@@ -1,1 +1,1 @@
-put partials in this directory
+put generated partials in this directory
