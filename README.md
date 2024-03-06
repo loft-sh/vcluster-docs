@@ -2,7 +2,7 @@
 
 This website is built using [Docusaurus](https://docusaurus.io/) v3, a modern static website generator.
 
-### Installation
+## Installation
 
 ```
 $ yarn
@@ -24,9 +24,16 @@ $ npm run build
 
 This command generates static content into the `build` directory and can be served using any static contents hosting service.
 
-
-
 `npm run serve`
 
 Serves the built website locally.
 
+## Generate partials for vCluster values
+
+1. Ensure `hack/gen-partials.sh` is executable
+2. Run `hack/gen-partials.sh` to generate partials with default arguments
+
+Optional:
+
+- Configure the input file and output directory `hack/gen-partials.sh ./my-schema.json ./gen/my-out-dir`
+- Enabled debug logs `DEBUG=true hack/gen-partials.sh`
