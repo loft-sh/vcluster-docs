@@ -53,7 +53,7 @@ func main() {
 	}
 
 	for name, def := range schema.Definitions {
-		content := buildContent("", def, schema.Definitions, 0)
+		content := buildContent("", def, schema.Definitions, 1)
 		if content == "" {
 			return
 		}
