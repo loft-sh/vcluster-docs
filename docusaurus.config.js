@@ -11,6 +11,10 @@ module.exports = {
   organizationName: "loft-sh", // Usually your GitHub org/user name.
   projectName: "vcluster-docs", // Usually your repo name.
   themeConfig: {
+    tableOfContents: { // default is ##, ### so add #### 
+      minHeadingLevel: 2,
+      maxHeadingLevel: 4,
+    },
     colorMode: {
       defaultMode: "light",
       disableSwitch: true,
