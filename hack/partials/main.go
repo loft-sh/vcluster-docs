@@ -52,12 +52,40 @@ func main() {
 		return
 	}
 
+	// Is it beautiful? No. Does it work? Probably.
+
+	topLevelProps := map[string]bool{}
+	for pair := schema.Properties.Oldest(); pair != nil; pair = pair.Next() {
+		def := pair.Value
+		if def == nil {
+			continue
+		}
+		*def = *pair.Value
+		name := strings.ToLower(pair.Key[:1]) + pair.Key[1:]
+		upperName := strings.ToUpper(pair.Key[:1]) + pair.Key[1:]
+		fileName := fmt.Sprintf("%s/%s.mdx", *outDir, name)
+		topLevelProps[upperName] = true
+
+		// some jsonschema massaging to top level properties include themselves :upsidedown:
+		// sets properties to a ref to its own definition
+		properties := jsonschema.NewProperties()
+		_, _ = properties.Set(pair.Key, def)
+		def.Properties = properties
+
+		content := buildContent("", def, schema.Definitions, 1)
+		l.Debug("generate content", "file", fileName)
+		os.WriteFile(fileName, []byte(content), 0644)
+	}
+
 	for name, def := range schema.Definitions {
+		if ok := topLevelProps[name]; ok {
+			l.Debug("skipping", "name", name)
+			continue
+		}
 		content := buildContent("", def, schema.Definitions, 1)
 		if content == "" {
 			return
 		}
-		// lowercase the first letter
 		name = strings.ToLower(name[:1]) + name[1:]
 		fileName := fmt.Sprintf("%s/%s.mdx", *outDir, name)
 		l.Debug("generate content", "file", fileName)
@@ -93,7 +121,6 @@ func buildContent(prefix string, schema *jsonschema.Schema, allDefinitions jsons
 	content := ""
 	for pair := schema.Properties.Oldest(); pair != nil; pair = pair.Next() {
 		fieldName := pair.Key
-
 		fieldSchema, ok := schema.Properties.Get(fieldName)
 		if !ok {
 			continue
