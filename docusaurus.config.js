@@ -10,6 +10,10 @@ module.exports = {
   favicon: "/media/vcluster_symbol.svg",
   organizationName: "loft-sh", // Usually your GitHub org/user name.
   projectName: "vcluster-docs", // Usually your repo name.
+  i18n: {
+    defaultLocale: 'en',
+    locales: ['en'],
+  },
   themeConfig: {
     tableOfContents: { // default is ##, ### so add #### 
       minHeadingLevel: 2,
