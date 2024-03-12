@@ -82,12 +82,18 @@ func main() {
 			l.Debug("skipping", "name", name)
 			continue
 		}
-		content := buildContent("", def, schema.Definitions, 1)
+		defCopy := *def
+		lowerName := strings.ToLower(name[:1]) + name[1:]
+		fileName := fmt.Sprintf("%s/%s.mdx", *outDir, lowerName)
+
+		properties := jsonschema.NewProperties()
+		defCopy.Ref = "#/$defs/" + name
+		_, _ = properties.Set(name, &defCopy)
+		defCopy.Properties = properties
+		content := buildContent("", &defCopy, schema.Definitions, 1)
 		if content == "" {
 			return
 		}
-		name = strings.ToLower(name[:1]) + name[1:]
-		fileName := fmt.Sprintf("%s/%s.mdx", *outDir, name)
 		l.Debug("generate content", "file", fileName)
 		os.WriteFile(fileName, []byte(content), 0644)
 	}
