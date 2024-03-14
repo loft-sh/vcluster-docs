@@ -7,9 +7,9 @@ The vCluster docs use the following style guides in this order:
 
 1. Kubernetes [Documentation Style Guide](https://kubernetes.io/docs/contribute/style/style-guide/)
 2. [Google developer documentation style guide](https://developers.google.com/style)
-3. Chicago Manual of Style - use this only for situations not covered by the Kubernetes Documentation Style Guide or the Google developer documentation style guide.
 
-Page titles follow title case. To check capitalization, use the [Title Case Converter](https://titlecaseconverter.com/) with **Chicago** selected in the **Title Case** field.
+
+Page titles follow **sentence** case. Capitalize Kubernetes objects [according to the K8s style guide](https://kubernetes.io/docs/contribute/style/style-guide/#documentation-formatting-standards).
 
 ### Oxford comma
 
@@ -53,9 +53,9 @@ Abbreviations for Kubernetes distros:
 
 ## Other product terms
 
-* AWS [EKS](https://aws.amazon.com/eks/)
-* [CoreDNS](https://coredns.io/)
-* [etcd](https://etcd.io/) 
+- AWS [EKS](https://aws.amazon.com/eks/)
+- [CoreDNS](https://coredns.io/)
+- [etcd](https://etcd.io/)
 
 
 ## Highlight lines of code
