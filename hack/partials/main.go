@@ -8,10 +8,15 @@ import (
 	"log/slog"
 	"math"
 	"os"
+	"path"
+	"slices"
 	"strings"
 
+	"github.com/gertd/go-pluralize"
 	"github.com/invopop/jsonschema"
 )
+
+var pluralizeClient = pluralize.NewClient()
 
 func main() {
 	l := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
@@ -54,17 +59,14 @@ func main() {
 
 	// Is it beautiful? No. Does it work? Probably.
 
-	topLevelProps := map[string]bool{}
 	for pair := schema.Properties.Oldest(); pair != nil; pair = pair.Next() {
 		def := pair.Value
 		if def == nil {
 			continue
 		}
 		*def = *pair.Value
-		name := strings.ToLower(pair.Key[:1]) + pair.Key[1:]
-		upperName := strings.ToUpper(pair.Key[:1]) + pair.Key[1:]
+		name := pair.Key
 		fileName := fmt.Sprintf("%s/%s.mdx", *outDir, name)
-		topLevelProps[upperName] = true
 
 		// some jsonschema massaging to top level properties include themselves :upsidedown:
 		// sets properties to a ref to its own definition
@@ -72,31 +74,11 @@ func main() {
 		_, _ = properties.Set(pair.Key, def)
 		def.Properties = properties
 
-		content := buildContent("", def, schema.Definitions, 1)
+		content := buildContent("", *outDir, def, schema.Definitions, 1)
 		l.Debug("generate content", "file", fileName)
 		os.WriteFile(fileName, []byte(content), 0644)
 	}
 
-	for name, def := range schema.Definitions {
-		if ok := topLevelProps[name]; ok {
-			l.Debug("skipping", "name", name)
-			continue
-		}
-		defCopy := *def
-		lowerName := strings.ToLower(name[:1]) + name[1:]
-		fileName := fmt.Sprintf("%s/%s.mdx", *outDir, lowerName)
-
-		properties := jsonschema.NewProperties()
-		defCopy.Ref = "#/$defs/" + name
-		_, _ = properties.Set(name, &defCopy)
-		defCopy.Properties = properties
-		content := buildContent("", &defCopy, schema.Definitions, 1)
-		if content == "" {
-			return
-		}
-		l.Debug("generate content", "file", fileName)
-		os.WriteFile(fileName, []byte(content), 0644)
-	}
 }
 
 const (
@@ -119,7 +101,7 @@ const TemplateConfigField = `
 </details>
 `
 
-func buildContent(prefix string, schema *jsonschema.Schema, allDefinitions jsonschema.Definitions, depth int) string {
+func buildContent(prefix string, outDir string, schema *jsonschema.Schema, allDefinitions jsonschema.Definitions, depth int) string {
 	if schema.Properties == nil {
 		return ""
 	}
@@ -131,25 +113,39 @@ func buildContent(prefix string, schema *jsonschema.Schema, allDefinitions jsons
 		if !ok {
 			continue
 		}
+		cp := *fieldSchema
+		properties := jsonschema.NewProperties()
+		_, _ = properties.Set(fieldName, &cp)
+		cp.Properties = properties
 
 		fieldContent := renderField(
 			prefix,
+			outDir,
 			fieldName,
-			fieldSchema,
+			&cp,
+			schema,
 			allDefinitions,
 			depth,
 		)
 		if fieldContent != "" {
 			content += "\n\n" + fieldContent
 		}
+		fileName := fmt.Sprintf("%s/%s.mdx", outDir, prefix+fieldName)
+		err := os.MkdirAll(path.Dir(fileName), 0755)
+		if err != nil {
+			log.Fatal(fmt.Errorf("creating directory: %w", err))
+		}
+		os.WriteFile(fileName, []byte(fieldContent), 0644)
 	}
 
 	return content
 }
 func renderField(
 	prefix,
+	outDir,
 	fieldName string,
 	fieldSchema *jsonschema.Schema,
+	parentSchema *jsonschema.Schema,
 	allDefinitions jsonschema.Definitions,
 	depth int,
 ) string {
@@ -162,12 +158,13 @@ func renderField(
 
 	var patternPropertySchema *jsonschema.Schema
 	var ok bool
+	var nestedSchema *jsonschema.Schema
 
 	ref := ""
 	if fieldSchema.Type == "array" {
 		ref = fieldSchema.Items.Ref
-	} else if patternPropertySchema, ok = fieldSchema.PatternProperties[".*"]; ok {
-		ref = patternPropertySchema.Ref
+	} else if patternPropertySchema, ok = findPatternProperty(fieldSchema); ok {
+		ref = fieldSchema.AdditionalProperties.Ref
 		isNameObjectMap = true
 	} else if fieldSchema.Ref != "" {
 		ref = fieldSchema.Ref
@@ -175,25 +172,25 @@ func renderField(
 
 	if ref != "" {
 		refSplit := strings.Split(ref, "/")
-		nestedSchema, ok := allDefinitions[refSplit[len(refSplit)-1]]
+		nestedSchema, ok = allDefinitions[refSplit[len(refSplit)-1]]
 
 		if ok {
 			newPrefix := prefix + fieldName + prefixSeparator
-			fieldContent = buildContent(newPrefix, nestedSchema, allDefinitions, depth+1)
+			fieldContent = buildContent(newPrefix, outDir, nestedSchema, allDefinitions, depth+1)
 			expandable = true
 		}
 	}
 
-	required := true
+	required := false
+	if slices.Contains(parentSchema.Required, fieldName) {
+		required = true
+	}
 	fieldDefault := ""
 
 	description := fieldSchema.Description
 	lines := strings.Split(description, "\n")
 	newLines := []string{}
 	for _, line := range lines {
-		if line == "+optional" {
-			required = false
-		}
 		if strings.HasPrefix(strings.TrimSpace(line), "+") {
 			continue
 		}
@@ -234,6 +231,15 @@ func renderField(
 	}
 
 	if ref != "" {
+		if isNameObjectMap && nestedSchema != nil {
+			// nameField, ok := nestedSchema.Properties.Get(fieldName)
+			// if ok {
+			// if nameFieldSchema, ok := nameField.(*jsonschema.Schema); ok {
+			fieldType = "&lt;" + pluralizeClient.Singular(fieldName) + "_name&gt;:object"
+			// }
+			// }
+		}
+
 		refSplit := strings.Split(ref, "/")
 		_, ok = allDefinitions[refSplit[len(refSplit)-1]]
 		if ok {
@@ -281,4 +287,18 @@ func GetEnumValues(fieldSchema *jsonschema.Schema, required bool, fieldDefault *
 		enumValues = fmt.Sprintf("<span>%s</span>", enumValues)
 	}
 	return enumValues
+}
+
+func findPatternProperty(schema *jsonschema.Schema) (*jsonschema.Schema, bool) {
+	if schema.AnyOf == nil {
+		return nil, false
+	}
+
+	for _, s := range schema.AnyOf {
+		if patternProperty, ok := s.PatternProperties[".*"]; ok {
+			return patternProperty, true
+		}
+	}
+
+	return nil, false
 }

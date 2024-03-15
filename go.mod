@@ -2,7 +2,10 @@ module github.com/loft-sh/vcluster-docs
 
 go 1.21.6
 
-require github.com/invopop/jsonschema v0.12.0
+require (
+	github.com/gertd/go-pluralize v0.2.1
+	github.com/invopop/jsonschema v0.12.0
+)
 
 require (
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
