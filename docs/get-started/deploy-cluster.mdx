@@ -119,19 +119,53 @@ helm template my-vcluster vcluster --repo https://charts.loft.sh -n my-vcluster 
 </TabItem>
 <TabItem value="terraform">
 
-@TODO Terraform deploy instructions
+1. Create the `vcluster.yaml` with the following contents:
 
-```tf
-resource "helm_release" "vCluster" {
-  name       = "vCluster"
-  repository = "https://charts.loft.sh"
-  chart      = "vcluster"
+    ```yaml
+    controlPlane:
+     distro:
+       k3s:
+        enabled: true
+    ```
 
-  values = [
-    file("${path.module}/vcluster.yaml")
-  ]
-}
-```
+2. Create a file `main.tf` with the following contents:
+
+    ```hcl
+    provider "helm" {
+      kubernetes {
+        config_path = "~/.kube/config"
+      }
+    }
+
+    resource "helm_release" "my_vcluster" {
+      name             = "my-vcluster"
+      namespace        = "my-vcluster"
+      create_namespace = true
+
+      repository       = "https://charts.loft.sh"
+      chart            = "vcluster"
+
+      values = [
+        file("${path.module}/vcluster.yaml")
+      ]
+    }
+    ```
+
+3. Run terraform init to install the required [helm provider](https://registry.terraform.io/providers/hashicorp/helm/latest):
+
+    ```bash
+    terraform init
+    ```
+
+4. Run terraform plan to generate a plan and verify that the provider can access your cluster and that the proposed changes are correct:
+    ```bash
+    terraform plan
+    ```
+5. Run terraform apply to create the vCluster:
+    ```bash
+    terraform apply
+    ```
+
 
 </TabItem>
 <TabItem value="argo">
@@ -283,8 +317,77 @@ kubectl get secret vc-my-vcluster -n my-vcluster --template={{.data.config}} | b
 </TabItem>
 <TabItem value="terraform">
 
-@TODO Terraform retrieve kubeconfig
+You may retrieve the kubeconfig for `my-vcluster` using `kubectl`. Switch to your host cluster's context before running this command:
 
+```bash
+kubectl get secret vc-my-vcluster -n my-vcluster --template={{.data.config}} | base64 -D
+```
+
+However, if you wish to connect to and manage the vCluster using terraform, you may use this secret to configure the [kubernetes terraform provider](https://registry.terraform.io/providers/hashicorp/kubernetes/latest).
+
+1. First, create a new terraform file in a separate folder from the terraform you used to create the vCluster:
+
+    ```hcl
+    provider "kubernetes" {
+      config_path = "~/.kube/config"
+    }
+
+    data "kubernetes_secret" "vc_my_vcluster" {
+      metadata {
+        name      = "vc-my-vcluster"
+        namespace = "my-vcluster"
+      }
+    }
+
+    provider "kubernetes" {
+      host = "https://localhost:8443"
+
+      client_certificate     = data.kubernetes_secret.vc_my_vcluster.data["client-certificate"]
+      client_key             = data.kubernetes_secret.vc_my_vcluster.data["client-key"]
+      cluster_ca_certificate = data.kubernetes_secret.vc_my_vcluster.data["certificate-authority"]
+
+      alias = "my-vcluster"
+    }
+
+    data "kubernetes_all_namespaces" "host_namespaces" {}
+
+    output "host_namespaces" {
+      value = data.kubernetes_all_namespaces.host_namespaces.namespaces
+    }
+
+    data "kubernetes_all_namespaces" "my_vcluster_namespaces" {
+      provider = kubernetes.my-vcluster
+    }
+
+    output "my_vcluster_namespaces" {
+      value = data.kubernetes_all_namespaces.my_vcluster_namespaces.namespaces
+    }
+    ```
+
+    There's a lot happening in this file:
+    - The first kubernetes provider declaration configures access to the host cluster.
+    - The datasource `data.kubernetes_secret.vc_my_vcluster` reads `my-vcluster`'s kubeconfig secret from the host cluster.
+    - The second kubernetes provider declaration uses the secret data to configure a second kubernetes provider with the alias `my-vcluster`
+    - The next datasource `data.kubernetes_all_namespaces.host_namespaces` is an example of reading namespaces from the host cluster.
+    - The output `output.host_namespaces` will show the host namespaces when running `terraform plan` or `terraform apply`.
+    - The next datasource `data.kubernetes_all_namespaces.my_vcluster_namespaces` is an example of reading namespaces from the `my-vcluster` vCluster. Note that it references the aliased provider.
+    - The output `output.my_vcluster_namespaces` will show the vCluster namespaces when running `terraform plan` or `terraform apply`.
+2. Since we're using host `https://localhost:8443` in this example, we'll need start port forwarding to access the vCluster:
+    ```bash
+    kubectl port-forward -n my-vcluster service/my-vcluster 8443:443
+    ```
+    This step isn't required if you have exposed your vCluster with a publicly available host using the supported methods.
+
+    @TODO add link to exposing vCluster docs
+3. Run terraform init to install the [kubernetes terraform provider](https://registry.terraform.io/providers/hashicorp/kubernetes/latest)
+    ```bash
+   terraform init
+    ```
+4. Change directory to the folder where you created this new terraform file and run:
+    ```bash
+   terraform plan
+    ```
+    The resulting output shows that there are changes to the outputs for `host_namespaces` and `my_vcluster_namespaces`.
 </TabItem>
 <TabItem value="argo">
 
