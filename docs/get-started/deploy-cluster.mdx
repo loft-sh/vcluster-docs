@@ -7,8 +7,11 @@ description: Learn how deploy a vCluster instance and use your virtual cluster.
 
 import Tabs from '@theme/Tabs'
 import TabItem from '@theme/TabItem'
+import CodeBlock from '@theme/CodeBlock';
 
 import InstallCLIFragment from '@site/docs/_fragments/install/cli.mdx'
+import SecretKubeconfigFormat  from '@site/docs/get-started/_fragments/secret-kubeconfig-format.mdx'
+import TerraformDeployFile from '!!raw-loader!@site/docs/get-started/_fragments/terraform-deploy-main.tf'
 
 ## Learning objectives
 
@@ -119,19 +122,38 @@ helm template my-vcluster vcluster --repo https://charts.loft.sh -n my-vcluster 
 </TabItem>
 <TabItem value="terraform">
 
-@TODO Terraform deploy instructions
+1. Create the `vcluster.yaml` config file with the following contents:
 
-```tf
-resource "helm_release" "vCluster" {
-  name       = "vCluster"
-  repository = "https://charts.loft.sh"
-  chart      = "vcluster"
+   ```yaml
+    controlPlane:
+      distro:
+        k3s:
+          enabled: true
+   ```
 
-  values = [
-    file("${path.module}/vcluster.yaml")
-  ]
-}
-```
+1. Create a `main.tf` with the following contents:
+
+   <CodeBlock language="hcl">{TerraformDeployFile}</CodeBlock>
+
+1. Install the required [Helm provider](https://registry.terraform.io/providers/hashicorp/helm/latest):
+
+   ```bash
+   terraform init
+   ```
+
+1. Generate a plan: 
+    
+    ```bash
+    terraform plan
+    ```
+
+   Verify that the provider can access your cluster and that the proposed changes are correct.
+
+1. Deploy vCluster:
+
+   ```bash
+   terraform apply
+   ```
 
 </TabItem>
 <TabItem value="argo">
@@ -262,6 +284,8 @@ Switch to your host cluster's context before running this command:
 kubectl get secret vc-my-vcluster -n my-vcluster --template={{.data.config}} | base64 -D
 ```
 
+<SecretKubeconfigFormat/>
+
 </TabItem>
 <TabItem value="helm">
 
@@ -270,6 +294,8 @@ Switch to your host cluster's context before running this command:
 ```bash
 kubectl get secret vc-my-vcluster -n my-vcluster --template={{.data.config}} | base64 -D
 ```
+
+<SecretKubeconfigFormat/>
 
 </TabItem>
 <TabItem value="kubectl">
@@ -280,10 +306,91 @@ Switch to your host cluster's context before running this command:
 kubectl get secret vc-my-vcluster -n my-vcluster --template={{.data.config}} | base64 -D
 ```
 
+<SecretKubeconfigFormat/>
+
 </TabItem>
 <TabItem value="terraform">
 
-@TODO Terraform retrieve kubeconfig
+You may retrieve the kubeconfig for `my-vcluster` using `kubectl`. Switch to your host cluster's context before running this command:
+
+```bash
+kubectl get secret vc-my-vcluster -n my-vcluster --template={{.data.config}} | base64 -D
+```
+
+<SecretKubeconfigFormat/>
+
+After you retrieve the secret, you can connect to and manage your virtual cluster using Terraform. Use this secret to configure the [Kubernetes Terraform provider](https://registry.terraform.io/providers/hashicorp/kubernetes/latest).
+
+1. Create a new Terraform file in a separate folder from the Terraform file you used to deploy vCluster:
+
+   ```hcl
+    provider "kubernetes" {
+      config_path = "~/.kube/config"
+    }
+
+    data "kubernetes_secret" "vc_my_vcluster" {
+      metadata {
+        name      = "vc-my-vcluster"
+        namespace = "my-vcluster"
+      }
+    }
+
+    provider "kubernetes" {
+      host = "https://localhost:8443"
+
+      client_certificate     = data.kubernetes_secret.vc_my_vcluster.data["client-certificate"]
+      client_key             = data.kubernetes_secret.vc_my_vcluster.data["client-key"]
+      cluster_ca_certificate = data.kubernetes_secret.vc_my_vcluster.data["certificate-authority"]
+
+      alias = "my-vcluster"
+    }
+
+    data "kubernetes_all_namespaces" "host_namespaces" {}
+
+    output "host_namespaces" {
+      value = data.kubernetes_all_namespaces.host_namespaces.namespaces
+    }
+
+    data "kubernetes_all_namespaces" "my_vcluster_namespaces" {
+      provider = kubernetes.my-vcluster
+    }
+
+    output "my_vcluster_namespaces" {
+      value = data.kubernetes_all_namespaces.my_vcluster_namespaces.namespaces
+    }
+    ```
+
+    - The first Kubernetes provider declaration configures access to the host cluster.
+    - The datasource `data.kubernetes_secret.vc_my_vcluster` reads `my-vcluster`'s kubeconfig secret from the host cluster.
+    - The second Kubernetes provider declaration uses the secret data to configure a second Kubernetes provider with the alias `my-vcluster`
+    - The next datasource `data.kubernetes_all_namespaces.host_namespaces` is an example of reading namespaces from the host cluster.
+    - The output `output.host_namespaces` shows the host namespaces when running `terraform plan` or `terraform apply`.
+    - The next datasource `data.kubernetes_all_namespaces.my_vcluster_namespaces` is an example of reading namespaces from the `my-vcluster` vCluster. Note that it references the aliased provider.
+    - The output `output.my_vcluster_namespaces` shows the vCluster namespaces when running `terraform plan` or `terraform apply`.
+
+1. Since you use host `https://localhost:8443` in this example, you need to `port-forward` to access the virtual cluster:
+
+   ```bash
+   kubectl port-forward -n my-vcluster service/my-vcluster 8443:443
+   ```
+    
+   This step isn't required if you have exposed your vCluster instance with a publicly available host using the supported methods.
+
+    @TODO add link to exposing vCluster docs
+
+1. Install the [Kubernetes Terraform provider](https://registry.terraform.io/providers/hashicorp/kubernetes/latest):
+
+    ```bash
+   terraform init
+    ```
+
+1. Change directory to the folder where you created this new Terraform file and run:
+
+   ```bash
+   terraform plan
+   ```
+    
+   The resulting output shows that there are changes to the outputs for `host_namespaces` and `my_vcluster_namespaces`.
 
 </TabItem>
 <TabItem value="argo">
@@ -294,6 +401,8 @@ Remember to use the namespace that corresponds to your ArgoCD `Application`'s de
 ```bash
 kubectl get secret vc-my-vcluster -n my-vcluster --template={{.data.config}} | base64 -D
 ```
+
+<SecretKubeconfigFormat/>
 
 </TabItem>
 <TabItem value="cluster-api">
@@ -307,33 +416,10 @@ clusterctl get kubeconfig ${CLUSTER_NAME} --namespace ${CLUSTER_NAMESPACE} > ./k
 kubectl get --kubeconfig ./kubeconfig.yaml get namespaces
 ```
 
+<SecretKubeconfigFormat/>
+
 </TabItem>
 </Tabs>
-
-The secret holds a kubeconfig in this format:
-
-```yaml
-apiVersion: v1
-clusters:
-- cluster:
-    certificate-authority-data: LS0t...
-    server: https://localhost:8443
-  name: local
-contexts:
-- context:
-    cluster: local
-    namespace: default
-    user: user
-  name: Default
-current-context: Default
-kind: Config
-users:
-- name: user
-  user:
-    client-certificate-data: LS0tLS...
-    client-key-data: LS0tLS...
-```
-
 
 ## Run kubectl commands
 
