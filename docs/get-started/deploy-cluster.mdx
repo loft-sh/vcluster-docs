@@ -1,0 +1,539 @@
+---
+title: Deploy and use a virtual cluster
+sidebar_label: 1. Deploy and use
+sidebar_position: 1
+description: Learn how deploy a vCluster instance and use your virtual cluster.
+---
+
+import Tabs from '@theme/Tabs'
+import TabItem from '@theme/TabItem'
+import CodeBlock from '@theme/CodeBlock';
+
+import InstallCLIFragment from '@site/docs/_fragments/install/cli.mdx'
+import SecretKubeconfigFormat  from '@site/docs/get-started/_fragments/secret-kubeconfig-format.mdx'
+import TerraformDeployFile from '!!raw-loader!@site/docs/get-started/_fragments/terraform-deploy-main.tf'
+
+## Learning objectives
+
+In this guide, you learn the following:
+
+1. How to deploy and use a virtual cluster.
+1. [How to configure your cluster](/get-started/configure-cluster.mdx) for features like Kubernetes distro.
+1. [How to uninstall vCluster](/get-started/cleanup.mdx).
+
+You can join the [Loft Users Slack](https://slack.loft.sh/) to ask questions in the #vcluster channel.
+
+## Key concepts and components
+
+- [**Control plane**](/architecture/control-plane.mdx): The control plane contains a Kubernetes API server, a controller manager, and a data store mount.
+- [**Syncing resources**](/architecture/syncer.mdx): vCluster runs your workloads by replicating pods from the virtual cluster to the host cluster. vCluster keeps the pods in sync.
+- [**Pod scheduling**](/architecture/scheduling.mdx): By default, vCluster reuses the host cluster scheduler to schedule workloads.
+- [**Storage**](/architecture/storage.mdx): You can use the host's storage classes without the need to create them in the virtual cluster.
+- [**Networking**](/architecture/networking.mdx): vCluster syncs resources such as Service and Ingress from the virtual cluster to the host cluster.
+- [**Nodes**](/architecture/nodes.mdx): By default, vCluster creates fakes nodes for every pod `spec.nodeName` in the virtual cluster. vCluster also creates a fake kubelet endpoint for each node to forward requests to the actual node or rewrite requests to preserve virtual cluster names.
+
+## Before you begin
+
+You have installed [kubectl](https://kubernetes.io/docs/tasks/tools/#kubectl) and have access to a Kubernetes v1.26+ cluster to use as the host cluster. You do not need admin permissions on the host cluster.
+
+## Deploy vCluster
+
+### Install the vCluster CLI
+
+The `vcluster` CLI installs Helm. Use one of the following commands to download and install the vCluster CLI:
+
+<InstallCLIFragment/>
+
+
+### Deploy a virtual cluster
+
+Deploy a vCluster instance to the 'my-vcluster' namespace. Installation creates the namespace if it does not yet exist. When you create namespaces within your virtual cluster, those resources are encapsulated within the vCluster namespace.
+
+<Tabs
+  groupId="get-started"
+  defaultValue="cli"
+  values={[
+	{ label: "CLI", value: "cli" },
+    { label: 'Helm', value: 'helm', },
+    { label: 'kubectl', value: 'kubectl', },
+    { label: 'Terraform', value: 'terraform', },
+    { label: 'Argo CD', value: 'argo', },
+    { label: 'Cluster API', value: 'cluster-api', },
+  ]
+}>
+<TabItem value="cli">
+
+:::info Default distro
+[K3s](https://k3s.io/) is the default Kubernetes distribution.
+:::
+
+to create a new vCluster instance in namespace `my-vcluster`, execute:
+
+```bash
+vcluster create my-cluster
+```
+
+When the installation finishes, you should see output similar to:
+
+```bash
+done Switched active kube context to my-vcluster
+- Use `vcluster disconnect` to return to your previous kube context
+```
+
+@TODO link to CLI docs
+
+`vcluster create` has config options for specific cases.
+
+
+</TabItem>
+<TabItem value="helm">
+
+@TODO Helm install instructions still correct?
+
+You want vCluster to use K3s, so create a file called `vcluster.yaml` with the following contents:
+
+```yaml
+controlPlane:
+  distro:
+    k3s:
+      enabled: true
+```
+
+Then, install the Helm chart, specifying `vcluster.yaml` for chart values:
+
+```bash
+helm upgrade --install my-vcluster vcluster \
+  --values vcluster.yaml \
+  --repo https://charts.loft.sh \
+  --namespace my-vcluster \
+  --repository-config=''
+```
+
+</TabItem>
+<TabItem value="kubectl">
+
+This installs vCluster with default values. Use Helm to generate Kubernetes deployment files.
+
+```bash
+kubectl create namespace my-vcluster
+helm template my-vcluster vcluster --repo https://charts.loft.sh -n my-vcluster | kubectl apply -f -
+```
+
+</TabItem>
+<TabItem value="terraform">
+
+1. Create the `vcluster.yaml` config file with the following contents:
+
+   ```yaml
+    controlPlane:
+      distro:
+        k3s:
+          enabled: true
+   ```
+
+1. Create a `main.tf` with the following contents:
+
+   <CodeBlock language="hcl">{TerraformDeployFile}</CodeBlock>
+
+1. Install the required [Helm provider](https://registry.terraform.io/providers/hashicorp/helm/latest):
+
+   ```bash
+   terraform init
+   ```
+
+1. Generate a plan: 
+    
+    ```bash
+    terraform plan
+    ```
+
+   Verify that the provider can access your cluster and that the proposed changes are correct.
+
+1. Deploy vCluster:
+
+   ```bash
+   terraform apply
+   ```
+
+</TabItem>
+<TabItem value="argo">
+
+To deploy vCluster using ArgoCD, you need to create two files:
+
+- `vcluster.yaml` for your vCluster config.
+- `my-vcluster.yaml` for your ArgoCD `Application` definition.
+
+1. Create the `vcluster.yaml` with the following contents:
+
+   ```yaml
+   controlPlane:
+     distro:
+       k3s:
+        enabled: true
+   ```
+
+
+1. Create the ArgoCD `Application` file `my-vcluster.yaml`. Deployment uses the `vcluster` Helm chart and the `vcluster.yaml` to pass the chart values,
+but you may use any of the options for passing values covered by the [ArgoCD Helm documentation](https://argo-cd.readthedocs.io/en/stable/user-guide/helm)
+
+   ```yaml
+   apiVersion: argoproj.io/v1alpha1
+   kind: Application
+   metadata:
+     name: my-vcluster
+     namespace: argocd
+   spec:
+     project: default
+     source:
+       chart: vcluster
+       repoURL: https://charts.loft.sh
+       helm:
+         releaseName: my-vcluster
+         valueFiles:
+           - vcluster.yaml
+     destination:
+       server: https://kubernetes.default.svc
+       namespace: my-vcluster
+   ```
+
+   Commit and push these files to your configured ArgoCD repository and synchronize it with your configured cluster.
+
+</TabItem>
+<TabItem value="cluster-api">
+
+Install the `clusterctl` CLI according to the [install instructions](https://cluster-api.sigs.k8s.io/user/quick-start.html#install-clusterctl) for your platform.
+
+1. Install the vCluster provider:
+
+   ```bash
+   clusterctl init --infrastructure vcluster
+   ```
+
+1. Generate the required manifests and apply using `clusterctl generate cluster` and `kubectl`.
+
+   ```bash
+   export CLUSTER_NAME=my-vcluster
+   export CLUSTER_NAMESPACE=my-vcluster
+   export KUBERNETES_VERSION=1.29.3
+   export HELM_VALUES=$(cat vcluster.yaml)
+
+   kubectl create namespace ${CLUSTER_NAMESPACE}
+
+   clusterctl generate cluster ${CLUSTER_NAME} \
+    --infrastructure vcluster \
+    --kubernetes-version ${KUBERNETES_VERSION} \
+    --target-namespace ${CLUSTER_NAMESPACE} | kubectl apply -f -
+   ```
+
+1. Execute the following command to wait for the vCluster custom resource to report a ready status:
+
+   ```bash
+   kubectl wait --for=condition=ready vcluster -n $CLUSTER_NAMESPACE $CLUSTER_NAME --timeout=300s
+   ```
+
+</TabItem>
+</Tabs>
+
+## Connect to your virtual cluster
+
+### CLI
+
+`vcluster create` creates a new context that starts with "vcluster_" and updates your kubeconfig file to point to that context. You can use the CLI to quickly connect to your virtual cluster. Execute:
+
+```bash
+vcluster connect my-vcluster
+```
+
+Output is similar to:
+
+```bash
+done Switched active kube context to vcluster_my-cluster
+- Use `vcluster disconnect` to return to your previous kube context
+```
+
+Useful `vcluster` commands:
+
+- `vcluster disconnect`: Switch to your host cluster context.
+- `vcluster list`: Retrieve a list of vCluster instance names.
+
+By default, the vCluster CLI connects to the virtual cluster either directly on local Kubernetes distributions or via port-forwarding for remote clusters.
+
+### Retrieve the virtual cluster kubeconfig
+
+If you can't use the CLI, you can retrieve the vCluster kubeconfig from a secret that is created automatically in the vCluster namespace.
+
+The secret is prefixed with `vc-` and ends with the vCluster name, so a vCluster called `my-vcluster` in namespace `my-vcluster` would create a secret called `vc-my-vcluster` in the namespace `my-vcluster`.
+
+<Tabs
+  groupId="get-started"
+  defaultValue="cli"
+  values={[
+	{ label: "CLI", value: "cli" },
+    { label: 'Helm', value: 'helm', },
+    { label: 'kubectl', value: 'kubectl', },
+    { label: 'Terraform', value: 'terraform', },
+    { label: 'Argo CD', value: 'argo', },
+    { label: 'Cluster API', value: 'cluster-api', },
+  ]
+}>
+<TabItem value="cli">
+
+Switch to your host cluster's context before running this command:
+
+```bash
+kubectl get secret vc-my-vcluster -n my-vcluster --template={{.data.config}} | base64 -D
+```
+
+<SecretKubeconfigFormat/>
+
+</TabItem>
+<TabItem value="helm">
+
+Switch to your host cluster's context before running this command:
+
+```bash
+kubectl get secret vc-my-vcluster -n my-vcluster --template={{.data.config}} | base64 -D
+```
+
+<SecretKubeconfigFormat/>
+
+</TabItem>
+<TabItem value="kubectl">
+
+Switch to your host cluster's context before running this command:
+
+```bash
+kubectl get secret vc-my-vcluster -n my-vcluster --template={{.data.config}} | base64 -D
+```
+
+<SecretKubeconfigFormat/>
+
+</TabItem>
+<TabItem value="terraform">
+
+You may retrieve the kubeconfig for `my-vcluster` using `kubectl`. Switch to your host cluster's context before running this command:
+
+```bash
+kubectl get secret vc-my-vcluster -n my-vcluster --template={{.data.config}} | base64 -D
+```
+
+<SecretKubeconfigFormat/>
+
+After you retrieve the secret, you can connect to and manage your virtual cluster using Terraform. Use this secret to configure the [Kubernetes Terraform provider](https://registry.terraform.io/providers/hashicorp/kubernetes/latest).
+
+1. Create a new Terraform file in a separate folder from the Terraform file you used to deploy vCluster:
+
+   ```hcl
+    provider "kubernetes" {
+      config_path = "~/.kube/config"
+    }
+
+    data "kubernetes_secret" "vc_my_vcluster" {
+      metadata {
+        name      = "vc-my-vcluster"
+        namespace = "my-vcluster"
+      }
+    }
+
+    provider "kubernetes" {
+      host = "https://localhost:8443"
+
+      client_certificate     = data.kubernetes_secret.vc_my_vcluster.data["client-certificate"]
+      client_key             = data.kubernetes_secret.vc_my_vcluster.data["client-key"]
+      cluster_ca_certificate = data.kubernetes_secret.vc_my_vcluster.data["certificate-authority"]
+
+      alias = "my-vcluster"
+    }
+
+    data "kubernetes_all_namespaces" "host_namespaces" {}
+
+    output "host_namespaces" {
+      value = data.kubernetes_all_namespaces.host_namespaces.namespaces
+    }
+
+    data "kubernetes_all_namespaces" "my_vcluster_namespaces" {
+      provider = kubernetes.my-vcluster
+    }
+
+    output "my_vcluster_namespaces" {
+      value = data.kubernetes_all_namespaces.my_vcluster_namespaces.namespaces
+    }
+    ```
+
+    - The first Kubernetes provider declaration configures access to the host cluster.
+    - The datasource `data.kubernetes_secret.vc_my_vcluster` reads `my-vcluster`'s kubeconfig secret from the host cluster.
+    - The second Kubernetes provider declaration uses the secret data to configure a second Kubernetes provider with the alias `my-vcluster`
+    - The next datasource `data.kubernetes_all_namespaces.host_namespaces` is an example of reading namespaces from the host cluster.
+    - The output `output.host_namespaces` shows the host namespaces when running `terraform plan` or `terraform apply`.
+    - The next datasource `data.kubernetes_all_namespaces.my_vcluster_namespaces` is an example of reading namespaces from the `my-vcluster` vCluster. Note that it references the aliased provider.
+    - The output `output.my_vcluster_namespaces` shows the vCluster namespaces when running `terraform plan` or `terraform apply`.
+
+1. Since you use host `https://localhost:8443` in this example, you need to `port-forward` to access the virtual cluster:
+
+   ```bash
+   kubectl port-forward -n my-vcluster service/my-vcluster 8443:443
+   ```
+    
+   This step isn't required if you have exposed your vCluster instance with a publicly available host using the supported methods.
+
+    @TODO add link to exposing vCluster docs
+
+1. Install the [Kubernetes Terraform provider](https://registry.terraform.io/providers/hashicorp/kubernetes/latest):
+
+    ```bash
+   terraform init
+    ```
+
+1. Change directory to the folder where you created this new Terraform file and run:
+
+   ```bash
+   terraform plan
+   ```
+    
+   The resulting output shows that there are changes to the outputs for `host_namespaces` and `my_vcluster_namespaces`.
+
+</TabItem>
+<TabItem value="argo">
+
+After your `my-vcluster` application is synced, you may retrieve the kubeconfig using `kubectl`.
+Remember to use the namespace that corresponds to your ArgoCD `Application`'s destination namespace.
+
+```bash
+kubectl get secret vc-my-vcluster -n my-vcluster --template={{.data.config}} | base64 -D
+```
+
+<SecretKubeconfigFormat/>
+
+</TabItem>
+<TabItem value="cluster-api">
+
+You may use the `clusterctl get kubeconfig` command to retrieve the kubeconfig. In this example, you get the cluster's kubeconfig, write it to a file, and then use it with `kubectl` to list the virtual cluster's namespaces:
+
+```bash
+export CLUSTER_NAME=my-vcluster
+export CLUSTER_NAMESPACE=my-vcluster
+clusterctl get kubeconfig ${CLUSTER_NAME} --namespace ${CLUSTER_NAMESPACE} > ./kubeconfig.yaml
+kubectl get --kubeconfig ./kubeconfig.yaml get namespaces
+```
+
+<SecretKubeconfigFormat/>
+
+</TabItem>
+</Tabs>
+
+## Run kubectl commands
+
+A virtual cluster behaves the same way as a regular Kubernetes cluster. You can run any `kubectl` command, including admin commands like these:
+
+```bash
+kubectl get namespace
+kubectl get pods -n kube-system
+```
+
+
+## What happens in the host cluster
+
+To illustrate what happens in the host cluster, create a namespace and deploy NGINX in the virtual cluster:
+
+```bash
+kubectl create namespace demo-nginx
+kubectl create deployment nginx-deployment -n demo-nginx --image=nginx -r 2
+```
+
+Check that this deployment creates two pods inside the virtual cluster:
+
+```bash
+kubectl get pods -n demo-nginx
+```
+
+Output is similar to:
+
+```bash
+NAME                                READY   STATUS    RESTARTS   AGE
+nginx-deployment-6d6565499c-2wfrd   1/1     Running   0          9s
+nginx-deployment-6d6565499c-2blwr   1/1     Running   0          9s
+```
+
+Most resources inside your virtual cluster only exist in your virtual cluster and **not** in the underlying host cluster.
+
+To verify this, perform these steps:
+
+1. Switch back to the host context.
+
+   ```bash
+   vcluster disconnect
+   ```
+
+1. Check namespaces in the host cluster.
+
+   ```bash
+   kubectl get namespaces
+   ```
+
+   Output is similar to:
+
+   ```bash
+   NAME                 STATUS   AGE
+   default              Active   35m
+   kube-node-lease      Active   35m
+   kube-public          Active   35m
+   kube-system          Active   35m
+   local-path-storage   Active   34m
+   # highlight-next-line
+   my-vcluster          Active   30m
+   ```
+
+   Notice that there is **no namespace `demo-nginx`** because this namespace only exists inside the virtual cluster.
+
+   Everything that belongs to the virtual cluster always remains inside the vCluster's `my-vcluster` namespace.
+
+1. Look for the NGINX deployment.
+
+   Check to see if your deployment `nginx-deployment` is in the underlying host cluster.
+
+   ```bash
+   kubectl get deployments -n my-vcluster
+   ```
+
+   Output is similar to:
+
+   ```bash
+   No resources found in my-vcluster namespace.
+   ```
+
+   You see that there is no deployment `nginx-deployment` because that deployment only lives inside the virtual cluster.
+
+1. Look for the NGINX pods.
+
+   The last thing to check is pods running inside the virtual cluster namespace:
+
+   ```bash
+   kubectl get pods -n my-vcluster
+   ```
+
+   Output is similar to:
+
+   ```bash
+   coredns-cb5ccc67f-kqwmx-x-kube-system-x-my-vcluster            1/1     Running   0          34m
+   my-vcluster-0                                                  1/1     Running   0          34m
+   # highlight-start
+   nginx-deployment-6d6565499c-cbv4w-x-demo-nginx-x-my-vcluster   1/1     Running   0          20m
+   nginx-deployment-6d6565499c-s7g8z-x-demo-nginx-x-my-vcluster   1/1     Running   0          20m
+   # highlight-end
+   ```
+
+   :::info Renaming
+   The pod name is rewritten during the sync process since vCluster is mapping pods from namespaces inside the virtual cluster into one single host namespace.
+   :::
+
+   The vCluster `my-cluster-0` pod contains the virtual cluster’s API server and some additional tools. There’s also a CoreDNS pod, which vCluster uses, and the two NGINX pods.
+
+   The host cluster has the `nginx-deployment` pods because the virtual cluster **does not** have separate nodes or a scheduler. Instead, the virtual cluster has a [syncer](/architecture/syncer.mdx) that synchronizes resources from the virtual cluster to the underlying host namespace.
+
+   The vCluster sync process tells the underlying cluster to schedule workloads. This sync process communicates with the Kubenetes API server of the host cluster to schedule the pods and keep track of their state.
+   To prevent collisions, vCluster appends the name of the virtual cluster namespace the pods are running in and the name of the virtual cluster.
+
+  Very few resources and API server requests actually reach the underlying API server. Only workload-related resources (e.g. Pod) and networking-related resources (e.g. Service) need to be synchronized down to the host cluster since the virtual cluster does **not** have any nodes or network itself.
+
+  The state of most objects running in the virtual cluster is stored in a database inside it. vCluster uses SQLite by defaul, but you can also use etcd or a few other options like PostgreSQL.
+

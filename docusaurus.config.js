@@ -15,7 +15,7 @@ module.exports = {
     locales: ['en'],
   },
   themeConfig: {
-    tableOfContents: { // default is ##, ### so add #### 
+    tableOfContents: { // default is ##, ### so add ####
       minHeadingLevel: 2,
       maxHeadingLevel: 4,
     },
@@ -79,6 +79,9 @@ module.exports = {
       links: [],
       copyright: `Copyright © ${new Date().getFullYear()} <a href="https://loft.sh/">Loft Labs, Inc.</a>`,
     },
+    prism: {
+        additionalLanguages: ['bash', 'hcl']
+    }
   },
   presets: [
     [
@@ -95,7 +98,7 @@ module.exports = {
                   label: "3.x (Latest)",
                   path: ""
               }
-          },          
+          },
         },
         theme: {
           customCss: resolveGlob.sync(['./src/css/**/*.scss']),
