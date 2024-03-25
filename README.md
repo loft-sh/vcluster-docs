@@ -30,10 +30,8 @@ Serves the built website locally.
 
 ## Generate partials for vCluster values
 
-1. Ensure `hack/gen-partials.sh` is executable
-2. Run `hack/gen-partials.sh` to generate partials with default arguments
-
-Optional:
-
-- Configure the input file and output directory `hack/gen-partials.sh ./my-schema.json ./gen/my-out-dir`
-- Enabled debug logs `DEBUG=true hack/gen-partials.sh`
+1. update vcluster repo
+2. run `go run ./hack/schema/main.go`
+3. copy jsonschema from `chart/values.schema.json`
+4. paste into `vcluster-docs/schema.json`
+5. run `./hack/gen-partials.sh`
