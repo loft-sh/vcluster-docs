@@ -1,13 +1,11 @@
 # Contribute to the vCluster docs
 
-
 ## Style guide
 
 The vCluster docs use the following style guides in this order:
 
-1. Kubernetes [Documentation Style Guide](https://kubernetes.io/docs/contribute/style/style-guide/)
-2. [Google developer documentation style guide](https://developers.google.com/style)
-
+1. Kubernetes [Documentation Style Guide](https://kubernetes.io/docs/contribute/style/style-guide/) for Kubernetes terms.
+2. [Google developer documentation style guide](https://developers.google.com/style).
 
 Page titles follow **sentence** case. Capitalize Kubernetes objects [according to the K8s style guide](https://kubernetes.io/docs/contribute/style/style-guide/#documentation-formatting-standards).
 
@@ -28,19 +26,21 @@ Loft Labs is the company. Do not use "Loft" or "Loft Platform" to refer to vClus
 
 "vCluster" is a trademark. There are strict legal frameworks around how to use a trademark, e.g. it cannot be used in plural. **Do not use "vClusters"**.
 
-### Products:
-  - vCluster: 
-  - vCluster Pro: a single enhanced/paid/upgraded virtual cluster that uses Pro functionality (as labeled "Pro")
-  - vCluster Platform: the management platform and UI for managing open source and commercial vCluster instances
+### Products
+
+- vCluster: this is the open source product
+- vCluster Pro: a single enhanced/paid/upgraded virtual cluster that uses Pro functionality (as labeled "Pro")
+- vCluster Platform: the management platform and UI for managing open source and commercial vCluster instances
 
 ### CLI
 
 `vcluster`
 
-
 ### Virtual clusters
 
 Never use vCluster or vClusters when talking about a virtual cluster or clusters that vCluster creates.
+
+vCluster is an app that spins up a virtual cluster and contains components to manage that virtual cluster; for example, the Syncer is a component that manages resource synchronization between host and virtual clusters.
 
 ## Kubernetes distros
 
@@ -49,7 +49,7 @@ Abbreviations for Kubernetes distros:
 - [Lightweight Kubernetes](https://k3s.io/): K3s
 - [Kubernetes](https://kubernetes.io/): K8s
 - [Zero Friction Kubernetes](https://k0sproject.io/ ): k0s  Note that k0s is the only Kubernetes distro to use a lower case 'k'
-- [AWS Elastic Kubernetes Service](https://aws.amazon.com/eks/): EKS
+- [AWS Elastic Kubernetes Service](https://aws.amazon.com/eks/): EKS (support for this is deprecated)
 
 ## Other product terms
 
@@ -60,4 +60,4 @@ Abbreviations for Kubernetes distros:
 
 ## Highlight lines of code
 
-Use inline comments in the code to highlight lines. See https://docusaurus.io/docs/markdown-features/code-blocks#highlighting-with-comments.
+Use inline comments in the code to highlight lines if possible. See https://docusaurus.io/docs/markdown-features/code-blocks#highlighting-with-comments.
