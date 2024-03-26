@@ -3,26 +3,26 @@ title: Storage
 sidebar_label: Storage
 ---
 
+import Prereqs from '@site/docs/_fragments/volume-snapshots-host-prereqs.mdx'
+
 <figure>
   <img src="/docs/media/diagrams/vcluster-persistent-volume-provisioning.svg" alt="vcluster Persistent Volume Provisioning" />
   <figcaption>vcluster - Persistent Volume Provisioning</figcaption>
 </figure>
 
-Since the vCluster's syncer synchronizes pods to the underlying host cluster to schedule them, vCluster users can use the storage classes of the underlying host cluster to create persistent volume claims and to mount persistent volumes. By default, you can use the host's storage classes without the need to create it in the virtual cluster. 
+Since the vCluster's Syncer synchronizes pods to the host cluster to schedule them, you can use the storage classes of the host cluster to create persistent volume claims and to mount persistent volumes. By default, you can use the host's storage classes without the need to create storage classes in the virtual cluster. 
 
+## Sync persistent volumes to the host cluster
 
-vCluster provides helm values to adjust this behavior during vCluster installation or upgrade. Find out more below.
+By default, creating persistent volumes in the virtual cluster has no effect, as the virtual cluster runs without any cluster-scoped access in the host cluster. However, if you enable syncing persistent volumes, vCluster creates the appropriate ClusterRole in the host cluster.
 
-## Sync Persistent Volumes
+When you create a persistent volume in the virtual cluster:
 
-By default, creating persistent volumes in the vCluster will have no effect, as vCluster runs without any cluster scoped access in the host cluster. However, if you enable persistentvolumes sync via helm values, the appropriate ClusterRole will be created in the host cluster and the syncer will be started with a flag that enables persistent volume synchronization from vCluster down to the underlying host cluster.
+1. vCluster creates a persistent volume in the host cluster with the name  `vcluster-<persistent-volume-name>-x-<vcluster-namespace>-x-<vcluster-name>`, replacing the placeholders with data from your host cluster and vCluster instance. vCluster creates this new name to avoid conflicts with existing persistent volumes.
+1. vCluster rewrites persistent volume claims with the new name so that it seems that the virtual name is bound.
+1. vCluster syncs the virtual cluster's persistent volume to the host cluster. 
 
-
-### How does it work?
-
-When you enable persistent volume sync, vCluster will create persistent volumes that are created in vCluster itself in the host cluster in the form of `vcluster-PERSISTENT_VOLUME_NAME-x-VCLUSTER_NAMESPACE-x-VCLUSTER_NAME` to avoid any conflicts with already existing persistent volumes or other vClusters that sync persistent volumes. vCluster will then rewrite persistent volume claims with those new names so that it seems that the virtual name was bound.
-
-This means that when you create a PVC in the form of:
+For example, when you create a PersistentVolumeClaim in the form of:
 
 ```yaml
 apiVersion: v1
@@ -39,15 +39,16 @@ spec:
       storage: 5Gi
 ```
 
-vCluster will rewrite this PVC into the following in the host cluster to prevent any conflicts with already existing storage classes or persistent volumes:
+vCluster rewrites this PersistentVolumeClaim into the following in the host cluster to prevent any conflicts with already existing storage classes or persistent volumes:
+
 ```yaml
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: persistent-volume-claim-x-default-x-VCLUSTER_NAME
+  name: persistent-volume-claim-x-<vcluster-namespace>-x-<vcluster-name>
 spec:
-  storageClassName: vcluster-my-storage-class-VCLUSTER_NAMESPACE-x-VCLUSTER_NAME
-  volumeName: vcluster-my-persistent-volume-VCLUSTER_NAMESPACE-x-VCLUSTER_NAME
+  storageClassName: vcluster-my-storage-class-<vcluster-namespace>-x-<vcluster-name>
+  volumeName: vcluster-my-persistent-volume-<vcluster-namespace>-x-<vcluster-name>
   accessModes:
     - ReadWriteOnce
   resources:
@@ -55,46 +56,47 @@ spec:
       storage: 5Gi
 ```
 
-This only happens if persistent volume sync is enabled in the vCluster. There might be cases where you want to disable this automatic rewriting of PVCs (for example if you want to mount an already existing PV of the host cluster to a PVC in the vCluster), for that case you can set the annotation called `vcluster.loft.sh/skip-translate` to `true`, which will tell vCluster to not rewrite the PVC `volumeName`, `storageClass`, `selectors` or `dataSource`.
+There might be cases where you want to disable this automatic rewriting of persistent volume claims (for example if you want to mount an already existing PV of the host cluster to a PVC in the vCluster), for that case you can set the annotation called `vcluster.loft.sh/skip-translate` to `true`, which will tell vCluster to not rewrite the PVC `volumeName`, `storageClass`, `selectors` or `dataSource`.
 
+See the `vcluster.yaml` reference to configure the following:
+- [Persistent volumes](/vcluster-yaml/sync/to-host/storage/persistent-volumes.mdx).
+- [Persistent volume claims](/vcluster-yaml/sync/to-host/storage/persistent-volume-claims.mdx).
 
-## Sync Volume Snapshots
+## Sync volume snapshots
 
-Kubernetes VolumeSnapshot resource represents a snapshot of a volume on a storage system. You can read more about volume snapshots on [the official Kubernetes documentation page of this feature](https://kubernetes.io/docs/concepts/storage/volume-snapshots/).
+Kubernetes' [VolumeSnapshot](https://kubernetes.io/docs/concepts/storage/volume-snapshots/) resource represents a snapshot of a volume on a storage system. 
 
-By default, VolumeSnapshot syncing is disabled, and creating a VolumeSnapshot custom resource in the vCluster will have no effect. Following chapters describe how to enable this feature in the vCluster.
+By default, VolumeSnapshot syncing is disabled, and creating a VolumeSnapshot custom resource in the virtual cluster has no effect on the host cluster. 
+
+See the `vcluster.yaml` reference to [configure](/vcluster-yaml/sync/to-host/storage/volume-snapshots.mdx) volume snapshots.
 
 ### Host prerequisites
 
-Vcluster relies fully on the volume snapshot capabilities of the host cluster, which has to fulfill certain criteria.
+<Prereqs/>
 
-Host cluster must have all relevant [snapshot CRDs](https://github.com/kubernetes-csi/external-snapshotter/tree/master/client/config/crd) installed, without which the vCluster will fail to start when volume snapshots sync is enabled.
+### How syncing works
 
-Host cluster should have a common snapshot controller installed, as well as a compatible CSI driver. Without these the volume snapshots will not be created in the storage backend.
+When you enable syncing volume snapshots, vCluster watches VolumeSnapshot, VolumeSnapshotContent, and VolumeSnapshotClass resources created in the virtual cluster and syncs them from the virtual cluster to the host cluster. 
 
-It is also recommended for the host cluster to have [the volume snapshots validating webhook](https://github.com/kubernetes-csi/external-snapshotter#validating-webhook) installed.
+vCluster syncs these resource type in the following ways:
 
+- **VolumeSnapshot**: vCluster syncs resources created in the virtual cluster to the host cluster.
 
-### How does it work?
+  - The name is in form of `vcluster-<volume-snapshot-name>-x-<volume-snapshot-namespace>-x-<vcluster-name>`. - vCluster syncs the status and finalizers of this resource back to its virtual cluster respresentation. 
+  - vCluster rewrites the `.spec.source` field of the VolumeSnapshot resource in the host cluster to reference the expected PersistentVolumeClaim or VolumeSnapshotContent resource.
 
-When you enable volume snapshot sync, vCluster will start watching VolumeSnapshot, VolumeSnapshotContent, and VolumeSnapshotClass CRs and syncing them between vCluster and host cluster. These resource types are synced in the following ways:
+- **VolumeSnapshotContent**: vCluster syncs resources created in the virtual cluster to the host cluster.
 
-**VolumeSnapshot** resources created in the vCluster will be synced to the host cluster with the name in form of `vcluster-VOLUME_SNAPSHOT_NAME-x-VOLUME_SNAPSHOT_NAMESPACE-x-VCLUSTER_NAME`. The status and finalizers of this resource will be synced back into vCluster. The `.spec.source` field of the VolumeSnapshot resource in the host cluster will be rewritten to reference the expected PersistentVolumeClaim or VolumeSnapshotContent resource.
+  - The name is in form of `vcluster-<volume-snapshot-name>-x-<vcluster-namespace>-x-<vcluster-name>`.
+  - vCluster syncs VolumeSnapshotContent resources created in the host cluster and referencing VolumeSnapshot from the virtual cluster into the virtual cluster.
+  - vCluster syncs the status and finalizers of this resource back to its virtual cluster respresentation.
+  - vCluster overwrites the `.spec.volumeSnapshotRef` field of the VolumeSnapshotContent resource to reference the expected VolumeSnapshot resource.
 
-**VolumeSnapshotContent** resources created in the vCluster will be synced to the host cluster with the name in form of `vcluster-VOLUME_SNAPSHOT_NAME-x-VCLUSTER_NAMESPACE-x-VCLUSTER_NAME`. VolumeSnapshotContent resources created in the host cluster and referencing VolumeSnapshot from the vCluster will be synced into vCluster. The status and finalizers of the resource in host cluster will be synced into its vCluster representation. The `.spec.volumeSnapshotRef` field of the VolumeSnapshotContent resource will be rewritten to reference the expected VolumeSnapshot resource.
-
-**VolumeSnapshotClass** resources will be synced from the host cluster into vCluster only.
+- **VolumeSnapshotClass** resources will be synced from the host cluster into vCluster only.
 
 ## Related content
 
-Sync from host to virtual:
+- [Configure](/vcluster-yaml/sync/from-host/storage-classes.mdx) storage sync from the host cluster to the virtual cluster.
+- [Configure](/vcluster-yaml/sync/to-host/storage/storage-classes.mdx) class sync from the virtual cluster to the host cluster.
 
-- [Configure storage sync from the host cluster to the virtual cluster](/vcluster-yaml/sync/from-host/storage-classes.mdx).
-
-Sync from virtual to host:
-
-- [Configure persistent volumes](/vcluster-yaml/sync/to-host/storage/persistent-volumes.mdx).
-- [Configure persistent volume claims](/vcluster-yaml/sync/to-host/storage/persistent-volume-claims.mdx).
-- [Configure storage classes](/vcluster-yaml/sync/to-host/storage/storage-classes.mdx).
-- [Configure volume snapshots](/vcluster-yaml/sync/to-host/storage/volume-snapshots.mdx).
 
