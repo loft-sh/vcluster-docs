@@ -6,7 +6,7 @@ provider "helm" {
 
 resource "helm_release" "my_vcluster" {
   name             = "my-vcluster"
-  namespace        = "my-vcluster"
+  namespace        = "team-x"
   create_namespace = true
 
   repository       = "https://charts.loft.sh"

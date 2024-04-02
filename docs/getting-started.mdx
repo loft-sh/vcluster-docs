@@ -1,0 +1,214 @@
+---
+title: Getting started
+sidebar_position: 2
+description: Learn how to configure, deploy, use and delete a vCluster instance.
+---
+import Tabs from '@theme/Tabs'
+import TabItem from '@theme/TabItem'
+import CodeBlock from '@theme/CodeBlock';
+
+import InstallCLIFragment from '@site/docs/_partials/quickstart/install-cli.mdx'
+import DeployVirtualCluster from '@site/docs/_partials/quickstart/deploy.mdx'
+import Cleanup from '@site/docs/_partials/quickstart/cleanup.mdx'
+import Connect from '@site/docs/_partials/quickstart/connect.mdx'
+import DeployChanges from '@site/docs/_partials/quickstart/deploy-changes.mdx'
+
+
+### Key concepts
+- [**vCluster Control Plane**](/architecture/control-plane.mdx): Contains a Kubernetes API server, a controller manager, a data store mount and the Syncer.
+- [**Syncing resources**](/architecture/syncer.mdx): vCluster runs your workloads by syncing pods from the virtual cluster to the host cluster.
+- [**Pod scheduling**](/architecture/scheduling.mdx): By default, vCluster reuses the host cluster scheduler to schedule workloads.
+- [**Storage**](/architecture/storage.mdx): You can use the host's storage classes without the need to create them in the virtual cluster.
+- [**Networking**](/architecture/networking.mdx): vCluster syncs resources such as Service and Ingress resources from the virtual to the host cluster.
+- [**Nodes**](/architecture/nodes.mdx): By default, vCluster creates pseudo nodes for every pod `spec.nodeName` in the virtual cluster.
+
+### Prerequisites
+You have installed [kubectl](https://kubernetes.io/docs/tasks/tools/#kubectl) and have access to a Kubernetes v1.26+ cluster to use as the host cluster. You do not need admin permissions on the host cluster but you do need to be able to deploy applications to a namespace.
+ 
+## 1. Install vCluster CLI
+<InstallCLIFragment/>
+
+
+## 2. Create `vcluster.yaml`
+The vcluster.yaml file is where all configurations are defined when creating or updating a virtual cluster. In the following example, we're enabling syncing of pods from the virtual cluster to the host cluster where the workloads actually run. 
+
+```YAML
+sync:
+  toHost:
+    pods:
+      enabled: true
+```
+
+## 3. Deploy virtual cluster
+<DeployVirtualCluster/>
+
+
+## 4. Use virtual cluster
+Interacting with a virtual cluster is very similar to using a standard Kubernetes cluster. 
+
+### 4.1 Connect to virtual cluster
+<Connect/>
+
+### 4.2 Deploying resources inside the virtual cluster
+To illustrate what happens in the host cluster, create a namespace and deploy NGINX in the virtual cluster:
+
+```bash
+kubectl create namespace demo-nginx
+kubectl create deployment ngnix-deployment -n demo-nginx --image=nginx -r 2
+```
+
+Check that this deployment creates two pods inside the virtual cluster:
+
+```bash 
+kubectl get pods -n demo-nginx
+```
+
+Note: Most resources inside your virtual cluster only exist in your virtual cluster and not in the underlying host cluster.
+
+To verify this, perform these steps:
+1. Disconnect from the current virtual cluster and switch back to the host context:
+
+    ```bash 
+    vcluster disconnect
+    ```
+
+2. Check namespaces in the host cluster:
+
+   ```bash 
+   kubectl get namespaces
+   ``` 
+   Output is similar to: 
+   ```bash
+   NAME                 STATUS   AGE
+   default              Active   35m
+   kube-public          Active   35m
+   kube-system          Active   35m
+   # highlight-next-line
+   team-x               Active   30m
+   ```
+
+3. Look for the `nginx-deployment` deployment:
+
+   ```bash 
+   kubectl get deployments -n team-x
+   ``` 
+
+   Notice that this resource does NOT exist in the host cluster because it normally does not get synced from the virtual to the host cluster since its typically not required to run workloads on the host cluster.
+
+4. Now, look for the NGINX pods:
+
+   ```bash 
+   kubectl get pods -n team-x
+   ``` 
+
+   Output is similar to:
+
+   ```bash
+   coredns-cb5ccc67f-kqwmx-x-kube-system-x-my-vcluster            1/1     Running   0          34m
+   my-vcluster-0                                                  1/1     Running   0          34m
+   nginx-deployment-6d6565499c-cbv4w-x-demo-nginx-x-my-vcluster   1/1     Running   0          20m
+   nginx-deployment-6d6565499c-s7g8z-x-demo-nginx-x-my-vcluster   1/1     Running   0          20m
+   ```
+   We can see from the output that the the two NGINX pods exist in the host cluster. The vCluster `my-cluster-0` pod is the vCluster control plane.
+
+   :::info K8s Resource Renaming
+   To prevent collisions, the pod names and their namespaces are rewritten by vCluster during the sync process from the virtual cluster to the host cluster.
+   :::
+
+
+## 5. Explore further
+
+<details>
+<summary>Expose vCluster control plane via Ingress</summary>
+1. Create an `Ingress` resource based on whichever ingress controller you have installed in the host cluster and ensure that the SSL passthrough feature is enabled (TLS termination has to happen at the vCluster level and not ingress controller level).
+
+1. Modify `vcluster.yaml` to configure the hostname to sign the vCluster proxy certificate for.
+
+      ```yaml
+      controlPlane:
+        proxy:
+          extraSANs: my-vcluster.example.com
+      ```
+
+1. Apply `vcluster.yaml`
+      <DeployChanges/>
+
+[Learn more about exposing vCluster](/docs/guides/use/access)
+</details>
+
+<details>
+<summary>Show real nodes</summary>
+<p>By default, vCluster syncs psuedo nodes from the host cluster to the virtual cluster. However, if you deployed a vCluster via the CLI on a local K8s cluster such as kind, it would automatically enable real node syncing so you would not see a difference in this context</p> 
+
+<p>Pseudo nodes only have real values for the CPU, architecture, and operating system, while everything else is randomly generated. Therefore, for use cases requiring real node information, you can opt to sync the real nodes into the virutal cluster.</p>
+
+1. Modify `vcluster.yaml`
+
+    ```yaml
+    sync:
+      fromHost:
+        nodes:
+          enabled: true
+    ```
+
+1. Apply `vcluster.yaml`
+
+      <DeployChanges/>
+
+</details>
+
+<details>
+<summary>Sync ingress resources</summary>
+### From host to virtual cluster
+If you want to use an ingress controller from the host cluster inside your virtual cluster, enable `IngressClass` syncing from host to virtual cluster:
+
+1. Modify `vcluster.yaml`
+
+    ```yaml
+    sync:
+      fromHost:
+        ingressClasses:
+          enabled: true
+    ```
+
+2. Apply `vcluster.yaml`
+      <DeployChanges/>
+
+### From virtual to host cluster
+Create an ingress in a virtual cluster to make a service in that virtual cluster available via a hostname/domain. Instead of having to run a separate ingress controller in each virtual cluster, sync the ingress resource to the underlying host cluster so that the virtual cluster can use a shared ingress controller that is running in the host cluster.
+
+1. Modify `vcluster.yaml`
+
+    ```yaml
+    sync:
+      toHost:
+        ingresses:
+          enabled: true
+    ```
+
+2. Apply `vcluster.yaml`
+      <DeployChanges/>
+
+</details>
+
+<details>
+<summary>Sync services from host to virtual cluster</summary>
+<p>In this example, you map a service `my-host-service` in the namespace `my-host-namespace` to the virtual cluster service `my-virtual-service` inside the virtual cluster namespace `team-x`.</p>
+
+1. Modify `vcluster.yaml`
+
+    ```yaml
+    replicateServices:
+      fromHost:
+      - from: my-host-namespace/my-host-service
+        to: team-x/my-virtual-service
+    ```
+
+1. Apply `vcluster.yaml`
+      <DeployChanges/>
+
+</details>
+
+## 6. Cleanup: Delete the virtual cluster
+
+<Cleanup/>
