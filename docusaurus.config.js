@@ -36,6 +36,10 @@ module.exports = {
                 {
                     type: "docsVersionDropdown",
                     position: "left",
+                    dropdownItemsAfter: [
+                        { to: "https://vcluster.com/docs", label: "Legacy" },
+                    ],
+                    dropdownActiveClassDisabled: true,
                 },
                 {
                     href: "https://vcluster.com/",
