@@ -248,7 +248,9 @@ func renderField(
 		}
 	} else {
 		if fieldType == "boolean" {
-			fieldDefault = "false"
+			// INFO: uncommented because of possible confusion between `default value` and the `default values.yaml` file
+			// fieldDefault = "false"
+			fieldDefault = ""
 			if required {
 				fieldDefault = "true"
 				required = false
@@ -262,10 +264,41 @@ func renderField(
 
 		enumValues := GetEnumValues(fieldSchema, required, &fieldDefault)
 		anchorName := anchorPrefix + fieldName
-		fieldContent = fmt.Sprintf(TemplateConfigField, expandable, " open", headlinePrefix, fieldName, required, fieldType, fieldDefault, enumValues, anchorName, description, fieldContent)
+
+		fieldContent = applyTemplate(templateFieldData{
+			expandable:       expandable,
+			expandableSuffix: " open",
+			headlinePrefix:   headlinePrefix,
+			fieldName:        fieldName,
+			required:         required,
+			fieldType:        fieldType,
+			fieldDefault:     fieldDefault,
+			enumValues:       enumValues,
+			anchorName:       anchorName,
+			description:      description,
+			content:          fieldContent,
+		})
 	}
 
 	return fieldContent
+}
+
+type templateFieldData struct {
+	expandable       bool
+	expandableSuffix string
+	headlinePrefix   string
+	fieldName        string
+	required         bool
+	fieldType        string
+	fieldDefault     string
+	enumValues       string
+	anchorName       string
+	description      string
+	content          string
+}
+
+func applyTemplate(d templateFieldData) string {
+	return fmt.Sprintf(TemplateConfigField, d.expandable, d.expandableSuffix, d.headlinePrefix, d.fieldName, d.required, d.fieldType, d.fieldDefault, d.enumValues, d.anchorName, d.description, d.content)
 }
 
 func GetEnumValues(fieldSchema *jsonschema.Schema, required bool, fieldDefault *string) string {
