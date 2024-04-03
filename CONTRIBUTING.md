@@ -5,9 +5,8 @@
 
 The vCluster docs use the following style guides in this order:
 
-1. Kubernetes [Documentation Style Guide](https://kubernetes.io/docs/contribute/style/style-guide/)
-2. [Google developer documentation style guide](https://developers.google.com/style)
-
+1. [Google developer documentation style guide](https://developers.google.com/style)
+2. Kubernetes [Documentation Style Guide](https://kubernetes.io/docs/contribute/style/style-guide/) for Kubernetes terms.
 
 Page titles follow **sentence** case. Capitalize Kubernetes objects [according to the K8s style guide](https://kubernetes.io/docs/contribute/style/style-guide/#documentation-formatting-standards).
 
