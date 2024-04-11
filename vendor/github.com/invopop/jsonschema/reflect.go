@@ -768,10 +768,7 @@ func (t *Schema) stringKeywords(tags []string) {
 			case "pattern":
 				t.Pattern = val
 			case "format":
-				switch val {
-				case "date-time", "email", "hostname", "ipv4", "ipv6", "uri", "uuid":
-					t.Format = val
-				}
+				t.Format = val
 			case "readOnly":
 				i, _ := strconv.ParseBool(val)
 				t.ReadOnly = i
@@ -976,6 +973,15 @@ func ignoredByJSONSchemaTags(tags []string) bool {
 	return tags[0] == "-"
 }
 
+func inlinedByJSONTags(tags []string) bool {
+	for _, tag := range tags[1:] {
+		if tag == "inline" {
+			return true
+		}
+	}
+	return false
+}
+
 // toJSONNumber converts string to *json.Number.
 // It'll aso return whether the number is valid.
 func toJSONNumber(s string) (json.Number, bool) {
@@ -1037,6 +1043,11 @@ func (r *Reflector) reflectFieldName(f reflect.StructField) (string, bool, bool,
 		}
 	}
 
+	// As per JSON Marshal rules, inline nested structs that have `inline` tag.
+	if inlinedByJSONTags(jsonTags) {
+		return "", true, false, false
+	}
+
 	// Try to determine the name from the different combos
 	name := f.Name
 	if jsonTags[0] != "" {
@@ -1067,7 +1078,32 @@ func (t *Schema) UnmarshalJSON(data []byte) error {
 	}{
 		SchemaAlt: (*SchemaAlt)(t),
 	}
-	return json.Unmarshal(data, aux)
+	err := json.Unmarshal(data, aux)
+	if err != nil {
+		return err
+	}
+
+	// check leafs and remove keys that are already in the schema.
+	// The rest will be added to the extras
+	if aux.SchemaAlt.Properties == nil {
+		m := make(map[string]any)
+		err = json.Unmarshal(data, &m)
+		if err != nil {
+			return err
+		}
+		t := reflect.TypeOf(aux.SchemaAlt).Elem()
+		for i := 0; i < t.NumField(); i++ {
+			field := t.Field(i)
+			fieldName := strings.Split(field.Tag.Get("json"), ",")[0]
+
+			if _, ok := m[fieldName]; ok {
+				delete(m, fieldName)
+			}
+		}
+		aux.SchemaAlt.Extras = m
+	}
+
+	return nil
 }
 
 // MarshalJSON is used to serialize a schema object or boolean.
