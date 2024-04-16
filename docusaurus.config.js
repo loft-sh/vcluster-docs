@@ -18,7 +18,7 @@ module.exports = {
     announcementBar: {
         id: 'beta',
         isCloseable: false,
-        content: 'This vCluster version is currently in beta. The beta functionality is stable but possibly incomplete and subject to change. We discourage using beta features in production. Join our <a href="https://slack.loft.sh" target="_blank">Slack community</a> if you have any questions or feedback.',
+        content: 'This vCluster version is currently in beta. Do not use in production. Join our <a href="https://slack.loft.sh" target="_blank">Slack community</a> for questions and feedback.',
         backgroundColor: '#f2f2f2',
         textColor: '#17202A',
     },
