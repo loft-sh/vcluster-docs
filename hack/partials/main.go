@@ -90,7 +90,7 @@ const TemplateConfigField = `
 <details className="config-field" data-expandable="%t"%s>
 <summary>
 
-%s` + "`%s`" + ` <span className="config-field-required" data-required="%t">required</span> <span className="config-field-type">%s</span> <span className="config-field-default">%s</span> <span className="config-field-enum">%s</span> {#%s}
+%s` + "`%s`" + ` <span className="config-field-required" data-required="%t">required</span> <span className="config-field-type">%s</span> <span className="config-field-default">%s</span> <span className="config-field-enum">%s</span> <span data-pro="%t" className="config-field-pro">pro</span> {#%s}
 
 %s
 
@@ -155,6 +155,7 @@ func renderField(
 	fieldContent := ""
 	isNameObjectMap := false
 	expandable := false
+	pro := false
 
 	var patternPropertySchema *jsonschema.Schema
 	var ok bool
@@ -186,6 +187,10 @@ func renderField(
 		required = true
 	}
 	fieldDefault := ""
+
+	if fieldSchema.Extras != nil && fieldSchema.Extras["pro"] != nil {
+		pro = true
+	}
 
 	description := fieldSchema.Description
 	lines := strings.Split(description, "\n")
@@ -244,7 +249,7 @@ func renderField(
 		_, ok = allDefinitions[refSplit[len(refSplit)-1]]
 		if ok {
 			anchorName := anchorPrefix + fieldName
-			fieldContent = fmt.Sprintf(TemplateConfigField, true, "", headlinePrefix, fieldName, required, fieldType, "", "", anchorName, description, fieldContent)
+			fieldContent = fmt.Sprintf(TemplateConfigField, true, "", headlinePrefix, fieldName, required, fieldType, "", "", pro, anchorName, description, fieldContent)
 		}
 	} else {
 		if fieldType == "boolean" {
@@ -277,6 +282,7 @@ func renderField(
 			anchorName:       anchorName,
 			description:      description,
 			content:          fieldContent,
+			pro:              pro,
 		})
 	}
 
@@ -295,10 +301,11 @@ type templateFieldData struct {
 	anchorName       string
 	description      string
 	content          string
+	pro              bool
 }
 
 func applyTemplate(d templateFieldData) string {
-	return fmt.Sprintf(TemplateConfigField, d.expandable, d.expandableSuffix, d.headlinePrefix, d.fieldName, d.required, d.fieldType, d.fieldDefault, d.enumValues, d.anchorName, d.description, d.content)
+	return fmt.Sprintf(TemplateConfigField, d.expandable, d.expandableSuffix, d.headlinePrefix, d.fieldName, d.required, d.fieldType, d.fieldDefault, d.enumValues, d.pro, d.anchorName, d.description, d.content)
 }
 
 func GetEnumValues(fieldSchema *jsonschema.Schema, required bool, fieldDefault *string) string {
