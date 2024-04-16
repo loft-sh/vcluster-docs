@@ -19,7 +19,7 @@ module.exports = {
             id: 'beta',
             isCloseable: false,
             content: 'This vCluster version is currently in beta. The beta functionality is stable but possibly incomplete and subject to change. We discourage using beta features in production. Join our <a href="https://slack.loft.sh" target="_blank">Slack community</a> if you have any questions or feedback.',
-            backgroundColor: '#f27506',
+            backgroundColor: '#f2f2f2',
             textColor: '#17202A',
         },
         tableOfContents: {
