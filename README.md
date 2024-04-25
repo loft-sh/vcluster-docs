@@ -1,37 +1,34 @@
-# Website
+# vCluster development links
 
-This website is built using [Docusaurus](https://docusaurus.io/) v3, a modern static website generator.
+- vCluster [repo](https://github.com/loft-sh/vcluster)
+- vCluster [open issues](https://github.com/loft-sh/vcluster/issues)
+- vCluster [releases and release notes](https://github.com/loft-sh/vcluster/releases)
 
-## Installation
+# vCluster resources
 
-```
-$ npm install
-```
+- [Website](https://www.vcluster.com)
+- [Documentation](https://www.vcluster.com/docs/)
+- [Blog](https://loft.sh/blog)
+- [Twitter](https://twitter.com/loft_sh)
+- [Slack](https://slack.loft.sh/)
 
-### Local Development
 
-```
-$ npm run start
-```
+# Contribute to the docs
 
-This command starts a local development server and opens up a browser window. Most changes are reflected live without having to restart the server.
+We welcome all contributions from our end users! 
 
-### Build
+- [Create a docs issue](https://github.com/loft-sh/vcluster-docs/issues).
+- Open a pull request.
+  - [Use the GitHub web UI](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/proposing-changes-to-your-work-with-pull-requests/creating-a-pull-request?tool=webui) to update a single page.
+  - To update several pages or add new pages:
+     - Fork the repo.
+     - Clone your fork.
+     - Ceate a local working branch.
+     - Commit your changes.
+     - Push your changes.
+     - Create a pull request.
 
-```
-$ npm run build
-```
+     See the GitHub [Pull requests documentation](https://docs.github.com/en/pull-requests) for specific guides.
 
-This command generates static content into the `build` directory and can be served using any static contents hosting service.
 
-`npm run serve`
-
-Serves the built website locally.
-
-## Generate partials for vCluster values
-
-1. update vcluster repo
-2. run `go run ./hack/schema/main.go`
-3. copy jsonschema from `chart/values.schema.json`
-4. paste into `vcluster-docs/schema.json`
-5. run `./hack/gen-partials.sh`
+The docs site uses Docusaurus. See [Contribute to the vCluster docs](CONTRIBUTING.md) for how to build the site locally. 
