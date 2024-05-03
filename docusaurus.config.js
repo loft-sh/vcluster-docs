@@ -182,8 +182,6 @@ const config = {
         copyright: `Copyright © ${new Date().getFullYear()} <a href="https://loft.sh/">Loft Labs, Inc.</a>`,
       },
       prism: {
-        theme: prismThemes.github,
-        darkTheme: prismThemes.dracula,
         additionalLanguages: ["bash", "hcl"],
       },
     }),
