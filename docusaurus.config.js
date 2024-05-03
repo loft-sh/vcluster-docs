@@ -109,7 +109,7 @@ module.exports = {
             current: {
               label: "v0.20",
               banner: "none",
-              badge: true,
+              badge: false,
             },
           },
         },
