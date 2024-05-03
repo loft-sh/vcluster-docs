@@ -44,7 +44,7 @@ module.exports = {
           type: "docsVersionDropdown",
           position: "left",
           dropdownItemsAfter: [
-            { to: "https://vcluster.com/docs/v0.19", label: "Legacy" },
+            { to: "https://vcluster.com/docs/v0.19", label: "v0.19 Stable" },
           ],
           dropdownActiveClassDisabled: true,
         },
@@ -107,8 +107,9 @@ module.exports = {
           lastVersion: "current",
           versions: {
             current: {
-              label: "Latest",
-              path: "",
+              label: "v0.20",
+              banner: "none",
+              badge: false,
             },
           },
         },
