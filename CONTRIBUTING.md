@@ -53,10 +53,8 @@ Page titles follow **sentence** case. Capitalize Kubernetes objects [according t
 
 Use the Oxford comma (serial comma) before the last item when listing 3 or more items in a sentence.
 
-
-| ---- | ---- |
-| Do   | Do Not |
-| vCluster requires a, b, and c. | vCluster requires a, b and c. |
+- **Do Not**: vCluster requires a, b and c.
+- **Do**: vCluster requires a, b, and c.
 
 See Scribbr's [article](https://www.scribbr.com/commas/oxford-comma/) on the Oxford comma for a detailed explanation and examples.
 
