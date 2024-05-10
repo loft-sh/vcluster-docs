@@ -56,7 +56,7 @@ Use the Oxford comma (serial comma) before the last item when listing 3 or more 
 
 | ---- | ---- |
 | Do   | Do Not |
-vCluster requires a, b, and c. | vCluster requires a, b and c. |
+| vCluster requires a, b, and c. | vCluster requires a, b and c. |
 
 See Scribbr's [article](https://www.scribbr.com/commas/oxford-comma/) on the Oxford comma for a detailed explanation and examples.
 
