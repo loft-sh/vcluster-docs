@@ -138,8 +138,48 @@ const allowHashLinkClick = function() {
     }
 };
 
+(() => {
+  let oldPushState = history.pushState;
+  history.pushState = function pushState() {
+    let ret = oldPushState.apply(this, arguments);
+    window.dispatchEvent(new Event('locationchange'));
+    return ret;
+  };
+
+  let oldReplaceState = history.replaceState;
+  history.replaceState = function replaceState() {
+    let ret = oldReplaceState.apply(this, arguments);
+    window.dispatchEvent(new Event('locationchange'));
+    return ret;
+  };
+
+  window.addEventListener('popstate', () => {
+    window.dispatchEvent(new Event('locationchange'));
+  });
+})();
+
+const showVersions = () => {
+  setTimeout(() => {
+    let vClusterVersions = document.querySelectorAll("#__docusaurus div.navbar__inner > div:nth-child(1) > div:nth-child(3)")
+    let platformVersions = document.querySelectorAll("#__docusaurus div.navbar__inner > div:nth-child(1) > div:nth-child(4)")
+
+    if (location.pathname.startsWith("/docs/vcluster")) {
+      vClusterVersions.forEach(el => el.style.display = "inline-block")
+      platformVersions.forEach(el => el.style.display = "none")
+    } else if (location.pathname.startsWith("/docs/platform")) {
+      vClusterVersions.forEach(el => el.style.display = "none")
+      platformVersions.forEach(el => el.style.display = "inline-block")
+    } else {
+      vClusterVersions.forEach(el => el.style.display = "none")
+      platformVersions.forEach(el => el.style.display = "none")
+    }
+  }, 0)
+}
+
 window.addEventListener('load', allowHashLinkClick);
 window.addEventListener('load', highlightActiveOnPageLink);
+window.addEventListener('load', showVersions);
+window.addEventListener('locationchange', showVersions);
 window.addEventListener('popstate', function (event) {
     highlightDetailsOnActiveHash(location.hash.substr(1));
 }, false);

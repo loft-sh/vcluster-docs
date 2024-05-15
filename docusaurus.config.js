@@ -55,7 +55,7 @@ const config = {
             },
           },
         },
-        
+
         theme: {
           customCss: resolveGlob.sync(["./src/css/**/*.scss"]),
         },
@@ -85,7 +85,48 @@ const config = {
       },
     ],
   ],
-  plugins: ["docusaurus-plugin-sass", "plugin-image-zoom"],
+
+  plugins: [
+    "docusaurus-plugin-sass",
+    "plugin-image-zoom",
+
+    [
+      '@docusaurus/plugin-content-docs',
+      {
+        id: 'vcluster',
+        path: 'vcluster',
+        routeBasePath: 'vcluster',
+        sidebarPath: require.resolve('./sidebarsVCluster.js'),
+        lastVersion: "current",
+        versions: {
+          current: {
+            label: "v0.20",
+            banner: "none",
+            badge: false,
+          },
+        },
+      },
+    ],
+    [
+      '@docusaurus/plugin-content-docs',
+      {
+        id: 'platform',
+        path: 'platform',
+        routeBasePath: 'platform',
+        sidebarPath: require.resolve('./sidebarsPlatform.js'),
+        lastVersion: "current",
+        versions: {
+          current: {
+            label: "v4.0",
+            banner: "none",
+            badge: false,
+          },
+        },
+        // ... other options
+      },
+    ],
+  ],
+
   scripts: [
     {
       src: "https://cdnjs.cloudflare.com/ajax/libs/clipboard.js/2.0.0/clipboard.min.js",
@@ -100,10 +141,10 @@ const config = {
 
   themeConfig: (
     /** @type {import('@docusaurus/preset-classic').ThemeConfig} */
-    
+
       {
       mermaid: {
-        theme: {light: 'default', dark: 'dark'},        
+        theme: {light: 'default', dark: 'dark'},
       },
       announcementBar: {
         id: 'beta',
@@ -132,9 +173,19 @@ const config = {
         items: [
           {
             type: "docsVersionDropdown",
+            docsPluginId: "vcluster",
             position: "left",
             dropdownItemsAfter: [
               { to: "https://vcluster.com/docs/v0.19", label: "v0.19 Stable" },
+            ],
+            dropdownActiveClassDisabled: true,
+          },
+          {
+            type: "docsVersionDropdown",
+            docsPluginId: "platform",
+            position: "left",
+            dropdownItemsAfter: [
+              { to: "https://loft.sh/docs/getting-started/install", label: "v3.4 Stable" },
             ],
             dropdownActiveClassDisabled: true,
           },
@@ -166,7 +217,7 @@ const config = {
             className: "github-link",
             "aria-label": "GitHub",
             position: "right",
-          },          
+          },
         ],
       },
       algolia: {
