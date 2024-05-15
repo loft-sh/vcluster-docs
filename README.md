@@ -32,3 +32,8 @@ We welcome all contributions from our end users!
 
 
 The docs site uses Docusaurus. See [Contribute to the vCluster docs](CONTRIBUTING.md) for how to build the site locally. 
+
+Content locations:
+
+- vcluster: vCluster content
+- platform: vCluster Platform content

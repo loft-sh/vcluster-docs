@@ -3,7 +3,7 @@
 set -e
 set -o pipefail
 
-OUTDIR=docs/_partials/config
+OUTDIR=vcluster/_partials/config
 SCHEMA_PATH=schema.json
 
 if [ ! -z $1 ]; then
