@@ -23,6 +23,8 @@ const (
 	anchorSeparator = "-"
 )
 
+var DefaultRequire = true
+
 const BasePath = "platform/api/_partials/resources/"
 
 const BaseResourcesPath = "platform/api/resources"
@@ -55,6 +57,10 @@ type ObjectInformation struct {
 	SubResourceGetDescription    string
 }
 
+func GenerateSchema(configInstance interface{}) *jsonschema.Schema {
+	return generateSchema(configInstance)
+}
+
 func generateSchema(configInstance interface{}) *jsonschema.Schema {
 	r := new(jsonschema.Reflector)
 	r.AllowAdditionalProperties = true
@@ -66,7 +72,12 @@ func generateSchema(configInstance interface{}) *jsonschema.Schema {
 		commentMap = map[string]string{}
 
 		runInDir("vendor", func() {
-			err := jsonschema.ExtractGoComments("", "github.com/loft-sh/api/v4/pkg/apis/management/v1", commentMap)
+			err := jsonschema.ExtractGoComments("", "github.com/loft-sh/vcluster-config/config", commentMap)
+			if err != nil {
+				panic(err)
+			}
+
+			err = jsonschema.ExtractGoComments("", "github.com/loft-sh/api/v4/pkg/apis/management/v1", commentMap)
 			if err != nil {
 				panic(err)
 			}
@@ -309,12 +320,66 @@ func GenerateObjectOverview(information *ObjectInformation) {
 	})
 }
 
+func GenerateFromPath(schema *jsonschema.Schema, basePath string, schemaPath string) {
+	splittedSchemaPath := strings.Split(schemaPath, "/")
+
+	fieldSchema := schema
+	lastProperty := schemaPath
+	for i, property := range splittedSchemaPath {
+		var ok bool
+
+		lastProperty = property
+		fieldSchema, ok = fieldSchema.Properties.Get(property)
+		if !ok {
+			panic("Couldn't find schema path " + schemaPath + " at " + property)
+		}
+
+		if i+1 == len(splittedSchemaPath) {
+			break
+		}
+
+		// resolve schema for next jump
+		ref := ""
+		if fieldSchema.Type == "array" {
+			ref = fieldSchema.Items.Ref
+		} else if patternPropertySchema, ok := fieldSchema.PatternProperties[".*"]; ok {
+			ref = patternPropertySchema.Ref
+		} else if fieldSchema.Ref != "" {
+			ref = fieldSchema.Ref
+		}
+		if ref != "" {
+			refSplit := strings.Split(ref, "/")
+			fieldSchema, ok = schema.Definitions[refSplit[len(refSplit)-1]]
+			if !ok {
+				panic("Couldn't find schema definition " + refSplit[len(refSplit)-1])
+			}
+		}
+	}
+
+	content := renderField(
+		"",
+		lastProperty,
+		fieldSchema,
+		schema.Definitions,
+		false,
+		1,
+	)
+	filePath := path.Join(basePath, schemaPath) + ".mdx"
+
+	// write file
+	_ = os.MkdirAll(path.Dir(filePath), 0o777)
+	err := os.WriteFile(filePath, []byte(content), os.ModePerm)
+	if err != nil {
+		panic(err)
+	}
+}
+
 func GenerateResource(schema *jsonschema.Schema, basePath string, subResource bool) error {
 	createSections(path.Join(basePath, "reference.mdx"), schema, schema.Definitions, subResource, false, false, 1)
 	return nil
 }
 
-func createSections(pageFile string, schema *jsonschema.Schema, definitions jsonschema.Definitions, skipMetadata, subResource, metadataOnly bool, depth int) string {
+func createSections(pageFile string, schema *jsonschema.Schema, definitions jsonschema.Definitions, skipMetadata, subResource bool, metadataOnly bool, depth int) string {
 	content := buildContent("", schema, definitions, metadataOnly, depth)
 	importContent := ""
 	if !skipMetadata && !metadataOnly {
@@ -419,7 +484,7 @@ func renderField(
 		}
 	}
 
-	required := true
+	required := DefaultRequire
 	fieldDefault := ""
 
 	description := fieldSchema.Description
@@ -488,7 +553,7 @@ func renderField(
 		_, ok = definitions[refSplit[len(refSplit)-1]]
 		if ok {
 			anchorName := anchorPrefix + fieldName
-			fieldContent = fmt.Sprintf(TemplateConfigField, true, "", headlinePrefix, fieldName, required, fieldType, "", "", anchorName, description, fieldContent)
+			fieldContent = fmt.Sprintf(TemplateConfigField, true, "", headlinePrefix, fieldName, required, fieldType, "", "", false, anchorName, description, fieldContent)
 		}
 	} else {
 		if fieldType == "boolean" {
@@ -506,7 +571,7 @@ func renderField(
 
 		enumValues := GetEumValues(fieldSchema, required, &fieldDefault)
 		anchorName := anchorPrefix + fieldName
-		fieldContent = fmt.Sprintf(TemplateConfigField, expandable, " open", headlinePrefix, fieldName, required, fieldType, fieldDefault, enumValues, anchorName, description, fieldContent)
+		fieldContent = fmt.Sprintf(TemplateConfigField, expandable, " open", headlinePrefix, fieldName, required, fieldType, fieldDefault, enumValues, false, anchorName, description, fieldContent)
 	}
 
 	return fieldContent
