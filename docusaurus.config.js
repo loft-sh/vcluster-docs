@@ -172,24 +172,6 @@ const config = {
         },
         items: [
           {
-            type: "docsVersionDropdown",
-            docsPluginId: "vcluster",
-            position: "left",
-            dropdownItemsAfter: [
-              { to: "https://vcluster.com/docs/v0.19", label: "v0.19 Stable" },
-            ],
-            dropdownActiveClassDisabled: true,
-          },
-          {
-            type: "docsVersionDropdown",
-            docsPluginId: "platform",
-            position: "left",
-            dropdownItemsAfter: [
-              { to: "https://loft.sh/docs/getting-started/install", label: "v3.4 Stable" },
-            ],
-            dropdownActiveClassDisabled: true,
-          },
-          {
             href: "https://vcluster.com/",
             label: "Website",
             position: "left",
