@@ -15,7 +15,7 @@
 
 # Contribute to the docs
 
-We welcome all contributions from our end users! 
+We welcome all contributions from our end users!
 
 - [Create a docs issue](https://github.com/loft-sh/vcluster-docs/issues).
 - Open a pull request.
@@ -31,9 +31,16 @@ We welcome all contributions from our end users!
      See the GitHub [Pull requests documentation](https://docs.github.com/en/pull-requests) for specific guides.
 
 
-The docs site uses Docusaurus. See [Contribute to the vCluster docs](CONTRIBUTING.md) for how to build the site locally. 
+The docs site uses Docusaurus. See [Contribute to the vCluster docs](CONTRIBUTING.md) for how to build the site locally.
 
 Content locations:
 
 - vcluster: vCluster content
 - platform: vCluster Platform content
+
+
+## Generate partials
+
+```bash
+go run hack/platform/partials/main.go
+```
