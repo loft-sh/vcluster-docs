@@ -167,25 +167,20 @@ const config = {
         logo: {
           alt: "vcluster",
           src: "/media/vCluster_horizontal-orange.svg",
-          href: "https://vcluster.com/",
+          href: "https://vcluster.com/docs",
           target: "_self",
         },
         items: [
           {
             href: "https://vcluster.com/",
             label: "Website",
-            position: "left",
+            position: "right",
             target: "_self",
-          },
-          {
-            label: "Docs",
-            position: "left",
-            to: "/",
           },
           {
             href: "https://loft.sh/blog",
             label: "Blog",
-            position: "left",
+            position: "right",
             target: "_self",
           },
           {
