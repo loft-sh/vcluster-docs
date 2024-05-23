@@ -55,7 +55,7 @@ const config = {
             },
           },
         },
-        
+
         theme: {
           customCss: resolveGlob.sync(["./src/css/**/*.scss"]),
         },
@@ -85,7 +85,48 @@ const config = {
       },
     ],
   ],
-  plugins: ["docusaurus-plugin-sass", "plugin-image-zoom"],
+
+  plugins: [
+    "docusaurus-plugin-sass",
+    "plugin-image-zoom",
+
+    [
+      '@docusaurus/plugin-content-docs',
+      {
+        id: 'vcluster',
+        path: 'vcluster',
+        routeBasePath: 'vcluster',
+        sidebarPath: require.resolve('./sidebarsVCluster.js'),
+        lastVersion: "current",
+        versions: {
+          current: {
+            label: "v0.20",
+            banner: "none",
+            badge: false,
+          },
+        },
+      },
+    ],
+    [
+      '@docusaurus/plugin-content-docs',
+      {
+        id: 'platform',
+        path: 'platform',
+        routeBasePath: 'platform',
+        sidebarPath: require.resolve('./sidebarsPlatform.js'),
+        lastVersion: "current",
+        versions: {
+          current: {
+            label: "v4.0",
+            banner: "none",
+            badge: false,
+          },
+        },
+        // ... other options
+      },
+    ],
+  ],
+
   scripts: [
     {
       src: "https://cdnjs.cloudflare.com/ajax/libs/clipboard.js/2.0.0/clipboard.min.js",
@@ -100,10 +141,10 @@ const config = {
 
   themeConfig: (
     /** @type {import('@docusaurus/preset-classic').ThemeConfig} */
-    
+
       {
       mermaid: {
-        theme: {light: 'default', dark: 'dark'},        
+        theme: {light: 'default', dark: 'dark'},
       },
       announcementBar: {
         id: 'beta',
@@ -126,33 +167,20 @@ const config = {
         logo: {
           alt: "vcluster",
           src: "/media/vCluster_horizontal-orange.svg",
-          href: "https://vcluster.com/",
+          href: "https://vcluster.com/docs",
           target: "_self",
         },
         items: [
           {
-            type: "docsVersionDropdown",
-            position: "left",
-            dropdownItemsAfter: [
-              { to: "https://vcluster.com/docs/v0.19", label: "v0.19 Stable" },
-            ],
-            dropdownActiveClassDisabled: true,
-          },
-          {
             href: "https://vcluster.com/",
             label: "Website",
-            position: "left",
+            position: "right",
             target: "_self",
-          },
-          {
-            label: "Docs",
-            position: "left",
-            to: "/",
           },
           {
             href: "https://loft.sh/blog",
             label: "Blog",
-            position: "left",
+            position: "right",
             target: "_self",
           },
           {
@@ -166,7 +194,7 @@ const config = {
             className: "github-link",
             "aria-label": "GitHub",
             position: "right",
-          },          
+          },
         ],
       },
       algolia: {
