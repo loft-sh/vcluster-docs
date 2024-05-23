@@ -2,24 +2,39 @@ import React from 'react';
 import {useHistory, useLocation} from '@docusaurus/router';
 import Content from '@theme-original/DocSidebar/Desktop/Content';
 import DocsVersionDropdownNavbarItem from '@theme-original/NavbarItem/DocsVersionDropdownNavbarItem';
+import DropdownNavbarItem from '@theme-original/NavbarItem/DropdownNavbarItem';
 import styles from "./styles.module.css";
 
 function VersionSelector(props) {
-  const history = useHistory();
+  let items = [];
+  if (props.docsPluginId === "vcluster") {
+    items = [
+      {
+        to: "/docs/vcluster", label: "vCluster"
+      },
+      {
+        to: "/docs/platform", label: "vCluster Platform"
+      },
+    ]
+  } else {
+    items = [
+      {
+        to: "/docs/platform", label: "vCluster Platform"
+      },
+      {
+        to: "/docs/vcluster", label: "vCluster"
+      },
+    ]
+  }
 
   return <div className={styles["version-selector-wrapper"]}>
-    <div className={styles["return-to-overview"]} onClick={() => history.push("/docs")}>
-      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none" viewBox="0 0 16 16" aria-hidden="true">
-        <path fill="currentColor" fill-rule="evenodd"
-              d="M10.795 3.235a.75.75 0 01-.03 1.06L6.842 8l3.923 3.705a.75.75 0 01-1.03 1.09l-4.5-4.25a.75.75 0 010-1.09l4.5-4.25a.75.75 0 011.06.03z"
-              clip-rule="evenodd"></path>
-      </svg>
-      Return to main menu
+    <div className={styles["product-selector"]}>
+      <DropdownNavbarItem className={styles["product-selector"]} label={props.docsPluginId === "vcluster" ? "vCluster" : "vCluster Platform"} items={items} />
     </div>
     <div className={styles["version-selector"]}>
-      <span className={styles["version-selector-label"]}>Version:</span> <DocsVersionDropdownNavbarItem docsPluginId={props.docsPluginId}
-                                                               dropdownItemsBefore={[]}
-                                                               dropdownItemsAfter={props.dropdownItemsAfter}/>
+      <DocsVersionDropdownNavbarItem docsPluginId={props.docsPluginId}
+                                     dropdownItemsBefore={[]}
+                                     dropdownItemsAfter={props.dropdownItemsAfter}/>
     </div>
   </div>
 }
