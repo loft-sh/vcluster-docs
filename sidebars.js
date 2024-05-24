@@ -23,7 +23,7 @@ const sidebars = {
     },
     {
       "type": "link",
-      "label": "Platform",
+      "label": "vCluster Platform",
       "href": "/docs/platform"
     }
   ],
