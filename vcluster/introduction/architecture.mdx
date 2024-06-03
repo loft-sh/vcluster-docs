@@ -1,0 +1,132 @@
+---
+title: Architecture
+sidebar_label: Architecture
+sidebar_position: 2
+---
+
+
+Virtual clusters are fully functional Kubernetes clusters nested inside a physical host cluster. These virtual clusters are designed to provide better isolation and flexibility for optimal multi-tenancy.
+
+<figure>
+<img
+  src={require('@site/static/media/diagrams/vcluster-architecture.png').default}
+  alt="vCluster Pod Scheduling"
+ />
+  <figcaption>vCluster - Pod Scheduling</figcaption>
+</figure>
+
+## Virtual cluster compoments
+
+### Virtual control plane
+
+vCluster creates isolated Kubernetes environments by deploying a virtual cluster that contains its own dedicated virtual control plane. This control plane orchestrates operations within the virtual cluster and facilitates interaction with the underlying host cluster.
+
+The virtual control plane is deployed as a single pod managed by a StatefulSet and has the following components:
+
+- A **Kubernetes API server**, which is the management interface for all API requests within the virtual cluster. It supports a variety of Kubernetes distributions, including vanilla Kubernetes (default), Lightweight Kuberntes (K3s), and Zero Friction Kubernetes (k0s).
+- A **controller manager**, which maintains the state of Kubernetes resources like pods, ensuring they match the desired configurations.
+- A **data store**, which is a connection to or mount of the data store where the API stores all resources. SQLite is used by default, but you can [choose other data stores](../configure/vcluster-yaml/control-plane/components/backing-store/) like etcd, MySQL, and PostgreSQL.
+- A **syncer**, which is a key component that synchronizes resources from the virtual to the host cluster to facilitate workload management on the host's infrastructure.
+- A **scheduler**, which is an optional component that schedules workloads. By default, vCluster reuses the host cluster scheduler to save on computing resources. If you need to add node labels or taints to control scheduling, drain nodes, or utilize custom schedulers, you can [enable the virtual scheduler](../configure/vcluster-yaml/control-plane/other/advanced/virtual-scheduler).
+
+### Syncer
+
+A virtual cluster doesn't have actual worker nodes or a network. Instead, it uses a syncer component to synchronize the virtual cluster pods to the underlying host cluster. The host cluster schedules the pod, and the syncer keeps the virtual cluster pod and host cluster pod in sync.
+
+Higher-level Kubernetes resources, such as Deployment, StatefulSet, and CRDs only exist inside the virtual cluster and never reach the API server or data store of the host cluster.
+
+By default, the syncer component synchronizes certain low-level virtual cluster Pod resources, such as ConfigMap and Secret, to the host namespace so that the host cluster scheduler can schedule these pods.
+
+While primarily focused on syncing from the virtual cluster to the host cluster, the syncer also propagates certain changes made in the host cluster back into the virtual cluster. This bi-directional syncing ensures that the virtual cluster remains up-to-date with the underlying infrastructure it depends on.
+
+You can [configure what and how the syncer synchronizes](../configure/vcluster-yaml/sync/) to and from the host cluster depending on your use case.
+
+## Host cluster and namespace
+
+Each virtual cluster runs as a regular StatefulSet inside a host cluster namespace. Everything that you create inside the virtual cluster lives either inside the virtual cluster itself or inside the host namespace.
+
+It is possible to run multiple virtual clusters inside the same namespace. You can even run a virtual cluster inside another virtual cluster (vCluster nesting).
+
+For certain cases that don't require strong isolation, you can run workloads in [multiple underlying host namespaces](../configure/vcluster-yaml/experimental/multi-namespace-mode). However, this feature is experimental and requires more management overhead.
+
+## Networking in virtual clusters
+
+Networking within virtual clusters is crucial for facilitating communication within the virtual environment itself, across different virtual clusters, and between the virtual and host clusters.
+
+### Ingress traffic
+
+Instead of having to run a separate ingress controller in each virtual cluster to provide external access to services within the virtual cluster, vCluster can [synchronize Ingress resources](../configure/vcluster-yaml/sync/to-host/networking/ingresses) to utilize the host cluster's ingress controller, facilitating resource sharing across virtual clusters and easing management like configuring DNS for each virtual cluster.
+
+### DNS in virtual clusters
+
+Each virtual cluster includes its own DNS service, which is [CoreDNS](../configure/vcluster-yaml/control-plane/components/coredns) by default. The DNS service lets pods within the virtual cluster resolve the IP addresses of other services running in the same virtual environment. This capability is anchored by the syncer component, which maps service DNS names within the virtual cluster to their corresponding IP addresses in the host cluster, adhering to Kubernetes' DNS naming conventions.
+
+The vCluster Pro edition has [CoreDNS embedded](../configure/vcluster-yaml/control-plane/components/coredns) directly into the virtual control plane pod, minimizing the overall footprint of each virtual cluster.
+
+### Communication within a virtual cluster
+
+#### Pod to pod
+
+Pods within a virtual cluster communicate using the host cluster's network infrastructure, with no additional configuration required. The syncer component ensures these pods maintain Kubernetes-standard networking.
+
+#### Pod to service
+
+Services within a virtual cluster are synchronized to allow pod communication, leveraging the virtual cluster's [CoreDNS](../configure/vcluster-yaml/control-plane/components/coredns) for intuitive domain name mappings, as in regular Kubernetes environments.
+
+#### Pod to host cluster service
+
+Services from the host cluster can be [replicated](../configure/vcluster-yaml/networking/replicate-services) into the virtual cluster, allowing pods within the virtual cluster to access host services using names that are meaningful within the virtual context.
+
+#### Pod to another virtual cluster service
+
+Services can also be mapped between [different virtual clusters](../configure/vcluster-yaml/networking/resolve-dns.mdx). This is achieved through DNS configurations that direct service requests from one virtual cluster to another.
+
+### Communication from the host cluster
+
+#### Host pod to virtual cluster service
+
+Host cluster pods can access services within a virtual cluster by [replicating](../configure/vcluster-yaml/networking/replicate-services#virtual-cluster-to-host-cluster) virtual cluster services to any host cluster namespace. This enables applications running inside the virtual cluster to be accessible to other workloads on the host cluster.
+
+## Design principles
+
+### Lightweight with low-overhead
+
+vCluster should be as lightweight as possible to minimize resource overhead inside the host cluster.
+
+**Implementation:** This is mainly achieved by bundling vCluster inside a single Pod using K8s as a control plane.
+
+### No performance degradation
+
+Workloads running inside a virtual cluster (even inside nested vCluster instances) should run with the same performance as workloads that are running directly on the underlying host cluster. The computing power, the access to underlying persistent storage, and the network performance should not be degraded at all.
+
+**Implementation:** This is mainly achieved by synchronizing pods, which means that the pods are actually being scheduled and started just like regular pods of the host cluster.
+
+### Reduce requests on the host cluster
+
+vCluster should greatly reduce the number of requests to the Kubernetes API server of the underlying host cluster by ensuring that all high-level resources, such as Deployment and StatefulSet, remain in the virtual cluster only, without ever reaching the host cluster.
+
+**Implementation:** This is mainly achieved by using a separate API server that handles all requests to the virtual cluster and a separate data store that stores all objects inside the virtual cluster. The syncer component synchronizes only a few low-level resources to the host cluster and thus requires very few API server requests. All of this happens in an asynchronous, non-blocking fashion, which follows Kubernetes design principles.
+
+### Flexible deployment
+
+vCluster should not make any assumptions about how users deploy it. Users should be able to create a virtual cluster in any host Kubernetes cluster without requiring the installation of any server-side component to deploy it. Deploying is possible with different client-only deployment tool, such as the vCluster CLI, Helm, kubectl, or Kustomize. Users can add an operator or CRDs to manage virtual clusters (for example, using Argo CD), but a server-side management plane should never be required for deploying a virtual cluster.
+
+**Implementation:** This is mainly achieved by making vCluster basically run as a simple StatefulSet + Service that can be deployed using any Kubernetes tool.
+
+### No admin privileges required
+
+To deploy a virtual cluster, a user should never be required to have any cluster-wide permissions. If a user has the RBAC permissions to deploy a simple web app to a namespace, they should also be able to deploy a virtual cluster to the namespace.
+
+**Implementation:** This is mainly achieved by making vCluster basically run as a simple StatefulSet + Service. Typically every user has the privilege to run these if they have any Kubernetes access at all.
+
+### Single namespace encapsulation
+
+Each virtual cluster and all the workloads and data inside the virtual cluster should be encapsulated into a single namespace. Even if the virtual cluster has hundreds of namespaces, everything in the host cluster should be encapsulated into a single host namespace.
+
+**Implementation:** This is mainly achieved by using a separate API server and data store. Additionally, the syncer component synchronizes everything to a single host namespace while renaming resources during the sync to prevent naming conflicts when mapping from multiple namespaces inside the virtual cluster to a single namespace in the host cluster.
+
+### Easy cleanup
+
+Virtual clusters should not have any hard wiring with the underlying cluster. Deleting a virtual cluster or merely deleting the virtual cluster's host namespace should always be possible without any negative impacts on the underlying cluster (no namespaces stuck in a terminating state or anything comparable). Also, deleting should always guarantee that all vCluster-related resources are being deleted cleanly and immediately without leaving any orphan resources behind.
+
+**Implementation:** This is mainly achieved by not adding any control plane or server-side elements to the deployment of a virtual cluster, which is just a StatefulSet and a few other Kubernetes resources. All synchronized resources in the host namespace have an appropriate owner reference, which means if you delete the virtual cluster itself, everything that belongs to it is automatically deleted by Kubernetes as well. This is a similar mechanism to what Deployments and StatefulSets use to clean up their pods.
