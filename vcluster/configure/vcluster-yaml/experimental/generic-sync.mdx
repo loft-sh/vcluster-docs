@@ -1,0 +1,192 @@
+---
+title: Experimental generic sync
+sidebar_label: genericSync
+sidebar_position: 3
+description: Make host cluster CRDs and resources, such as Istio and cert-manager, available to the virtual cluster for use by workloads.
+---
+import CodeBlock from '@theme/CodeBlock';
+import CertManagerConfig from '!!raw-loader!@site/vcluster/configure/vcluster-yaml/experimental/_code/cert-manager-config.yaml'
+import IstioBasicConfig from '!!raw-loader!@site/vcluster/configure/vcluster-yaml/experimental/_code/istio-config-basic.yaml'
+import IstioHostOnlyGatewayConfig from '!!raw-loader!@site/vcluster/configure/vcluster-yaml/experimental/_code/istio-config-host-only-gateways.yaml'
+import NodeInfoRemoverConfig from '!!raw-loader!@site/vcluster/configure/vcluster-yaml/experimental/_code/node-info-remover-config.yaml'
+import ProAdmonition from '@site/vcluster/_partials/admonitions/pro-admonition.mdx'
+import ExperimentalGenericSync from '@site/vcluster/_partials/config/experimental/genericSync.mdx'
+import PatchesRef from '@site/vcluster/configure/vcluster-yaml/experimental/_fragments/hooks-patch-ref.mdx'
+
+{/*
+- The current documentation is hard to follow, since it's organized across multiple headings, which makes it seem like they are unrelated features, but really they are typically used together:
+  - configuration syntax: https://www.vcluster.com/docs/syncer/other_resources/config_syntax
+
+  - Hooks refer to [Sync Patches](https://www.vcluster.com/pro/docs/features/generic_resource_patches), which is a Pro feature
+    - not sure how to represent this in the current docs structure, if genericSync is an OSS feature
+*/}
+
+Make host cluster CRDs and resources available to the virtual cluster for use by workloads.
+
+## Configuration syntax
+
+### Virtual to host cluster
+
+```yaml
+experimental:
+  genericSync:
+    export:
+      - apiVersion:
+        kind:
+        patches:
+          - op:
+            path:
+        reversePatches:
+          - op:
+            path:
+        selector:
+          labelSelector:
+```
+
+Use the top-level `export` field to declare which virtual resources you want to sync to the host cluster. Each item in the `export` array defines the resource via `apiVersion` and `kind` strings. Each `apiVersion` and `kind` pair can have only one entry in the `export` array.
+
+Use `patches` to define how to modify synced resources before the resource's creation or update in the host cluster.
+
+Use `reversePatches` to declare how changes to synced host cluster resource propogate back to the original resource in the virtual cluster.
+
+Use `selector` to limit which resources to sync from the virtual cluster. The virtual resource is synced when it matches one or more selectors, or when the `selector` field is empty.
+
+See [Certificate manager](#certificate-manager-export) for an example.
+
+### Host to virtual cluster
+
+```yaml
+experimental:
+  multiNamespaceMode:
+    enabled: true
+  genericSync:
+    import:
+      - apiVersion:
+        kind:
+        patches:
+          - op:
+            path:
+        reversePatches:
+          - op:
+            path:
+        selector:
+          labelSelector:
+```
+
+Requires multi-namespace mode.
+
+Use the top-level `import` field to declare which host resources to sync to the virtual cluster. Each item in the `import` array defines the resource via `apiVersion` and `kind` strings. Each `apiVersion` and `kind` pair can have only one entry in the `import` array.
+
+Use `patches` to define how to modify certain synced resource fields before the resource's creation or update in the virtual cluster. See [patches reference]  for details.
+
+Use `reversePatches` to declare how changes to synced virtual cluster resource propogate back to the original resource in the host cluster.
+
+Use `selector` to limit which resources to sync from the host cluster. The host resource is synced when it matches, or when the `selector` is empty.
+
+## Hooks (Pro)
+
+<ProAdmonition/>
+
+Use Hooks to:
+
+- Patch any Kubernetes resource during synchronization and before resources are applied to the Kubernetes API server.
+- Remove sensitive information before being written to the host or virtual cluster.
+
+You can also add additional information to a resource, such as labels and annotations on all resources belonging to a tenant.
+
+Hooks configuration specifies Kubernetes resources to patch. You can specify the resource group, API version, and resource kind and then the verbs for
+which API calls to patch. Configure patches using operations like `add`, `remove`, `replace`, and `copyFromObject`. See [Node info remover](#node-info-remover-hooks-pro) for an example.
+
+## Examples
+
+Find additional configuration examples in the vCluster repository's [generic-sync-examples folder](https://github.com/loft-sh/vcluster/tree/main/generic-sync-examples).
+
+### Certificate manager export
+
+Create TLS certificates for websites and manage your own cert-manager [Issuer](https://cert-manager.io/docs/concepts/issuer/). The RBAC-namespaced `role` and cluster-scoped `clusterRole` configure permissions.
+
+The vCluster instance must run in multi-namespace mode so that it can:
+
+- Utilize cert-manager's Issuer resource.
+- Sync cert-manager's namespace-scoped Secret to the virtual cluster's namespace, so the virtual cluster's Ingress can use the Secret.
+
+Follow these steps to use cert-manager:
+
+1. Create an Issuer in the virtual cluster.
+1. Create an Ingress in the virtual cluster that uses the Issuer through annotation: `cert-manager.io/issuer: ${ISSUER_NAME}`.
+1. Verify that a `Certificate` resource has been created for the ingress.
+1. Verify that a `Secret` with the name from `spec.tls[0].secretName` has been created and synced back to the vCluster with the generated certificate.
+1. Apply the cert-manager configuration.
+
+
+{/*
+- Use case: Allow users  from [here](https://github.com/loft-sh/vcluster/blob/main/generic-sync-examples/cert-manager))
+- Configuring generic sync:
+  - Mention that we need to enable multi-namespace mode to utilize cert-manager's `Issuer` resource
+  - Also need multi-namespace mode to sync the namespace scoped `Secret` (created by cert-manager) back to the virtual cluster's namespace so that it can be used by the ingress
+- Usage steps:
+  - create an Issuer in the virtual cluster
+  - create an Ingress in the virtual cluster that uses the Issuer through annotation: `cert-manager.io/issuer: ${ISSUER_NAME}`
+  - Check that a `Certificate` resource gets created for the ingress
+  - Check that a `Secret` with the name from `spec.tls[0].secretName` gets created and synced back to the vCluster with the generated certificate
+*/}
+
+<details>
+  <summary>cert-manager configuration</summary>
+<CodeBlock language="yaml">{CertManagerConfig}</CodeBlock>
+</details>
+
+### Istio export
+
+Use Istio VirtualService and Gateway resources to expose vCluster services.
+
+{/*
+- Use case: Allow users to use `VirtualService` and `Gateway` resources to expose vCluster services
+- Configuring generic sync:
+  - use example [here](https://github.com/loft-sh/vcluster/tree/main/generic-sync-examples/istio)
+  - This example is more advanced, since it shows using `patches` to rewrite parts of the `VirtualService` and `DestinationRule`
+- Usage steps:
+  - Deploy a sample application, perhaps the one from [istio getting started](https://istio.io/latest/docs/setup/getting-started/#bookinfo)
+  - create the Gateway & VirtualService in the vCluster
+  - see that browsing the website works using the host installed Istio
+*/}
+
+Follow these steps to use Istio:
+
+1. Install Istio on your host cluster.
+1. Deploy an Istio app in the virtual cluster. You can use Istio's BookInfo [app](https://istio.io/latest/docs/setup/getting-started/#bookinfo) if you don't have one.
+1. Create the VirtualService and Gateway in the virtual cluster by applying the `genericSync` Istio configuration.
+1. Verify that you can browse to the app's website using the host-installed Istio.
+
+<details>
+  <summary>Istio configuration</summary>
+<CodeBlock language="yaml">{IstioBasicConfig}</CodeBlock>
+</details>
+
+### Node info remover hooks (Pro)
+
+<ProAdmonition/>
+
+Configure `hooks` to hide Node images from virtual cluster users. After applying the configuration, you can test by running `kubectl get nodes` in the virtual cluster.
+
+{/*
+- Use case: Hide node images from virtual cluster users
+- Configuring Hooks:
+  - use the [example](https://www.vcluster.com/pro/docs/features/generic_resource_patches#example---node-info-remover) from the existing docs
+- Usage:
+  - `kubectl get nodes` from the vCluster and see that the information is hidden
+*/}
+
+
+<details>
+  <summary>Node info remover configuration</summary>
+<CodeBlock language="yaml">{NodeInfoRemoverConfig}</CodeBlock>
+</details>
+
+## `patches` reference
+
+<PatchesRef/>
+
+## Config reference
+
+<ExperimentalGenericSync/>

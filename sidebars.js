@@ -19,7 +19,7 @@ const sidebars = {
     {
       "type": "link",
       "label": "vCluster",
-      "href": "/docs/vcluster"
+      "href": "/docs/vcluster/introduction/what-are-virtual-clusters/"
     },
     {
       "type": "link",
