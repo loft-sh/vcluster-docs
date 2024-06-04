@@ -199,7 +199,7 @@ const config = {
       },
       algolia: {
         appId: "K85RIQNFGF",
-        apiKey: "42375731adc726ebb99849e9051aa9b4",
+        apiKey: "057a9f939df7215d92c8171d47352c54",
         indexName: "vcluster",
         placeholder: "Search...",
         algoliaOptions: {},
