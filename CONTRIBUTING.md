@@ -31,6 +31,8 @@ This command generates static content into the `build` directory and can be serv
 
 Serves the built website locally.
 
+Note: Before making a pull request, it's recommended to run `npm run serve` to fix any broken links that may have been introduced. 
+
 ## Generate partials for vCluster values
 
 1. update vcluster repo
