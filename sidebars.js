@@ -19,12 +19,14 @@ const sidebars = {
     {
       "type": "link",
       "label": "vCluster",
-      "href": "/docs/vcluster"
+      "href": "/docs/vcluster",
+      "className": "product-link"
     },
     {
       "type": "link",
       "label": "vCluster Platform",
-      "href": "/docs/platform"
+      "href": "/docs/platform",
+      "className": "product-link"
     }
   ],
 
