@@ -5,7 +5,6 @@ import (
 	"path"
 
 	clusterv1 "github.com/loft-sh/agentapi/v4/pkg/apis/loft/cluster/v1"
-	agentstoragev1 "github.com/loft-sh/agentapi/v4/pkg/apis/loft/storage/v1"
 	managementv1 "github.com/loft-sh/api/v4/pkg/apis/management/v1"
 	storagev1 "github.com/loft-sh/api/v4/pkg/apis/storage/v1"
 	"github.com/loft-sh/vcluster-docs/hack/platform/util"
@@ -105,9 +104,9 @@ clusters:
 				DisplayName: "Isolated Virtual Cluster Template",
 				Description: "This virtual cluster template deploys an isolated virtual cluster",
 				Template: storagev1.VirtualClusterTemplateDefinition{
-					VirtualClusterCommonSpec: agentstoragev1.VirtualClusterCommonSpec{
+					VirtualClusterCommonSpec: storagev1.VirtualClusterCommonSpec{
 						Access: nil,
-						HelmRelease: agentstoragev1.VirtualClusterHelmRelease{
+						HelmRelease: storagev1.VirtualClusterHelmRelease{
 							Values: `# Below you can configure the virtual cluster
 isolation:
   enabled: true
@@ -307,11 +306,6 @@ isolation:
 				DisplayName: "Isolated Space Template",
 				Description: "This space templates deploys an isolated space",
 				Template: storagev1.SpaceTemplateDefinition{
-					TemplateMetadata: storagev1.TemplateMetadata{
-						Labels: map[string]string{
-							clusterv1.SpacePodSecurityLabel: "baseline",
-						},
-					},
 					Objects: `apiVersion: v1
 kind: ResourceQuota
 metadata:
@@ -426,31 +420,6 @@ spec:
 		SubResourceCreateDescription: "Import a namespace through this API.",
 	})
 
-	// ProjectImportVirtualCluster
-	util.GenerateObjectOverview(&util.ObjectInformation{
-		Title:       "Import Virtual Cluster",
-		Description: "This API can be used to import an existing vcluster from a connected cluster into the project.",
-		File:        path.Join(util.BaseResourcesPath, "project/importvcluster.mdx"),
-		Name:        "Import Virtual Cluster",
-		Resource:    "projects",
-		SubResource: "importvirtualcluster",
-		Object: &managementv1.ProjectImportVirtualCluster{
-			TypeMeta: metav1.TypeMeta{
-				Kind:       "ProjectImportVirtualCluster",
-				APIVersion: managementv1.SchemeGroupVersion.String(),
-			},
-			ObjectMeta: metav1.ObjectMeta{},
-			SourceVirtualCluster: managementv1.ProjectImportVirtualClusterSource{
-				Name:       "my-virtual-cluster-name",
-				Namespace:  "my-virtual-cluster-namespace",
-				Cluster:    "my-connected-cluster",
-				ImportName: "my-name-in-project",
-			},
-		},
-		SubResourceCreate:            true,
-		SubResourceCreateDescription: "Import a virtual cluster through this API.",
-	})
-
 	// ProjectMigrateSpaceInstnace
 	util.GenerateObjectOverview(&util.ObjectInformation{
 		Title:       "Move Space To Other Project",
@@ -513,7 +482,7 @@ spec:
 			ObjectMeta: metav1.ObjectMeta{},
 			Users: []managementv1.ProjectMember{
 				{
-					Info: clusterv1.EntityInfo{
+					Info: storagev1.EntityInfo{
 						Name:        "my-user",
 						DisplayName: "My User",
 						Email:       "my-email",
@@ -522,7 +491,7 @@ spec:
 			},
 			Teams: []managementv1.ProjectMember{
 				{
-					Info: clusterv1.EntityInfo{
+					Info: storagev1.EntityInfo{
 						Name:        "my-team",
 						DisplayName: "My Team",
 					},
@@ -629,7 +598,7 @@ spec:
 				AppConfig: storagev1.AppConfig{
 					Icon: "https://argo-cd.readthedocs.io/en/stable/assets/logo.png",
 					Config: clusterv1.HelmReleaseConfig{
-						Chart: agentstoragev1.Chart{
+						Chart: clusterv1.Chart{
 							Name:    "argo-cd",
 							RepoURL: "https://argoproj.github.io/argo-helm",
 						},
@@ -698,13 +667,13 @@ spec:
 				Description: "Defines cluster access for the global admins",
 				Clusters:    []string{"*"},
 				LocalClusterAccessTemplate: storagev1.LocalClusterAccessTemplate{
-					LocalClusterAccessSpec: agentstoragev1.LocalClusterAccessSpec{
-						Users: []agentstoragev1.UserOrTeam{
+					LocalClusterAccessSpec: storagev1.LocalClusterAccessSpec{
+						Users: []storagev1.UserOrTeam{
 							{
 								Team: "loft-admins",
 							},
 						},
-						ClusterRoles: []agentstoragev1.ClusterRoleRef{
+						ClusterRoles: []storagev1.ClusterRoleRef{
 							{
 								Name: "loft-cluster-admin",
 							},
@@ -739,7 +708,7 @@ spec:
 				Email:       "myuser@test.com",
 				DisplayName: "My User",
 				Subject:     "my-user",
-				ClusterRoles: []agentstoragev1.ClusterRoleRef{
+				ClusterRoles: []storagev1.ClusterRoleRef{
 					{
 						Name: "loft-management-admin",
 					},
@@ -771,7 +740,7 @@ spec:
 				DisplayName: "Global Admins",
 				Description: "All users in this team have full admin access to all clusters",
 				Groups:      []string{"loft:admins"},
-				ClusterRoles: []agentstoragev1.ClusterRoleRef{
+				ClusterRoles: []storagev1.ClusterRoleRef{
 					{
 						Name: "loft-management-admin",
 					},
