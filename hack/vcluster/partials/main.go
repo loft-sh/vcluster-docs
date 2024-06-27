@@ -44,7 +44,6 @@ var paths = []string{
 	"policies/centralAdmission",
 	"policies",
 	"plugins",
-	"platform",
 	"observability/metrics",
 	"observability",
 	"networking/resolveDNS",
