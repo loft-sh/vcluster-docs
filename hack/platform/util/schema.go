@@ -331,7 +331,7 @@ func GenerateFromPath(schema *jsonschema.Schema, basePath string, schemaPath str
 		lastProperty = property
 		fieldSchema, ok = fieldSchema.Properties.Get(property)
 		if !ok {
-			panic("Couldn't find schema path " + schemaPath + " at " + property)
+			panic("Couldn't find schema path '" + schemaPath + "' at '" + property + "'")
 		}
 
 		if i+1 == len(splittedSchemaPath) {
