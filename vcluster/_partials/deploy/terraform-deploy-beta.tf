@@ -11,7 +11,7 @@ resource "helm_release" "my_vcluster" {
 
   repository       = "https://charts.loft.sh"
   chart            = "vcluster"
-  version          = "0.20.0-beta.9"
+  version          = "0.20.0-beta.12"
 
   values = [
     file("${path.module}/vcluster.yaml")
