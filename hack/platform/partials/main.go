@@ -81,7 +81,7 @@ clusters:
 ...`,
 			},
 		},
-		SubResourceGet:            true,
+		SubResourceCreate:         true,
 		SubResourceGetDescription: "If ingress endpoint is configured for the virtual cluster, you can retrieve the kube config for a virtual cluster like shown below.",
 	})
 
