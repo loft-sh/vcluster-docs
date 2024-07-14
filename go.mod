@@ -8,7 +8,7 @@ require (
 	github.com/invopop/jsonschema v0.12.1-0.20240219232115-a4467074499d
 	github.com/loft-sh/agentapi/v4 v4.0.0-alpha.16
 	github.com/loft-sh/api/v4 v4.0.0-alpha.16
-	github.com/loft-sh/vcluster-config v0.0.0-20240626114406-e551a685416f
+	github.com/loft-sh/vcluster-config v0.0.0-20240708084328-0260ef98d153
 	k8s.io/apimachinery v0.30.1
 	sigs.k8s.io/controller-runtime v0.18.4
 )
