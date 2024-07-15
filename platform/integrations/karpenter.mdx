@@ -1,0 +1,449 @@
+---
+title: Using Karpenter with vCluster Platform
+sidebar_label: Karpenter
+sidebar_position: 7
+---
+
+import Tabs from "@theme/Tabs";
+import TabItem from "@theme/TabItem";
+import Flow, { Step } from "@site/src/components/Flow";
+import Label from "@site/src/components/Label";
+
+vCluster is compatible with Karpenter and vCluster's features can be used in conjuntion with Karpenter to
+further reduce infrastructure costs.
+
+This article will explain how to [Setup Designated Node Pool for a vCluster](#setup-designated-node-pool-for-a-vcluster), [Setup Designated Node
+Pool for a Project](#setup-designated-node-pool-for-a-project), and [Setup Designated Node Pool for Dev/Prod Workloads Accross All vClusters](#setup-designated-node-pool-for-a-project). All
+three of which can be powerful cost saving tools.
+
+This article assumes you are using a host cluster provisioned on one of the following managed Kubernetes
+services: EKS (Elastic Kubernetes Service) or AKS (Azure Kubernetes Service).
+
+Much of this article borrows and builds upon the [Getting Started with Karpenter](https://karpenter.sh/docs/getting-started/getting-started-with-karpenter/) documentation and the [Karpenter Provider Azure README.md](https://github.com/Azure/karpenter-provider-azure).
+
+### Pre-requisites for Setups
+1. A kubernetes cluster setup in either AKS or EKS.
+2. Necessary permissions in chosen cloud provider to use Karpenter.
+3. vCluster Platform installed on host cluster. Read [Deploy the vCluster Platform docs](https://www.vcluster.com/docs/platform/install/quick-start-guide#2-deploy-the-vcluster-platform).
+4. (EKS Only) EBS driver installed. [Get the Amazon EBS CSI driver add-on](https://docs.aws.amazon.com/eks/latest/userguide/managing-ebs-csi.html#adding-ebs-csi-eks-add-on).
+5. (EKS Only) Set the environment variables: `CLUSTER_NAME`, `ARM_AMI_ID`, `AMD_AMI_ID`, `K8S_VERSION`.
+6. (EKS Only) Delete the gp2 StorageClass with `kubectl delete storageclass gp2` and replace with gp3 by applying following yaml:
+```yaml
+
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: gp3
+  annotations:
+    storageclass.kubernetes.io/is-default-class: "true"
+provisioner: ebs.csi.aws.com
+volumeBindingMode: WaitForFirstConsumer
+parameters:
+  type: gp3
+allowVolumeExpansion: true
+
+```
+
+## Setup Designated Node Pool for a vCluster
+This section utilizes taints and tolerations to guide vcluster pods to the desired node. This works best if every node pool or node utilizes a taint. Otherwise, the pods may be scheduled on non-tainted nodes.
+1. Select "Create Virtual Cluster"
+2. Select "Configure" and add a toleration to virtual cluster pods using the yaml editor. If the below yaml is out of date then see the [applying tolerations docs](https://www.vcluster.com/docs/v0.19/architecture/scheduling#automatically-applying-tolerations-to-all-pods-synced-by-vcluster).
+
+```yaml
+sync:
+  toHost:
+    pods:
+      enforceTolerations:
+      - vclusterID=<vcluster-name>:NoSchedule
+```
+
+3. Create a node pool with a taint matching the toleration and create node class for it to use.
+
+<Tabs
+  defaultValue="EKS"
+  values={[
+    { label: "Provision Node Pool for EKS", value: "EKS" },
+    { label: "Provision Node Pool for AKS", value: "AKS" },
+  ]}
+>
+  <TabItem value="EKS">
+
+    ```bash
+    cat <<EOF | envsubst | kubectl apply -f -
+    ---
+    apiVersion: karpenter.sh/v1beta1
+    kind: NodePool
+    metadata:
+      name: <name-of-your-choosing>
+    spec:
+      template:
+        spec:
+          taints:
+          - key: vclusterID
+            value:  <vcluster-id>
+            effect: NoSchedule
+          requirements:
+            - key: kubernetes.io/arch
+              operator: In
+              values: ["amd64"]
+            - key: kubernetes.io/os
+              operator: In
+              values: ["linux"]
+            - key: karpenter.sh/capacity-type
+              operator: In
+              values: ["spot"]
+            - key: karpenter.k8s.aws/instance-category
+              operator: In
+              values: ["c", "m", "r"]
+            - key: karpenter.k8s.aws/instance-generation
+              operator: Gt
+              values: ["2"]
+          nodeClassRef:
+            apiVersion: karpenter.k8s.aws/v1beta1
+            kind: EC2NodeClass
+            name: <node-class-name>
+      limits:
+        cpu: 100
+      disruption:
+        consolidationPolicy: WhenUnderutilized
+        expireAfter: Never
+    ---
+    apiVersion: karpenter.k8s.aws/v1beta1
+    kind: EC2NodeClass
+    metadata:
+      name: <name-of-your-choosing>
+    spec:
+      amiFamily: AL2 # Amazon Linux 2
+      role: "KarpenterNodeRole-${CLUSTER_NAME}" # replace with your cluster name
+      subnetSelectorTerms:
+        - tags:
+            karpenter.sh/discovery: "${CLUSTER_NAME}" # replace with your cluster name
+      securityGroupSelectorTerms:
+        - tags:
+            karpenter.sh/discovery: "${CLUSTER_NAME}" # replace with your cluster name
+      amiSelectorTerms:
+        - id: "${ARM_AMI_ID}"
+        - id: "${AMD_AMI_ID}"
+EOF
+
+      ```
+
+  </TabItem>
+  <TabItem value="AKS">
+
+    ```bash
+    cat <<EOF | kubectl apply -f -
+    ---
+    apiVersion: karpenter.sh/v1beta1
+    kind: NodePool
+    metadata:
+      name: <name-of-your-choosing>
+    spec:
+      template:
+        spec:
+          taints:
+          - key: vclusterID
+            value:  <cluster-id>
+            effect: NoSchedule
+          requirements:
+            - key: kubernetes.io/arch
+              operator: In
+              values: ["amd64"]
+            - key: kubernetes.io/os
+              operator: In
+              values: ["linux"]
+            - key: karpenter.sh/capacity-type
+              operator: In
+              values: ["on-demand"]
+            - key: karpenter.azure.com/sku-family
+              operator: In
+              values: [D]
+          nodeClassRef:
+            name: <node-class-name>
+      limits:
+        cpu: 100
+      disruption:
+        consolidationPolicy: WhenUnderutilized
+        expireAfter: Never
+    ---
+    apiVersion: karpenter.azure.com/v1alpha2
+    kind: AKSNodeClass
+    metadata:
+      name: <name-of-your-choosing>
+    spec:
+      imageFamily: Ubuntu2204
+EOF
+    ```
+  </TabItem>
+</Tabs>
+
+4. Now we will confirm the node pool is working. Run `kubectl get nodes --watch`. Open a separate terminal tab. Connect to your vcluster by running `vcluster connect <vcluster-id>`. Then run:
+```bash
+cat <<EOF | kubectl apply -f -
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: inflate
+spec:
+  replicas: 0
+  selector:
+    matchLabels:
+      app: inflate
+  template:
+    metadata:
+      labels:
+        app: inflate
+    spec:
+      terminationGracePeriodSeconds: 0
+      containers:
+        - name: inflate
+          image: public.ecr.aws/eks-distro/kubernetes/pause:3.7
+          resources:
+            requests:
+              cpu: 1
+EOF
+
+kubectl scale deployment inflate --replicas 5
+
+```
+
+You should see nodes provision for the deployment. If you do the above on a vcluster without the tolerations then the nodes should not be provisioned on the node pool.
+
+5. Tear down the deployment used above.
+```bash
+kubectl delete deployment inflate
+
+```
+
+## Setup Designated Node Pool for a Project
+We will designate a node pool for a project by creating templates and enforcing the template for that project.
+1. Using the Vcluster Platform add a template: Templates -> Virtual Clusters -> Add Virtual Cluster Template.
+2. In the yaml editor box, which contains the vcluster.yaml, add the following:
+```yaml
+sync:
+  toHost:
+    pods:
+      enforceTolerations:
+      - vclusterID=<project-name>:NoSchedule
+```
+3. Create a node pool with the taint corresponding to the toleration in step 2, e.g.:
+
+<Tabs
+  defaultValue="EKS"
+  values={[
+    { label: "Provision NodePool for EKS", value: "EKS" },
+    { label: "Provision NodePool for AKS", value: "AKS" },
+  ]}
+>
+  <TabItem value="EKS">
+
+    ```bash
+    cat <<EOF | envsubst | kubectl apply -f -
+    apiVersion: karpenter.sh/v1beta1
+    kind: NodePool
+    metadata:
+      name: <name-of-your-choosing>
+    spec:
+      template:
+        spec:
+          taints:
+          - key: <project-name>
+            value: "true"
+            effect: NoSchedule
+          requirements:
+            - key: kubernetes.io/arch
+              operator: In
+              values: ["amd64"]
+            - key: kubernetes.io/os
+              operator: In
+              values: ["linux"]
+            - key: karpenter.sh/capacity-type
+              operator: In
+              values: ["spot"]
+            - key: karpenter.k8s.aws/instance-category
+              operator: In
+              values: ["c", "m", "r"]
+            - key: karpenter.k8s.aws/instance-generation
+              operator: Gt
+              values: ["2"]
+          nodeClassRef:
+            apiVersion: karpenter.k8s.aws/v1beta1
+            kind: EC2NodeClass
+            name: <node-class-name>
+      limits:
+        cpu: 100
+      disruption:
+        consolidationPolicy: WhenUnderutilized
+        expireAfter: Never
+EOF
+```
+
+  </TabItem>
+  <TabItem value="AKS">
+
+    ```bash
+    cat <<EOF | envsubst | kubectl apply -f -
+    apiVersion: karpenter.sh/v1beta1
+    kind: NodePool
+    metadata:
+      name: <name-of-your-choosing>
+    spec:
+      template:
+        spec:
+          taints:
+          - key: <project-name>
+            value: "true"
+            effect: NoSchedule
+          requirements:
+            - key: kubernetes.io/arch
+              operator: In
+              values: ["amd64"]
+            - key: kubernetes.io/os
+              operator: In
+              values: ["linux"]
+            - key: karpenter.sh/capacity-type
+              operator: In
+              values: ["on-demand"]
+            - key: karpenter.azure.com/sku-family
+              operator: In
+              values: [D]
+          nodeClassRef:
+            name: <node-class-name>
+      limits:
+        cpu: 100
+      disruption:
+        consolidationPolicy: WhenUnderutilized
+        expireAfter: Never
+EOF
+    ```
+
+  </TabItem>
+</Tabs>
+
+4. Create project that only allows template(s) with set tolerations. Go to project dropdown -> New Project -> Allowed Templates. Then clear all templates and select the template(s) that include tolerations for the node pool created in step 3. Now all pods created in vClusters belonging to the created project will deploy to designated node pool(s).
+
+### Target Node Pool Based on vCluster Pod Labels
+1. Create a node pool with custom label(s) e.g. `my.org/environ`.
+
+<Tabs
+  defaultValue="EKS"
+  values={[
+    { label: "Provision NodePool for EKS", value: "EKS" },
+    { label: "Provision NodePool for AKS", value: "AKS" },
+  ]}
+>
+  <TabItem value="EKS">
+
+    ```bash
+    cat <<EOF | envsubst | kubectl apply -f -
+    apiVersion: karpenter.sh/v1beta1
+    kind: NodePool
+    metadata:
+      name: default
+    spec:
+      template:
+        spec:
+          requirements:
+            - key: kubernetes.io/arch
+              operator: In
+              values: ["amd64"]
+            - key: kubernetes.io/os
+              operator: In
+              values: ["linux"]
+            - key: karpenter.sh/capacity-type
+              operator: In
+              values: ["spot"]
+            - key: karpenter.k8s.aws/instance-category
+              operator: In
+              values: ["c", "m", "r"]
+            - key: karpenter.k8s.aws/instance-generation
+              operator: Gt
+              values: ["2"]
+            - key: my.org/environ
+              operator: Exists
+          nodeClassRef:
+            apiVersion: karpenter.k8s.aws/v1beta1
+            kind: EC2NodeClass
+            name: <node-class-name>
+      limits:
+        cpu: 100
+      disruption:
+        consolidationPolicy: WhenUnderutilized
+        expireAfter: Never
+EOF
+    ```
+
+  </TabItem>
+  <TabItem value="AKS">
+
+    ```bash
+    cat <<EOF | envsubst | kubectl apply -f -
+    apiVersion: karpenter.sh/v1beta1
+    kind: NodePool
+    metadata:
+      name: default
+    spec:
+      template:
+        spec:
+          requirements:
+            - key: kubernetes.io/arch
+              operator: In
+              values: ["amd64"]
+            - key: kubernetes.io/os
+              operator: In
+              values: ["linux"]
+            - key: karpenter.sh/capacity-type
+              operator: In
+              values: ["on-demand"]
+            - key: karpenter.azure.com/sku-family
+              operator: In
+              values: [D]
+            - key: my.org/environ
+              operator: Exists
+          nodeClassRef:
+            name: <node-class-name>
+      limits:
+        cpu: 100
+      disruption:
+        consolidationPolicy: WhenUnderutilized
+        expireAfter: Never
+EOF
+    ```
+
+  </TabItem>
+</Tabs>
+
+2. Add nodeSelector to deployments in your virtual cluster using a nodeSelector that targets the label from step 1 with the desired value.
+
+```bash
+cat <<EOF | kubectl apply -f -
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: inflate
+spec:
+  replicas: 0
+  selector:
+    matchLabels:
+      app: inflate
+  template:
+    metadata:
+      labels:
+        app: inflate
+    spec:
+      nodeSelector:
+        my.org/environ: <any key, "prod", "dev", "test" make sense here>
+      terminationGracePeriodSeconds: 0
+      containers:
+        - name: inflate
+          image: public.ecr.aws/eks-distro/kubernetes/pause:3.7
+          resources:
+            requests:
+              cpu: 1
+EOF
+
+kubectl scale deployment inflate --replicas 5
+
+```
+
+If multiple deployments use the same key/value pair for an already deployed node they can be scheduled to it. Otherwise, a new node will be provisioned. You can read more about user-defined labels in the [Karpenter's User-Defined Labels docs](https://karpenter.sh/docs/concepts/scheduling/#user-defined-labels).
