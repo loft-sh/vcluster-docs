@@ -7,9 +7,17 @@ import (
 	clusterv1 "github.com/loft-sh/agentapi/v4/pkg/apis/loft/cluster/v1"
 	managementv1 "github.com/loft-sh/api/v4/pkg/apis/management/v1"
 	storagev1 "github.com/loft-sh/api/v4/pkg/apis/storage/v1"
+	"github.com/loft-sh/vcluster-config/config"
 	"github.com/loft-sh/vcluster-docs/hack/platform/util"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
+
+// Config represents the external config for vcluster.yaml to generate associated partials
+type Config struct {
+	External struct {
+		*config.PlatformConfig `json:"platform"`
+	} `json:"external"`
+}
 
 func main() {
 	_ = os.RemoveAll(util.BasePath)
@@ -893,4 +901,11 @@ spec:
 		},
 		Create: true,
 	})
+
+	util.DefaultRequire = false
+
+	paths := []string{"external/platform/apiKey"}
+	for _, p := range paths {
+		util.GenerateFromPath(util.GenerateSchema(&Config{}), util.BasePath+"/config", p)
+	}
 }
