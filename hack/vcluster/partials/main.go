@@ -10,7 +10,7 @@ import (
 const OutDir = "vcluster/_partials/config"
 
 // we only generate paths we actually need
-var paths = []string{
+var configPaths = []string{
 	"telemetry",
 	"sync/toHost/volumeSnapshots",
 	"sync/toHost/storageClasses",
@@ -59,6 +59,7 @@ var paths = []string{
 	"experimental/deploy",
 	"experimental/denyProxyRequests",
 	"experimental",
+	"external",
 	"controlPlane/advanced/workloadServiceAccount",
 	"controlPlane/advanced/virtualScheduler",
 	"controlPlane/advanced/serviceAccount",
@@ -85,12 +86,28 @@ var paths = []string{
 	"controlPlane",
 }
 
+var platformConfigPaths = []string{
+	"external/platform/apiKey",
+}
+
+type Config struct {
+	External struct {
+		*config.PlatformConfig `json:"platform"`
+	} `json:"external"`
+}
+
 func main() {
 	_ = os.RemoveAll(OutDir)
 	util.DefaultRequire = false
 
-	schema := util.GenerateSchema(&config.Config{})
-	for _, path := range paths {
-		util.GenerateFromPath(schema, OutDir, path)
+	schemaPaths := map[*[]string]any{
+		&configPaths:         &config.Config{},
+		&platformConfigPaths: &Config{},
+	}
+
+	for paths, schema := range schemaPaths {
+		for _, path := range *paths {
+			util.GenerateFromPath(util.GenerateSchema(schema), OutDir, path)
+		}
 	}
 }
