@@ -7,67 +7,10 @@ import (
 	clusterv1 "github.com/loft-sh/agentapi/v4/pkg/apis/loft/cluster/v1"
 	managementv1 "github.com/loft-sh/api/v4/pkg/apis/management/v1"
 	storagev1 "github.com/loft-sh/api/v4/pkg/apis/storage/v1"
-	"github.com/loft-sh/vcluster-config/config"
+	extconfig "github.com/loft-sh/vcluster-docs/hack/platform/partials/extconfig"
 	"github.com/loft-sh/vcluster-docs/hack/platform/util"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
-
-// Config represents the external config for vcluster.yaml to generate associated partials
-type Config struct {
-	External struct {
-		Platform struct {
-			// APIKey defines where to find the platform access key and host. By default, vCluster will search in the following locations in this precedence:
-			// * platform.api.accessKey
-			// * environment variable called LICENSE
-			// * secret specified under external.platform.apiKey.secretName
-			// * secret called "vcluster-platform-api-key" in the vCluster namespace
-			APIKey config.PlatformAPIKey `json:"apiKey,omitempty"`
-
-			// AutoSleep holds configuration for automatic sleep and wakeup
-			// +optional
-			AutoSleep *AutoSleep `json:"autoSleep,omitempty"`
-
-			// AutoDelete holds configuration for automatic delete
-			// +optional
-			AutoDelete *AutoDelete `json:"autoDelete,omitempty"`
-		} `json:"platform"`
-	} `json:"external"`
-}
-
-type AutoSleep struct {
-	// AfterInactivity specifies after how many seconds of inactivity the virtual cluster should sleep
-	// +optional
-	AfterInactivity int64 `json:"afterInactivity,omitempty"`
-
-	// Schedule specifies scheduled virtual cluster sleep in Cron format, see https://en.wikipedia.org/wiki/Cron.
-	// Note: timezone defined in the schedule string will be ignored. Use ".Timezone" field instead.
-	// +optional
-	Schedule string `json:"schedule,omitempty"`
-
-	// Timezone specifies time zone used for scheduled virtual cluster operations. Defaults to UTC.
-	// Accepts the same format as time.LoadLocation() in Go (https://pkg.go.dev/time#LoadLocation).
-	// The value should be a location name corresponding to a file in the IANA Time Zone database, such as "America/New_York".
-	// +optional
-	Timezone string `json:"timezone,omitempty"`
-
-	// AutoSleep holds configuration for automatic wakeup
-	// +optional
-	AutoWakeup *AutoWakeup `json:"autoWakeup,omitempty"`
-}
-
-type AutoWakeup struct {
-	// Schedule specifies scheduled wakeup from sleep in Cron format, see https://en.wikipedia.org/wiki/Cron.
-	// Note: timezone defined in the schedule string will be ignored. The timezone for the autoSleep schedule will be
-	// used
-	// +optional
-	Schedule string `json:"schedule,omitempty"`
-}
-
-type AutoDelete struct {
-	// AfterInactivity specifies after how many seconds of inactivity the virtual cluster be deleted
-	// +optional
-	AfterInactivity int64 `json:"afterInactivity,omitempty"`
-}
 
 func main() {
 	_ = os.RemoveAll(util.BasePath)
@@ -958,8 +901,11 @@ spec:
 		"external/platform/apiKey",
 		"external/platform/autoSleep",
 		"external/platform/autoDelete",
+		"external/platform",
+		"external",
 	}
+
 	for _, p := range paths {
-		util.GenerateFromPath(util.GenerateSchema(&Config{}), util.BasePath+"/config", p)
+		util.GenerateFromPath(util.GenerateSchema(&extconfig.Config{}), util.BasePath+"/config", p)
 	}
 }
