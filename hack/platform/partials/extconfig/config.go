@@ -4,6 +4,7 @@ import "github.com/loft-sh/vcluster-config/config"
 
 // External holds external tool configuration
 type External struct {
+	// Platform holds configuration for vCluster platform
 	Platform Platform `json:"platform"`
 }
 
@@ -27,9 +28,11 @@ type Platform struct {
 
 // Config represents the external config for vcluster.yaml to generate associated partials
 type Config struct {
+	// External holds external tool configuration
 	External External `json:"external"`
 }
 
+// AutoSleep holds configuration for automatic sleep based on inactivity or a preset schedule
 type AutoSleep struct {
 	// AfterInactivity specifies after how many seconds of inactivity the virtual cluster should sleep
 	// +optional
@@ -51,6 +54,7 @@ type AutoSleep struct {
 	AutoWakeup *AutoWakeup `json:"autoWakeup,omitempty"`
 }
 
+// AutoWakeup holds configuration for automatic wakeup from sleep based on a preset schedule
 type AutoWakeup struct {
 	// Schedule specifies scheduled wakeup from sleep in Cron format, see https://en.wikipedia.org/wiki/Cron.
 	// Note: timezone defined in the schedule string will be ignored. The timezone for the autoSleep schedule will be
@@ -59,6 +63,7 @@ type AutoWakeup struct {
 	Schedule string `json:"schedule,omitempty"`
 }
 
+// AutoDelete holds configuration for automatic deletion of a virtual cluster after inactivity
 type AutoDelete struct {
 	// AfterInactivity specifies after how many seconds of inactivity the virtual cluster be deleted
 	// +optional
