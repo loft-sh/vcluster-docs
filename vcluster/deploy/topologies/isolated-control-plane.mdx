@@ -7,34 +7,32 @@ sidebar_class_name: pro
 
 import ProAdmonition from '@site/vcluster/_partials/admonitions/pro-admonition.mdx'
 
+import DeployBeta from '../../_partials/deploy/deploy-beta.mdx'
+
 <ProAdmonition/>
 
-This comprehensive guide will help you configure an isolated control plane using vCluster.
-This feature allows you to run a vCluster control plane in one cluster while a separate, headless vCluster instance runs workloads in another cluster.
+vCluster creates isolated Kubernetes environments by deploying a virtual cluster that contains its own dedicated virtual control plane. This 
+control plane orchestrates operations within the virtual cluster and facilitates interaction with the underlying host cluster. The virtual 
+control plane is deployed as a single pod managed as a StatefulSet (default) or Deployment. By default, any workloads from a virtual 
+cluster are deployed in the same namespace of a host cluster.
 
-This setup is handy for scenarios where separation of management and workload execution is critical for security, management, or operational reasons.
+If you don't want to have your workloads running in the same namespace of the same host cluster, you can enable our isolated control plane feature, 
+which allows you to run a vCluster control plane pod in one host cluster while a separate, headless vCluster runs workloads in another cluster. A headless vcluster
+is a vCluster without a control plane pod.
 
-## Prerequisites
+Separation of management and workload execution is often critical for security, management, or operational reasons. 
 
-Before proceeding, ensure you have the following:
-- Kubernetes CLI (kubectl) installed and configured
-- Helm 3.x installed
-- Access to two Kubernetes clusters (one for the control plane and one for the workloads)
-- Basic familiarity with Kubernetes concepts like namespaces, contexts, and YAML configurations
+<p></p>
 
-## Part 1: Setup the Cluster Hosting the Workloads
+:::note Name of the Virtual Clusters
+The release names in both clusters **must be the same** to ensure that the vCluster can properly sync across them. In this example, they are both called `my-vcluster`. 
+:::
 
-### Switch Kubernetes Context
+## Part 1:  Set up the Headless vCluster
 
-First, ensure you operate in the Kubernetes context where you want to deploy your workloads. Replace `CONTEXT_NAME` with the name of your desired context:
+### Create a Headless vCluster 
 
-```bash
-kubectl config use-context CONTEXT_NAME
-```
-
-### Create the Headless vCluster
-
-You'll start by creating a headless vCluster instance in the cluster where your workloads will run. Use the following YAML configuration saved as `workloads-vcluster.yaml` to set up the headless vCluster:
+On the host cluster that will run the workloads, create a Headless vCluster with the following `vcluster.yaml`. 
 
 ```yaml
 experimental:
@@ -42,24 +40,16 @@ experimental:
     headless: true
 ```
 
-Execute the following command to create your headless vCluster:
+<DeployBeta />
 
-```bash
-helm upgrade --install my-vcluster vcluster \
-  --repo https://charts.loft.sh \
-  --namespace remote-workloads \
-  --create-namespace \
-  --version 0.20.0-beta.12 \
-  --values workloads-vcluster.yaml
-```
 
-### Obtain the kubeconfig for the Headless vCluster
+### Obtain the kubeconfig of the Headless vCluster
 
-After setting up the headless vCluster, you must obtain its kubeconfig. This allows the control plane vCluster to communicate with it:
+On the host cluster, you must obtain the kubeconfig of the Headless vCluster. This will be used to allow the control plane vCluster to communicate with it.
 
 ```bash
 export WORKLOAD_KUBECONFIG=$(kubectl config view --raw -o json | TOKEN=$(kubectl create token vc-my-vcluster \
-  -n remote-workloads \
+  -n team-x \
   --duration=48h \
 ) jq '."current-context" as $current | (.contexts[] | select(.name == $current)) as $context | {
   "current-context": ."current-context",
@@ -71,11 +61,16 @@ export WORKLOAD_KUBECONFIG=$(kubectl config view --raw -o json | TOKEN=$(kubectl
 }' | yq -P)
 ```
 
+:::warning Kube Context
+Confirm that your kube context is set to the host cluster and not the newly created Headless vCluster. If you used the vCluster CLI, use `vcluster disconnect` to be 
+set back to your previous kube context. 
+:::
+
 ## Part 2: Set Up the Control Plane vCluster
 
-### Switch to Control Plane Context
+### Switch to the kube context of the other Host
 
-Now, switch to the Kubernetes context where the control plane will be deployed:
+Now, switch to the kube context of the host where the control plane will be deployed:
 
 ```bash
 kubectl config use-context CONTEXT_NAME
@@ -91,7 +86,7 @@ kubectl create namespace vc-control-plane
 
 ### Configure Kubeconfig Secret
 
-Using the kubeconfig obtained from the workload setup, create a Kubernetes secret in the control plane namespace:
+Using the kubeconfig obtained from the headless vCluster setup, create a Kubernetes secret in the control plane namespace.
 
 ```bash
 kubectl create secret generic vc-remote-workloads-kubeconfig \
@@ -111,20 +106,20 @@ kubectl create secret generic vcluster-platform-api-key \
 ```
 
 :::info
-You can also specify the project via `project` key, if the platform is insecure via `insecure` and the virtual cluster name in the platform via `name`
+You can also specify the project via `project` key, if the platform is insecure via `insecure` and the virtual cluster name in the platform via `name`.
 :::
 
-This command activates the `my-vcluster` vCluster in the `vc-control-plane` namespace. Ensure you run this in the correct Kubernetes context where your control plane vCluster is deployed.
+This command activates the `my-vcluster` vCluster in the `vc-control-plane` namespace.
 
 ### Create the Control Plane vCluster
 
-Set up the control plane vCluster using the following YAML configuration in a file named `control-plane-vcluster.yaml`:
+Set up the control plane vCluster using the following `vcluster.yaml`.
 
 ```yaml
 experimental:
   isolatedControlPlane:
     enabled: true
-    namespace: "remote-workloads"
+    namespace: "team-x"
     service: "my-vcluster"
     kubeConfig: "/worker-cluster/kubeconfig.yaml"
 
@@ -155,7 +150,7 @@ networking:
 
 <details>
 <summary>
-Setting up control plane without Load Balancer support
+Setting up the control plane without Load Balancer support
 </summary>
 
 By default vCluster starts a `LoadBalancer` type Service to serve API. In some environments like local development clusters or bare metal clusters you might want to use `NodePort` type instead. In order to do this, include this configuration in your `vcluster.yaml` file.
@@ -169,19 +164,11 @@ controlPlane:
 ```
 </details>
 
+On the host cluster that will run the control, create a control plane vCluster. 
 
-Deploy the control plane vCluster with the following command:
+<DeployBeta />
 
-```bash
-helm upgrade --install my-vcluster vcluster \
-  --repo https://charts.loft.sh \
-  --namespace vc-control-plane \
-  --version 0.20.0-beta.12 \
-  --values control-plane-vcluster.yaml
-```
+## Testing out the Isolated Control Plane
 
-## Final Notes
-
-The release names in both clusters **must be the same** to ensure that the vCluster can properly sync across them.
-
-Following these detailed steps, you should have a vCluster control plane that synchronizes its workloads into another Kubernetes cluster.
+In the kube context of the control plane vCluster, try deploying an application and see
+that the pods only run in the host cluster of the headless vCluster and not in the control plane vCluster. 
