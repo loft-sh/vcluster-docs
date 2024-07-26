@@ -71,18 +71,6 @@ func generateSchema(configInstance interface{}) *jsonschema.Schema {
 	if commentMap == nil {
 		commentMap = map[string]string{}
 
-		runInDir("hack", func() {
-			localCommentsMap := map[string]string{}
-			err := jsonschema.ExtractGoComments("", "platform/partials/extconfig", localCommentsMap)
-			if err != nil {
-				panic(err)
-			}
-
-			for k, v := range localCommentsMap {
-				commentMap["github.com/loft-sh/vcluster-docs/hack/"+k] = v
-			}
-		})
-
 		runInDir("vendor", func() {
 			err := jsonschema.ExtractGoComments("", "github.com/loft-sh/vcluster-config/config", commentMap)
 			if err != nil {
