@@ -7,6 +7,7 @@ import (
 	clusterv1 "github.com/loft-sh/agentapi/v4/pkg/apis/loft/cluster/v1"
 	managementv1 "github.com/loft-sh/api/v4/pkg/apis/management/v1"
 	storagev1 "github.com/loft-sh/api/v4/pkg/apis/storage/v1"
+	extconfig "github.com/loft-sh/vcluster-docs/hack/platform/partials/extconfig"
 	"github.com/loft-sh/vcluster-docs/hack/platform/util"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -893,4 +894,18 @@ spec:
 		},
 		Create: true,
 	})
+
+	util.DefaultRequire = false
+
+	paths := []string{
+		"external/platform/apiKey",
+		"external/platform/autoSleep",
+		"external/platform/autoDelete",
+		"external/platform",
+		"external",
+	}
+
+	for _, p := range paths {
+		util.GenerateFromPath(util.GenerateSchema(&extconfig.Config{}), util.BasePath+"/config", p)
+	}
 }
