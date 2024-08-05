@@ -1,0 +1,155 @@
+---
+title: GKE Workload Identity
+sidebar_label: GKE Workload Identity
+sidebar_class_name: pro
+sidebar_position: 2
+---
+
+import CodeBlock from '@theme/CodeBlock';
+
+import DeployBeta from '@site/vcluster/_partials/deploy/deploy-beta.mdx'
+import ProAdmonition from '@site/vcluster/_partials/admonitions/pro-admonition.mdx'
+import GetResourceName from '@site/vcluster/integrations/pod-identity/_partials/get-resource-name.mdx'
+
+import GKEWorkloadIdentityTestDeployment from '!!raw-loader!@site/vcluster/integrations/pod-identity/_code/gcs-list-buckets-deployment.yaml'
+
+<ProAdmonition/>
+
+# Integrating GCP Workload Identity with vCluster
+
+This tutorial guides you through the process of integrating GCP Service Accounts with your vCluster using Workload Identity.
+
+Setting up Workload Identity requires you to link a GCP Service Account with the Kubernetes Service Account (KSA) used by your workloads.
+This KSA needs to be available in the host cluster in which your vCluster instance runs.
+
+To achieve this setup, we'll need to use the [sync.toHost feature][sync-toHost-docs] in order to expose the KSA in the host cluster together with the vCluster Platform API to retrieve the updated name of the KSA in the host cluster.
+
+### Prerequisites
+This guide assumes you have the following prerequisites:
+- `kubectl` installed
+- `gcloud` CLI installed and configured
+- A running GKE cluster with Workload Identity Federation enabled ([GCP docs][gcloud-gke-workload-identity])
+
+### Step-by-Step Guide
+
+#### 1. Start vCluster Platform and create access key
+
+In order to integrate your workloads with GKE Workload Identity, you'll need a vCluster Platform instance running.
+If you don't have one already, follow the [vCluster Platform installation guide][vcluster-platform-install-link].
+
+Once you're done, you'll need to create a new access key. This will allow you to use the vCluster Platform API.
+Please follow this [guide to create a new access key][access-key-link].
+
+#### 2. Set Up Environment Variables
+
+Next, you need to set up the necessary environment variables. These variables include information about your GCP project, vCluster details, and authentication keys.
+
+```bash
+# Set up environment variables
+export GSA_NAME=my-gke-sa
+export VCLUSTER_KSA_NAME=demo-sa
+export VCLUSTER_KSA_NAMESPACE=default
+export GCP_PROJECT_ID=my-gcp-project-id-12345 # Replace with your actual GCP project ID
+export VCLUSTER_NAME=my-vcluster
+export HOST=https://my.loft.host  # Replace with your actual host
+export ACCESS_KEY=abcd1234 # Replace with your actual vCluster Platform access key
+```
+
+Before proceeding adjust all values to your specific case, make sure to specify correct GCP project ID, vCluster Platform host and auth key.
+
+#### 3. Read Updated Name From vCluster Platform API
+
+<GetResourceName />
+
+#### 4. Create vCluster Configuration
+
+Create `vcluster.yaml` file with following content:
+
+```yaml
+sync:
+  toHost:
+    serviceAccounts:
+      enabled: true
+```
+
+#### 5. Deploy vCluster
+
+<DeployBeta />
+
+#### 6. Connect to vCluster
+
+Establish a connection to your vCluster instance:
+
+```bash
+vcluster connect ${VCLUSTER_NAME}
+```
+
+#### 7. Create Example Workload
+
+Create a file named `gcs-list-buckets-deployment.yaml` with the following content:
+
+<CodeBlock language="yaml">{GKEWorkloadIdentityTestDeployment}</CodeBlock>
+
+Apply the deployment:
+
+```bash
+kubectl apply -f gcs-list-buckets-deployment.yaml
+```
+
+#### 9. Create a GCP Service Account
+
+Create a new GCP Service Account (SA) that will be used for workload identity.
+
+```bash
+# Create a new GCP Service Account
+gcloud iam service-accounts create ${GSA_NAME} \
+  --display-name "Workload Identity experiment SA"
+```
+
+#### 10. Bind IAM Policies to the GCP Service Account
+
+Bind the necessary IAM policies to the GCP Service Account, allowing it to be used by the Kubernetes Service Account and to list GCS buckets.
+
+```bash
+# Bind IAM policy for Workload Identity User
+gcloud iam service-accounts add-iam-policy-binding ${GSA_NAME}@${GCP_PROJECT_ID}.iam.gserviceaccount.com \
+  --member "serviceAccount:${GCP_PROJECT_ID}.svc.id.goog[${VCLUSTER_NAME}/${KSA_NAME}]" \
+  --role "roles/iam.workloadIdentityUser"
+
+# Bind IAM policy for Storage Object Viewer
+gcloud projects add-iam-policy-binding ${GCP_PROJECT_ID} \
+  --member "serviceAccount:${GSA_NAME}@${GCP_PROJECT_ID}.iam.gserviceaccount.com" \
+  --role "roles/storage.objectViewer"
+
+# Add IAM policy binding to the GCP project
+gcloud projects add-iam-policy-binding ${GCP_PROJECT_ID} \
+  --member "serviceAccount:${GSA_NAME}@${GCP_PROJECT_ID}.iam.gserviceaccount.com" \
+  --role "roles/editor"
+```
+
+#### 11. Annotate the Kubernetes Service Account
+
+Annotate the Kubernetes Service Account with the GCP Service Account email.
+
+```bash
+# Annotate the Kubernetes Service Account
+kubectl annotate serviceaccount \
+  --namespace ${VCLUSTER_KSA_NAMESPACE} \
+  ${VCLUSTER_KSA_NAME} \
+  iam.gke.io/gcp-service-account=${GSA_NAME}@${GCP_PROJECT_ID}.iam.gserviceaccount.com
+```
+
+#### 12. Verify the Setup
+
+Verify that the setup is complete and the pod is able to list the GCS buckets using the IAM role.
+
+```bash
+kubectl logs -l app=gcs-list-buckets -n default
+```
+
+Following these steps will integrate your GCP Service Account with your vCluster, allowing you to manage resources securely and efficiently.
+
+[vcluster-platform-install-link]: ../../../platform/install/quick-start-guide
+[access-key-link]: ../../../platform/users/advanced/access-keys
+[gcloud-gke-workload-identity]: https://cloud.google.com/kubernetes-engine/docs/how-to/workload-identity#enable_on_clusters_and_node_pools
+[sync-toHost-docs]: ../../configure/vcluster-yaml/sync/to-host/README.mdx
