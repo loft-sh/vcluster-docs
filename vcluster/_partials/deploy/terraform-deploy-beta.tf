@@ -13,6 +13,7 @@ resource "helm_release" "my_vcluster" {
   chart            = "vcluster"
   version          = "0.20.0-beta.12"
 
+  # If you didn't create a vcluster.yaml, remove the values section.
   values = [
     file("${path.module}/vcluster.yaml")
   ]
