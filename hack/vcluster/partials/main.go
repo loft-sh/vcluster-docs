@@ -31,6 +31,8 @@ var paths = []string{
 	"sync/fromHost/nodes",
 	"sync/fromHost/ingressClasses",
 	"sync/fromHost/events",
+	"sync/fromHost/runtimeClasses",
+	"sync/fromHost/priorityClasses",
 	"sync/fromHost/csiStorageCapacities",
 	"sync/fromHost/csiNodes",
 	"sync/fromHost/csiDrivers",
