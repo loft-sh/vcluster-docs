@@ -568,19 +568,6 @@ func renderField(
 			fieldContent = fmt.Sprintf(TemplateConfigField, true, "", headlinePrefix, fieldName, required, fieldType, "", "", false, anchorName, description, fieldContent)
 		}
 	} else {
-		if fieldType == "boolean" {
-			fieldDefault = "false"
-			if required {
-				fieldDefault = "true"
-				required = false
-			}
-		} else {
-			fieldDefault, ok = fieldSchema.Default.(string)
-			if !ok {
-				fieldDefault = ""
-			}
-		}
-
 		enumValues := GetEumValues(fieldSchema, required, &fieldDefault)
 		anchorName := anchorPrefix + fieldName
 		fieldContent = fmt.Sprintf(TemplateConfigField, expandable, " open", headlinePrefix, fieldName, required, fieldType, fieldDefault, enumValues, false, anchorName, description, fieldContent)
