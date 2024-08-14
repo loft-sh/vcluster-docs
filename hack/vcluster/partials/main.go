@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 
+	"github.com/ghodss/yaml"
 	"github.com/loft-sh/vcluster-config/config"
 	"github.com/loft-sh/vcluster-docs/hack/platform/util"
 )
@@ -11,6 +12,7 @@ const OutDir = "vcluster/_partials/config"
 
 // we only generate paths we actually need
 var paths = []string{
+	"integrations",
 	"telemetry",
 	"sync/toHost/volumeSnapshots",
 	"sync/toHost/storageClasses",
@@ -91,8 +93,14 @@ func main() {
 	_ = os.RemoveAll(OutDir)
 	util.DefaultRequire = false
 
+	defaults := map[string]interface{}{}
+	err := yaml.Unmarshal([]byte(config.Values), &defaults)
+	if err != nil {
+		panic(err)
+	}
+
 	schema := util.GenerateSchema(&config.Config{})
 	for _, path := range paths {
-		util.GenerateFromPath(schema, OutDir, path)
+		util.GenerateFromPath(schema, OutDir, path, defaults)
 	}
 }

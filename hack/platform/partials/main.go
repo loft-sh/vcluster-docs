@@ -906,6 +906,6 @@ spec:
 	}
 
 	for _, p := range paths {
-		util.GenerateFromPath(util.GenerateSchema(&extconfig.Config{}), util.BasePath+"/config", p)
+		util.GenerateFromPath(util.GenerateSchema(&extconfig.Config{}), util.BasePath+"/config", p, nil)
 	}
 }

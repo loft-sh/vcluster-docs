@@ -332,7 +332,7 @@ func GenerateObjectOverview(information *ObjectInformation) {
 	})
 }
 
-func GenerateFromPath(schema *jsonschema.Schema, basePath string, schemaPath string) {
+func GenerateFromPath(schema *jsonschema.Schema, basePath string, schemaPath string, defaults map[string]interface{}) {
 	splittedSchemaPath := strings.Split(schemaPath, "/")
 
 	fieldSchema := schema
@@ -344,6 +344,13 @@ func GenerateFromPath(schema *jsonschema.Schema, basePath string, schemaPath str
 		fieldSchema, ok = fieldSchema.Properties.Get(property)
 		if !ok {
 			panic("Couldn't find schema path '" + schemaPath + "' at '" + property + "'")
+		}
+
+		if propertyMap, ok := defaults[property]; ok {
+			defaults, ok = propertyMap.(map[string]interface{})
+			if !ok {
+				defaults = nil
+			}
 		}
 
 		if i+1 == len(splittedSchemaPath) {
@@ -375,6 +382,7 @@ func GenerateFromPath(schema *jsonschema.Schema, basePath string, schemaPath str
 		schema.Definitions,
 		false,
 		1,
+		defaults,
 	)
 	filePath := path.Join(basePath, schemaPath) + ".mdx"
 
@@ -392,7 +400,7 @@ func GenerateResource(schema *jsonschema.Schema, basePath string, subResource bo
 }
 
 func createSections(pageFile string, schema *jsonschema.Schema, definitions jsonschema.Definitions, skipMetadata, subResource bool, metadataOnly bool, depth int) string {
-	content := buildContent("", schema, definitions, metadataOnly, depth)
+	content := buildContent("", schema, definitions, metadataOnly, depth, nil)
 	importContent := ""
 	if !skipMetadata && !metadataOnly {
 		if subResource {
@@ -413,7 +421,7 @@ func createSections(pageFile string, schema *jsonschema.Schema, definitions json
 	return content
 }
 
-func buildContent(prefix string, schema *jsonschema.Schema, definitions jsonschema.Definitions, metadataOnly bool, depth int) string {
+func buildContent(prefix string, schema *jsonschema.Schema, definitions jsonschema.Definitions, metadataOnly bool, depth int, defaults interface{}) string {
 	content := ""
 	if schema.Properties != nil {
 		for pair := schema.Properties.Oldest(); pair != nil; pair = pair.Next() {
@@ -440,6 +448,11 @@ func buildContent(prefix string, schema *jsonschema.Schema, definitions jsonsche
 				}
 			}
 
+			var fieldDefaults interface{}
+			if defaultsMap, ok := defaults.(map[string]interface{}); ok && defaultsMap != nil {
+				fieldDefaults = defaultsMap[fieldName]
+			}
+
 			fieldContent := renderField(
 				prefix,
 				fieldName,
@@ -447,6 +460,7 @@ func buildContent(prefix string, schema *jsonschema.Schema, definitions jsonsche
 				definitions,
 				metadataOnly,
 				depth,
+				fieldDefaults,
 			)
 			if fieldContent != "" {
 				content += "\n\n" + fieldContent
@@ -464,6 +478,7 @@ func renderField(
 	definitions jsonschema.Definitions,
 	metadataOnly bool,
 	depth int,
+	defaults interface{},
 ) string {
 	headlinePrefix := strings.Repeat("#", int(math.Min(5, float64(depth+1)))) + " "
 	anchorPrefix := strings.TrimPrefix(strings.ReplaceAll(prefix, prefixSeparator, anchorSeparator), anchorSeparator)
@@ -488,10 +503,9 @@ func renderField(
 	if ref != "" {
 		refSplit := strings.Split(ref, "/")
 		nestedSchema, ok := definitions[refSplit[len(refSplit)-1]]
-
 		if ok {
 			newPrefix := prefix + fieldName + prefixSeparator
-			fieldContent = buildContent(newPrefix, nestedSchema, definitions, metadataOnly, depth+1)
+			fieldContent = buildContent(newPrefix, nestedSchema, definitions, metadataOnly, depth+1, defaults)
 			expandable = true
 		}
 	}
@@ -568,6 +582,17 @@ func renderField(
 			fieldContent = fmt.Sprintf(TemplateConfigField, true, "", headlinePrefix, fieldName, required, fieldType, "", "", false, anchorName, description, fieldContent)
 		}
 	} else {
+		if defaults != nil {
+			fieldDefault = fmt.Sprintf("%v", defaults)
+			if fieldDefault == "map[]" {
+				fieldDefault = "{}"
+			}
+			fieldDefault = strings.ReplaceAll(fieldDefault, "[", "&#91;")
+			fieldDefault = strings.ReplaceAll(fieldDefault, "]", "&#93;")
+			fieldDefault = strings.ReplaceAll(fieldDefault, "{", "&#123;")
+			fieldDefault = strings.ReplaceAll(fieldDefault, "}", "&#125;")
+		}
+
 		enumValues := GetEumValues(fieldSchema, required, &fieldDefault)
 		anchorName := anchorPrefix + fieldName
 		fieldContent = fmt.Sprintf(TemplateConfigField, expandable, " open", headlinePrefix, fieldName, required, fieldType, fieldDefault, enumValues, false, anchorName, description, fieldContent)
