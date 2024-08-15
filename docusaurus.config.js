@@ -146,13 +146,6 @@ const config = {
       mermaid: {
         theme: {light: 'default', dark: 'dark'},
       },
-      announcementBar: {
-        id: 'beta',
-        isCloseable: false,
-        content: 'vCluster v0.20 is in beta. Do not use in production. Questions? Join our <a href="https://slack.loft.sh" target="_blank">Slack community</a>.',
-        backgroundColor: '#f2f2f2',
-        textColor: '#17202A',
-      },
       tableOfContents: {
         // default is ##, ### so add ####
         minHeadingLevel: 2,
