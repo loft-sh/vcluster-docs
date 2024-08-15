@@ -100,7 +100,7 @@ const config = {
         lastVersion: "current",
         versions: {
           current: {
-            label: "v0.20",
+            label: "v0.20 Stable",
             banner: "none",
             badge: false,
           },
