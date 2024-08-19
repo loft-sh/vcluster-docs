@@ -12,6 +12,7 @@ const OutDir = "vcluster/_partials/config"
 
 // we only generate paths we actually need
 var paths = []string{
+	"policies/podSecurityStandard",
 	"integrations",
 	"telemetry",
 	"sync/toHost/volumeSnapshots",
@@ -42,7 +43,6 @@ var paths = []string{
 	"sync",
 	"rbac",
 	"policies/resourceQuota",
-	"policies/podSecurityStandard",
 	"policies/networkPolicy",
 	"policies/limitRange",
 	"policies/centralAdmission",
