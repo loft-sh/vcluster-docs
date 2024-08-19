@@ -346,15 +346,17 @@ func GenerateFromPath(schema *jsonschema.Schema, basePath string, schemaPath str
 			panic("Couldn't find schema path '" + schemaPath + "' at '" + property + "'")
 		}
 
+		if i+1 == len(splittedSchemaPath) {
+			break
+		}
+
 		if propertyMap, ok := defaults[property]; ok {
 			defaults, ok = propertyMap.(map[string]interface{})
 			if !ok {
 				defaults = nil
 			}
-		}
-
-		if i+1 == len(splittedSchemaPath) {
-			break
+		} else {
+			defaults = nil
 		}
 
 		// resolve schema for next jump
@@ -448,11 +450,6 @@ func buildContent(prefix string, schema *jsonschema.Schema, definitions jsonsche
 				}
 			}
 
-			var fieldDefaults interface{}
-			if defaultsMap, ok := defaults.(map[string]interface{}); ok && defaultsMap != nil {
-				fieldDefaults = defaultsMap[fieldName]
-			}
-
 			fieldContent := renderField(
 				prefix,
 				fieldName,
@@ -460,7 +457,7 @@ func buildContent(prefix string, schema *jsonschema.Schema, definitions jsonsche
 				definitions,
 				metadataOnly,
 				depth,
-				fieldDefaults,
+				defaults,
 			)
 			if fieldContent != "" {
 				content += "\n\n" + fieldContent
@@ -482,6 +479,12 @@ func renderField(
 ) string {
 	headlinePrefix := strings.Repeat("#", int(math.Min(5, float64(depth+1)))) + " "
 	anchorPrefix := strings.TrimPrefix(strings.ReplaceAll(prefix, prefixSeparator, anchorSeparator), anchorSeparator)
+
+	if defaultsMap, ok := defaults.(map[string]interface{}); ok && defaultsMap != nil {
+		defaults = defaultsMap[fieldName]
+	} else {
+		defaults = nil
+	}
 
 	fieldContent := ""
 	isNameObjectMap := false
