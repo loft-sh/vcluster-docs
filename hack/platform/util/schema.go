@@ -488,6 +488,7 @@ func renderField(
 
 	fieldContent := ""
 	isNameObjectMap := false
+	isObjectOfType := false
 	expandable := false
 
 	var patternPropertySchema *jsonschema.Schema
@@ -501,6 +502,9 @@ func renderField(
 		isNameObjectMap = true
 	} else if fieldSchema.Ref != "" {
 		ref = fieldSchema.Ref
+	} else if fieldSchema.AdditionalProperties != nil && fieldSchema.AdditionalProperties.Ref != "" {
+		ref = fieldSchema.AdditionalProperties.Ref
+		isObjectOfType = true
 	}
 
 	if ref != "" {
@@ -545,6 +549,7 @@ func renderField(
 	}
 
 	fieldType := fieldSchema.Type
+
 	if fieldType == "" && fieldSchema.OneOf != nil {
 		for _, oneOfType := range fieldSchema.OneOf {
 			if fieldType != "" {
@@ -575,6 +580,10 @@ func renderField(
 
 	if fieldType == "" {
 		fieldType = "object"
+	}
+
+	if isObjectOfType {
+		fieldType = "&#123;key: " + fieldType + "&#125;"
 	}
 
 	if ref != "" {
