@@ -97,13 +97,16 @@ const config = {
         path: 'vcluster',
         routeBasePath: 'vcluster',
         sidebarPath: require.resolve('./sidebarsVCluster.js'),
-        lastVersion: "current",
+        lastVersion: "0.20.0",
         versions: {
           current: {
+            label: "main 🚧",
+          },
+          "0.20.0": {
             label: "v0.20 Stable",
             banner: "none",
             badge: false,
-          },
+          }
         },
       },
     ],
