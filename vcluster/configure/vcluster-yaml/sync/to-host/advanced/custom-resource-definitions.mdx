@@ -1,0 +1,244 @@
+---
+title: Custom Resource Definitions
+sidebar_label: customResourceDefinitions
+sidebar_position: 1
+sidebar_class_name: pro
+description: Configuration for ...
+---
+
+import CustomResourceDefinitions from '@site/vcluster/_partials/config/sync/toHost/customResourceDefinitions.mdx'
+import ProAdmonition from '@site/vcluster/_partials/admonitions/pro-admonition.mdx'
+
+<ProAdmonition/>
+
+vCluster allows you to sync custom resources from the vCluster to the host cluster. This allows you to sync arbitrary resources that are by default not synced by vCluster. This only works for resources that have a custom resource definition in the host cluster.
+
+If those custom resources will create other resources inside the host cluster, vCluster will try to find them and sync them back to the host cluster as well. E.g. a [cert-manager](https://cert-manager.io/) certificate creates a secret which will be synced back automatically into the vCluster.
+
+vCluster will automatically add the required cluster and namespace RBAC permissions for retrieving the custom resource definition and syncing the resources from the vCluster to the host cluster.
+<br />
+
+:::info Only Namespace-Scoped Resource
+This feature currently only works for namespace-scoped resources only.
+:::
+
+:::info Multi-Namespace-Mode
+If you want to sync many custom resources, consider using [multi-namespace-mode](../../../experimental/multi-namespace-mode).
+:::
+
+## Enable Custom Resource Syncing
+
+To enable custom resource syncing, figure out what CRDs you want to sync via `kubectl get crds`. Copy the name, e.g. `certificates.cert-manager.io` and then configure the `vcluster.yaml` like this:
+```yaml
+sync:
+  toHost:
+    customResourceDefinitions:
+      certificates.cert-manager.io:
+        enabled: true
+```
+
+## Translate Patches
+
+You can modify the sync behaviour with translate patches that target specific paths. Currently there is 3 different kinds of patches supported.
+
+:::info Wildcard patches
+You can use `*` in paths to select all entries of an array or object, e.g. `spec.containers[*].name` or `spec.containers[*].volumeMounts[*]`. vCluster will then just call the patch multiple times.
+:::
+
+### Reference patches
+
+Tell vCluster that this specific field points to a different resource that should get rewritten. vCluster will also automatically import the referenced resource if it can find it in the host cluster. E.g.:
+```yaml
+sync:
+  toHost:
+    customResourceDefinitions:
+      certificates.cert-manager.io:
+        enabled: true
+        translate:
+        - path: spec.secretName
+          reference:
+            apiVersion: v1
+            kind: Secret
+```
+
+This will tell vCluster to translate the path `spec.secretName` as it points to a secret. If the secret is created in the host cluster, vCluster will automatically import it.
+
+:::info Multi-Namespace-Mode
+This is not needed in multi-namespace-mode as names are not translated, so you can omit this.
+:::
+
+### Labels patches
+
+Tell vCluster that this specific field is a label selector. This is needed to avoid conflicts between different namespaces and vClusters, so vCluster will add a label called `vcluster.loft.sh/namespace` to only select resources that are in the specific virtual namespace. To translate a labels field, you can add:
+```yaml
+sync:
+  toHost:
+    customResourceDefinitions:
+      my-resource.my-group.io:
+        enabled: true
+        translate:
+        - path: spec.labelSelector
+          labels: {}
+```
+
+:::info Multi-Namespace-Mode
+This is not needed in multi-namespace-mode as labels are not translated, so you can omit this.
+:::
+
+### JavaScript Expressions
+
+These are powerful JavaScript ES6 compatible expressions to change a field while syncing. You can define how it should changed when syncing from the vCluster into the host cluster or when syncing from the host cluster into the virtual cluster. To add a suffix to certificate dns names you can do:
+```yaml
+sync:
+  toHost:
+    customResourceDefinitions:
+      certificates.cert-manager.io:
+        enabled: true
+        translate:
+        - path: spec.dnsNames[*]
+          expression:
+            toHost: '"my-prefix"+value'
+            # optional fromHost, if omitted patches fromHost will be discarded
+            # fromHost: 'value.slice("my-prefix".length)'
+```
+
+There is also a variable called `context` besides `value` that can be used to access vCluster specific data:
+* `context.vcluster.name`: Name of the vCluster
+* `context.vcluster.namespace`: Namespace of the vCluster
+* `context.vcluster.config`: Config of the vCluster, basically `vcluster.yaml` merged with the defaults
+* `context.hostObject`: Host object (can be null if not available)
+* `context.virtualObject`: Virtual object (can be null if not available)
+* `context.path`: The matched path on the object, useful when using wildcard path selectors (*)
+
+## Full Example: Using cert-manager custom resource in Single-Namespace-Mode (default)
+
+To configure vCluster to sync ClusterIssuers from the host cluster (from [cert-manager](https://cert-manager.io/)):
+```yaml
+sync:
+  toHost:
+    # we want to rewrite ingress cert-manager.io/issuer annotations
+    ingresses:
+      enabled: true
+      translate:
+      - path: metadata.annotations["cert-manager.io/issuer"]
+        reference:
+          apiVersion: cert-manager.io/v1
+          kind: Issuer
+
+    customResourceDefinitions:
+      # sync certificates
+      certificates.cert-manager.io:
+        enabled: true
+        translate:
+        - path: spec.secretName
+          reference:
+            apiVersion: v1
+            kind: Secret
+        - path: spec.issuerRef
+          reference:
+            apiVersion: cert-manager.io/v1
+            kind: Issuer   # defaults to Issuer
+            kindPath: kind # to also allow ClusterIssuer
+            namePath: name
+        - path: status.nextPrivateKeySecretName
+          reference:
+            apiVersion: v1
+            kind: Secret
+      # sync issuers
+      issuers.cert-manager.io:
+        enabled: true
+        translate:
+        - path: spec.acme.privateKeySecretRef.name
+          reference:
+            apiVersion: v1
+            kind: Secret
+
+  fromHost:
+    customResourceDefinitions:
+      # sync cluster issuers in read-only mode
+      clusterissuers.cert-manager.io:
+        enabled: true
+```
+
+After you started the vCluster with the above configuration you should see that the custom resource definitions have synced:
+```
+$ kubectl get customresourcedefinitions
+NAME                             CREATED AT
+certificates.cert-manager.io     2024-08-21T14:36:07Z
+clusterissuers.cert-manager.io   2024-08-21T14:36:09Z
+issuers.cert-manager.io          2024-08-21T14:36:08Z
+```
+
+Next you can deploy a self-signed issuer into the vCluster:
+```
+echo "apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: letsencrypt-staging
+spec:
+  selfSigned: {}" | kubectl apply -f -
+```
+
+And then create a certificate via:
+```
+echo "apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: example-com
+spec:
+  secretName: example-com-tls
+  issuerRef:
+    name: letsencrypt-staging
+  commonName: example.com
+  dnsNames:
+  - www.example.com" | kubectl apply -f -
+```
+
+After a couple of seconds you should see the certificate being ready and the secret synced to the vCluster:
+```
+$ kubectl get certificates
+NAME                     READY   SECRET                    AGE
+example-com              True    example-com-tls           1m
+```
+
+Next check if the secret is there:
+```
+$ kubectl get secrets
+NAME                      TYPE                DATA   AGE
+example-com-tls           kubernetes.io/tls   3      1m
+```
+
+That's it, you have configured vCluster to sync cert-manager custom resources and imported the created secrets back into the vCluster.
+
+## Full Example: Using cert-manager custom resource in Multi-Namespace-Mode
+
+The same example as above, would look like this in [multi-namespace-mode](../../../experimental/multi-namespace-mode):
+
+```yaml
+experimental:
+  multiNamespaceMode:
+    enabled: true
+
+sync:
+  toHost:
+    secrets:
+      all: true # sync all secrets
+
+    ingresses:
+      enabled: true
+
+    customResourceDefinitions:
+      certificates.cert-manager.io:
+        enabled: true
+      issuers.cert-manager.io:
+        enabled: true
+
+  fromHost:
+    customResourceDefinitions:
+      clusterissuers.cert-manager.io:
+        enabled: true
+```
+
+## Config reference
+
+<CustomResourceDefinitions/>

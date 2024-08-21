@@ -12,6 +12,8 @@ const OutDir = "vcluster/_partials/config"
 
 // we only generate paths we actually need
 var paths = []string{
+	"sync/fromHost/customResourceDefinitions",
+	"sync/toHost/customResourceDefinitions",
 	"policies/podSecurityStandard",
 	"integrations",
 	"telemetry",
