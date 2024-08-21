@@ -39,7 +39,19 @@ Content locations:
 - platform: vCluster Platform content
 
 
-## Generate partials
+## Generate new vCluster version
+
+```bash
+npm run docusaurus docs:version:vcluster 0.20.0
+```
+
+## Generate vCluster partials
+
+```bash
+go run hack/vcluster/partials/main.go
+```
+
+## Generate platform partials
 
 ```bash
 go run hack/platform/partials/main.go

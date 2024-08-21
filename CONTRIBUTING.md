@@ -31,15 +31,7 @@ This command generates static content into the `build` directory and can be serv
 
 Serves the built website locally.
 
-Note: Before making a pull request, it's recommended to run `npm run serve` to fix any broken links that may have been introduced. 
-
-## Generate partials for vCluster values
-
-1. update vcluster repo
-2. run `go run ./hack/schema/main.go`
-3. copy jsonschema from `chart/values.schema.json`
-4. paste into `vcluster-docs/schema.json`
-5. run `./hack/gen-partials.sh`
+Note: Before making a pull request, it's recommended to run `npm run serve` to fix any broken links that may have been introduced.
 
 
 ## Style guide
@@ -67,7 +59,7 @@ Loft Labs is the company. Do not use "Loft" or "Loft Platform" to refer to vClus
 "vCluster" is a trademark. There are strict legal frameworks around how to use a trademark, e.g. it cannot be used in plural. **Do not use "vClusters"**.
 
 ### Products:
-  - vCluster: 
+  - vCluster:
   - vCluster Pro: a single enhanced/paid/upgraded virtual cluster that uses Pro functionality (as labeled "Pro")
   - vCluster Platform: the management platform and UI for managing open source and commercial vCluster instances
 
