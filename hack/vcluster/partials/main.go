@@ -15,7 +15,6 @@ var paths = []string{
 	"sync/fromHost/customResourceDefinitions",
 	"sync/toHost/customResourceDefinitions",
 	"policies/podSecurityStandard",
-	"integrations",
 	"telemetry",
 	"sync/toHost/volumeSnapshots",
 	"sync/toHost/storageClasses",
