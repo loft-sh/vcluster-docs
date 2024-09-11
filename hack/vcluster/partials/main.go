@@ -50,6 +50,7 @@ var paths = []string{
 	"policies",
 	"plugins",
 	"integrations/metricsServer",
+	"integrations/externalSecrets",
 	"integrations",
 	"networking/resolveDNS",
 	"networking/replicateServices",
