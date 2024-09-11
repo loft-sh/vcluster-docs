@@ -49,6 +49,7 @@ var paths = []string{
 	"policies/centralAdmission",
 	"policies",
 	"plugins",
+	"integrations/kubeVirt",
 	"integrations/metricsServer",
 	"integrations",
 	"networking/resolveDNS",
