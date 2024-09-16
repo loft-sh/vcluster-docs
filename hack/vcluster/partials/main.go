@@ -51,6 +51,7 @@ var paths = []string{
 	"plugins",
 	"integrations/kubeVirt",
 	"integrations/metricsServer",
+	"integrations/externalSecrets",
 	"integrations",
 	"networking/resolveDNS",
 	"networking/replicateServices",

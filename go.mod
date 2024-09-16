@@ -8,7 +8,7 @@ require (
 	github.com/invopop/jsonschema v0.12.1-0.20240219232115-a4467074499d
 	github.com/loft-sh/agentapi/v4 v4.0.0-alpha.16
 	github.com/loft-sh/api/v4 v4.0.0-alpha.16
-	github.com/loft-sh/vcluster-config v0.0.0-20240821142255-d57a5fd76b49
+	github.com/loft-sh/vcluster-config v0.0.0-20240909081734-1a85a054049a
 	k8s.io/apimachinery v0.30.1
 	sigs.k8s.io/controller-runtime v0.18.4
 )
@@ -19,6 +19,7 @@ require (
 	github.com/asaskevich/govalidator v0.0.0-20230301143203-a9d515a09cc2 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
+	github.com/blang/semver v3.5.1+incompatible // indirect
 	github.com/blang/semver/v4 v4.0.0 // indirect
 	github.com/buger/jsonparser v1.1.1 // indirect
 	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
