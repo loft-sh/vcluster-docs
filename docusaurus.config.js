@@ -208,9 +208,14 @@ const config = {
       prism: {
         additionalLanguages: ["bash", "hcl"],
       },
+      announcementBar: {
+        id: 'platform-upgrade',
+        content: '🚀 <strong>Platform 4.0 is now available!</strong> Check out the <a href="/docs/platform/administer/upgrade-migrate/upgrade-platform#upgrading-from-v3x-to-v40">latest docs</a> and upgrade today!',
+        backgroundColor: '#4a90e2',
+        textColor: '#ffffff',
+        isCloseable: false,
+     },
     }),
 };
 
 export default config;
-
-
