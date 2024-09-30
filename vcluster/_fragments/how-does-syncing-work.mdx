@@ -1,0 +1,70 @@
+Syncing is the process where vCluster copies a resource between the virtual cluster and the host cluster. It's the basic principle vCluster uses to emulate a fully functional Kubernetes cluster.
+
+
+vCluster only syncs low-level resources by default, such as pods, secrets, configmaps or services. As soon as one of these resources are created in the virtual cluster, vCluster will sync it to the other side. As soon as a resource was copied by vCluster, it will start watching for changes to the resource on either side, so when a controller changes something on the host cluster side, the vCluster will sync that change to the virtual cluster or when a change on the virtual cluster side happens, it will sync it to the host cluster, to make sure the resource is in sync.
+
+Let's take `Ingress` as an example. A user that creates the following ingress in the virtual cluster:
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: nginx
+spec:
+  tls:
+  - hosts:
+      - https-example.foo.com
+    secretName: testsecret-tls
+  rules:
+  - http:
+      paths:
+      - path: /
+        pathType: ImplementationSpecific
+        backend:
+          service:
+            name: nginx
+            port:
+              number: 80
+```
+
+When copying to the host cluster, the vCluster will change the ingress to:
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  annotations:
+    vcluster.loft.sh/object-host-name: nginx-x-default-x-vcluster
+    vcluster.loft.sh/object-host-namespace: vcluster
+    vcluster.loft.sh/object-kind: networking.k8s.io/v1, Kind=Ingress
+    vcluster.loft.sh/object-name: nginx
+    vcluster.loft.sh/object-namespace: default
+    vcluster.loft.sh/object-uid: bb8bea39-8c0c-4295-8616-6a20b3b1900a
+  labels:
+    vcluster.loft.sh/managed-by: vcluster
+    vcluster.loft.sh/namespace: default
+  name: nginx-x-default-x-vcluster
+  namespace: vcluster
+spec:
+  rules:
+  - http:
+      paths:
+      - backend:
+          service:
+            name: nginx-x-default-x-vcluster
+            port:
+              number: 80
+        path: /
+        pathType: ImplementationSpecific
+  tls:
+  - hosts:
+    - https-example.foo.com
+    secretName: testsecret-tls-x-default-x-vcluster
+```
+
+There is a couple of important changes to be noticed:
+* **Name Rewritten**: vCluster rewrites the name of the resource to avoid conflicts in the host cluster. The name is rewritten in the form of `NAME-x-NAMESPACE-x-VCLUSTER_NAME`
+* **Namespace Rewritten**: vCluster rewrites the namespace of the resource to sync everything into the vcluster's namespace.
+* **Annotations / Labels Added**: vCluster adds annotations and labels to identify the resource in the host cluster.
+* **References Rewritten**: vCluster rewrites the `spec.rules[*].http.paths[*].backend.service.name` and `spec.tls[*].secretName` to match the rewritten names of the resources in the host cluster.
+
+vCluster will also keep track from now of the resource within its internal name cache, that tracks the `VIRTUAL NAME <-> HOST NAME` as well as all references used by this resource. In the ingress case, this would be the service `nginx` and the secret `testsecret-tls`. Tracking references helps the vCluster to understand what resources are still needed in the host cluster. For secrets and configmaps this is important, because by default only the needed ones are actually synced to the host cluster.
+
