@@ -70,24 +70,6 @@ This will tell vCluster to translate the path `spec.secretName` as it points to 
 With multi-namespace-mode you only need to rewrite references that include a namespace. You can use the `namespacePath` option to specify the path of the namespace of the reference.
 :::
 
-### Labels patches
-
-Tell vCluster that this specific field is a label selector. This is needed to avoid conflicts between different namespaces and vClusters, so vCluster will add a label called `vcluster.loft.sh/namespace` to only select resources that are in the specific virtual namespace. To translate a labels field, you can add:
-```yaml
-sync:
-  toHost:
-    customResourceDefinitions:
-      my-resource.my-group.io:
-        enabled: true
-        translate:
-        - path: spec.labelSelector
-          labels: {}
-```
-
-:::info Multi-Namespace-Mode
-This is not needed in multi-namespace-mode as labels are not translated, so you can omit this.
-:::
-
 ### JavaScript Expressions
 
 These are powerful JavaScript ES6 compatible expressions to change a field while syncing. You can define how it should changed when syncing from the vCluster into the host cluster or when syncing from the host cluster into the virtual cluster. To add a suffix to certificate dns names you can do:
@@ -100,6 +82,7 @@ sync:
         translate:
         - path: spec.dnsNames[*]
           expression:
+            # specifies the sync direction here again, because you can also react on change for fromHost with an expression
             toHost: '"my-prefix"+value'
             # optional fromHost, if omitted patches fromHost will be discarded
             # fromHost: 'value.slice("my-prefix".length)'
@@ -112,6 +95,66 @@ There is also a variable called `context` besides `value` that can be used to ac
 * `context.hostObject`: Host object (can be null if not available)
 * `context.virtualObject`: Virtual object (can be null if not available)
 * `context.path`: The matched path on the object, useful when using wildcard path selectors (*)
+
+For example, let's assume you want to add `www.` to every DNS name specified in a cert-manager certificate in the path `spec.dnsNames`, you could use the following patch:
+```yaml
+sync:
+  toHost:
+    customResourceDefinitions:
+      certificates.cert-manager.io:
+        enabled: true
+        translate:
+        - path: spec.dnsNames[*]
+          expression:
+            # specifies the sync direction here again, because you can also react on change for fromHost
+            toHost: "value.startsWith('www.') ? value : `www.${value}`"
+            # specifies how to sync back changes to the virtual cluster. If omitted will not sync back changes.
+            fromHost: "value.startsWith('www.') ? value.slice(4) : value"
+```
+
+With that patch, creating a new certificate within the vCluster like this:
+```yaml
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: name-within-vcluster
+spec:
+  dnsNames:
+    - example.com
+```
+
+Would create the following certificate in the host cluster:
+```yaml
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: synced-name
+spec:
+  dnsNames:
+    - www.example.com # the patch added www. to this field
+```
+
+When you change now the certificate in the host cluster like this:
+```yaml
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: synced-name
+spec:
+  dnsNames:
+    - www.other-domain.com # changed from www.example.com
+```
+
+vCluster would sync back the certificate like this:
+```yaml
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: name-within-vcluster
+spec:
+  dnsNames:
+    - other-domain.com # the patch removed the www. from www.other-domain.com
+```
 
 ## Full Example: Using cert-manager custom resource in Single-Namespace-Mode (default)
 
