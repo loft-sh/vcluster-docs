@@ -8,8 +8,8 @@ require (
 	github.com/invopop/jsonschema v0.12.1-0.20240219232115-a4467074499d
 	github.com/loft-sh/agentapi/v4 v4.0.0-alpha.16
 	github.com/loft-sh/api/v4 v4.0.0-alpha.16
-	github.com/loft-sh/vcluster-config v0.0.0-20240909081734-1a85a054049a
-	k8s.io/apimachinery v0.30.1
+	github.com/loft-sh/vcluster-config v0.0.0-20241002083900-0c849f7204c4
+	k8s.io/apimachinery v0.30.2
 	sigs.k8s.io/controller-runtime v0.18.4
 )
 
@@ -19,7 +19,6 @@ require (
 	github.com/asaskevich/govalidator v0.0.0-20230301143203-a9d515a09cc2 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
-	github.com/blang/semver v3.5.1+incompatible // indirect
 	github.com/blang/semver/v4 v4.0.0 // indirect
 	github.com/buger/jsonparser v1.1.1 // indirect
 	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
@@ -96,10 +95,11 @@ require (
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
-	k8s.io/api v0.30.1 // indirect
-	k8s.io/apiserver v0.30.1 // indirect
-	k8s.io/client-go v0.30.1 // indirect
-	k8s.io/component-base v0.30.1 // indirect
+	k8s.io/api v0.30.2 // indirect
+	k8s.io/apiextensions-apiserver v0.30.2 // indirect
+	k8s.io/apiserver v0.30.2 // indirect
+	k8s.io/client-go v0.30.2 // indirect
+	k8s.io/component-base v0.30.2 // indirect
 	k8s.io/klog/v2 v2.120.1 // indirect
 	k8s.io/kube-openapi v0.0.0-20240521193020-835d969ad83a // indirect
 	k8s.io/utils v0.0.0-20240502163921-fe8a2dddb1d0 // indirect
