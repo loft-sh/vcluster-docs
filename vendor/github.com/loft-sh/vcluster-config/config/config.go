@@ -353,15 +353,33 @@ func UnmarshalYAMLStrict(data []byte, i any) error {
 // ExportKubeConfig describes how vCluster should export the vCluster kubeconfig.
 type ExportKubeConfig struct {
 	// Context is the name of the context within the generated kubeconfig to use.
-	Context string `json:"context"`
+	Context string `json:"context,omitempty"`
 
 	// Override the default https://localhost:8443 and specify a custom hostname for the generated kubeconfig.
-	Server string `json:"server"`
+	Server string `json:"server,omitempty"`
+
+	// If tls should get skipped for the server
+	Insecure bool `json:"insecure,omitempty"`
+
+	// ServiceAccount can be used to generate a service account token instead of the default certificates.
+	ServiceAccount ExportKubeConfigServiceAccount `json:"serviceAccount,omitempty"`
 
 	// Declare in which host cluster secret vCluster should store the generated virtual cluster kubeconfig.
-	// If this is not defined, vCluster create it with `vc-NAME`. If you specify another name,
+	// If this is not defined, vCluster will create it with `vc-NAME`. If you specify another name,
 	// vCluster creates the config in this other secret.
 	Secret ExportKubeConfigSecretReference `json:"secret,omitempty"`
+}
+
+type ExportKubeConfigServiceAccount struct {
+	// Name of the service account to be used to generate a service account token instead of the default certificates.
+	Name string `json:"name,omitempty"`
+
+	// Namespace of the service account to be used to generate a service account token instead of the default certificates.
+	// If omitted, will use the kube-system namespace.
+	Namespace string `json:"namespace,omitempty"`
+
+	// ClusterRole to assign to the service account.
+	ClusterRole string `json:"clusterRole,omitempty"`
 }
 
 // Declare in which host cluster secret vCluster should store the generated virtual cluster kubeconfig.
@@ -427,8 +445,9 @@ type SyncToHost struct {
 	// PriorityClasses defines if priority classes created within the virtual cluster should get synced to the host cluster.
 	PriorityClasses EnableSwitch `json:"priorityClasses,omitempty"`
 
-	// CustomResourceDefinitions defines what custom resource definitions should get synced from the virtual cluster to the host cluster.
-	CustomResourceDefinitions map[string]SyncToHostCustomResourceDefinition `json:"customResourceDefinitions,omitempty"`
+	// CustomResources defines what custom resources should get synced from the virtual cluster to the host cluster. vCluster will copy the definition automatically from host cluster to virtual cluster on startup.
+	// vCluster will also automatically add any required RBAC permissions to the vCluster role for this to work.
+	CustomResources map[string]SyncToHostCustomResource `json:"customResources,omitempty"`
 }
 
 type EnableSwitchWithTranslate struct {
@@ -467,11 +486,11 @@ type SyncFromHost struct {
 	// CSIStorageCapacities defines if csi storage capacities should get synced from the host cluster to the virtual cluster, but not back. If auto, is automatically enabled when the virtual scheduler is enabled.
 	CSIStorageCapacities EnableAutoSwitch `json:"csiStorageCapacities,omitempty"`
 
-	// CustomResourceDefinitions defines what custom resource definitions should get synced read-only to the virtual cluster from the host cluster.
-	CustomResourceDefinitions map[string]SyncFromHostCustomResourceDefinition `json:"customResourceDefinitions,omitempty"`
+	// CustomResources defines what custom resources should get synced read-only to the virtual cluster from the host cluster. vCluster will automatically add any required RBAC to the vCluster cluster role.
+	CustomResources map[string]SyncFromHostCustomResource `json:"customResources,omitempty"`
 }
 
-type SyncToHostCustomResourceDefinition struct {
+type SyncToHostCustomResource struct {
 	// Enabled defines if this option should be enabled.
 	Enabled bool `json:"enabled,omitempty"`
 
@@ -484,15 +503,18 @@ type TranslatePatch struct {
 	Path string `json:"path,omitempty"`
 
 	// Expression transforms the value according to the given JavaScript expression.
-	Expression *TranslatePatchExpression `json:"expression,omitempty" jsonschema:"oneof_required=expression"`
+	Expression string `json:"expression,omitempty"`
+
+	// ReverseExpression transforms the value according to the given JavaScript expression.
+	ReverseExpression string `json:"reverseExpression,omitempty"`
 
 	// Reference treats the path value as a reference to another object and will rewrite it based on the chosen mode
 	// automatically. In single-namespace mode this will translate the name to "vxxxxxxxxx" to avoid conflicts with
 	// other names, in multi-namespace mode this will not translate the name.
-	Reference *TranslatePatchReference `json:"reference,omitempty" jsonschema:"oneof_required=reference"`
+	Reference *TranslatePatchReference `json:"reference,omitempty"`
 
 	// Labels treats the path value as a labels selector.
-	Labels *TranslatePatchLabels `json:"labels,omitempty" jsonschema:"oneof_required=labels"`
+	Labels *TranslatePatchLabels `json:"labels,omitempty"`
 }
 
 type TranslatePatchLabels struct{}
@@ -520,13 +542,13 @@ type TranslatePatchReference struct {
 
 type TranslatePatchExpression struct {
 	// ToHost is the expression to apply when retrieving a change from virtual to host.
-	ToHost string `json:"toHost,omitempty" jsonschema:"oneof_required=toHost"`
+	ToHost string `json:"toHost,omitempty"`
 
 	// FromHost is the patch to apply when retrieving a change from host to virtual.
-	FromHost string `json:"fromHost,omitempty" jsonschema:"oneof_required=fromHost"`
+	FromHost string `json:"fromHost,omitempty"`
 }
 
-type SyncFromHostCustomResourceDefinition struct {
+type SyncFromHostCustomResource struct {
 	// Enabled defines if this option should be enabled.
 	Enabled bool `json:"enabled,omitempty"`
 }
@@ -1225,6 +1247,12 @@ type CoreDNSDeployment struct {
 
 	// NodeSelector is the node selector to use for coredns.
 	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
+
+	// Affinity is the affinity to apply to the pod.
+	Affinity map[string]interface{} `json:"affinity,omitempty"`
+
+	// Tolerations are the tolerations to apply to the pod.
+	Tolerations []map[string]interface{} `json:"tolerations,omitempty"`
 
 	// Resources are the desired resources for coredns.
 	Resources Resources `json:"resources,omitempty"`
