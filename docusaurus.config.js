@@ -120,7 +120,7 @@ const config = {
         lastVersion: "current",
         versions: {
           current: {
-            label: "v4.0",
+            label: "v4.0 Stable",
             banner: "none",
             badge: false,
           },
@@ -212,5 +212,4 @@ const config = {
 };
 
 export default config;
-
 
