@@ -156,8 +156,8 @@ const config = {
       },
       colorMode: {
         defaultMode: "light",
-        disableSwitch: true,
-        respectPrefersColorScheme: false,
+        disableSwitch: false,
+        respectPrefersColorScheme: true,
       },
       navbar: {
         logo: {
@@ -206,6 +206,7 @@ const config = {
         copyright: `Copyright © ${new Date().getFullYear()} <a href="https://loft.sh/">Loft Labs, Inc.</a>`,
       },
       prism: {
+        theme: prismThemes.dracula,
         additionalLanguages: ["bash", "hcl"],
       },
       announcementBar: {
