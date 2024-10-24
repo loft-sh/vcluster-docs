@@ -1,9 +1,11 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 
 	"github.com/ghodss/yaml"
+	"github.com/invopop/jsonschema"
 	"github.com/loft-sh/vcluster-config/config"
 	"github.com/loft-sh/vcluster-docs/hack/platform/util"
 )
@@ -101,8 +103,16 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-
-	schema := util.GenerateSchema(&config.Config{})
+	schema := &jsonschema.Schema{}
+	schemaBytes, err := os.ReadFile("vcluster.schema.json")
+	if err != nil {
+		panic(err)
+	}
+	err = json.Unmarshal(schemaBytes, schema)
+	if err != nil {
+		panic(err)
+	}
+	// schema := util.GenerateSchema(&config.Config{})
 	for _, path := range paths {
 		util.GenerateFromPath(schema, OutDir, path, defaults)
 	}

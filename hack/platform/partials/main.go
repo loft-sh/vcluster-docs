@@ -1,14 +1,19 @@
 package main
 
 import (
+	"encoding/json"
+	"fmt"
 	"os"
 	"path"
+	"strings"
+
+	"github.com/invopop/jsonschema"
+	"github.com/loft-sh/vcluster-docs/hack/platform/util"
 
 	clusterv1 "github.com/loft-sh/agentapi/v4/pkg/apis/loft/cluster/v1"
 	managementv1 "github.com/loft-sh/api/v4/pkg/apis/management/v1"
 	storagev1 "github.com/loft-sh/api/v4/pkg/apis/storage/v1"
-	extconfig "github.com/loft-sh/vcluster-docs/hack/platform/partials/extconfig"
-	"github.com/loft-sh/vcluster-docs/hack/platform/util"
+	orderedmap "github.com/wk8/go-ordered-map/v2"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -76,10 +81,10 @@ func main() {
 			Spec:       managementv1.VirtualClusterInstanceKubeConfigSpec{},
 			Status: managementv1.VirtualClusterInstanceKubeConfigStatus{
 				KubeConfig: `apiVersion: v1
-kind: Config
-clusters:
-- cluster:
-...`,
+	kind: Config
+	clusters:
+	- cluster:
+	...`,
 			},
 		},
 		SubResourceCreate:         true,
@@ -109,10 +114,10 @@ clusters:
 						Access: nil,
 						HelmRelease: storagev1.VirtualClusterHelmRelease{
 							Values: `# Below you can configure the virtual cluster
-isolation:
-  enabled: true
+	isolation:
+	 enabled: true
 
-# Checkout https://vcluster.com/docs for more config options`,
+	# Checkout https://vcluster.com/docs for more config options`,
 						},
 					},
 				},
@@ -308,26 +313,26 @@ isolation:
 				Description: "This space templates deploys an isolated space",
 				Template: storagev1.SpaceTemplateDefinition{
 					Objects: `apiVersion: v1
-kind: ResourceQuota
-metadata:
-  name: loft-resource-quota
-spec:
-  hard:
-    count/configmaps: '100'
-    count/endpoints: '40'
-    count/persistentvolumeclaims: '20'
-    count/pods: '20'
-    count/secrets: '100'
-    count/services: '20'
-    limits.cpu: '20'
-    limits.ephemeral-storage: 160Gi
-    limits.memory: 40Gi
-    requests.cpu: '10'
-    requests.ephemeral-storage: 60Gi
-    requests.memory: 20Gi
-    requests.storage: 100Gi
-    services.loadbalancers: '1'
-    services.nodeports: '0'`,
+	kind: ResourceQuota
+	metadata:
+	 name: loft-resource-quota
+	spec:
+	 hard:
+	   count/configmaps: '100'
+	   count/endpoints: '40'
+	   count/persistentvolumeclaims: '20'
+	   count/pods: '20'
+	   count/secrets: '100'
+	   count/services: '20'
+	   limits.cpu: '20'
+	   limits.ephemeral-storage: 160Gi
+	   limits.memory: 40Gi
+	   requests.cpu: '10'
+	   requests.ephemeral-storage: 60Gi
+	   requests.memory: 20Gi
+	   requests.storage: 100Gi
+	   services.loadbalancers: '1'
+	   services.nodeports: '0'`,
 				},
 				Access: []storagev1.Access{
 					{
@@ -896,16 +901,54 @@ spec:
 	})
 
 	util.DefaultRequire = false
-
-	paths := []string{
-		"external/platform/apiKey",
-		"external/platform/autoSleep",
-		"external/platform/autoDelete",
-		"external/platform",
-		"external",
+	schema := &jsonschema.Schema{}
+	schemaBytes, err := os.ReadFile("vendor/github.com/loft-sh/vcluster-config/vcluster.schema.json")
+	if err != nil {
+		panic(err)
 	}
-
-	for _, p := range paths {
-		util.GenerateFromPath(util.GenerateSchema(&extconfig.Config{}), util.BasePath+"/config", p, nil)
+	err = json.Unmarshal(schemaBytes, schema)
+	if err != nil {
+		panic(err)
 	}
+	externalProperty, ok := schema.Properties.Get("external")
+
+	if !ok {
+		panic("external property not found in vendor/github.com/loft-sh/vcluster-config/vcluster.schema.json")
+	}
+	walkTree(externalProperty, schema, "external", "")
+	fmt.Println(paths)
+}
+
+var paths []string
+
+func walkTree(node, parent *jsonschema.Schema, name, parentName string) bool {
+	if node == nil || getChildren(node, parent) == nil {
+		return true
+	} else {
+		parentName = fmt.Sprintf("%s/%s", parentName, name)
+		paths = append(paths, parentName)
+	}
+	children := getChildren(node, parent)
+
+	for childNode := children.Oldest(); childNode != nil; childNode = childNode.Next() {
+		if walkTree(childNode.Value, parent, childNode.Key, parentName) {
+			continue
+		}
+	}
+	return true
+}
+
+func getChildren(node *jsonschema.Schema, parentSchema *jsonschema.Schema) *orderedmap.OrderedMap[string, *jsonschema.Schema] {
+	if node == nil {
+		return nil
+	}
+	if node.Ref != "" {
+		refSplit := strings.Split(node.Ref, "/")
+		fieldSchema, ok := parentSchema.Definitions[refSplit[len(refSplit)-1]]
+		if !ok {
+			panic("Couldn't find schema definition " + refSplit[len(refSplit)-1])
+		}
+		return fieldSchema.Properties
+	}
+	return nil
 }
