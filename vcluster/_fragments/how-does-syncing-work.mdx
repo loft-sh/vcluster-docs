@@ -1,9 +1,41 @@
-Syncing is the process where vCluster copies a resource between the virtual cluster and the host cluster. It's the basic principle vCluster uses to emulate a fully functional Kubernetes cluster.
+Since a virtual cluster does not have actual worker nodes or a network, syncing is the process where vCluster copies a resource between the virtual cluster and the host cluster. 
+It's the basic principle that vCluster uses to emulate a fully functional Kubernetes cluster. 
 
+By default, vCluster only syncs low-level resources, such as pods, secrets, configmaps, or services, but a user can 
+enable many other resources for all use cases. vCluster control plane runs with a minimal set of RBAC permissions to allow execution in restricted environments. Certain resources require 
+extra permissions to sync, which are automatically given to the vCluster ServiceAccount if you enable a resource that requires additional 
+permissions. 
 
-vCluster only syncs low-level resources by default, such as pods, secrets, configmaps or services. As soon as one of these resources are created in the virtual cluster, vCluster will sync it to the other side. As soon as a resource was copied by vCluster, it will start watching for changes to the resource on either side, so when a controller changes something on the host cluster side, the vCluster will sync that change to the virtual cluster or when a change on the virtual cluster side happens, it will sync it to the host cluster, to make sure the resource is in sync.
+All fields of a resources are synced from either the virtual cluster to the host cluster or the inverse (i.e. from the host cluster to the virtual cluster). The direction on how
+the sync of the resources is based on what section the resource is part of in the `vcluster.yaml`. There 
+are a few exceptions for each resource where specific fields are kept in sync in both directions (i.e. bi-directional sync). 
 
-Let's take `Ingress` as an example. A user that creates the following ingress in the virtual cluster:
+If the resource is being asked to sync from the virtual cluster to the host cluster, vCluster copies the resources from the vCluster and sends it to the host cluster to be created. There are 
+a couple of additional labels added to the host cluster resource object for vCluster to keep it in sync. The syncer starts watching for changes to the resource on either side. When the resource
+is updated in the virtual cluster, the syncer copies those changes in host cluster. 
+
+:::warning Syncing will overwrite resources
+When you enable a sync, the syncer will usually copy changes in one direction. For example, if you are syncing pods from the virtual cluster to the host cluster, when changes
+are made to one of the pods in the host cluster, those fields are overwritten when the sync occurs. There are a couple of fields that are exceptions that are supported due to bi-directional sync. 
+:::
+
+If the resource is being asked to sync from the host cluster to the virtual cluster, as soon as that resource is created in the host cluster, vCluster copies it to the virtual cluster. 
+Any changes to the resource in the host cluster are automatically applied to the resource in the virtual cluster.
+
+When syncing resources, vCluster stores the mapping of the `VIRTUAL NAME <-> HOST NAME` for the actual resource, and the references of the other resources used by this resource. 
+Tracking references helps the vCluster to understand what resources are still needed in the host cluster. This important for secrets and configmaps because by default only the secrets and configmaps used by pods are actually synced to the host cluster.
+
+Assume you've started your vCluster with ingress syncing to the host enabled. 
+
+``` vcluster.yaml
+sync:
+  toHost:
+    ingresses:
+      enabled: true
+```
+
+After the virtual cluster is up, the user creates an ingress in the virtual cluster.
+
 ```yaml
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -26,7 +58,14 @@ spec:
               number: 80
 ```
 
-When copying to the host cluster, the vCluster will change the ingress to:
+When vCluster copies the ingress to the host cluster, the vCluster creates an ingress in the namespace of the virtual cluster with the following changes:
+
+* **Name Rewritten**: vCluster rewrites the name of the resource to avoid conflicts in the host cluster. The name is rewritten in the form of `NAME-x-NAMESPACE-x-VCLUSTER_NAME`
+* **Namespace Rewritten**: vCluster rewrites the namespace of the resource to sync everything into the namespace of the deployed virtual cluster control plane.
+* **Annotations / Labels Added**: vCluster adds annotations and labels to identify the resource in the host cluster, which are pre-fixed with `vcluster.loft.sh/`.
+* **References Rewritten**: vCluster rewrites the `spec.rules[*].http.paths[*].backend.service.name` and `spec.tls[*].secretName` to match the rewritten names of the resources in the host cluster.
+
+
 ```yaml
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -60,11 +99,11 @@ spec:
     secretName: testsecret-tls-x-default-x-vcluster
 ```
 
-There is a couple of important changes to be noticed:
-* **Name Rewritten**: vCluster rewrites the name of the resource to avoid conflicts in the host cluster. The name is rewritten in the form of `NAME-x-NAMESPACE-x-VCLUSTER_NAME`
-* **Namespace Rewritten**: vCluster rewrites the namespace of the resource to sync everything into the vcluster's namespace.
-* **Annotations / Labels Added**: vCluster adds annotations and labels to identify the resource in the host cluster.
-* **References Rewritten**: vCluster rewrites the `spec.rules[*].http.paths[*].backend.service.name` and `spec.tls[*].secretName` to match the rewritten names of the resources in the host cluster.
+### Syncing labels to the host cluster
 
-vCluster will also keep track from now of the resource within its internal name cache, that tracks the `VIRTUAL NAME <-> HOST NAME` as well as all references used by this resource. In the ingress case, this would be the service `nginx` and the secret `testsecret-tls`. Tracking references helps the vCluster to understand what resources are still needed in the host cluster. For secrets and configmaps this is important, because by default only the needed ones are actually synced to the host cluster.
+When syncing labels to the host cluster, vCluster rewrites the following labels to avoid conflicts:
 
+* `release` (Label is needed to avoid conflicts with the vCluster pods themselves). This is only excluded in single-namespace mode as multi-namespace mode does sync all pods into separate namespaces.
+* `vcluster.loft.sh/namespace`
+* `vcluster.loft.sh/managed-by`
+* `vcluster.loft.sh/controlled-by`
