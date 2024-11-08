@@ -186,7 +186,7 @@ const config = {
             position: "right",
           },
           {
-            href: "https://github.com/loft-sh/vcluster-docs",
+            href: "https://github.com/loft-sh/vcluster",
             className: "github-link",
             "aria-label": "GitHub",
             position: "right",
