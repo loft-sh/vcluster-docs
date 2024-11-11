@@ -42,7 +42,7 @@ Content locations:
 ### Generate new vCluster version
 
 ```bash
-npm run docusaurus docs:version:vcluster 0.20.0
+npm run docusaurus docs:version:vcluster 0.21.0
 ```
 
 ### Generate vCluster partials
