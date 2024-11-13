@@ -216,10 +216,10 @@ const config = {
       },
       announcementBar: {
         id: 'platform-upgrade',
-        content: '🚀 <strong>Platform 4.0 is now available!</strong> Check out the <a href="/docs/platform/reference/migrations/4-0-migration">latest docs</a> and upgrade today!',
+        content: '🚀 <strong>New releases: <a href="https://www.vcluster.com/releases/en/changelog?hideLogo=true&hideMenu=true&theme=dark&embed=true&c=vCluster" target="_blank">platform 4.1 and vCluster 0.21.0</a></strong>',
         backgroundColor: '#4a90e2',
         textColor: '#ffffff',
-        isCloseable: false,
+        isCloseable: true,
      },
     }),
 };
