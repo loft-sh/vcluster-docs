@@ -10,8 +10,6 @@ import (
 	"github.com/loft-sh/vcluster-docs/hack/platform/util"
 )
 
-const OutDir = "vcluster/_partials/config"
-
 // we only generate paths we actually need
 var paths = []string{
 	"sync/fromHost/customResources",
@@ -95,16 +93,22 @@ var paths = []string{
 }
 
 func main() {
-	_ = os.RemoveAll(OutDir)
-	util.DefaultRequire = false
+	if len(os.Args) != 3 {
+		panic("expected to be called with vcluster jsonschema path as first argument and output dir as a second, e.g.\n" +
+			"go run hack/vcluster/partials/main.go configsrc/v0.21/vcluster.schema.json vcluster_versioned_docs/version-0.21.0/_partials/config")
+	}
 
+	util.DefaultRequire = false
+	jsonSchemaPath := os.Args[1]
+	outputDir := os.Args[2]
+	_ = os.RemoveAll(outputDir)
 	defaults := map[string]interface{}{}
 	err := yaml.Unmarshal([]byte(config.Values), &defaults)
 	if err != nil {
 		panic(err)
 	}
 	schema := &jsonschema.Schema{}
-	schemaBytes, err := os.ReadFile("vcluster.schema.json")
+	schemaBytes, err := os.ReadFile(jsonSchemaPath)
 	if err != nil {
 		panic(err)
 	}
@@ -112,8 +116,7 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	// schema := util.GenerateSchema(&config.Config{})
 	for _, path := range paths {
-		util.GenerateFromPath(schema, OutDir, path, defaults)
+		util.GenerateFromPath(schema, outputDir, path, defaults)
 	}
 }

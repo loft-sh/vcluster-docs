@@ -18,6 +18,12 @@ import (
 )
 
 func main() {
+	if len(os.Args) != 2 {
+		panic("expected to be called with vcluster jsonschema path as first argument, e.g.\n" +
+			"go run hack/vcluster/partials/main.go configsrc/v0.21/vcluster.schema.json")
+	}
+	jsonSchemaPath := os.Args[1]
+
 	_ = os.RemoveAll(util.BasePath)
 
 	util.GenerateSection(&managementv1.ConfigStatus{}, true, path.Join(util.BasePath, "config/status_reference.mdx"))
@@ -902,7 +908,7 @@ func main() {
 
 	util.DefaultRequire = false
 	schema := &jsonschema.Schema{}
-	schemaBytes, err := os.ReadFile("vendor/github.com/loft-sh/vcluster-config/vcluster.schema.json")
+	schemaBytes, err := os.ReadFile(jsonSchemaPath)
 	if err != nil {
 		panic(err)
 	}
@@ -913,10 +919,19 @@ func main() {
 	externalProperty, ok := schema.Properties.Get("external")
 
 	if !ok {
-		panic("external property not found in vendor/github.com/loft-sh/vcluster-config/vcluster.schema.json")
+		panic("external property not found in " + jsonSchemaPath)
 	}
 	walkTree(externalProperty, schema, "external", "")
-	fmt.Println(paths)
+
+	// fmt.Println("properties:")
+	// for childNode := schema.Properties.Oldest(); childNode != nil; childNode = childNode.Next() {
+	// 	fmt.Printf("%v : %v\n", childNode.Key, childNode.Value)
+	// }
+	// fmt.Println(paths)
+	for _, p := range paths {
+		p := strings.TrimPrefix(p, "/")
+		util.GenerateFromPath(schema, util.BasePath+"/config", p, nil)
+	}
 }
 
 var paths []string
