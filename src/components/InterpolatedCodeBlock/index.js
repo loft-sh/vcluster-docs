@@ -1,0 +1,138 @@
+import React, { useState } from 'react';
+import CodeBlock from '@theme/CodeBlock';
+
+/**
+ * InterpolatedCodeBlock - Interactive code block with editable variables
+ * 
+ * Creates a code block that allows users to customize variable values.
+ * Variables are defined directly in the code using [[VAR:NAME:default]] syntax.
+ * 
+ * Features:
+ * - Automatically detects variables in the code
+ * - Generates input fields for each variable
+ * - Populates input fields with default values
+ * - Updates the code in real-time as users type
+ * - Works with any language syntax highlighting
+ * 
+ * Usage Example:
+ * ```jsx
+ * <InterpolatedCodeBlock
+ *   code={`# Create a Kubernetes namespace
+ * kubectl create namespace [[VAR:NAMESPACE:my-namespace]]
+ * 
+ * # Set up Helm with custom values
+ * helm install my-app ./chart --set region=[[VAR:REGION:us-west-1]]`}
+ *   language="bash"
+ * />
+ * ```
+ * 
+ * @param {string} code - The code block content with variables in [[VAR:NAME:default]] format
+ * @param {string} language - Language for syntax highlighting (default: "bash")
+ */
+const InterpolatedCodeBlock = ({ code = '', language = 'bash' }) => {
+  // Parse variables using [[VAR:name:default]] pattern
+  const varPattern = /\[\[VAR:([^:]+):([^\]]*)\]\]/g;
+  
+  // Extract all variables from the code
+  const initialVariables = {};
+  let match;
+  
+  // Create a copy of the pattern to avoid state issues with regex
+  const patternForMatching = new RegExp(varPattern);
+  
+  if (typeof code === 'string') {
+    // Find all variables in the code
+    while ((match = patternForMatching.exec(code)) !== null) {
+      initialVariables[match[1]] = match[2];
+    }
+  }
+
+  const [values, setValues] = useState(initialVariables);
+
+  // Replace placeholders with values for rendering
+  const processedCode = typeof code === 'string' 
+    ? code.replace(varPattern, (_, name) => {
+        return values[name] || initialVariables[name] || '';
+      })
+    : code;
+
+  // Skip rendering the interactive UI if no variables found
+  if (Object.keys(initialVariables).length === 0) {
+    return <CodeBlock language={language}>{code}</CodeBlock>;
+  }
+
+  return (
+    <div style={{ marginBottom: 'var(--ifm-leading)' }}>
+      <div style={{ 
+        backgroundColor: 'var(--prism-background)',
+        borderRadius: 'var(--ifm-code-border-radius)',
+        padding: 'var(--ifm-pre-padding)',
+        marginBottom: '0',
+        position: 'relative'
+      }}>
+        <div style={{
+          fontSize: '0.8rem',
+          color: 'var(--ifm-color-emphasis-600)',
+          marginBottom: '8px',
+          fontStyle: 'italic'
+        }}>
+          Customize variable values for the command below:
+        </div>
+        {Object.entries(initialVariables).map(([key, defaultValue]) => (
+          <div
+            key={key}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              marginBottom: '0.5rem',
+              fontFamily: 'var(--ifm-font-family-monospace)',
+            }}
+          >
+            <label
+              style={{ 
+                minWidth: '150px',
+                color: 'var(--ifm-font-color-base)', /* Regular text color */
+                fontSize: '0.9rem',
+                fontWeight: '600', /* Semi-bold for emphasis */
+                marginRight: '10px'
+              }}
+            >
+              {key}
+            </label>
+            <input
+              type="text"
+              value={values[key] || ''}
+              onChange={(e) => setValues(prev => ({ ...prev, [key]: e.target.value }))}
+              placeholder={defaultValue}
+              style={{ 
+                backgroundColor: 'rgba(255, 255, 255, 0.07)',
+                border: '1px solid var(--ifm-color-emphasis-300)',
+                borderRadius: 'var(--ifm-global-radius)',
+                padding: '0.3rem 0.5rem',
+                color: 'var(--ifm-font-color-base)',
+                fontFamily: 'var(--ifm-font-family-monospace)',
+                fontSize: '0.9rem',
+                width: '100%',
+                outline: 'none',
+                transition: 'all 0.2s ease'
+              }}
+              onFocus={(e) => {
+                e.target.style.borderColor = 'var(--ifm-color-primary)';
+                e.target.style.boxShadow = '0 0 0 1px var(--ifm-color-primary)';
+              }}
+              onBlur={(e) => {
+                e.target.style.borderColor = 'var(--ifm-color-emphasis-300)';
+                e.target.style.boxShadow = 'none';
+              }}
+            />
+          </div>
+        ))}
+      </div>
+      <CodeBlock language={language} style={{ marginTop: '0' }}>
+        {processedCode}
+      </CodeBlock>
+    </div>
+  );
+};
+
+export default InterpolatedCodeBlock;
