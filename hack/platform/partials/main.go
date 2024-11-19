@@ -87,10 +87,10 @@ func main() {
 			Spec:       managementv1.VirtualClusterInstanceKubeConfigSpec{},
 			Status: managementv1.VirtualClusterInstanceKubeConfigStatus{
 				KubeConfig: `apiVersion: v1
-	kind: Config
-	clusters:
-	- cluster:
-	...`,
+kind: Config
+clusters:
+- cluster:
+...`,
 			},
 		},
 		SubResourceCreate:         true,
@@ -120,10 +120,10 @@ func main() {
 						Access: nil,
 						HelmRelease: storagev1.VirtualClusterHelmRelease{
 							Values: `# Below you can configure the virtual cluster
-	isolation:
-	 enabled: true
+isolation:
+  enabled: true
 
-	# Checkout https://vcluster.com/docs for more config options`,
+# Checkout https://vcluster.com/docs for more config options`,
 						},
 					},
 				},
@@ -319,26 +319,26 @@ func main() {
 				Description: "This space templates deploys an isolated space",
 				Template: storagev1.SpaceTemplateDefinition{
 					Objects: `apiVersion: v1
-	kind: ResourceQuota
-	metadata:
-	 name: loft-resource-quota
-	spec:
-	 hard:
-	   count/configmaps: '100'
-	   count/endpoints: '40'
-	   count/persistentvolumeclaims: '20'
-	   count/pods: '20'
-	   count/secrets: '100'
-	   count/services: '20'
-	   limits.cpu: '20'
-	   limits.ephemeral-storage: 160Gi
-	   limits.memory: 40Gi
-	   requests.cpu: '10'
-	   requests.ephemeral-storage: 60Gi
-	   requests.memory: 20Gi
-	   requests.storage: 100Gi
-	   services.loadbalancers: '1'
-	   services.nodeports: '0'`,
+kind: ResourceQuota
+metadata:
+  name: loft-resource-quota
+spec:
+  hard:
+    count/configmaps: '100'
+    count/endpoints: '40'
+    count/persistentvolumeclaims: '20'
+    count/pods: '20'
+    count/secrets: '100'
+    count/services: '20'
+    limits.cpu: '20'
+    limits.ephemeral-storage: 160Gi
+    limits.memory: 40Gi
+    requests.cpu: '10'
+    requests.ephemeral-storage: 60Gi
+    requests.memory: 20Gi
+    requests.storage: 100Gi
+    services.loadbalancers: '1'
+    services.nodeports: '0'`,
 				},
 				Access: []storagev1.Access{
 					{
