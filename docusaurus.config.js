@@ -16,7 +16,7 @@ const config = {
   tagline: "Virtual Clusters for Kubernetes",
   url: "https://vcluster.com",
   baseUrl: __webpack_public_path__,
-  favicon: "/media/vcluster_symbol.svg",
+  favicon: "/media/vcluster_symbol_dark.svg",
   organizationName: "loft-sh", // Usually your GitHub org/user name.
   projectName: "vcluster-docs", // Usually your repo name.
 
