@@ -8,7 +8,7 @@ require (
 	github.com/invopop/jsonschema v0.12.1-0.20240219232115-a4467074499d
 	github.com/loft-sh/agentapi/v4 v4.0.0-alpha.16
 	github.com/loft-sh/api/v4 v4.0.0-alpha.16
-	github.com/loft-sh/vcluster-config v0.0.0-20241008151101-d4764031b03a
+	github.com/wk8/go-ordered-map/v2 v2.1.8
 	k8s.io/apimachinery v0.30.2
 	sigs.k8s.io/controller-runtime v0.18.4
 )
@@ -64,7 +64,6 @@ require (
 	github.com/spf13/cobra v1.8.0 // indirect
 	github.com/spf13/pflag v1.0.5 // indirect
 	github.com/stoewer/go-strcase v1.3.0 // indirect
-	github.com/wk8/go-ordered-map/v2 v2.1.8 // indirect
 	go.etcd.io/etcd/api/v3 v3.5.14 // indirect
 	go.etcd.io/etcd/client/pkg/v3 v3.5.14 // indirect
 	go.etcd.io/etcd/client/v3 v3.5.14 // indirect

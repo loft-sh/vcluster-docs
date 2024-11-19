@@ -72,12 +72,7 @@ func generateSchema(configInstance interface{}) *jsonschema.Schema {
 		commentMap = map[string]string{}
 
 		runInDir("vendor", func() {
-			err := jsonschema.ExtractGoComments("", "github.com/loft-sh/vcluster-config/config", commentMap)
-			if err != nil {
-				panic(err)
-			}
-
-			err = jsonschema.ExtractGoComments("", "github.com/loft-sh/api/v4/pkg/apis/management/v1", commentMap)
+			err := jsonschema.ExtractGoComments("", "github.com/loft-sh/api/v4/pkg/apis/management/v1", commentMap)
 			if err != nil {
 				panic(err)
 			}

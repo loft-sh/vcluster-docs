@@ -6,7 +6,6 @@ import (
 
 	"github.com/ghodss/yaml"
 	"github.com/invopop/jsonschema"
-	"github.com/loft-sh/vcluster-config/config"
 	"github.com/loft-sh/vcluster-docs/hack/platform/util"
 )
 
@@ -94,16 +93,22 @@ var paths = []string{
 
 func main() {
 	if len(os.Args) != 3 {
-		panic("expected to be called with vcluster jsonschema path as first argument and output dir as a second, e.g.\n" +
-			"go run hack/vcluster/partials/main.go configsrc/v0.21/vcluster.schema.json vcluster_versioned_docs/version-0.21.0/_partials/config")
+		panic("expected to be called with vcluster jsonschema directory as first argument and output dir as a second, e.g.\n" +
+			"go run hack/vcluster/partials/main.go configsrc/v0.21/ vcluster_versioned_docs/version-0.21.0/_partials/config")
 	}
 
 	util.DefaultRequire = false
-	jsonSchemaPath := os.Args[1]
+	versionDir := os.Args[1]
+	jsonSchemaPath := versionDir + "/vcluster.schema.json"
+	defaultValues := versionDir + "/default_values.yaml"
+	values, err := os.ReadFile(defaultValues)
+	if err != nil {
+		panic(err)
+	}
 	outputDir := os.Args[2]
 	_ = os.RemoveAll(outputDir)
 	defaults := map[string]interface{}{}
-	err := yaml.Unmarshal([]byte(config.Values), &defaults)
+	err = yaml.Unmarshal(values, &defaults)
 	if err != nil {
 		panic(err)
 	}
