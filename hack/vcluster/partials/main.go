@@ -2,7 +2,9 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/ghodss/yaml"
 	"github.com/invopop/jsonschema"
@@ -99,27 +101,27 @@ func main() {
 
 	util.DefaultRequire = false
 	versionDir := os.Args[1]
-	jsonSchemaPath := versionDir + "/vcluster.schema.json"
-	defaultValues := versionDir + "/default_values.yaml"
+	jsonSchemaPath := filepath.Join(versionDir, "vcluster.schema.json")
+	defaultValues := filepath.Join(versionDir, "default_values.yaml")
 	values, err := os.ReadFile(defaultValues)
 	if err != nil {
-		panic(err)
+		panic(fmt.Errorf("failed to read default values from %q: %w", defaultValues, err))
 	}
 	outputDir := os.Args[2]
 	_ = os.RemoveAll(outputDir)
 	defaults := map[string]interface{}{}
 	err = yaml.Unmarshal(values, &defaults)
 	if err != nil {
-		panic(err)
+		panic(fmt.Errorf("failed to parse default values YAML: %w", err))
 	}
 	schema := &jsonschema.Schema{}
 	schemaBytes, err := os.ReadFile(jsonSchemaPath)
 	if err != nil {
-		panic(err)
+		panic(fmt.Errorf("failed to read schema file %q: %w", jsonSchemaPath, err))
 	}
 	err = json.Unmarshal(schemaBytes, schema)
 	if err != nil {
-		panic(err)
+		panic(fmt.Errorf("failed to parse schema JSON: %w", err))
 	}
 	for _, path := range paths {
 		util.GenerateFromPath(schema, outputDir, path, defaults)

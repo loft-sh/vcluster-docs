@@ -910,11 +910,11 @@ spec:
 	schema := &jsonschema.Schema{}
 	schemaBytes, err := os.ReadFile(jsonSchemaPath)
 	if err != nil {
-		panic(err)
+		panic(fmt.Errorf("failed to read schema file %q: %w", jsonSchemaPath, err))
 	}
 	err = json.Unmarshal(schemaBytes, schema)
 	if err != nil {
-		panic(err)
+		panic(fmt.Errorf("failed to parse JSON schema from %q: %w", jsonSchemaPath, err))
 	}
 	externalProperty, ok := schema.Properties.Get("external")
 
@@ -961,7 +961,7 @@ func getChildren(node *jsonschema.Schema, parentSchema *jsonschema.Schema) *orde
 		refSplit := strings.Split(node.Ref, "/")
 		fieldSchema, ok := parentSchema.Definitions[refSplit[len(refSplit)-1]]
 		if !ok {
-			panic("Couldn't find schema definition " + refSplit[len(refSplit)-1])
+			panic(fmt.Errorf("schema definition %q not found in reference %q", refSplit[len(refSplit)-1], node.Ref))
 		}
 		return fieldSchema.Properties
 	}
