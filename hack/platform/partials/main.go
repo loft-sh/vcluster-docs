@@ -1,18 +1,29 @@
 package main
 
 import (
+	"encoding/json"
+	"fmt"
 	"os"
 	"path"
+	"strings"
+
+	"github.com/invopop/jsonschema"
+	"github.com/loft-sh/vcluster-docs/hack/platform/util"
 
 	clusterv1 "github.com/loft-sh/agentapi/v4/pkg/apis/loft/cluster/v1"
 	managementv1 "github.com/loft-sh/api/v4/pkg/apis/management/v1"
 	storagev1 "github.com/loft-sh/api/v4/pkg/apis/storage/v1"
-	extconfig "github.com/loft-sh/vcluster-docs/hack/platform/partials/extconfig"
-	"github.com/loft-sh/vcluster-docs/hack/platform/util"
+	orderedmap "github.com/wk8/go-ordered-map/v2"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 func main() {
+	if len(os.Args) != 2 {
+		panic("expected to be called with vcluster jsonschema path as first argument, e.g.\n" +
+			"go run hack/vcluster/partials/main.go configsrc/v0.21/vcluster.schema.json")
+	}
+	jsonSchemaPath := os.Args[1]
+
 	_ = os.RemoveAll(util.BasePath)
 
 	util.GenerateSection(&managementv1.ConfigStatus{}, true, path.Join(util.BasePath, "config/status_reference.mdx"))
@@ -896,16 +907,63 @@ spec:
 	})
 
 	util.DefaultRequire = false
-
-	paths := []string{
-		"external/platform/apiKey",
-		"external/platform/autoSleep",
-		"external/platform/autoDelete",
-		"external/platform",
-		"external",
+	schema := &jsonschema.Schema{}
+	schemaBytes, err := os.ReadFile(jsonSchemaPath)
+	if err != nil {
+		panic(fmt.Errorf("failed to read schema file %q: %w", jsonSchemaPath, err))
 	}
+	err = json.Unmarshal(schemaBytes, schema)
+	if err != nil {
+		panic(fmt.Errorf("failed to parse JSON schema from %q: %w", jsonSchemaPath, err))
+	}
+	externalProperty, ok := schema.Properties.Get("external")
 
+	if !ok {
+		panic("external property not found in " + jsonSchemaPath)
+	}
+	walkTree(externalProperty, schema, "external", "")
+
+	// fmt.Println("properties:")
+	// for childNode := schema.Properties.Oldest(); childNode != nil; childNode = childNode.Next() {
+	// 	fmt.Printf("%v : %v\n", childNode.Key, childNode.Value)
+	// }
+	// fmt.Println(paths)
 	for _, p := range paths {
-		util.GenerateFromPath(util.GenerateSchema(&extconfig.Config{}), util.BasePath+"/config", p, nil)
+		p := strings.TrimPrefix(p, "/")
+		util.GenerateFromPath(schema, util.BasePath+"/config", p, nil)
 	}
+}
+
+var paths []string
+
+func walkTree(node, parent *jsonschema.Schema, name, parentName string) bool {
+	if node == nil || getChildren(node, parent) == nil {
+		return true
+	} else {
+		parentName = fmt.Sprintf("%s/%s", parentName, name)
+		paths = append(paths, parentName)
+	}
+	children := getChildren(node, parent)
+
+	for childNode := children.Oldest(); childNode != nil; childNode = childNode.Next() {
+		if walkTree(childNode.Value, parent, childNode.Key, parentName) {
+			continue
+		}
+	}
+	return true
+}
+
+func getChildren(node *jsonschema.Schema, parentSchema *jsonschema.Schema) *orderedmap.OrderedMap[string, *jsonschema.Schema] {
+	if node == nil {
+		return nil
+	}
+	if node.Ref != "" {
+		refSplit := strings.Split(node.Ref, "/")
+		fieldSchema, ok := parentSchema.Definitions[refSplit[len(refSplit)-1]]
+		if !ok {
+			panic(fmt.Errorf("schema definition %q not found in reference %q", refSplit[len(refSplit)-1], node.Ref))
+		}
+		return fieldSchema.Properties
+	}
+	return nil
 }

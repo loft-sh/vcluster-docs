@@ -1,14 +1,15 @@
 package main
 
 import (
+	"encoding/json"
+	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/ghodss/yaml"
-	"github.com/loft-sh/vcluster-config/config"
+	"github.com/invopop/jsonschema"
 	"github.com/loft-sh/vcluster-docs/hack/platform/util"
 )
-
-const OutDir = "vcluster/_partials/config"
 
 // we only generate paths we actually need
 var paths = []string{
@@ -93,17 +94,36 @@ var paths = []string{
 }
 
 func main() {
-	_ = os.RemoveAll(OutDir)
-	util.DefaultRequire = false
-
-	defaults := map[string]interface{}{}
-	err := yaml.Unmarshal([]byte(config.Values), &defaults)
-	if err != nil {
-		panic(err)
+	if len(os.Args) != 3 {
+		panic("expected to be called with vcluster jsonschema directory as first argument and output dir as a second, e.g.\n" +
+			"go run hack/vcluster/partials/main.go configsrc/v0.21/ vcluster_versioned_docs/version-0.21.0/_partials/config")
 	}
 
-	schema := util.GenerateSchema(&config.Config{})
+	util.DefaultRequire = false
+	versionDir := os.Args[1]
+	jsonSchemaPath := filepath.Join(versionDir, "vcluster.schema.json")
+	defaultValues := filepath.Join(versionDir, "default_values.yaml")
+	values, err := os.ReadFile(defaultValues)
+	if err != nil {
+		panic(fmt.Errorf("failed to read default values from %q: %w", defaultValues, err))
+	}
+	outputDir := os.Args[2]
+	_ = os.RemoveAll(outputDir)
+	defaults := map[string]interface{}{}
+	err = yaml.Unmarshal(values, &defaults)
+	if err != nil {
+		panic(fmt.Errorf("failed to parse default values YAML: %w", err))
+	}
+	schema := &jsonschema.Schema{}
+	schemaBytes, err := os.ReadFile(jsonSchemaPath)
+	if err != nil {
+		panic(fmt.Errorf("failed to read schema file %q: %w", jsonSchemaPath, err))
+	}
+	err = json.Unmarshal(schemaBytes, schema)
+	if err != nil {
+		panic(fmt.Errorf("failed to parse schema JSON: %w", err))
+	}
 	for _, path := range paths {
-		util.GenerateFromPath(schema, OutDir, path, defaults)
+		util.GenerateFromPath(schema, outputDir, path, defaults)
 	}
 }
