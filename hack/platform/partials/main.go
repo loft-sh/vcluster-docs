@@ -14,6 +14,7 @@ import (
 	managementv1 "github.com/loft-sh/api/v4/pkg/apis/management/v1"
 	storagev1 "github.com/loft-sh/api/v4/pkg/apis/storage/v1"
 	orderedmap "github.com/wk8/go-ordered-map/v2"
+	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -902,6 +903,52 @@ spec:
 					"loft:user:admin",
 				},
 			},
+		},
+		Create: true,
+	})
+
+	// ClusterRoleTemplate
+	util.GenerateObjectOverview(&util.ObjectInformation{
+		Title:       "Cluster Role Template",
+		Name:        "ClusterRoleTemplate",
+		Resource:    "clusterroletemplates",
+		Description: "ClusterRoleTemplate holds the clusterRoleTemplate information",
+		File:        path.Join(util.BaseResourcesPath, "clusterroletemplate.mdx"),
+		Object: &managementv1.ClusterRoleTemplate{
+			TypeMeta: metav1.TypeMeta{
+				Kind:       "ClusterRoleTemplate",
+				APIVersion: managementv1.SchemeGroupVersion.String(),
+			},
+			ObjectMeta: metav1.ObjectMeta{},
+			Spec: managementv1.ClusterRoleTemplateSpec{
+				ClusterRoleTemplateSpec: storagev1.ClusterRoleTemplateSpec{
+					DisplayName: "Project User -No Create",
+					Description: "Allows the user or team to manage the project. Gives only access to existing\n    space and virtual cluster objects but no creation or deletion privileges.",
+					Management:  true,
+					Access: []storagev1.Access{
+						{
+							Verbs: []string{"get"},
+							Users: []string{"*"},
+						},
+					},
+					ClusterRoleTemplate: storagev1.ClusterRoleTemplateTemplate{
+						ObjectMeta: metav1.ObjectMeta{},
+						Rules: []rbacv1.PolicyRule{
+							{
+								Verbs:     []string{"get", "list", "update"},
+								APIGroups: []string{managementv1.SchemeGroupVersion.String()},
+								Resources: []string{"spaceinstances", "virtualclusterinstances"},
+							},
+							{
+								Verbs:     []string{"get", "list"},
+								APIGroups: []string{managementv1.SchemeGroupVersion.String()},
+								Resources: []string{"projectsecrets"},
+							},
+						},
+					},
+				},
+			},
+			Status: managementv1.ClusterRoleTemplateStatus{},
 		},
 		Create: true,
 	})
