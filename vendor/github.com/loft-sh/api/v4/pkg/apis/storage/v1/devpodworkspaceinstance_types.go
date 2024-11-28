@@ -24,7 +24,7 @@ var (
 	DevPodWorkspaceSourceAnnotation = "loft.sh/workspace-source"
 
 	// DevPodWorkspaceRunnerNetworkPeerAnnotation holds the workspace runner network peer name of the devpod workspace
-	DevPodWorkspaceRunnerNetworkPeerAnnotation = "loft.sh/runner-network-peer-name"
+	DevPodWorkspaceRunnerEndpointAnnotation = "loft.sh/runner-endpoint"
 )
 
 var (
@@ -90,6 +90,10 @@ type DevPodWorkspaceInstanceSpec struct {
 	// +optional
 	TemplateRef *TemplateRef `json:"templateRef,omitempty"`
 
+	// EnvironmentRef is the reference to DevPodEnvironmentTemplate that should be used
+	// +optional
+	EnvironmentRef EnvironmentRef `json:"environmentRef,omitempty"`
+
 	// Template is the inline template to use for DevPod machine creation. This is mutually
 	// exclusive with templateRef.
 	// +optional
@@ -108,12 +112,21 @@ type DevPodWorkspaceInstanceSpec struct {
 	// Access to the DevPod machine instance object itself
 	// +optional
 	Access []Access `json:"access,omitempty"`
+
+	// PreventWakeUpOnConnection is used to prevent workspace that uses sleep mode from waking up on incomming ssh connection.
+	// +optional
+	PreventWakeUpOnConnection bool `json:"preventWakeUpOnConnection,omitempty"`
 }
 
 type RunnerRef struct {
 	// Runner is the connected runner the workspace will be created in
 	// +optional
 	Runner string `json:"runner,omitempty"`
+}
+
+type EnvironmentRef struct {
+	// Name is the name of DevPodEnvironmentTemplate this references
+	Name string `json:"name"`
 }
 
 type DevPodWorkspaceInstanceStatus struct {
@@ -146,6 +159,10 @@ type DevPodWorkspaceInstanceStatus struct {
 	// IgnoreReconciliation ignores reconciliation for this object
 	// +optional
 	IgnoreReconciliation bool `json:"ignoreReconciliation,omitempty"`
+
+	// ClusterRef holds the runners cluster if the workspace is scheduled
+	// on kubernetes based runner
+	ClusterRef *ClusterRef `json:"clusterRef,omitempty"`
 }
 
 type WorkspaceStatusResult struct {

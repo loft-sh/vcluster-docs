@@ -116,7 +116,17 @@ var (
 	NewConvertVirtualClusterConfigREST = func(getter generic.RESTOptionsGetter) rest.Storage {
 		return NewConvertVirtualClusterConfigRESTFunc(Factory)
 	}
-	NewConvertVirtualClusterConfigRESTFunc   NewRESTFunc
+	NewConvertVirtualClusterConfigRESTFunc     NewRESTFunc
+	ManagementDevPodEnvironmentTemplateStorage = builders.NewApiResourceWithStorage( // Resource status endpoint
+		InternalDevPodEnvironmentTemplate,
+		func() runtime.Object { return &DevPodEnvironmentTemplate{} },     // Register versioned resource
+		func() runtime.Object { return &DevPodEnvironmentTemplateList{} }, // Register versioned resource list
+		NewDevPodEnvironmentTemplateREST,
+	)
+	NewDevPodEnvironmentTemplateREST = func(getter generic.RESTOptionsGetter) rest.Storage {
+		return NewDevPodEnvironmentTemplateRESTFunc(Factory)
+	}
+	NewDevPodEnvironmentTemplateRESTFunc     NewRESTFunc
 	ManagementDevPodWorkspaceInstanceStorage = builders.NewApiResourceWithStorage( // Resource status endpoint
 		InternalDevPodWorkspaceInstance,
 		func() runtime.Object { return &DevPodWorkspaceInstance{} },     // Register versioned resource
@@ -220,7 +230,17 @@ var (
 	NewLoftUpgradeREST = func(getter generic.RESTOptionsGetter) rest.Storage {
 		return NewLoftUpgradeRESTFunc(Factory)
 	}
-	NewLoftUpgradeRESTFunc          NewRESTFunc
+	NewLoftUpgradeRESTFunc      NewRESTFunc
+	ManagementOIDCClientStorage = builders.NewApiResourceWithStorage( // Resource status endpoint
+		InternalOIDCClient,
+		func() runtime.Object { return &OIDCClient{} },     // Register versioned resource
+		func() runtime.Object { return &OIDCClientList{} }, // Register versioned resource list
+		NewOIDCClientREST,
+	)
+	NewOIDCClientREST = func(getter generic.RESTOptionsGetter) rest.Storage {
+		return NewOIDCClientRESTFunc(Factory)
+	}
+	NewOIDCClientRESTFunc           NewRESTFunc
 	ManagementOwnedAccessKeyStorage = builders.NewApiResourceWithStorage( // Resource status endpoint
 		InternalOwnedAccessKey,
 		func() runtime.Object { return &OwnedAccessKey{} },     // Register versioned resource
@@ -607,6 +627,18 @@ var (
 		func() runtime.Object { return &ConvertVirtualClusterConfig{} },
 		func() runtime.Object { return &ConvertVirtualClusterConfigList{} },
 	)
+	InternalDevPodEnvironmentTemplate = builders.NewInternalResource(
+		"devpodenvironmenttemplates",
+		"DevPodEnvironmentTemplate",
+		func() runtime.Object { return &DevPodEnvironmentTemplate{} },
+		func() runtime.Object { return &DevPodEnvironmentTemplateList{} },
+	)
+	InternalDevPodEnvironmentTemplateStatus = builders.NewInternalResourceStatus(
+		"devpodenvironmenttemplates",
+		"DevPodEnvironmentTemplateStatus",
+		func() runtime.Object { return &DevPodEnvironmentTemplate{} },
+		func() runtime.Object { return &DevPodEnvironmentTemplateList{} },
+	)
 	InternalDevPodWorkspaceInstance = builders.NewInternalResource(
 		"devpodworkspaceinstances",
 		"DevPodWorkspaceInstance",
@@ -783,6 +815,18 @@ var (
 		func() runtime.Object { return &LoftUpgrade{} },
 		func() runtime.Object { return &LoftUpgradeList{} },
 	)
+	InternalOIDCClient = builders.NewInternalResource(
+		"oidcclients",
+		"OIDCClient",
+		func() runtime.Object { return &OIDCClient{} },
+		func() runtime.Object { return &OIDCClientList{} },
+	)
+	InternalOIDCClientStatus = builders.NewInternalResourceStatus(
+		"oidcclients",
+		"OIDCClientStatus",
+		func() runtime.Object { return &OIDCClient{} },
+		func() runtime.Object { return &OIDCClientList{} },
+	)
 	InternalOwnedAccessKey = builders.NewInternalResource(
 		"ownedaccesskeys",
 		"OwnedAccessKey",
@@ -863,7 +907,15 @@ var (
 		return NewProjectMigrateVirtualClusterInstanceRESTFunc(Factory)
 	}
 	NewProjectMigrateVirtualClusterInstanceRESTFunc NewRESTFunc
-	InternalProjectTemplatesREST                    = builders.NewInternalSubresource(
+	InternalProjectRunnersREST                      = builders.NewInternalSubresource(
+		"projects", "ProjectRunners", "runners",
+		func() runtime.Object { return &ProjectRunners{} },
+	)
+	NewProjectRunnersREST = func(getter generic.RESTOptionsGetter) rest.Storage {
+		return NewProjectRunnersRESTFunc(Factory)
+	}
+	NewProjectRunnersRESTFunc    NewRESTFunc
+	InternalProjectTemplatesREST = builders.NewInternalSubresource(
 		"projects", "ProjectTemplates", "templates",
 		func() runtime.Object { return &ProjectTemplates{} },
 	)
@@ -1142,7 +1194,15 @@ var (
 	NewVirtualClusterAccessKeyREST = func(getter generic.RESTOptionsGetter) rest.Storage {
 		return NewVirtualClusterAccessKeyRESTFunc(Factory)
 	}
-	NewVirtualClusterAccessKeyRESTFunc           NewRESTFunc
+	NewVirtualClusterAccessKeyRESTFunc         NewRESTFunc
+	InternalVirtualClusterExternalDatabaseREST = builders.NewInternalSubresource(
+		"virtualclusterinstances", "VirtualClusterExternalDatabase", "externaldatabase",
+		func() runtime.Object { return &VirtualClusterExternalDatabase{} },
+	)
+	NewVirtualClusterExternalDatabaseREST = func(getter generic.RESTOptionsGetter) rest.Storage {
+		return NewVirtualClusterExternalDatabaseRESTFunc(Factory)
+	}
+	NewVirtualClusterExternalDatabaseRESTFunc    NewRESTFunc
 	InternalVirtualClusterInstanceKubeConfigREST = builders.NewInternalSubresource(
 		"virtualclusterinstances", "VirtualClusterInstanceKubeConfig", "kubeconfig",
 		func() runtime.Object { return &VirtualClusterInstanceKubeConfig{} },
@@ -1201,6 +1261,8 @@ var (
 		InternalConfigStatus,
 		InternalConvertVirtualClusterConfig,
 		InternalConvertVirtualClusterConfigStatus,
+		InternalDevPodEnvironmentTemplate,
+		InternalDevPodEnvironmentTemplateStatus,
 		InternalDevPodWorkspaceInstance,
 		InternalDevPodWorkspaceInstanceStatus,
 		InternalDevPodDeleteOptionsREST,
@@ -1228,6 +1290,8 @@ var (
 		InternalLicenseTokenStatus,
 		InternalLoftUpgrade,
 		InternalLoftUpgradeStatus,
+		InternalOIDCClient,
+		InternalOIDCClientStatus,
 		InternalOwnedAccessKey,
 		InternalOwnedAccessKeyStatus,
 		InternalProject,
@@ -1239,6 +1303,7 @@ var (
 		InternalProjectMembersREST,
 		InternalProjectMigrateSpaceInstanceREST,
 		InternalProjectMigrateVirtualClusterInstanceREST,
+		InternalProjectRunnersREST,
 		InternalProjectTemplatesREST,
 		InternalProjectSecret,
 		InternalProjectSecretStatus,
@@ -1282,6 +1347,7 @@ var (
 		InternalVirtualClusterInstance,
 		InternalVirtualClusterInstanceStatus,
 		InternalVirtualClusterAccessKeyREST,
+		InternalVirtualClusterExternalDatabaseREST,
 		InternalVirtualClusterInstanceKubeConfigREST,
 		InternalVirtualClusterInstanceLogREST,
 		InternalVirtualClusterTemplate,
@@ -1438,9 +1504,11 @@ type Authentication struct {
 	Password                 *AuthenticationPassword `json:"password,omitempty"`
 	Connectors               []ConnectorWithName     `json:"connectors,omitempty"`
 	DisableTeamCreation      bool                    `json:"disableTeamCreation,omitempty"`
+	DisableUserCreation      bool                    `json:"disableUserCreation,omitempty"`
 	AccessKeyMaxTTLSeconds   int64                   `json:"accessKeyMaxTTLSeconds,omitempty"`
 	LoginAccessKeyTTLSeconds *int64                  `json:"loginAccessKeyTTLSeconds,omitempty"`
 	CustomHttpHeaders        map[string]string       `json:"customHttpHeaders,omitempty"`
+	GroupsFilters            []string                `json:"groupsFilters,omitempty"`
 }
 
 type AuthenticationGithub struct {
@@ -1562,6 +1630,11 @@ type BackupSpec struct {
 
 type BackupStatus struct {
 	RawBackup string `json:"rawBackup,omitempty"`
+}
+
+type Cloud struct {
+	ReleaseChannel    string            `json:"releaseChannel,omitempty"`
+	MaintenanceWindow MaintenanceWindow `json:"maintenanceWindow,omitempty"`
 }
 
 // +genclient
@@ -1746,6 +1819,8 @@ type ConfigStatus struct {
 	DevPodSubDomain        string                          `json:"devPodSubDomain,omitempty"`
 	UISettings             *uiv1.UISettingsConfig          `json:"uiSettings,omitempty"`
 	VaultIntegration       *storagev1.VaultIntegrationSpec `json:"vault,omitempty"`
+	DisableConfigEndpoint  bool                            `json:"disableConfigEndpoint,omitempty"`
+	Cloud                  *Cloud                          `json:"cloud,omitempty"`
 }
 
 type Connector struct {
@@ -1775,8 +1850,9 @@ type ConvertVirtualClusterConfig struct {
 }
 
 type ConvertVirtualClusterConfigSpec struct {
-	Distro string `json:"distro,omitempty"`
-	Values string `json:"values,omitempty"`
+	Annotations map[string]string `json:"annotations,omitempty"`
+	Distro      string            `json:"distro,omitempty"`
+	Values      string            `json:"values,omitempty"`
 }
 
 type ConvertVirtualClusterConfigStatus struct {
@@ -1789,6 +1865,24 @@ type ConvertVirtualClusterConfigStatus struct {
 type DevPodDeleteOptions struct {
 	metav1.TypeMeta `json:",inline"`
 	Options         string `json:"options,omitempty"`
+}
+
+// +genclient
+// +genclient
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+
+type DevPodEnvironmentTemplate struct {
+	metav1.TypeMeta   `json:",inline"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
+	Spec              DevPodEnvironmentTemplateSpec   `json:"spec,omitempty"`
+	Status            DevPodEnvironmentTemplateStatus `json:"status,omitempty"`
+}
+
+type DevPodEnvironmentTemplateSpec struct {
+	storagev1.DevPodEnvironmentTemplateSpec `json:",inline"`
+}
+
+type DevPodEnvironmentTemplateStatus struct {
 }
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
@@ -1977,7 +2071,7 @@ type KioskStatus struct {
 }
 
 // +genclient
-// +genclient
+// +genclient:nonNamespaced
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 
 type License struct {
@@ -2053,17 +2147,36 @@ type LoftUpgradeSpec struct {
 type LoftUpgradeStatus struct {
 }
 
-type OIDC struct {
-	Enabled          bool         `json:"enabled,omitempty"`
-	WildcardRedirect bool         `json:"wildcardRedirect,omitempty"`
-	Clients          []OIDCClient `json:"clients,omitempty"`
+type MaintenanceWindow struct {
+	DayOfWeek  string `json:"dayOfWeek,omitempty"`
+	TimeWindow string `json:"timeWindow,omitempty"`
 }
 
+type OIDC struct {
+	Enabled          bool             `json:"enabled,omitempty"`
+	WildcardRedirect bool             `json:"wildcardRedirect,omitempty"`
+	Clients          []OIDCClientSpec `json:"clients,omitempty"`
+}
+
+// +genclient
+// +genclient:nonNamespaced
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+
 type OIDCClient struct {
+	metav1.TypeMeta   `json:",inline"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
+	Spec              OIDCClientSpec   `json:"spec,omitempty"`
+	Status            OIDCClientStatus `json:"status,omitempty"`
+}
+
+type OIDCClientSpec struct {
 	Name         string   `json:"name,omitempty"`
 	ClientID     string   `json:"clientId,omitempty"`
 	ClientSecret string   `json:"clientSecret,omitempty"`
 	RedirectURIs []string `json:"redirectURIs"`
+}
+
+type OIDCClientStatus struct {
 }
 
 // +genclient
@@ -2194,6 +2307,14 @@ type ProjectMigrateVirtualClusterInstanceSource struct {
 	Namespace string `json:"namespace,omitempty"`
 }
 
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+
+type ProjectRunners struct {
+	metav1.TypeMeta   `json:",inline"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
+	Runners           []Runner `json:"runners,omitempty"`
+}
+
 // +genclient
 // +genclient
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
@@ -2228,14 +2349,16 @@ type ProjectStatus struct {
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 
 type ProjectTemplates struct {
-	metav1.TypeMeta                `json:",inline"`
-	metav1.ObjectMeta              `json:"metadata,omitempty"`
-	DefaultVirtualClusterTemplate  string                    `json:"defaultVirtualClusterTemplate,omitempty"`
-	VirtualClusterTemplates        []VirtualClusterTemplate  `json:"virtualClusterTemplates,omitempty"`
-	DefaultSpaceTemplate           string                    `json:"defaultSpaceTemplate,omitempty"`
-	SpaceTemplates                 []SpaceTemplate           `json:"spaceTemplates,omitempty"`
-	DefaultDevPodWorkspaceTemplate string                    `json:"defaultDevPodWorkspaceTemplate,omitempty"`
-	DevPodWorkspaceTemplates       []DevPodWorkspaceTemplate `json:"devPodWorkspaceTemplates,omitempty"`
+	metav1.TypeMeta                  `json:",inline"`
+	metav1.ObjectMeta                `json:"metadata,omitempty"`
+	DefaultVirtualClusterTemplate    string                      `json:"defaultVirtualClusterTemplate,omitempty"`
+	VirtualClusterTemplates          []VirtualClusterTemplate    `json:"virtualClusterTemplates,omitempty"`
+	DefaultSpaceTemplate             string                      `json:"defaultSpaceTemplate,omitempty"`
+	SpaceTemplates                   []SpaceTemplate             `json:"spaceTemplates,omitempty"`
+	DefaultDevPodWorkspaceTemplate   string                      `json:"defaultDevPodWorkspaceTemplate,omitempty"`
+	DevPodWorkspaceTemplates         []DevPodWorkspaceTemplate   `json:"devPodWorkspaceTemplates,omitempty"`
+	DevPodEnvironmentTemplates       []DevPodEnvironmentTemplate `json:"devPodEnvironmentTemplates,omitempty"`
+	DefaultDevPodEnvironmentTemplate string                      `json:"defaultDevPodEnvironmentTemplate,omitempty"`
 }
 
 // +genclient
@@ -2426,7 +2549,7 @@ type SpaceInstanceStatus struct {
 }
 
 // +genclient
-// +genclient:nonNamespaced
+// +genclient
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 
 type SpaceTemplate struct {
@@ -2624,6 +2747,23 @@ type VirtualClusterAccessKey struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 	AccessKey         string `json:"accessKey,omitempty"`
+}
+
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+
+type VirtualClusterExternalDatabase struct {
+	metav1.TypeMeta   `json:",inline"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
+	Spec              VirtualClusterExternalDatabaseSpec   `json:"spec,omitempty"`
+	Status            VirtualClusterExternalDatabaseStatus `json:"status,omitempty"`
+}
+
+type VirtualClusterExternalDatabaseSpec struct {
+	Connector string `json:"connector,omitempty"`
+}
+
+type VirtualClusterExternalDatabaseStatus struct {
+	DataSource string `json:"dataSource,omitempty"`
 }
 
 // +genclient
@@ -3839,6 +3979,125 @@ func (s *storageConvertVirtualClusterConfig) UpdateConvertVirtualClusterConfig(c
 }
 
 func (s *storageConvertVirtualClusterConfig) DeleteConvertVirtualClusterConfig(ctx context.Context, id string) (bool, error) {
+	st := s.GetStandardStorage()
+	_, sync, err := st.Delete(ctx, id, nil, &metav1.DeleteOptions{})
+	return sync, err
+}
+
+// DevPodEnvironmentTemplate Functions and Structs
+//
+// +k8s:deepcopy-gen=false
+type DevPodEnvironmentTemplateStrategy struct {
+	builders.DefaultStorageStrategy
+}
+
+// +k8s:deepcopy-gen=false
+type DevPodEnvironmentTemplateStatusStrategy struct {
+	builders.DefaultStatusStorageStrategy
+}
+
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+
+type DevPodEnvironmentTemplateList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata,omitempty"`
+	Items           []DevPodEnvironmentTemplate `json:"items"`
+}
+
+func (DevPodEnvironmentTemplate) NewStatus() interface{} {
+	return DevPodEnvironmentTemplateStatus{}
+}
+
+func (pc *DevPodEnvironmentTemplate) GetStatus() interface{} {
+	return pc.Status
+}
+
+func (pc *DevPodEnvironmentTemplate) SetStatus(s interface{}) {
+	pc.Status = s.(DevPodEnvironmentTemplateStatus)
+}
+
+func (pc *DevPodEnvironmentTemplate) GetSpec() interface{} {
+	return pc.Spec
+}
+
+func (pc *DevPodEnvironmentTemplate) SetSpec(s interface{}) {
+	pc.Spec = s.(DevPodEnvironmentTemplateSpec)
+}
+
+func (pc *DevPodEnvironmentTemplate) GetObjectMeta() *metav1.ObjectMeta {
+	return &pc.ObjectMeta
+}
+
+func (pc *DevPodEnvironmentTemplate) SetGeneration(generation int64) {
+	pc.ObjectMeta.Generation = generation
+}
+
+func (pc DevPodEnvironmentTemplate) GetGeneration() int64 {
+	return pc.ObjectMeta.Generation
+}
+
+// Registry is an interface for things that know how to store DevPodEnvironmentTemplate.
+// +k8s:deepcopy-gen=false
+type DevPodEnvironmentTemplateRegistry interface {
+	ListDevPodEnvironmentTemplates(ctx context.Context, options *internalversion.ListOptions) (*DevPodEnvironmentTemplateList, error)
+	GetDevPodEnvironmentTemplate(ctx context.Context, id string, options *metav1.GetOptions) (*DevPodEnvironmentTemplate, error)
+	CreateDevPodEnvironmentTemplate(ctx context.Context, id *DevPodEnvironmentTemplate) (*DevPodEnvironmentTemplate, error)
+	UpdateDevPodEnvironmentTemplate(ctx context.Context, id *DevPodEnvironmentTemplate) (*DevPodEnvironmentTemplate, error)
+	DeleteDevPodEnvironmentTemplate(ctx context.Context, id string) (bool, error)
+}
+
+// NewRegistry returns a new Registry interface for the given Storage. Any mismatched types will panic.
+func NewDevPodEnvironmentTemplateRegistry(sp builders.StandardStorageProvider) DevPodEnvironmentTemplateRegistry {
+	return &storageDevPodEnvironmentTemplate{sp}
+}
+
+// Implement Registry
+// storage puts strong typing around storage calls
+// +k8s:deepcopy-gen=false
+type storageDevPodEnvironmentTemplate struct {
+	builders.StandardStorageProvider
+}
+
+func (s *storageDevPodEnvironmentTemplate) ListDevPodEnvironmentTemplates(ctx context.Context, options *internalversion.ListOptions) (*DevPodEnvironmentTemplateList, error) {
+	if options != nil && options.FieldSelector != nil && !options.FieldSelector.Empty() {
+		return nil, fmt.Errorf("field selector not supported yet")
+	}
+	st := s.GetStandardStorage()
+	obj, err := st.List(ctx, options)
+	if err != nil {
+		return nil, err
+	}
+	return obj.(*DevPodEnvironmentTemplateList), err
+}
+
+func (s *storageDevPodEnvironmentTemplate) GetDevPodEnvironmentTemplate(ctx context.Context, id string, options *metav1.GetOptions) (*DevPodEnvironmentTemplate, error) {
+	st := s.GetStandardStorage()
+	obj, err := st.Get(ctx, id, options)
+	if err != nil {
+		return nil, err
+	}
+	return obj.(*DevPodEnvironmentTemplate), nil
+}
+
+func (s *storageDevPodEnvironmentTemplate) CreateDevPodEnvironmentTemplate(ctx context.Context, object *DevPodEnvironmentTemplate) (*DevPodEnvironmentTemplate, error) {
+	st := s.GetStandardStorage()
+	obj, err := st.Create(ctx, object, nil, &metav1.CreateOptions{})
+	if err != nil {
+		return nil, err
+	}
+	return obj.(*DevPodEnvironmentTemplate), nil
+}
+
+func (s *storageDevPodEnvironmentTemplate) UpdateDevPodEnvironmentTemplate(ctx context.Context, object *DevPodEnvironmentTemplate) (*DevPodEnvironmentTemplate, error) {
+	st := s.GetStandardStorage()
+	obj, _, err := st.Update(ctx, object.Name, rest.DefaultUpdatedObjectInfo(object), nil, nil, false, &metav1.UpdateOptions{})
+	if err != nil {
+		return nil, err
+	}
+	return obj.(*DevPodEnvironmentTemplate), nil
+}
+
+func (s *storageDevPodEnvironmentTemplate) DeleteDevPodEnvironmentTemplate(ctx context.Context, id string) (bool, error) {
 	st := s.GetStandardStorage()
 	_, sync, err := st.Delete(ctx, id, nil, &metav1.DeleteOptions{})
 	return sync, err
@@ -5090,6 +5349,125 @@ func (s *storageLoftUpgrade) DeleteLoftUpgrade(ctx context.Context, id string) (
 	return sync, err
 }
 
+// OIDCClient Functions and Structs
+//
+// +k8s:deepcopy-gen=false
+type OIDCClientStrategy struct {
+	builders.DefaultStorageStrategy
+}
+
+// +k8s:deepcopy-gen=false
+type OIDCClientStatusStrategy struct {
+	builders.DefaultStatusStorageStrategy
+}
+
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+
+type OIDCClientList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata,omitempty"`
+	Items           []OIDCClient `json:"items"`
+}
+
+func (OIDCClient) NewStatus() interface{} {
+	return OIDCClientStatus{}
+}
+
+func (pc *OIDCClient) GetStatus() interface{} {
+	return pc.Status
+}
+
+func (pc *OIDCClient) SetStatus(s interface{}) {
+	pc.Status = s.(OIDCClientStatus)
+}
+
+func (pc *OIDCClient) GetSpec() interface{} {
+	return pc.Spec
+}
+
+func (pc *OIDCClient) SetSpec(s interface{}) {
+	pc.Spec = s.(OIDCClientSpec)
+}
+
+func (pc *OIDCClient) GetObjectMeta() *metav1.ObjectMeta {
+	return &pc.ObjectMeta
+}
+
+func (pc *OIDCClient) SetGeneration(generation int64) {
+	pc.ObjectMeta.Generation = generation
+}
+
+func (pc OIDCClient) GetGeneration() int64 {
+	return pc.ObjectMeta.Generation
+}
+
+// Registry is an interface for things that know how to store OIDCClient.
+// +k8s:deepcopy-gen=false
+type OIDCClientRegistry interface {
+	ListOIDCClients(ctx context.Context, options *internalversion.ListOptions) (*OIDCClientList, error)
+	GetOIDCClient(ctx context.Context, id string, options *metav1.GetOptions) (*OIDCClient, error)
+	CreateOIDCClient(ctx context.Context, id *OIDCClient) (*OIDCClient, error)
+	UpdateOIDCClient(ctx context.Context, id *OIDCClient) (*OIDCClient, error)
+	DeleteOIDCClient(ctx context.Context, id string) (bool, error)
+}
+
+// NewRegistry returns a new Registry interface for the given Storage. Any mismatched types will panic.
+func NewOIDCClientRegistry(sp builders.StandardStorageProvider) OIDCClientRegistry {
+	return &storageOIDCClient{sp}
+}
+
+// Implement Registry
+// storage puts strong typing around storage calls
+// +k8s:deepcopy-gen=false
+type storageOIDCClient struct {
+	builders.StandardStorageProvider
+}
+
+func (s *storageOIDCClient) ListOIDCClients(ctx context.Context, options *internalversion.ListOptions) (*OIDCClientList, error) {
+	if options != nil && options.FieldSelector != nil && !options.FieldSelector.Empty() {
+		return nil, fmt.Errorf("field selector not supported yet")
+	}
+	st := s.GetStandardStorage()
+	obj, err := st.List(ctx, options)
+	if err != nil {
+		return nil, err
+	}
+	return obj.(*OIDCClientList), err
+}
+
+func (s *storageOIDCClient) GetOIDCClient(ctx context.Context, id string, options *metav1.GetOptions) (*OIDCClient, error) {
+	st := s.GetStandardStorage()
+	obj, err := st.Get(ctx, id, options)
+	if err != nil {
+		return nil, err
+	}
+	return obj.(*OIDCClient), nil
+}
+
+func (s *storageOIDCClient) CreateOIDCClient(ctx context.Context, object *OIDCClient) (*OIDCClient, error) {
+	st := s.GetStandardStorage()
+	obj, err := st.Create(ctx, object, nil, &metav1.CreateOptions{})
+	if err != nil {
+		return nil, err
+	}
+	return obj.(*OIDCClient), nil
+}
+
+func (s *storageOIDCClient) UpdateOIDCClient(ctx context.Context, object *OIDCClient) (*OIDCClient, error) {
+	st := s.GetStandardStorage()
+	obj, _, err := st.Update(ctx, object.Name, rest.DefaultUpdatedObjectInfo(object), nil, nil, false, &metav1.UpdateOptions{})
+	if err != nil {
+		return nil, err
+	}
+	return obj.(*OIDCClient), nil
+}
+
+func (s *storageOIDCClient) DeleteOIDCClient(ctx context.Context, id string) (bool, error) {
+	st := s.GetStandardStorage()
+	_, sync, err := st.Delete(ctx, id, nil, &metav1.DeleteOptions{})
+	return sync, err
+}
+
 // OwnedAccessKey Functions and Structs
 //
 // +k8s:deepcopy-gen=false
@@ -5283,6 +5661,14 @@ type ProjectMigrateVirtualClusterInstanceList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []ProjectMigrateVirtualClusterInstance `json:"items"`
+}
+
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+
+type ProjectRunnersList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata,omitempty"`
+	Items           []ProjectRunners `json:"items"`
 }
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
@@ -7275,6 +7661,14 @@ type VirtualClusterAccessKeyList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []VirtualClusterAccessKey `json:"items"`
+}
+
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+
+type VirtualClusterExternalDatabaseList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata,omitempty"`
+	Items           []VirtualClusterExternalDatabase `json:"items"`
 }
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
