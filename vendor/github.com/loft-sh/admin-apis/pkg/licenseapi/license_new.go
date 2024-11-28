@@ -70,6 +70,11 @@ func New(product ProductName) *License {
 						Name:        string(VirtualClusterCentralHostPathMapper),
 						Status:      virtualClusterStatus,
 					},
+					{
+						DisplayName: "Enterprise Plugins",
+						Name:        string(VirtualClusterEnterprisePlugins),
+						Status:      virtualClusterStatus,
+					},
 				},
 			},
 			{
@@ -97,6 +102,11 @@ func New(product ProductName) *License {
 						Status:      virtualClusterStatus,
 					},
 					{
+						DisplayName: "Embedded etcd",
+						Name:        string(VirtualClusterProDistroEmbeddedEtcd),
+						Status:      virtualClusterStatus,
+					},
+					{
 						DisplayName: "Isolated Control Plane",
 						Name:        string(VirtualClusterProDistroIsolatedControlPlane),
 						Status:      virtualClusterStatus,
@@ -104,6 +114,40 @@ func New(product ProductName) *License {
 					{
 						DisplayName: "Centralized Admission Control",
 						Name:        string(VirtualClusterProDistroCentralizedAdmissionControl),
+						Status:      virtualClusterStatus,
+					},
+					{
+						DisplayName: "Generic Sync",
+						Name:        string(VirtualClusterProDistroGenericSync),
+						Status:      virtualClusterStatus,
+					},
+					{
+						DisplayName: "Translate Patches",
+						Name:        string(VirtualClusterProDistroTranslatePatches),
+						Status:      virtualClusterStatus,
+					},
+					{
+						DisplayName: "KubeVirt Integration",
+						Name:        string(VirtualClusterProDistroIntegrationsKubeVirt),
+						Status:      virtualClusterStatus,
+					},
+					{
+						DisplayName: "External Secrets Integration",
+						Name:        string(VirtualClusterProDistroIntegrationsExternalSecrets),
+						Status:      virtualClusterStatus,
+					},
+					{
+						DisplayName: "FIPS",
+						Name:        string(VirtualClusterProDistroFips),
+						Status:      virtualClusterStatus,
+					},
+					{
+						DisplayName: "External Database",
+						Name:        string(VirtualClusterProDistroExternalDatabase),
+					},
+					{
+						DisplayName: "Database Connector",
+						Name:        string(VirtualClusterProDistroDatabaseConnector),
 						Status:      virtualClusterStatus,
 					},
 				},

@@ -35,7 +35,7 @@ type ConfigStatus struct {
 	// +optional
 	Authentication Authentication `json:"auth,omitempty"`
 
-	// OIDC holds oidc provider relevant information
+	// DEPRECATED: Configure the OIDC clients using either the OIDC Client UI or a secret. By default, vCluster Platform as an OIDC Provider is enabled but does not function without OIDC clients.
 	// +optional
 	OIDC *OIDC `json:"oidc,omitempty"`
 
@@ -66,6 +66,13 @@ type ConfigStatus struct {
 	// VaultIntegration holds the vault integration configuration
 	// +optional
 	VaultIntegration *storagev1.VaultIntegrationSpec `json:"vault,omitempty"`
+
+	// DisableLoftConfigEndpoint will disable setting config via the UI and config.management.loft.sh endpoint
+	DisableConfigEndpoint bool `json:"disableConfigEndpoint,omitempty"`
+
+	// Cloud holkds the settings to be used exclusively in vCluster Cloud based
+	// environments and deployments.
+	Cloud *Cloud `json:"cloud,omitempty"`
 }
 
 // Audit holds the audit configuration options for loft. Changing any options will require a loft restart
@@ -288,23 +295,7 @@ type OIDC struct {
 	WildcardRedirect bool `json:"wildcardRedirect,omitempty"`
 
 	// The clients that are allowed to request loft tokens
-	Clients []OIDCClient `json:"clients,omitempty"`
-}
-
-// OIDCClient holds information about a client
-type OIDCClient struct {
-	// The client name
-	Name string `json:"name,omitempty"`
-
-	// The client id of the client
-	ClientID string `json:"clientId,omitempty"`
-
-	// The client secret of the client
-	ClientSecret string `json:"clientSecret,omitempty"`
-
-	// A registered set of redirect URIs. When redirecting from dex to the client, the URI
-	// requested to redirect to MUST match one of these values, unless the client is "public".
-	RedirectURIs []string `json:"redirectURIs"`
+	Clients []OIDCClientSpec `json:"clients,omitempty"`
 }
 
 // Authentication holds authentication relevant information
@@ -328,6 +319,12 @@ type Authentication struct {
 	// +optional
 	DisableTeamCreation bool `json:"disableTeamCreation,omitempty"`
 
+	// DisableUserCreation prevents the SSO connectors from creating a new user on a users initial signin through sso.
+	// Default behaviour is false, this means that a new user object will be created once a user without
+	// a Kubernetes user object logs in.
+	// +optional
+	DisableUserCreation bool `json:"disableUserCreation,omitempty"`
+
 	// AccessKeyMaxTTLSeconds is the global maximum lifespan of an accesskey in seconds.
 	// Leaving it 0 or unspecified will disable it.
 	// Specifying 2592000 will mean all keys have a Time-To-Live of 30 days.
@@ -345,6 +342,9 @@ type Authentication struct {
 	// CustomHttpHeaders are additional headers that should be set for the authentication endpoints
 	// +optional
 	CustomHttpHeaders map[string]string `json:"customHttpHeaders,omitempty"`
+
+	// GroupsFilters is a regex expression to only save matching sso groups into the user resource
+	GroupsFilters []string `json:"groupsFilters,omitempty"`
 }
 
 type AuthenticationRancher struct {
@@ -695,4 +695,24 @@ type AuthenticationOIDC struct {
 	// Type of the OIDC to show in the UI. Only for displaying purposes
 	// +optional
 	Type string `json:"type,omitempty"`
+}
+
+type Cloud struct {
+	// ReleaseChannel specifies the release channel for the cloud configuration.
+	// This can be used to determine which updates or versions are applied.
+	ReleaseChannel string `json:"releaseChannel,omitempty"`
+
+	// MaintenanceWindow specifies the maintenance window for the cloud configuration.
+	// This is a structured representation of the time window during which maintenance can occur.
+	MaintenanceWindow MaintenanceWindow `json:"maintenanceWindow,omitempty"`
+}
+
+type MaintenanceWindow struct {
+	// DayOfWeek specifies the day of the week for the maintenance window.
+	// It should be a string representing the day, e.g., "Monday", "Tuesday", etc.
+	DayOfWeek string `json:"dayOfWeek,omitempty"`
+
+	// TimeWindow specifies the time window for the maintenance.
+	// It should be a string representing the time range in 24-hour format, in UTC, e.g., "02:00-03:00".
+	TimeWindow string `json:"timeWindow,omitempty"`
 }
