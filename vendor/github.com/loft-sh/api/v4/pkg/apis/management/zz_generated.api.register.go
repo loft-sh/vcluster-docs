@@ -15,6 +15,7 @@ import (
 	"github.com/loft-sh/api/v4/pkg/managerfactory"
 	"github.com/loft-sh/apiserver/pkg/builders"
 	authorizationv1 "k8s.io/api/authorization/v1"
+	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/internalversion"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -76,7 +77,11 @@ var (
 	NewClusterREST = func(getter generic.RESTOptionsGetter) rest.Storage {
 		return NewClusterRESTFunc(Factory)
 	}
-	NewClusterRESTFunc             NewRESTFunc
+	NewClusterRESTFunc   NewRESTFunc
+	NewClusterStatusREST = func(getter generic.RESTOptionsGetter) rest.Storage {
+		return NewClusterStatusRESTFunc(Factory)
+	}
+	NewClusterStatusRESTFunc       NewRESTFunc
 	ManagementClusterAccessStorage = builders.NewApiResourceWithStorage( // Resource status endpoint
 		InternalClusterAccess,
 		func() runtime.Object { return &ClusterAccess{} },     // Register versioned resource
@@ -136,7 +141,17 @@ var (
 	NewDevPodWorkspaceInstanceREST = func(getter generic.RESTOptionsGetter) rest.Storage {
 		return NewDevPodWorkspaceInstanceRESTFunc(Factory)
 	}
-	NewDevPodWorkspaceInstanceRESTFunc       NewRESTFunc
+	NewDevPodWorkspaceInstanceRESTFunc     NewRESTFunc
+	ManagementDevPodWorkspacePresetStorage = builders.NewApiResourceWithStorage( // Resource status endpoint
+		InternalDevPodWorkspacePreset,
+		func() runtime.Object { return &DevPodWorkspacePreset{} },     // Register versioned resource
+		func() runtime.Object { return &DevPodWorkspacePresetList{} }, // Register versioned resource list
+		NewDevPodWorkspacePresetREST,
+	)
+	NewDevPodWorkspacePresetREST = func(getter generic.RESTOptionsGetter) rest.Storage {
+		return NewDevPodWorkspacePresetRESTFunc(Factory)
+	}
+	NewDevPodWorkspacePresetRESTFunc         NewRESTFunc
 	ManagementDevPodWorkspaceTemplateStorage = builders.NewApiResourceWithStorage( // Resource status endpoint
 		InternalDevPodWorkspaceTemplate,
 		func() runtime.Object { return &DevPodWorkspaceTemplate{} },     // Register versioned resource
@@ -690,15 +705,35 @@ var (
 	NewDevPodStopOptionsREST = func(getter generic.RESTOptionsGetter) rest.Storage {
 		return NewDevPodStopOptionsRESTFunc(Factory)
 	}
-	NewDevPodStopOptionsRESTFunc NewRESTFunc
-	InternalDevPodUpOptionsREST  = builders.NewInternalSubresource(
+	NewDevPodStopOptionsRESTFunc                    NewRESTFunc
+	InternalDevPodWorkspaceInstanceTroubleshootREST = builders.NewInternalSubresource(
+		"devpodworkspaceinstances", "DevPodWorkspaceInstanceTroubleshoot", "troubleshoot",
+		func() runtime.Object { return &DevPodWorkspaceInstanceTroubleshoot{} },
+	)
+	NewDevPodWorkspaceInstanceTroubleshootREST = func(getter generic.RESTOptionsGetter) rest.Storage {
+		return NewDevPodWorkspaceInstanceTroubleshootRESTFunc(Factory)
+	}
+	NewDevPodWorkspaceInstanceTroubleshootRESTFunc NewRESTFunc
+	InternalDevPodUpOptionsREST                    = builders.NewInternalSubresource(
 		"devpodworkspaceinstances", "DevPodUpOptions", "up",
 		func() runtime.Object { return &DevPodUpOptions{} },
 	)
 	NewDevPodUpOptionsREST = func(getter generic.RESTOptionsGetter) rest.Storage {
 		return NewDevPodUpOptionsRESTFunc(Factory)
 	}
-	NewDevPodUpOptionsRESTFunc      NewRESTFunc
+	NewDevPodUpOptionsRESTFunc    NewRESTFunc
+	InternalDevPodWorkspacePreset = builders.NewInternalResource(
+		"devpodworkspacepresets",
+		"DevPodWorkspacePreset",
+		func() runtime.Object { return &DevPodWorkspacePreset{} },
+		func() runtime.Object { return &DevPodWorkspacePresetList{} },
+	)
+	InternalDevPodWorkspacePresetStatus = builders.NewInternalResourceStatus(
+		"devpodworkspacepresets",
+		"DevPodWorkspacePresetStatus",
+		func() runtime.Object { return &DevPodWorkspacePreset{} },
+		func() runtime.Object { return &DevPodWorkspacePresetList{} },
+	)
 	InternalDevPodWorkspaceTemplate = builders.NewInternalResource(
 		"devpodworkspacetemplates",
 		"DevPodWorkspaceTemplate",
@@ -1270,7 +1305,10 @@ var (
 		InternalDevPodSshOptionsREST,
 		InternalDevPodWorkspaceInstanceStateREST,
 		InternalDevPodStopOptionsREST,
+		InternalDevPodWorkspaceInstanceTroubleshootREST,
 		InternalDevPodUpOptionsREST,
+		InternalDevPodWorkspacePreset,
+		InternalDevPodWorkspacePresetStatus,
 		InternalDevPodWorkspaceTemplate,
 		InternalDevPodWorkspaceTemplateStatus,
 		InternalDirectClusterEndpointToken,
@@ -1821,6 +1859,7 @@ type ConfigStatus struct {
 	VaultIntegration       *storagev1.VaultIntegrationSpec `json:"vault,omitempty"`
 	DisableConfigEndpoint  bool                            `json:"disableConfigEndpoint,omitempty"`
 	Cloud                  *Cloud                          `json:"cloud,omitempty"`
+	CostControl            *CostControl                    `json:"costControl,omitempty"`
 }
 
 type Connector struct {
@@ -1858,6 +1897,34 @@ type ConvertVirtualClusterConfigSpec struct {
 type ConvertVirtualClusterConfigStatus struct {
 	Values    string `json:"values,omitempty"`
 	Converted bool   `json:"converted"`
+}
+
+type CostControl struct {
+	Enabled  *bool                    `json:"enabled,omitempty"`
+	Global   CostControlGlobalConfig  `json:"global,omitempty"`
+	Cluster  CostControlClusterConfig `json:"cluster,omitempty"`
+	Settings *CostControlSettings     `json:"settings,omitempty"`
+}
+
+type CostControlClusterConfig struct {
+	Metrics  *storagev1.Metrics  `json:"metrics,omitempty"`
+	OpenCost *storagev1.OpenCost `json:"opencost,omitempty"`
+}
+
+type CostControlGlobalConfig struct {
+	Metrics *storagev1.Metrics `json:"metrics,omitempty"`
+}
+
+type CostControlResourcePrice struct {
+	Price      float64 `json:"price,omitempty"`
+	TimePeriod string  `json:"timePeriod,omitempty"`
+}
+
+type CostControlSettings struct {
+	PriceCurrency               string                    `json:"priceCurrency,omitempty"`
+	AvgCPUPricePerNode          *CostControlResourcePrice `json:"averageCPUPricePerNode,omitempty"`
+	AvgRAMPricePerNode          *CostControlResourcePrice `json:"averageRAMPricePerNode,omitempty"`
+	ControlPlanePricePerCluster *CostControlResourcePrice `json:"controlPlanePricePerCluster,omitempty"`
 }
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
@@ -1942,6 +2009,37 @@ type DevPodWorkspaceInstanceState struct {
 type DevPodWorkspaceInstanceStatus struct {
 	storagev1.DevPodWorkspaceInstanceStatus `json:",inline"`
 	SleepModeConfig                         *clusterv1.SleepModeConfig `json:"sleepModeConfig,omitempty"`
+}
+
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+
+type DevPodWorkspaceInstanceTroubleshoot struct {
+	metav1.TypeMeta   `json:",inline"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
+	State             string                             `json:"state,omitempty"`
+	Workspace         *DevPodWorkspaceInstance           `json:"workspace,omitempty"`
+	Template          *storagev1.DevPodWorkspaceTemplate `json:"template,omitempty"`
+	Pods              []corev1.Pod                       `json:"pods,omitempty"`
+	PVCs              []corev1.PersistentVolumeClaim     `json:"pvcs,omitempty"`
+	Errors            []string                           `json:"errors,omitempty"`
+}
+
+// +genclient
+// +genclient:nonNamespaced
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+
+type DevPodWorkspacePreset struct {
+	metav1.TypeMeta   `json:",inline"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
+	Spec              DevPodWorkspacePresetSpec   `json:"spec,omitempty"`
+	Status            DevPodWorkspacePresetStatus `json:"status,omitempty"`
+}
+
+type DevPodWorkspacePresetSpec struct {
+	storagev1.DevPodWorkspacePresetSpec `json:",inline"`
+}
+
+type DevPodWorkspacePresetStatus struct {
 }
 
 // +genclient
@@ -2358,6 +2456,7 @@ type ProjectTemplates struct {
 	DefaultDevPodWorkspaceTemplate   string                      `json:"defaultDevPodWorkspaceTemplate,omitempty"`
 	DevPodWorkspaceTemplates         []DevPodWorkspaceTemplate   `json:"devPodWorkspaceTemplates,omitempty"`
 	DevPodEnvironmentTemplates       []DevPodEnvironmentTemplate `json:"devPodEnvironmentTemplates,omitempty"`
+	DevPodWorkspacePresets           []DevPodWorkspacePreset     `json:"devPodWorkspacePresets,omitempty"`
 	DefaultDevPodEnvironmentTemplate string                      `json:"defaultDevPodEnvironmentTemplate,omitempty"`
 }
 
@@ -4165,6 +4264,14 @@ type DevPodStopOptionsList struct {
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 
+type DevPodWorkspaceInstanceTroubleshootList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata,omitempty"`
+	Items           []DevPodWorkspaceInstanceTroubleshoot `json:"items"`
+}
+
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+
 type DevPodUpOptionsList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
@@ -4265,6 +4372,125 @@ func (s *storageDevPodWorkspaceInstance) UpdateDevPodWorkspaceInstance(ctx conte
 }
 
 func (s *storageDevPodWorkspaceInstance) DeleteDevPodWorkspaceInstance(ctx context.Context, id string) (bool, error) {
+	st := s.GetStandardStorage()
+	_, sync, err := st.Delete(ctx, id, nil, &metav1.DeleteOptions{})
+	return sync, err
+}
+
+// DevPodWorkspacePreset Functions and Structs
+//
+// +k8s:deepcopy-gen=false
+type DevPodWorkspacePresetStrategy struct {
+	builders.DefaultStorageStrategy
+}
+
+// +k8s:deepcopy-gen=false
+type DevPodWorkspacePresetStatusStrategy struct {
+	builders.DefaultStatusStorageStrategy
+}
+
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+
+type DevPodWorkspacePresetList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata,omitempty"`
+	Items           []DevPodWorkspacePreset `json:"items"`
+}
+
+func (DevPodWorkspacePreset) NewStatus() interface{} {
+	return DevPodWorkspacePresetStatus{}
+}
+
+func (pc *DevPodWorkspacePreset) GetStatus() interface{} {
+	return pc.Status
+}
+
+func (pc *DevPodWorkspacePreset) SetStatus(s interface{}) {
+	pc.Status = s.(DevPodWorkspacePresetStatus)
+}
+
+func (pc *DevPodWorkspacePreset) GetSpec() interface{} {
+	return pc.Spec
+}
+
+func (pc *DevPodWorkspacePreset) SetSpec(s interface{}) {
+	pc.Spec = s.(DevPodWorkspacePresetSpec)
+}
+
+func (pc *DevPodWorkspacePreset) GetObjectMeta() *metav1.ObjectMeta {
+	return &pc.ObjectMeta
+}
+
+func (pc *DevPodWorkspacePreset) SetGeneration(generation int64) {
+	pc.ObjectMeta.Generation = generation
+}
+
+func (pc DevPodWorkspacePreset) GetGeneration() int64 {
+	return pc.ObjectMeta.Generation
+}
+
+// Registry is an interface for things that know how to store DevPodWorkspacePreset.
+// +k8s:deepcopy-gen=false
+type DevPodWorkspacePresetRegistry interface {
+	ListDevPodWorkspacePresets(ctx context.Context, options *internalversion.ListOptions) (*DevPodWorkspacePresetList, error)
+	GetDevPodWorkspacePreset(ctx context.Context, id string, options *metav1.GetOptions) (*DevPodWorkspacePreset, error)
+	CreateDevPodWorkspacePreset(ctx context.Context, id *DevPodWorkspacePreset) (*DevPodWorkspacePreset, error)
+	UpdateDevPodWorkspacePreset(ctx context.Context, id *DevPodWorkspacePreset) (*DevPodWorkspacePreset, error)
+	DeleteDevPodWorkspacePreset(ctx context.Context, id string) (bool, error)
+}
+
+// NewRegistry returns a new Registry interface for the given Storage. Any mismatched types will panic.
+func NewDevPodWorkspacePresetRegistry(sp builders.StandardStorageProvider) DevPodWorkspacePresetRegistry {
+	return &storageDevPodWorkspacePreset{sp}
+}
+
+// Implement Registry
+// storage puts strong typing around storage calls
+// +k8s:deepcopy-gen=false
+type storageDevPodWorkspacePreset struct {
+	builders.StandardStorageProvider
+}
+
+func (s *storageDevPodWorkspacePreset) ListDevPodWorkspacePresets(ctx context.Context, options *internalversion.ListOptions) (*DevPodWorkspacePresetList, error) {
+	if options != nil && options.FieldSelector != nil && !options.FieldSelector.Empty() {
+		return nil, fmt.Errorf("field selector not supported yet")
+	}
+	st := s.GetStandardStorage()
+	obj, err := st.List(ctx, options)
+	if err != nil {
+		return nil, err
+	}
+	return obj.(*DevPodWorkspacePresetList), err
+}
+
+func (s *storageDevPodWorkspacePreset) GetDevPodWorkspacePreset(ctx context.Context, id string, options *metav1.GetOptions) (*DevPodWorkspacePreset, error) {
+	st := s.GetStandardStorage()
+	obj, err := st.Get(ctx, id, options)
+	if err != nil {
+		return nil, err
+	}
+	return obj.(*DevPodWorkspacePreset), nil
+}
+
+func (s *storageDevPodWorkspacePreset) CreateDevPodWorkspacePreset(ctx context.Context, object *DevPodWorkspacePreset) (*DevPodWorkspacePreset, error) {
+	st := s.GetStandardStorage()
+	obj, err := st.Create(ctx, object, nil, &metav1.CreateOptions{})
+	if err != nil {
+		return nil, err
+	}
+	return obj.(*DevPodWorkspacePreset), nil
+}
+
+func (s *storageDevPodWorkspacePreset) UpdateDevPodWorkspacePreset(ctx context.Context, object *DevPodWorkspacePreset) (*DevPodWorkspacePreset, error) {
+	st := s.GetStandardStorage()
+	obj, _, err := st.Update(ctx, object.Name, rest.DefaultUpdatedObjectInfo(object), nil, nil, false, &metav1.UpdateOptions{})
+	if err != nil {
+		return nil, err
+	}
+	return obj.(*DevPodWorkspacePreset), nil
+}
+
+func (s *storageDevPodWorkspacePreset) DeleteDevPodWorkspacePreset(ctx context.Context, id string) (bool, error) {
 	st := s.GetStandardStorage()
 	_, sync, err := st.Delete(ctx, id, nil, &metav1.DeleteOptions{})
 	return sync, err
