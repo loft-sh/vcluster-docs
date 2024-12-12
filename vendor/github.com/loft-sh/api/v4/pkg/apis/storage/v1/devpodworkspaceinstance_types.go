@@ -17,6 +17,10 @@ var (
 	// DevPodWorkspaceUIDLabel holds the actual workspace uid of the devpod workspace
 	DevPodWorkspaceUIDLabel = "loft.sh/workspace-uid"
 
+	// DevPodKubernetesProviderWorkspaceUIDLabel holds the actual workspace uid of the devpod workspace on resources
+	// created by the DevPod Kubernetes provider.
+	DevPodKubernetesProviderWorkspaceUIDLabel = "devpod.sh/workspace-uid"
+
 	// DevPodWorkspacePictureAnnotation holds the workspace picture url of the devpod workspace
 	DevPodWorkspacePictureAnnotation = "loft.sh/workspace-picture"
 
@@ -86,13 +90,17 @@ type DevPodWorkspaceInstanceSpec struct {
 	// +optional
 	Owner *UserOrTeam `json:"owner,omitempty"`
 
+	// PresetRef holds the DevPodWorkspacePreset template reference
+	// +optional
+	PresetRef *PresetRef `json:"presetRef,omitempty"`
+
 	// TemplateRef holds the DevPod machine template reference
 	// +optional
 	TemplateRef *TemplateRef `json:"templateRef,omitempty"`
 
 	// EnvironmentRef is the reference to DevPodEnvironmentTemplate that should be used
 	// +optional
-	EnvironmentRef EnvironmentRef `json:"environmentRef,omitempty"`
+	EnvironmentRef *EnvironmentRef `json:"environmentRef,omitempty"`
 
 	// Template is the inline template to use for DevPod machine creation. This is mutually
 	// exclusive with templateRef.
@@ -118,6 +126,18 @@ type DevPodWorkspaceInstanceSpec struct {
 	PreventWakeUpOnConnection bool `json:"preventWakeUpOnConnection,omitempty"`
 }
 
+type PresetRef struct {
+	// Name is the name of DevPodWorkspacePreset
+	Name string `json:"name"`
+
+	// Version holds the preset version to use. Version is expected to
+	// be in semantic versioning format. Alternatively, you can also exchange
+	// major, minor or patch with an 'x' to tell Loft to automatically select
+	// the latest major, minor or patch version.
+	// +optional
+	Version string `json:"version,omitempty"`
+}
+
 type RunnerRef struct {
 	// Runner is the connected runner the workspace will be created in
 	// +optional
@@ -127,6 +147,10 @@ type RunnerRef struct {
 type EnvironmentRef struct {
 	// Name is the name of DevPodEnvironmentTemplate this references
 	Name string `json:"name"`
+
+	// Version is the version of DevPodEnvironmentTemplate this references
+	// +optional
+	Version string `json:"version,omitempty"`
 }
 
 type DevPodWorkspaceInstanceStatus struct {
