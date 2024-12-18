@@ -125,7 +125,7 @@ const config = {
         lastVersion: "current",
         versions: {
           current: {
-            label: "v4.x (Stable: v4.1.0)",
+            label: "v4.x (Stable: v4.2.0)",
             banner: "none",
             badge: false,
           },
