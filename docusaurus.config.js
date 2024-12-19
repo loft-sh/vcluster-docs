@@ -221,7 +221,7 @@ const config = {
       },
       announcementBar: {
         id: 'platform-upgrade',
-        content: '🚀 <strong>New releases: <a href="https://www.vcluster.com/releases/en/changelog?hideLogo=true&hideMenu=true&theme=dark&embed=true&c=vCluster" target="_blank">platform 4.1 and vCluster 0.21.0</a></strong>',
+        content: '🚀 <strong>New releases: <a href="https://www.vcluster.com/releases/en/changelog?hideLogo=true&hideMenu=true&theme=dark&embed=true&c=vCluster" target="_blank">platform 4.2 and vCluster 0.22</a></strong>',
         backgroundColor: '#4a90e2',
         textColor: '#ffffff',
         isCloseable: true,
