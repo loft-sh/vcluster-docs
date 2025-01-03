@@ -1,0 +1,92 @@
+---
+title: Elastic Stack
+sidebar_label: Elastic Stack
+sidebar_position: 2
+description: Learn how to deploy a sample ELK stack with Kind
+---
+
+
+### Add the Helm repo and install a single-node Elasticsearch and Kibana charts 
+
+You can find the charts for the ELK(elasticsearch,kibana and logstash) in this public [repo](https://github.com/kirillyesikov/ELK_helm_4_vCluster).
+Make sure you change the password for the logstashPipeline and logstashConfig in the values.yaml since the elasticsearch password is a dynamically generated variable.
+
+```bash
+helm repo add ELK_4_vCluster https://kirillyesikov.github.io/ELK_helm_4_vCluster/
+
+helm upgrade --install elastic ELK_4_vCluster/elasticsearch  -n logging --create-namespace --set replicas=1
+
+helm upgrade --install kibana ELK_4_vCluster/kibana  -n logging  --set replicas=1
+```
+
+
+### Install a single node Logstash instance
+
+:::info This is a sample configuration that produces an index template ecs-logstash
+This logstashPipeline config creates a template that is pushed to elasticsearch, so you are able to create the indices in Kibana.
+:::
+For that you need to decode the password from the secret: `kubectl get secrets -n logging elasticsearch-master-credentials -o jsonpath='{.data.password}' | base64 -D`.
+And change the password for the logstashPipeline and logstashConfig in the [values.yaml](https://github.com/kirillyesikov/ELK_helm_4_vCluster/blob/main/logstash_4_vCluster/values.yaml) manually.
+It's recommended to pull the helm chart locally and use `helm pull ELK_4_vCluster/logstash --untar`.
+
+
+```bash
+logstashConfig: 
+  logstash.yml: |
+    http.host: 0.0.0.0
+
+    xpack.monitoring.enabled: true
+    xpack.monitoring.elasticsearch.hosts: [https://elasticsearch-master:9200]
+    xpack.monitoring.elasticsearch.username: elastic
+    xpack.monitoring.elasticsearch.password: "t7BkKsbJOQM0oH7n"
+    xpack.monitoring.elasticsearch.ssl.certificate_authority: /usr/share/elasticsearch/config/certs/ca.crt
+
+logstashPipeline: 
+  logstash.conf: |
+    input {
+      http {
+        port => 8080
+      }
+    }
+    output {
+      elasticsearch {
+        hosts => [https://elasticsearch-master:9200]
+        user => elastic
+        password => "t7BkKsbJOQM0oH7n"
+        cacert => /usr/share/elasticsearch/config/certs/ca.crt
+      }
+    }   
+```
+
+
+
+
+After the change, install the helm chart itself using the edited values.yaml.
+
+```
+helm upgrade --install logstash ELK_4_vCluster/logstash -f values.yaml  -n logging --set replicas=1
+```
+
+
+
+
+### Install fluentd imperatively using the daemonset , you can download the deamonset from [github](https://github.com/kirillyesikov/vcluster-docs/blob/main/vcluster_versioned_docs/version-0.19.0/integrations/fluentd-daemonset-elasticsearch-rbac.yaml):
+
+```
+kubectl apply -f fluentd-daemonset-elasticsearch-rbac.yaml
+```
+Alternatively, you can also deploy via the [helm charts provided by fluentbit](https://docs.fluentbit.io/manual/installation/kubernetes#installing-with-helm-chart).
+
+
+### Setup ELK indexes  
+1.  Refer to this Kibana [tutorial](https://www.elastic.co/guide/en/elasticsearch/reference/8.5/index-mgmt.html) to setup some basic indices:
+     * This setup offers a sample scenario configuration with an index template ecs-logstash being pushed to elasticsearch and indices created with Kibana UI.
+     * You can port-forward `kubectl port-forward -n logging svc/elasticsearch-master 9200` and view the indices created at [https://localhost:9200/_cat/indices](https://localhost:9200/_cat/indices).
+   
+ 
+ 1. Open the Kibana Dashboard:
+     * Port-forward kibana dashboard on its default port `kubectl port-forward -n logging svc/kibana-kibana 5601`
+     * Get Kibana credentials `kubectl get secrets -n logging elasticsearch-master-credentials -o jsonpath='{.data.password}' | base64 -D`
+     * Navigate to [http://localhost:5601](http://localhost:5601)
+
+  
