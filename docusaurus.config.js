@@ -97,13 +97,18 @@ const config = {
         path: 'vcluster',
         routeBasePath: 'vcluster',
         sidebarPath: require.resolve('./sidebarsVCluster.js'),
-        lastVersion: "0.21.0",
+        lastVersion: "0.22.0",
         versions: {
           current: {
             label: "main 🚧",
           },
+          "0.22.0": {
+            label: "v0.22 Stable",
+            banner: "none",
+            badge: false,
+          },
           "0.21.0": {
-            label: "v0.21 Stable",
+            label: "v0.21",
             banner: "none",
             badge: false,
           },
@@ -125,7 +130,7 @@ const config = {
         lastVersion: "current",
         versions: {
           current: {
-            label: "v4.x (Stable: v4.1.0)",
+            label: "v4.x (Stable: v4.2.0)",
             banner: "none",
             badge: false,
           },
@@ -216,7 +221,7 @@ const config = {
       },
       announcementBar: {
         id: 'platform-upgrade',
-        content: '🚀 <strong>New releases: <a href="https://www.vcluster.com/releases/en/changelog?hideLogo=true&hideMenu=true&theme=dark&embed=true&c=vCluster" target="_blank">platform 4.1 and vCluster 0.21.0</a></strong>',
+        content: '🚀 <strong>New releases: <a href="https://www.vcluster.com/releases/en/changelog?hideLogo=true&hideMenu=true&theme=dark&embed=true&c=vCluster" target="_blank">platform 4.2 and vCluster 0.22</a></strong>',
         backgroundColor: '#4a90e2',
         textColor: '#ffffff',
         isCloseable: true,

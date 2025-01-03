@@ -1,0 +1,176 @@
+---
+title: Deploy on EKS
+sidebar_label: EKS
+sidebar_position: 8
+id: eks
+description: Learn how to deploy vCluster on Amazon EKS, including storage provisioning with EBS CSI driver and IAM role configuration.
+---
+
+import Mark from "@site/src/components/Mark";
+
+import ProAdmonition from '../../_partials/admonitions/pro-admonition.mdx';
+
+import InstallCli from '../../_partials/deploy/install-cli.mdx';
+
+import KubeconfigUpdate from '../../../docs/_partials/kubeconfig_update.mdx';
+
+<!-- vale off -->
+# Deploy vCluster on EKS
+<!-- vale on -->
+
+This guide provides step-by-step instructions for deploying vCluster `vCluster`
+on [Amazon EKS](https://aws.amazon.com/.).
+
+## Prerequisites
+
+Before staring, ensure you have the following tools installed:
+
+- `kubectl` installed: Kubernetes command-line tool for interacting with the cluster. See [Install and Set Up kubectl](https://kubernetes.io/docs/tasks/tools/#kubectl) for installation instructions.
+- `vCluster CLI` <InstallCli />
+- [AWS CLI](https://aws.amazon.com/cli/) version <Mark color="lightgreen">1.16.156</Mark> or greater
+  :::note
+  AWS IAM permissions to create roles and policies
+  :::
+- [eksctl](https://eksctl.io/) installed for cluster management
+  :::note
+  [Upgrade](https://github.com/eksctl-io/eksctl?tab=readme-ov-file#installation) `eksctl` to the latest version to ensure latest Kubernetes version is
+  deployed.
+  :::
+
+## Create EKS cluster
+
+Start by creating EKS cluster using `eksctl`. This command creates a file named
+`cluster.yaml` with the required settings. Adjust the cluster name, region, and instance type as needed.
+
+```bash title="Cluster configuration file"
+CLUSTER_NAME=vcluster-demo
+REGION=eu-central-1
+INSTANCE_TYPE=t3.medium
+
+cat << EOF > cluster.yaml
+apiVersion: eksctl.io/v1alpha5
+kind: ClusterConfig
+metadata:
+ name: ${CLUSTER_NAME}
+ region: ${REGION}
+nodeGroups:
+ - name: ng-1
+   instanceType: ${INSTANCE_TYPE}
+   desiredCapacity: 2
+   volumeSize: 80
+
+addons:
+- name: aws-ebs-csi-driver
+  wellKnownPolicies:      # this setting adds IAM and service account
+    ebsCSIController: true
+EOF
+```
+
+The file defines a cluster with two `t3.medium` instances located in the `eu-central-1` region. The `aws-ebs-csi-driver` add-on is enabled to ensure proper EBS storage provisioning, which is required by `vCluster` to store data for virtual clusters.
+
+Create the cluster by running:
+
+```bash title="Create EKS cluster"
+eksctl create cluster -f cluster.yaml
+```
+
+<KubeconfigUpdate />
+
+This process typically takes about 15-20 minutes.
+
+### Verify the cluster creation
+
+Verify the installation by checking if the CSI driver pods are running:
+
+```bash title="Verify CSI driver installation"
+kubectl get pods -n kube-system -l app.kubernetes.io/name=aws-ebs-csi-driver
+```
+
+Expected output should look similar to:
+```
+NAME                                 READY   STATUS    RESTARTS   AGE
+ebs-csi-controller-794b4448b-fhjxr   6/6     Running   0          2m14s
+ebs-csi-controller-794b4448b-j94g5   6/6     Running   0          2m14s
+ebs-csi-node-crz7p                   3/3     Running   0          2m14s
+ebs-csi-node-jg8n8                   3/3     Running   0          2m14s
+```
+
+### Configure storage class
+
+`vCluster` requires a default StorageClass for its persistent volumes. EKS provides the `gp2` StorageClass by default, but `gp3` is required. Create a new StorageClass:
+
+```bash title="gp3 StorageClass configuration"
+cat <<EOF | kubectl apply -f -
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: gp3
+  annotations:
+    storageclass.kubernetes.io/is-default-class: "true"
+provisioner: ebs.csi.aws.com
+parameters:
+  type: gp3
+  encrypted: "true"
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
+EOF
+```
+
+Remove the default status from the `gp2` StorageClass:
+
+```bash title="Remove default status from gp2 StorageClass"
+kubectl patch storageclass gp2 -p '{"metadata": {"annotations":{"storageclass.kubernetes.io/is-default-class":"false"}}}'
+```
+
+## Create virtual cluster
+
+Now that all the prerequisites are configured, create a virtual cluster
+using the CLI.
+
+```yaml title="vCluster configuration using vcluster.yaml"
+vcluster create my-vcluster --namespace team-x
+```
+
+<KubeconfigUpdate />
+
+### Verify the Installation
+
+Check if `vCluster` pods are running:
+
+```bash title="Check vCluster pods"
+kubectl get pods -n team-x
+```
+
+You should see output similar to:
+```
+NAME                                                   READY   STATUS    RESTARTS   AGE
+coredns-666d64755b-k5njg-x-kube-system-x-my-vcluster   1/1     Running   0          3m11s
+my-vcluster-0                                          1/1     Running   0          6m33s
+```
+
+This configuration ensures that:
+- Service accounts are properly synced between virtual and host clusters
+- Persistent volume claims are handled correctly
+- The `gp3` storage class created earlier is used
+
+## Next steps
+
+Now that you have `vCluster` running on EKS, consider:
+
+- Setting up the [platform UI](/platform/install/quick-start-guide) to mange your virtual clusters.
+- Integrating with [Karpenter](/platform/integrations/karpenter) for autoscaling.
+
+### Pod identity
+
+<ProAdmonition />
+
+When using the platform you can easily enable [Pod Identity](/vcluster/integrations/pod-identity/eks-pod-identity).
+
+## Cleanup
+
+If you deployed the EKS cluster with this tutorial, and want to clean up the resources, run the
+following command:
+
+```bash title="Clean up resources"
+eksctl delete cluster -f cluster.yaml --disable-nodegroup-eviction
+```
