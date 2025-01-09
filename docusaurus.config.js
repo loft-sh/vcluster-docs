@@ -208,6 +208,7 @@ const config = {
         apiKey: "057a9f939df7215d92c8171d47352c54",
         indexName: "vcluster",
         placeholder: "Search...",
+        externalUrlRegex: 'vcluster\\.com\/docs\/v0\\.19',
         algoliaOptions: {},
       },
       footer: {
