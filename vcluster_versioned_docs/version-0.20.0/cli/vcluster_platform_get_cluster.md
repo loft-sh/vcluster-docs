@@ -20,7 +20,7 @@ vcluster platform get cluster [flags]
 ### Options inherited from parent commands
 
 ```
-      --config string       The vcluster CLI config to use (will be created if it does not exist) (default "/Users/ryanswanson/.vcluster/config.json")
+      --config string       The vcluster CLI config to use (will be created if it does not exist) (default "~/.vcluster/config.json")
       --context string      The kubernetes config context to use
       --debug               Prints the stack trace if an error occurs
       --log-output string   The log format to use. Can be either plain, raw or json (default "plain")

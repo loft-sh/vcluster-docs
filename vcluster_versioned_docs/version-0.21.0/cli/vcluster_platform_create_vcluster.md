@@ -33,7 +33,6 @@ vcluster platform create vcluster test --namespace test
       --chart-version string              The virtual cluster chart version to use (e.g. v0.9.1)
       --cluster string                    The vCluster platform connected cluster to use
       --connect                           If true will run vcluster connect directly after the vcluster was created (default true)
-      --create-context                    If the CLI should create a kube context for the space (default true)
       --description string                The description to show in the platform UI for this virtual cluster
       --display-name string               The display name to show in the platform UI for this virtual cluster
       --expose                            If true will create a load balancer service to expose the vcluster endpoint
@@ -51,11 +50,9 @@ vcluster platform create vcluster test --namespace test
       --set-param stringArray             If a template is used, this can be used to set a specific parameter. E.g. --set-param 'my-param=my-value'
       --set-parameter stringArray         If a template is used, this can be used to set a specific parameter. E.g. --set-parameter 'my-param=my-value'
       --skip-wait                         If true, will not wait until the virtual cluster is running
-      --switch-context                    If the CLI should switch the current context to the new context (default true)
       --team string                       The team to create the space for
       --template string                   The vCluster platform template to use
       --template-version string           The vCluster platform template version to use
-      --update-current                    If true updates the current kube config (default true)
       --upgrade                           If true will try to upgrade the vcluster instead of failing if it already exists
       --use                               If the platform should use the virtual cluster if its already there
       --user string                       The user to create the space for
@@ -66,7 +63,7 @@ vcluster platform create vcluster test --namespace test
 ## Global & Inherited Flags
 
 ```
-      --config string       The vcluster CLI config to use (will be created if it does not exist) (default "/Users/ryanswanson/.vcluster/config.json")
+      --config string       The vcluster CLI config to use (will be created if it does not exist) (default "~/.vcluster/config.json")
       --context string      The kubernetes config context to use
       --debug               Prints the stack trace if an error occurs
       --log-output string   The log format to use. Can be either plain, raw or json (default "plain")

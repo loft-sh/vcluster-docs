@@ -35,7 +35,7 @@ vcluster platform add cluster my-cluster
       --helm-values stringArray     Extra helm values for the agent chart
   -h, --help                        help for cluster
       --insecure                    If true, deploys the agent in insecure mode
-      --namespace string            The namespace to generate the service account in. The namespace will be created if it does not exist (default "loft")
+      --namespace string            The namespace to generate the service account in. The namespace will be created if it does not exist (default "vcluster-platform")
       --service-account string      The service account name to create (default "loft-admin")
       --wait                        If true, will wait until the cluster is initialized
 ```
@@ -44,7 +44,7 @@ vcluster platform add cluster my-cluster
 ## Global & Inherited Flags
 
 ```
-      --config string       The vcluster CLI config to use (will be created if it does not exist) (default "/Users/ryanswanson/.vcluster/config.json")
+      --config string       The vcluster CLI config to use (will be created if it does not exist) (default "~/.vcluster/config.json")
       --debug               Prints the stack trace if an error occurs
       --log-output string   The log format to use. Can be either plain, raw or json (default "plain")
   -s, --silent              Run in silent mode and prevents any vcluster log output except panics & fatals
