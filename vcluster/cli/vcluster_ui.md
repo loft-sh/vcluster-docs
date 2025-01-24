@@ -30,7 +30,7 @@ vcluster ui
   -h, --help   help for ui
 ```
 
-
+vclusters
 ## Global & Inherited Flags
 
 ```
