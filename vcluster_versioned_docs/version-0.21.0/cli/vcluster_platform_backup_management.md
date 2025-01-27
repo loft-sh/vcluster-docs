@@ -30,7 +30,7 @@ vcluster platform backup management
 ```
       --filename string    The filename to write the backup to (default "backup.yaml")
   -h, --help               help for management
-      --namespace string   The namespace vCluster platform was installed into (default "vcluster-platform")
+      --namespace string   The namespace vCluster platform was installed into
       --skip strings       What resources the backup should skip. Valid options are: users, teams, accesskeys, sharedsecrets, clusters and clusteraccounttemplates
 ```
 
@@ -38,7 +38,7 @@ vcluster platform backup management
 ## Global & Inherited Flags
 
 ```
-      --config string       The vcluster CLI config to use (will be created if it does not exist) (default "/Users/ryanswanson/.vcluster/config.json")
+      --config string       The vcluster CLI config to use (will be created if it does not exist) (default "~/.vcluster/config.json")
       --context string      The kubernetes config context to use
       --debug               Prints the stack trace if an error occurs
       --log-output string   The log format to use. Can be either plain, raw or json (default "plain")
