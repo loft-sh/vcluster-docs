@@ -1,4 +1,3 @@
-# Contribute to the vCluster docs
 <!-- vale off -->
 ## Docs website
 
@@ -190,7 +189,9 @@ EOF
 
 #### Highlight lines of code
 
-Use inline comments in the code to highlight lines. See <https://docusaurus.io/docs/markdown-features/code-blocks#highlighting-with-comments>.
+Use [inline
+comments](https://docusaurus.io/docs/markdown-features/code-blocks#highlighting-with-comments)
+in the code to highlight lines. See .
 
 ### vCluster terms
 
@@ -223,7 +224,7 @@ Abbreviations for Kubernetes distros:
 
 - [Lightweight Kubernetes](https://k3s.io/): K3s
 - [Kubernetes](https://kubernetes.io/): K8s
-- [Zero Friction Kubernetes](https://k0sproject.io/ ): k0s  Note that k0s is the
+- [Zero Friction Kubernetes](https://k0sproject.io/): k0s  Note that k0s is the
   only Kubernetes distro to use a lower case 'k'
 - [AWS Elastic Kubernetes Service](https://aws.amazon.com/eks/): EKS
 
