@@ -1,0 +1,539 @@
+
+import Columns from '@site/src/components/Columns';
+
+
+import Column from '@site/src/components/Column';
+
+import DeployChanges from '../../vcluster/_partials/manage/deploy-changes.mdx'
+
+
+As part of the v0.20.0 release, Loft Labs introduced a new `vcluster.yaml` configuration file with a new structure. This file replaces your existing `values.yaml` configuration file. Previously, configuring
+a virtual cluster had configuration options using CLI flags, annotations and different `values.yaml` options. With the new `vcluster.yaml`, all configuration options are now easily configured in a single source.
+
+<p></p>
+
+:::warning
+Pre-v0.20.0 `values.yaml` files are not compatible with v0.20.0. You need to convert to the new format to use the new vCluster CLI and upgrade existing vCluster instances.
+:::
+
+
+Upgrade vCluster v0.19 to v0.20+ by following these steps:
+
+1. [Upgrade the vCluster CLI](#upgrade-the-cli).
+1. [Convert your Helm values configuration file to the new `vcluster.yaml` configuration file](#convert-your-valuesyaml-to-vclusteryaml).
+1. [Use your new `vcluster.yaml` file to upgrade your vCluster instance](#upgrade-your-vcluster-instance).
+
+## Supported legacy versions
+
+Loft Labs has tested the conversion path from v0.19.x to v0.20.0 and therefore recommends moving to v0.19.x before converting to v0.20.0.
+
+Conversions from vCluster versions prior to 0.19.x might work but have not been tested extensively.
+
+## Before you begin
+
+* Helm version is >= v.3.10.0.
+* If you are using [vcluster-hostpath-mapper](https://github.com/loft-sh/vcluster-hostpath-mapper), upgrade it to to v0.1.1-beta.1 or later for compatibility with the new vcluster.yaml configuration file in v0.20.
+* Review the [list of changes](/vcluster/cli/0-20-cli-changes) in the vCluster CLI as commands, subcommands, and flags were removed, renamed or added.
+
+## Upgrade the CLI
+
+Before upgrading virtual cluster instances, upgrade to the latest version of the vCluster CLI.
+
+```BASH
+vcluster upgrade --version <VCLUSTER_VERSION>
+```
+
+Replace:
+
+- `<VCLUSTER_VERSION>` with the version of vCluster you want to upgrade to.
+
+
+
+A new command has been added to support converting from the old `values.yaml` format to the new `vcluster.yaml`.
+
+```BASH
+Usage:
+  vcluster convert config [flags]
+Flags:
+      --distro string   Kubernetes distro used
+  -f, --file string     Path to the input file
+  -h, --help            Help for config
+  -o, --output string   Prints the output in the specified format. Allowed values: yaml, json (default "yaml")
+```
+
+## Get your previous `values.yaml` (Optional)
+
+If you have the existing `values.yaml` that you provided to your existing vCluster, you can skip this step.
+
+### Get the user-suppied values
+
+If you don't have the `values.yaml`, use Helm to retrieve the user defined configuration for your currently running virtual cluster.
+
+```bash
+helm get values <VCLUSTER_NAME> -n <VCLUSTER_NAMESPACE> > values.yaml
+```
+
+Replace:
+
+- `<VCLUSTER_NAME>` with the name of your vCluster instance.
+- `<VCLUSTER_NAMESPACE>` with the namespace that vCluster runs in.
+
+This uses `--revision 0` under the hood. Adjust this accordingly to receive the values of your latest revision. See the [Helm docs](https://helm.sh/docs/helm/helm_history/) for how to fetch revision history.
+
+### Get the default values
+
+If the `helm get` provides an empty file, then you used the default configuration to deploy your vCluster. You still need to
+supply a `values.yaml` to the convert due to changes in defaults.
+
+```bash
+helm get values <VCLUSTER_NAME> -n <VCLUSTER_NAMESPACE> --all > values.yaml
+```
+
+Replace:
+
+- `<VCLUSTER_NAME>` with the name of your vCluster instance.
+- `<VCLUSTER_NAMESPACE>` with the namespace that vCluster runs in.
+
+
+## Convert your `values.yaml` to `vcluster.yaml`
+
+Convert your `values.yaml` to the new `vcluster.yaml` configuration file format by running:
+
+```BASH
+vcluster convert config --distro <KUBERNETES_DISTRO> -f <VALUES_FILE> > vcluster.yaml
+```
+
+Replace:
+
+- `<KUBERNETES_DISTRO>` with your virtual cluster's existing Kubernetes distribution. **You can't change the Kubernetes distribution or backing store during an upgrade**.
+- `<VALUES_FILE>` with the path to the `values.yaml`file you used to configure your pre-v0.20 vCluster instance.
+
+
+For example:
+
+```BASH
+vcluster convert config --distro k8s -f /my/k8s/values.yaml > vcluster.yaml
+```
+
+### Notes about Changes for your `vcluster.yaml`
+
+<!-- vale off -->
+<!-- StatefulSet is Kubernetes object and should be written accordingly. -->
+#### Scheduling of the StatefulSet
+<!-- vale on -->
+Since the scheduling of the control plane pod changed in v0.20+, the converted `vcluster.yaml` includes retaining
+the original scheduling pattern as it is can't be changed between upgrades.
+
+#### Image repository
+By default, the conversion does not set the repo of the images to use the open source repo, but upgrade you to use
+the vCluster Pro repo. This allows users to seamlessly test and adopt any vCluster Pro feature without disrupting their existing
+open source features. The Pro features are integrated into the Pro image but remain inactive by default to ensure that your experience remains consistent with the open source version unless you specifically activate Pro features.
+
+If you want to continue using the open source image, you need to explicitly set the open source repository for your images.
+
+```yaml
+controlPlane:
+  statefulSet:
+    image:
+      repository: loft-sh/vcluster-oss
+```
+
+#### Supporting EKS distributions
+
+The v0.20 removed the support of EKS as a virtual cluster distribution.
+
+:::note reminder
+The Kubernetes distribution of the virtual cluster doesn't need to match the distribution of your host cluster. You can use any distribution of vCluster to deploy vCluster on EKS clusters.
+:::
+
+In order to continue using your virtual clusters that have EKS as the distribution, you can convert to using the k8s distribution and replace the images with the EKS images. While this was tested when v0.20.0 was released, it is not continuously tested. It's recommended spinning up new virtual clusters with the k8s distribution and migrate your workloads to them.
+
+```bash
+vcluster convert config --distro k8s -f /my/k8s/values.yaml > vcluster.yaml
+```
+
+After the conversion, you need to update the `vcluster.yaml` and change the images to be used. Refer to the EKS registries for [kube-apiserver](https://gallery.ecr.aws/eks-distro/kubernetes/kube-apiserver), [controller-manager](https://gallery.ecr.aws/eks-distro/kubernetes/kube-controller-manager) and [kube-scheduler](https://gallery.ecr.aws/eks-distro/kubernetes/kube-scheduler) for the specific tags you might want to use.
+
+**Example using EKS v1.30:**
+
+```yaml
+controlplane:
+  distro:
+    k8s:
+      enabled: true
+      apiserver:
+         image:
+           registry: "public.ecr.aws"
+           repository: "eks-distro/kubernetes/kube-apiserver"
+           tag: "v1.30.2-eks-1-30-10"
+      controllerManager:
+         image:
+           registry: "public.ecr.aws"
+            repository: "eks-distro/kubernetes/kube-controller-manager"
+            tag: "v1.30.2-eks-1-30-10"
+      scheduler:
+         image:
+           registry: "public.ecr.aws"
+           repository: "eks-distro/kubernetes/kube-scheduler"
+           tag: "v1.30.2-eks-1-30-10"
+```
+
+## Upgrade your vCluster instance
+
+:::warning Downgrading vCluster instances is NOT supported
+While downgrading to an older version of the vCluster CLI is supported, you cannot downgrade virtual cluster instances to a prior version of vCluster (for example, from 0.20+ back to 0.19). Make sure you have tested the upgrade sufficiently before rolling out this change to critical systems.
+:::
+
+
+<DeployChanges/>
+
+## Changes in the vCluster values between 0.19 and 0.20+
+
+The following is a reference for how specific 0.19 fields map to (or have changed in) 0.20+.
+
+autoDeletePersistentVolumeClaims
+<Columns>
+  <Column className='text--left'>
+  **0.19**:
+  ```yaml
+  autoDeletePersistentVolumeClaims: false
+  ```
+  </Column>
+  <Column className='text--left'>
+  **0.20+**:
+  ```yaml
+  controlPlane:
+    backingStore:
+      etcd:
+        deploy:
+          statefulSet:
+            persistence:
+              volumeClaim:
+                retentionPolicy: Delete
+  ```
+  </Column>
+</Columns>
+
+fallbackHostDns
+<Columns>
+  <Column className='text--left'>
+  **0.19**:
+  ```yaml
+  fallbackHostDns: false
+  ```
+  </Column>
+  <Column className='text--left'>
+  **0.20+**:
+  ```yaml
+  networking:
+    advanced:
+      fallbackHostCluster: true
+  ```
+  </Column>
+</Columns>
+
+init Section
+<Columns>
+  <Column className='text--left'>
+  **0.19**:
+  ```yaml
+  init:
+    helm: []
+    manifests: '---'
+    manifestsTemplate: ""
+  ```
+  </Column>
+  <Column className='text--left'>
+  **0.20+**:
+  ```yaml
+  experimental:
+    deploy:
+      vcluster:
+        helm: []
+        manifests: '---'
+        manifestsTemplate: ""
+  ```
+  </Column>
+</Columns>
+
+isolation.nodeProxyPermission.enabled
+<Columns>
+  <Column className='text--left'>
+  **0.19**:
+  ```yaml
+  isolation:
+    nodeProxyPermission:
+      enabled: false
+  ```
+  </Column>
+  <Column className='text--left'>
+  **0.20+**:
+
+  This setting is removed. Instead, replicate the same RBAC permissions using `rbac.clusterRole.extraRules` or `rbac.clusterRole.overwriteRules`:
+  ```yaml
+  rbac:
+    clusterRole:
+      enabled: true
+      extraRules:
+      - apiGroups: [""]
+        resources: ["nodes/proxy"]
+        verbs: ["get", "watch", "list"]
+  ```
+  </Column>
+</Columns>
+
+isolation.podSecurityStandard
+<Columns>
+  <Column className='text--left'>
+  **0.19**:
+  ```yaml
+  isolation:
+    podSecurityStandard: baseline
+  ```
+  </Column>
+  <Column className='text--left'>
+  **0.20+**:
+  ```yaml
+  policies:
+    podSecurityStandard: Baseline
+  ```
+  </Column>
+</Columns>
+
+mapServices, monitoring.serviceMonitor, noopSyncer, openshift
+<Columns>
+  <Column className='text--left'>
+  **0.19**:
+  ```yaml
+  mapServices:
+    fromHost: []
+    fromVirtual: []
+  monitoring:
+    serviceMonitor:
+      enabled: false
+  noopSyncer:
+    enabled: false
+    synck8sService: false
+  openshift:
+    enable: false
+  ```
+  </Column>
+  <Column className='text--left'>
+  **0.20+**:
+
+  mapServices → `networking.replicateServices`:
+  ```yaml
+  networking:
+    replicateServices:
+      fromHost: []
+      fromVirtual: []
+  ```
+  monitoring.serviceMonitor.enabled → `controlPlane.serviceMonitor.enabled`:
+  ```yaml
+  controlPlane:
+    serviceMonitor:
+      enabled: false
+  ```
+  noopSyncer → `experimental.syncSettings`:
+  ```yaml
+  experimental:
+    syncSettings:
+      disableSync: false
+      rewriteKubernetesService: false
+  ```
+  openshift.enable → Replace with extra RBAC rules:
+  ```yaml
+  rbac:
+    role:
+      extraRules:
+        - apiGroups: [""]
+          resources: ["endpoints/restricted"]
+          verbs: ["create"]
+  ```
+  </Column>
+</Columns>
+
+<!-- vale off -->
+pro / proLicenseSecret
+<!-- vale on -->
+<Columns>
+  <Column className='text--left'>
+  **0.19**:
+  ```yaml
+  pro: false
+  proLicenseSecret: ""
+  ```
+  </Column>
+  <Column className='text--left'>
+  **0.20+**:
+  ```yaml
+  pro: false
+  # proLicenseSecret: ${namespace}/${name}
+  external:
+    platform:
+      apiKey:
+        secretName: ${name}
+        namespace: ${namespace}
+  ```
+  </Column>
+</Columns>
+
+proxy, securityContext, and service
+<Columns>
+  <Column className='text--left'>
+  **0.19**:
+  ```yaml
+  proxy:
+    metricsServer:
+      nodes:
+        enabled: false
+      pods:
+        enabled: false
+  securityContext:
+    allowPrivilegeEscalation: false
+    runAsGroup: 0
+    runAsUser: 0
+  service:
+    externalIPs: []
+    externalTrafficPolicy: ""
+    loadBalancerAnnotations: {}
+    loadBalancerClass: ""
+    loadBalancerIP: ""
+    loadBalancerSourceRanges: []
+    type: ClusterIP
+  ```
+  </Column>
+  <Column className='text--left'>
+  **0.20+**:
+
+  proxy.metricsServer → `integrations.metricsServer`:
+  ```yaml
+  integrations:
+    metricsServer:
+      enabled: true
+      nodes: true
+      pods: true
+  ```
+  securityContext → `controlPlane.statefulSet.security.containerSecurityContext`:
+  ```yaml
+  controlPlane:
+    statefulSet:
+      security:
+        containerSecurityContext:
+          allowPrivilegeEscalation: false
+          runAsGroup: 0
+          runAsUser: 0
+  ```
+  service → `controlPlane.service.spec`:
+  ```yaml
+  controlPlane:
+    service:
+      annotations: {}
+      spec:
+        externalIPs: []
+        externalTrafficPolicy: ""
+        type: ClusterIP
+        loadBalancerClass: ""
+        loadBalancerIP: ""
+        loadBalancerSourceRanges: []
+        loadBalancerAnnotations: {}
+  ```
+  </Column>
+</Columns>
+
+sync.fake-\*
+<Columns>
+  <Column className='text--left'>
+  **0.19**:
+  ```yaml
+  sync:
+    fake-nodes:
+      enabled: true
+    fake-persistentvolumes:
+      enabled: true
+  ```
+  </Column>
+  <Column className='text--left'>
+  **0.20+**:
+
+  Disable is an inverse of enable and is acceptable in this context.
+
+  `fake-nodes.enabled = true` → disable node sync from the host:
+  ```yaml
+  sync:
+    fromHost:
+      nodes:
+        enabled: false
+  ```
+  `fake-persistentvolumes.enabled = true` → disable PV sync to the host:
+  ```yaml
+  sync:
+    toHost:
+      persistentVolumes:
+        enabled: false
+  ```
+  </Column>
+</Columns>
+<!-- vale on -->
+
+### Quick reference table
+
+| Old (0.19)                        | New (0.20+)                                                                                                 |
+| ------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `autoDeletePersistentVolumeClaims`    | `controlPlane.backingStore.etcd.deploy.statefulSet.persistence.volumeClaim.retentionPolicy: Delete`             |
+| `fallbackHostDns`                     | `networking.advanced.fallbackHostCluster`                                                                       |
+| `init.helm/manifests/manifestsTemplate` | `experimental.deploy.vcluster.helm/manifests/manifestsTemplate`                                                 |
+| `isolation.nodeProxyPermission.enabled` | Replaced by extra RBAC rules in `rbac.clusterRole.extraRules`                                                   |
+| `isolation.podSecurityStandard`       | `policies.podSecurityStandard`                                                                                  |
+| `mapServices`                         | `networking.replicateServices`                                                                                  |
+| `monitoring.serviceMonitor.enabled`   | `controlPlane.serviceMonitor.enabled`                                                                            |
+| `noopSyncer`                          | `experimental.syncSettings`                                                                                     |
+| `openshift.enable`                    | Add extra rules in `rbac.role.extraRules`                                                                       |
+| `proLicenseSecret`                    | `external.platform.apiKey.secretName` / `namespace`                                                             |
+| `proxy.metricsServer.nodes/pods`      | `integrations.metricsServer.enabled/nodes/pods`                                                                 |
+| `securityContext`                     | `controlPlane.statefulSet.security.containerSecurityContext`                                                    |
+| `service.*`                           | `controlPlane.service.spec`                                                                                     |
+| `sync.fake-nodes/fake-persistentvolumes` | `sync.fromHost.nodes.enabled = false` / `sync.toHost.persistentVolumes.enabled = false`                          |
+
+
+## Compare Helm values between versions
+
+:::tip compare version values
+You can easily compare values files between versions to see the changes.
+:::
+
+You can spin up two virtual clusters, one at older version, such as 0.19 and one at newer version, for example 0.20+.
+Retrieve their computed `values.yaml` files and compare them with a simple `diff`:
+
+```bash
+VERSION_OLD="0.19.7"
+VERSION_NEW="0.20.0"
+NAMESPACE_OLD="vcluster-old"
+NAMESPACE_NEW="vcluster-new"
+RELEASE_OLD="vcluster-${VERSION_OLD//./-}"
+RELEASE_NEW="vcluster-${VERSION_NEW//./-}"
+
+helm upgrade --install $RELEASE_OLD vcluster \
+  --repo https://charts.loft.sh \
+  --namespace $NAMESPACE_OLD \
+  --repository-config='' \
+  --version $VERSION_OLD \
+  --create-namespace
+
+helm upgrade --install $RELEASE_NEW vcluster \
+  --repo https://charts.loft.sh \
+  --namespace $NAMESPACE_NEW \
+  --repository-config='' \
+  --version $VERSION_NEW \
+  --create-namespace
+
+helm get values $RELEASE_OLD -n $NAMESPACE_OLD --all > ${VERSION_OLD}.yaml
+helm get values $RELEASE_NEW -n $NAMESPACE_NEW --all > ${VERSION_NEW}.yaml
+
+diff -u ${VERSION_OLD}.yaml ${VERSION_NEW}.yaml > v${VERSION_OLD}-to-v${VERSION_NEW}.diff
+```
+
+## Related content
+
+- [vCluster config reference](/vcluster/configure/vcluster-yaml/) for full configuration details.
+

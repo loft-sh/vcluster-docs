@@ -48,7 +48,7 @@ before running this command:
       --no-tunnel            If true, vCluster platform will not create a loft.host tunnel for this installation
       --no-wait              If true, vCluster platform will not wait after installing it
       --password string      The password to use for the admin account. (If empty this will be the namespace UID)
-      --reset                If true, an existing vCluster platform instance will be deleted before installing vCluster platform
+      --reset                If true, existing vCluster Platform resources, including the deployment, will be deleted before installing vCluster platform
       --reuse-values         Reuse previous vCluster platform helm values on upgrade (default true)
       --upgrade              If true, vCluster platform will try to upgrade the release
       --values string        Path to a file for extra vCluster platform helm chart values
@@ -59,7 +59,7 @@ before running this command:
 ## Global & Inherited Flags
 
 ```
-      --config string       The vcluster CLI config to use (will be created if it does not exist) (default "/Users/ryanswanson/.vcluster/config.json")
+      --config string       The vcluster CLI config to use (will be created if it does not exist) (default "~/.vcluster/config.json")
       --debug               Prints the stack trace if an error occurs
       --log-output string   The log format to use. Can be either plain, raw or json (default "plain")
   -s, --silent              Run in silent mode and prevents any vcluster log output except panics & fatals
