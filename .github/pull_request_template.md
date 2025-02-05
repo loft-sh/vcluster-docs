@@ -14,6 +14,6 @@ If you want the preview link to be available in the Linear issue, you must inclu
 
 
 ## Internal Reference
-<!--Add the Github or Linear ticket reference-->
+<!--Add the GitHub or Linear ticket reference-->
 Closes DOC-
 
