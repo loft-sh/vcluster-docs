@@ -8,8 +8,8 @@ require (
 	github.com/gertd/go-pluralize v0.2.1
 	github.com/ghodss/yaml v1.0.0
 	github.com/invopop/jsonschema v0.12.1-0.20240219232115-a4467074499d
-	github.com/loft-sh/agentapi/v4 v4.2.0
-	github.com/loft-sh/api/v4 v4.2.0
+	github.com/loft-sh/agentapi/v4 v4.2.1
+	github.com/loft-sh/api/v4 v4.2.1
 	github.com/wk8/go-ordered-map/v2 v2.1.8
 	k8s.io/api v0.31.1
 	k8s.io/apimachinery v0.31.1
@@ -86,7 +86,7 @@ require (
 	go.uber.org/zap v1.27.0 // indirect
 	golang.org/x/crypto v0.31.0 // indirect
 	golang.org/x/exp v0.0.0-20240909161429-701f63a606c0 // indirect
-	golang.org/x/net v0.29.0 // indirect
+	golang.org/x/net v0.33.0 // indirect
 	golang.org/x/oauth2 v0.23.0 // indirect
 	golang.org/x/sync v0.10.0 // indirect
 	golang.org/x/sys v0.28.0 // indirect
