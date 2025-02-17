@@ -1,0 +1,189 @@
+import Highlight from "@site/src/components/Highlight/Highlight";
+
+import Flow, { Step } from "@site/src/components/Flow";
+
+
+
+## From Host ConfigMap Sync Example
+
+This guide shows how to sync k8s config map from host and use it in your workload inside the virtual cluster.
+
+### Prerequisites
+
+- kubectl with access to the host cluster and virtual cluster.
+
+### Set up cluster contexts
+
+Setting up the host and virtual cluster contexts makes it easier to switch
+between them.
+
+```bash
+export HOST_CTX="your-host-context"
+export VCLUSTER_CTX="vcluster-ctx"
+```
+
+then, create `foobar2` namespace in your host cluster:
+
+```bash
+kubectl --context="${HOST_CTX}" create namespace foobar2
+```
+
+:::tip
+You can find your contexts by running `kubectl config get-contexts`
+:::
+
+
+### Enable from host syncing for secret
+
+Enable the from host syncing for secrets in your virtual cluster configuration:
+
+```yaml title="Enable from host syncing for a secret"
+sync:
+  fromHost:
+    configMaps:
+      enabled: true
+      selector:
+        mappings:
+          "foobar2/config": "my-namespace/config"
+```
+
+This configuration:
+
+- Enables from host syncing of the config map named `config` in the namespace `foobar2`.
+- Automatically configures RBAC permissions for vCluster, so it can access this config map (you need to re-deploy vCluster for it to take place)
+- Makes this config map accessible as `config` in the `my-namespace` in your vCluster.
+
+:::tip create virtual cluster
+Create or update a `virtual Cluster` following the [vCluster quick start
+guide](/vcluster/#deploy-vcluster).
+:::
+
+### Sync secret to virtual and use it in pod
+
+<Flow id="config-maps-from-host-example">
+  <Step>
+    First, we will need to create a config map that we want to sync in the host cluster:
+
+    Copy this file and save it locally as `config.json`
+
+    ```json title=config.json
+    {
+      "name": "my-config",
+      "hosts": ["123.456.789", "987.654.321"]
+    }
+    ```
+
+    then, let's create a config map containing this file in the host cluster:
+
+    ```bash title="Create config map in the host"
+    kubectl --context="${HOST_CTX}" create configmap config \
+    --namespace=foobar2 \
+    --from-file=config.json=config.json
+    ```
+  </Step>
+
+  #### Ensure that config map got synced to the vCluster
+
+  Our config map should be now accessible in the virtual cluster.
+  Keep in mind, that any edit made in the virtual object will be overwritten my the host object data.
+
+  <Step>
+    Let's check config map in the virtual cluster:
+
+    ```bash title="Get synced config map"
+    kubectl --context="${VCLUSTER_CTX}" get configmap --namespace my-namespace config -o yaml
+    ```
+
+    you should see similar output:
+
+    ```yaml title="config map contents"
+    apiVersion: v1
+    data:
+      config.json: |
+        {
+          "name": "my-config",
+          "hosts": ["123.456.789", "987.654.321"]
+        }
+    kind: ConfigMap
+    metadata:
+      creationTimestamp: "2025-02-17T12:43:17Z"
+      name: config
+      namespace: my-namespace
+      resourceVersion: "18279"
+      uid: bb131bf9-8fed-4d34-904c-1f83ed05aa72
+    ```
+
+
+  </Step>
+
+  #### Use it in your workload
+
+  <Step>
+
+    Now, we can create a new pod in the `my-namespace` namespace and specify this config map as a volume and mount it in the container.
+
+    Save this pod locally to the file called `pod.yaml`:
+    ```yaml title="pod.yaml"
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      name: my-pod
+      namespace: my-virtual-namespace
+    spec:
+      containers:
+      - name: busybox
+        image: busybox
+        command:
+        - sleep
+        - "inf"
+        volumeMounts:
+        - name: my-config
+          mountPath: /tmp/
+      volumes:
+      - name: my-config
+        configMap:
+          name: config
+    ```
+
+    then, create it in the virtual cluster:
+
+    ```bash title="Create pod"
+    kubectl --context="${VCLUSTER_CTX}" create -f pod.yaml
+    ```
+
+  </Step>
+  <Step>
+    #### Verify that config is mounted
+
+    <Highlight color="green">Virtual Cluster</Highlight> Wait for pod running
+
+    ```bash title="Wait for pod running"
+    kubectl --context="${VCLUSTER_CTX}" wait --for=condition=ready pod my-pod --namespace my-virtual-namespace --timeout=300s
+    ```
+
+    once it is running, we can check if our file is accessible in the container under `/tmp/config.json` path.
+
+    ```bash title="Check mounted file"
+    kubectl --context="${VCLUSTER_CTX}" exec -it --namespace my-virtual-namespace my-pod -- cat /tmp/config.json
+    ```
+    you should see environment successfully injected from the secret:
+
+    ```json title="Config from ConfigMap"
+    {
+      "name": "my-config",
+      "hosts": ["123.456.789", "987.654.321"]
+    }
+
+    ```
+
+  </Step>
+
+  <Step>
+    #### Summary
+
+    From host config map syncing allow you to make specific config map(s) from host accessible in your vCluster. You can make them accessible in the different namespaces and/or with different names in the virtual cluster.
+    They are always synced from host to the virtual, so it is also possible to sync one host config map to the multiple virtual ones.
+    They can be used as a volume or env source in your workloads.
+
+  </Step>
+</Flow>
