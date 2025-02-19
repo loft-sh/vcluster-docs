@@ -41,6 +41,8 @@ var paths = []string{
 	"sync/fromHost/csiStorageCapacities",
 	"sync/fromHost/csiNodes",
 	"sync/fromHost/csiDrivers",
+	"sync/fromHost/configMaps",
+	"sync/fromHost/secrets",
 	"sync/fromHost",
 	"sync",
 	"rbac",
