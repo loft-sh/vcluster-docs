@@ -95,6 +95,7 @@ var paths = []string{
 	"controlPlane/backingStore/database/external",
 	"controlPlane/backingStore",
 	"controlPlane",
+	"reuseNamespace",
 }
 
 func main() {
