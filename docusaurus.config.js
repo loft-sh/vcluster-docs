@@ -248,7 +248,7 @@ const config = {
               },
               {
                 html: `
-                  <a href="https://devpod.sh/open#https://github.com/loft-sh/vcluster-docs@doc-478/improve-contribution" target="_blank" class="footer-devpod-link" aria-label="Open in DevPod">
+                  <a href="https://devpod.sh/open#https://github.com/loft-sh/vcluster-docs" target="_blank" class="footer-devpod-link" aria-label="Open in DevPod">
                     Open in DevPod
                   </a>
                 `
