@@ -16,6 +16,19 @@
 
 We welcome all contributions from our end users!
 
+### Quick Start with DevPod
+
+The quickest way to start contributing:
+
+1. [Install DevPod](https://devpod.sh/docs/getting-started/install)
+2. Open this repository in DevPod:
+
+[![Open in DevPod](https://devpod.sh/assets/open-in-devpod.svg)](https://devpod.sh/open#https://github.com/loft-sh/vcluster-docs)
+
+This sets up a complete development environment with all dependencies.
+
+### Other ways to contribute
+
 - [Create a docs issue](https://github.com/loft-sh/vcluster-docs/issues).
 - Open a pull request.
   - [Use the GitHub web UI](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/proposing-changes-to-your-work-with-pull-requests/creating-a-pull-request?tool=webui)

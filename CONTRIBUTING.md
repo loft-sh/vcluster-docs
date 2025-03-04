@@ -4,7 +4,23 @@
 This docs website is built using [Docusaurus](https://docusaurus.io/) v3, a modern
 static website generator.
 
-## Installation
+### Quick Start with DevPod
+
+The fastest way to start contributing is to use DevPod, which sets up a complete development environment for you.
+
+1. First, [install DevPod](https://devpod.sh/docs/getting-started/install) for your operating system
+2. Once installed, click the link below to open this repository in DevPod:
+
+[![Open in DevPod](https://devpod.sh/assets/open-in-devpod.svg)](https://devpod.sh/open#https://github.com/loft-sh/vcluster-docs)
+
+This will automatically set up all dependencies and configurations needed for working on the documentation, including:
+
+- Node.js and npm for running the development server
+- Vale linter for documentation style and grammar checking
+- VS Code extensions for Vale and ESLint 
+- Pre-configured settings for the documentation workflow
+
+## Manual Installation
 
 ```bash
 npm install
@@ -265,6 +281,10 @@ Running `vale` locally allows us to check our documentation before submitting a 
 ### Plugins
 VSCode and Neovim have `vale` plugins that can be installed to lint files as
 you write them.
+
+> [!NOTE]
+> If you're using DevPod with the "Open in DevPod" link above, Vale and the VS Code extension 
+> are automatically installed and configured for you!
 
 - VSCode [vale plugin](https://github.com/errata-ai/vale-vscode).
 - Neovim Setup:
