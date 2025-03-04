@@ -14,9 +14,9 @@
 
 ## Contribute to the docs
 
-We welcome all contributions from our end users!
+We encourage contributions from all users!
 
-### Quick Start with DevPod
+### Quick start for contributing using DevPod
 
 The quickest way to start contributing:
 

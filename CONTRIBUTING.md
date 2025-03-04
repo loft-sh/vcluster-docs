@@ -4,20 +4,20 @@
 This docs website is built using [Docusaurus](https://docusaurus.io/) v3, a modern
 static website generator.
 
-### Quick Start with DevPod
+### Quick start for contributing with DevPod
 
-The fastest way to start contributing is to use DevPod, which sets up a complete development environment for you.
+Use DevPod to quickly set up a complete development environment and start contributing.
 
-1. First, [install DevPod](https://devpod.sh/docs/getting-started/install) for your operating system
-2. Once installed, click the link below to open this repository in DevPod:
+1. [Install DevPod](https://devpod.sh/docs/getting-started/install) for your operating system.
+2. Once installed, click the following link to open this repository in DevPod:
 
 [![Open in DevPod](https://devpod.sh/assets/open-in-devpod.svg)](https://devpod.sh/open#https://github.com/loft-sh/vcluster-docs)
 
 This will automatically set up all dependencies and configurations needed for working on the documentation, including:
 
 - Node.js and npm for running the development server
-- Vale linter for documentation style and grammar checking
-- VS Code extensions for Vale and ESLint 
+- The Vale linter for checking documentation style and grammar
+- VS Code extensions for Vale and ESLint
 - Pre-configured settings for the documentation workflow
 
 ## Manual Installation
@@ -279,15 +279,16 @@ Individual files or folders can be linted
 Running `vale` locally allows us to check our documentation before submitting a pull request. This helps catch style issues early and streamlines the review process.
 
 ### Plugins
+
 VSCode and Neovim have `vale` plugins that can be installed to lint files as
 you write them.
 
 > [!NOTE]
-> If you're using DevPod with the "Open in DevPod" link above, Vale and the VS Code extension 
+> If you're using DevPod with the "Open in DevPod" link above, Vale and the VS Code extension
 > are automatically installed and configured for you!
 
-- VSCode [vale plugin](https://github.com/errata-ai/vale-vscode).
-- Neovim Setup:
+- VS Code [Vale plugin](https://github.com/errata-ai/vale-vscode).
+- Neovim setup:
   - Install [mason.nvim](https://github.com/williamboman/mason.nvim) and add vale_ls LSP. Configure and use like any other LSP.
   - Install `vale_ls` on start with `lazy.nvim`
     ```lua
