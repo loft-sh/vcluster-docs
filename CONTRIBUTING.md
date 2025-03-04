@@ -12,7 +12,7 @@ contributing.
 
 1. [Install DevPod](https://devpod.sh/docs/getting-started/install) for your
    operating system.
-2. Once installed, click the following link to open this repository in DevPod:
+2. Once installed, click the following to open this repository in DevPod:
 
 [![Open in DevPod](https://devpod.sh/assets/open-in-devpod.svg)](https://devpod.sh/open#https://github.com/loft-sh/vcluster-docs)
 
@@ -24,13 +24,13 @@ working on the documentation, including:
 - VS Code extensions for Vale and ESLint
 - Pre-configured settings for the documentation workflow
 
-## Manual Installation
+## Manual installation
 
 ```bash
 npm install
 ```
 
-### Local Development
+### Local development
 
 ```bash
 npm run start
@@ -186,7 +186,7 @@ controlPlane:
 EOF
 ```
 
-Applying a Kubernetes manifest using here docs:
+Applying a Kubernetes manifest using docs:
 
 ```bash
 cat << EOF | kubectl apply -f -
@@ -274,7 +274,7 @@ configurable, allowing you to define custom rules that suit your project’s
 needs. By integrating it into our CI pipeline, contributors can receive
 real-time feedback on their documentation during pull requests.
 
-### Running Vale Locally
+### Running Vale locally
 
 Vale offers multiple installation methods suitable for different operating
 systems:
@@ -329,9 +329,9 @@ write them.
 > `.vale.ini` file from the root of the repository and run linter with
 > `vale --config="/path/to/your/.vale.ini"`.
 
-### Controlling Vale Rules
+### Controlling Vale rules
 
-Disabling All Rules
+Disabling all rules
 
 - Use these HTML-style comments to control Vale checking:
   ```
@@ -347,7 +347,7 @@ Disabling All Rules
   <!-- vale on -->
   ```
 
-Disabling Specific Rules
+Disabling specific rules
 
 - Target individual rules with this syntax:
   ```
@@ -357,7 +357,7 @@ Disabling Specific Rules
 
 Important formatting requirements:
 
-- Use capital YES and NO
+- Use capital "YES" and "NO"
 - Include spaces around the equals sign
 - Specify the full rule name
 
