@@ -1,0 +1,179 @@
+---
+title: Migrate the platform to a different cluster
+sidebar_label: Migrate to a different cluster
+sidebar_position: 1
+description: Learn how to migrate vcluster platform from one Kubernetes cluster to another.
+---
+
+import Flow, { Step } from '@site/src/components/Flow'
+import BasePrerequisites from '../../docs/_partials/base-prerequisites.mdx';
+
+This guide explains how to migrate the platform to a different Kubernetes cluster, which may be necessary during cluster decommissioning or cloud platform migration.
+
+## Use cases
+- Decommissioning the cluster where the platform is installed
+- Migrating the platform to a different cluster while cleaning up the original cluster
+- Migrating the platform while preserving virtual clusters or spaces on the original cluster for use as a connected cluster
+
+## Scope
+
+The platform on a dedicated Kubernetes cluster with its own ingress and DNS record
+
+### Out of scope
+The following scenarios require different migration approaches and are not covered in this guide:
+- The platform that uses the Loft router (with hostname `<something.loft.host>`) - requires special DNS handling
+- The platform that is deployed or managed by an automated deployment tool like `ArgoCD` - requires coordination with GitOps workflows
+- The platform has managed virtual cluster instances running on the same Kubernetes host cluster - requires additional instance migration steps
+- The destination Kubernetes cluster has a virtual cluster agent - requires agent decommissioning first
+
+## Prerequisites
+
+### Base prerequisites
+<BasePrerequisites />
+
+### Platform specific prerequisites
+- Storage space for backup (approximately 1GB)
+- Access to DNS management for the platform's domain
+- Only one platform instance can exist per Kubernetes cluster. Do not install the platform twice in the same Kubernetes host cluster.
+- The migration process requires 15-30 minutes of downtime. Communicate this downtime to end users.
+- The source and destination installations must use the same platform version. Version changes during migration are not supported.
+
+## Migration steps
+
+<Flow id="migration procedure">
+
+### Install the platform in the new cluster
+<Step>
+Configuration
+
+- Use the Helm values from the original installation, making adjustments to values like `ingressClass` or `storageClass` as necessary
+- If your project namespaces have the "loft-p-" prefix, set `projectNamespacePrefix: loft-p-` in your configuration
+</Step>
+
+<Step>
+Installation
+
+Install the platform in the new cluster following the [quick start guide](/platform/install/quick-start-guide).
+
+:::info Avoid DNS conflicts
+When using cloud-managed ingress, use a temporary hostname to prevent conflicts with the running platform instance.
+:::
+</Step>
+
+### Prepare for migration
+
+<Step>
+Send downtime communication to end users
+</Step>
+
+<Step>
+Optional: stop `ArgoCD` sync of any virtual clusters
+</Step>
+
+<Step>
+[Perform a backup of the source platform](/platform/administer/backup-restore/backup-restore-platform)
+</Step>
+
+<Step>
+Backup the license certificate:
+  ```bash title="Backup license certificate"
+  kubectl get secret loft-cert -n vcluster-platform -o yaml > loft-cert-backup.yaml
+  ```
+</Step>
+
+### Execute migration
+
+<Step>
+Scale down the source platform:
+
+```bash title="Scale down the platform deployment"
+kubectl scale deployment loft --replicas=0 -n vcluster-platform
+```
+</Step>
+
+<Step>
+If the original cluster is going to be connected to the platform: modify the `VirtualClusterInstances` hosted in the platform cluster to reference the new cluster name
+</Step>
+
+<Step>
+[Restore the backup to the new installation](https://www.vcluster.com/docs/platform/administer/backup-restore/backup-restore-platform#restoring-vcluster-platform-from-backup)
+</Step>
+
+<Step>
+Apply the license certificate to the new cluster:
+
+  ```bash title="Apply license certificate"
+  # Create a clean secret file for the target namespace
+
+  TARGET_NAMESPACE="vcluster-platform" # Change this to match your target namespace if needed
+
+  # Get the license data from the backup
+  LICENSE_DATA=$(grep -A1 "license:" loft-cert-backup.yaml | tail -n1 | awk '{print $1}')
+  PRIVATE_KEY=$(grep -A1 "privateKey:" loft-cert-backup.yaml | tail -n1 | awk '{print $1}')
+
+  # Create a clean secret file
+  cat << EOF > loft-cert-clean.yaml
+  apiVersion: v1
+  kind: Secret
+  metadata:
+    name: loft-cert
+    namespace: ${TARGET_NAMESPACE}
+  data:
+    license: ${LICENSE_DATA}
+    privateKey: ${PRIVATE_KEY}
+  type: Opaque
+  EOF
+
+  ```
+
+  ```bash title="Apply license certificate"
+  kubectl create -f loft-cert-clean.yaml
+  ```
+
+</Step>
+<Step>
+Update the hostname in the platform configuration as described in the [configuration guide](https://www.vcluster.com/docs/platform/configure/config#changing-the-lofthost-variable)
+</Step>
+<Step>
+Update the DNS record to point to the new cluster if needed
+</Step>
+<Step>
+If the original cluster is going to be used as a connected cluster: connect it to the new platform installation
+</Step>
+
+</Flow>
+
+## Post-migration validation
+<Flow id="post-migration validation">
+<Step>
+Log in to the platform UI and verify object presence:
+   - Check for all expected projects
+   - Verify user access and permissions
+   - Confirm virtual cluster listings
+</Step>
+<Step>
+Verify license status in the platform UI:
+   - Navigate to Settings → License
+   - Confirm license is active and correct
+</Step>
+<Step>
+Restart platform agents on connected clusters:
+
+  ```bash title="Restart platform agents"
+  kubectl rollout restart deployment loft -n vcluster-platform
+  ```
+</Step>
+<Step>
+Validate the core capabilities of the platform:
+   - Single Sign-on: test login with all configured providers
+   - Log access: verify log retrieval from multiple virtual clusters
+   - Virtual cluster creation: create a test cluster
+   - Sleep mode: test sleep/wake feature
+</Step>
+<Step>
+Optional: restart `ArgoCD` sync if previously stopped
+</Step>
+<Step>
+Send end-of-downtime communication to end users
+</Step>
+</Flow>
