@@ -1,19 +1,19 @@
 ---
 title: Migrate the platform to a different cluster
-sidebar_label: Migrate to a different cluster
+sidebar_label: Migrate Clusters
 sidebar_position: 1
-description: Learn how to migrate vcluster platform from one Kubernetes cluster to another.
+description: Learn how to migrate vCluster platform from one Kubernetes cluster to another.
 ---
 
 import Flow, { Step } from '@site/src/components/Flow'
-import BasePrerequisites from '../../docs/_partials/base-prerequisites.mdx';
+import BasePrerequisites from '../../_partials/install/base-prerequisites.mdx';
 
 This guide explains how to migrate the platform to a different Kubernetes cluster, which may be necessary during cluster decommissioning or cloud platform migration.
 
 ## Use cases
 - Decommissioning the cluster where the platform is installed
 - Migrating the platform to a different cluster while cleaning up the original cluster
-- Migrating the platform while preserving virtual clusters or spaces on the original cluster for use as a connected cluster
+- Migrating the platform to a new cluster and keeping the original cluster as a connected cluster
 
 ## Scope
 
@@ -23,7 +23,7 @@ The platform on a dedicated Kubernetes cluster with its own ingress and DNS reco
 The following scenarios require different migration approaches and are not covered in this guide:
 - The platform that uses the Loft router (with hostname `<something.loft.host>`) - requires special DNS handling
 - The platform that is deployed or managed by an automated deployment tool like `ArgoCD` - requires coordination with GitOps workflows
-- The platform has managed virtual cluster instances running on the same Kubernetes host cluster - requires additional instance migration steps
+- The platform with virtual cluster instances running on the same Kubernetes host cluster - these instances require separate migration after the platform migration
 - The destination Kubernetes cluster has a virtual cluster agent - requires agent decommissioning first
 
 ## Prerequisites
@@ -74,13 +74,6 @@ Optional: stop `ArgoCD` sync of any virtual clusters
 [Perform a backup of the source platform](/platform/administer/backup-restore/backup-restore-platform)
 </Step>
 
-<Step>
-Backup the license certificate:
-  ```bash title="Backup license certificate"
-  kubectl get secret loft-cert -n vcluster-platform -o yaml > loft-cert-backup.yaml
-  ```
-</Step>
-
 ### Execute migration
 
 <Step>
@@ -92,10 +85,6 @@ kubectl scale deployment loft --replicas=0 -n vcluster-platform
 </Step>
 
 <Step>
-If the original cluster is going to be connected to the platform: modify the `VirtualClusterInstances` hosted in the platform cluster to reference the new cluster name
-</Step>
-
-<Step>
 [Restore the backup to the new installation](https://www.vcluster.com/docs/platform/administer/backup-restore/backup-restore-platform#restoring-vcluster-platform-from-backup)
 </Step>
 
@@ -103,30 +92,28 @@ If the original cluster is going to be connected to the platform: modify the `Vi
 Apply the license certificate to the new cluster:
 
   ```bash title="Apply license certificate"
-  # Create a clean secret file for the target namespace
+  TARGET_NAMESPACE='vcluster-platform'
+  CA_CERT=$(kubectl get secret loft-cert -n vcluster-platform -o jsonpath="{.data.ca\.crt}")
+  TLS_CERT=$(kubectl get secret loft-cert -n vcluster-platform -o jsonpath="{.data.tls\.crt}")
+  PRIVATE_KEY=$(kubectl get secret loft-cert -n vcluster-platform -o jsonpath="{.data.tls\.key}")
 
-  TARGET_NAMESPACE="vcluster-platform" # Change this to match your target namespace if needed
-
-  # Get the license data from the backup
-  LICENSE_DATA=$(grep -A1 "license:" loft-cert-backup.yaml | tail -n1 | awk '{print $1}')
-  PRIVATE_KEY=$(grep -A1 "privateKey:" loft-cert-backup.yaml | tail -n1 | awk '{print $1}')
-
-  # Create a clean secret file
-  cat << EOF > loft-cert-clean.yaml
+  cat <<EOF > loft-cert-clean.yaml
   apiVersion: v1
   kind: Secret
   metadata:
     name: loft-cert
     namespace: ${TARGET_NAMESPACE}
+  type: kubernetes.io/tls
   data:
-    license: ${LICENSE_DATA}
-    privateKey: ${PRIVATE_KEY}
-  type: Opaque
+    ca.crt: ${CA_CERT}
+    tls.crt: ${TLS_CERT}
+    tls.key: ${PRIVATE_KEY}
   EOF
-
   ```
 
   ```bash title="Apply license certificate"
+  kubectl scale deployment loft --replicas=0 -n vcluster-platform
+  kubectl delete secret loft-cert -n ${TARGET_NAMESPACE} --ignore-not-found
   kubectl create -f loft-cert-clean.yaml
   ```
 
