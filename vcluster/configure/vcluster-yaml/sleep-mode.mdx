@@ -1,0 +1,197 @@
+---
+title: Sleep Mode
+sidebar_label: sleepMode
+sidebar_position: 7
+sidebar_class_name: pro
+description: Learn how to configure and manage sleep mode functionality in virtual clusters without using an agent.
+---
+import ProAdmonition from '../../_partials/admonitions/pro-admonition.mdx'
+import SleepMode from '../../_partials/config/sleepMode.mdx'
+import SleepModeDeploymentExample from '../../../vcluster/_fragments/sleepmode-deployment-example.mdx'
+import SleepModeIngressExample from '../../../vcluster/_fragments/sleepmode-ingress-example.mdx'
+import BasePrerequisites from '../../../docs/_partials/base-prerequisites.mdx';
+import InstallCli from '../../_partials/deploy/install-cli.mdx';
+
+<ProAdmonition />
+
+# Sleep mode
+
+Not all workloads need to run all the time, and scaling them down saves time and money. With sleep mode you can scale down workloads based on a set schedule, or activity from users and ingress.
+
+:::warning
+Sleep mode is intended for pre-production use cases only, and comes with some limitations and
+caveats when used on a stand alone vCluster that is not connected to [the Platform](../../../../platform/use-platform/virtual-clusters/key-features/sleep-mode).
+:::
+
+## How it works
+
+### Sleep mode operations
+
+Sleep mode performs two main operations:
+
+**Sleeping**
+Deletes bare pods and scales down the following resources:
+- Deployments
+- ReplicaSets
+- ReplicationControllers
+- DaemonSets
+
+**Waking**
+
+- Scales resources back to their original state
+- Cannot restore previously deleted bare pods
+
+### Resource exemption
+
+Resources can be exempted from sleep mode using either:
+- Adding the annotation `sleepmode.loft.sh/exclude: true`
+- Configuring `sleepMode` with specific labels
+- Adding configured labels to workloads that should keep running
+
+## Detecting activity
+
+To wake a sleeping cluster or to update the last active time, sleep mode captures the following:
+
+- Access of cluster resources through API calls (e.g., `kubectl get <resource>`)
+- Attempts to contact Ingress endpoints (NGINX only)
+
+:::note
+Ingress activity detection is only available for [NGINX](https://github.com/kubernetes/ingress-nginx/tree/main)
+ingress controllers, making use of the [mirror-target](https://github.com/kubernetes/ingress-nginx/blob/main/docs/user-guide/nginx-configuration/annotations.md#mirror)
+annotation.  This has the effect of overwriting any previously set mirror-target annotation.
+:::
+
+### Ignoring other types of activity
+
+| Annotation| Behavior | Format |
+|-----------|----------|--------|
+| "sleepmode.loft.sh/ignore-all" | ignore all activity | "true" OR "false" |
+| "sleepmode.loft.sh/ignore-ingresses" | ignore requests to associated ingresses  | "true" OR "false"  |
+| "sleepmode.loft.sh/ignore-groups" | ignore requests with a specific apigroup | "apps,group2,group3" |
+| "sleepmode.loft.sh/ignore-resources" | ignore requests to specific resource types  | "pods,resource2,resource3"  |
+| "sleepmode.loft.sh/ignore-verbs" | ignore requests with specific verbs | "create,verb1,verb2"  |
+| "sleepmode.loft.sh/ignore-resource-verbs" | ignore requests with specific verbs to specific resources |  "myresource.mygroup=create update delete, myresource2.mygroup=create update" |
+| "sleepmode.loft.sh/ignore-resource-names" | ignore requests to specific resources with specific names | "myresource.mygroup=name1 name2,myotherresource.mygroup=name1"  |
+| "sleepmode.loft.sh/ignore-user-agents" | ignore specific useragents with trailling wildcard support | "kubectl*,argo,useragent3"  |
+
+:::note
+These annotations are to be added to the vCluster workload, e.g. the `StatefulSet` or `Deployment` running the virtual cluster, and any request can be ignored dynamically by adding the header `X-Sleep-Mode-Ignore`.
+:::
+
+## Differences and compatibility with the platform
+
+The documentation on this page describes sleep mode for a vCluster not connected to the platform.  The main difference in effect between the two is that
+an agent on the host cluster can shut down the vCluster workload, i.e. the control plane, entirely. A virtual cluster on its own must remain active
+to monitor for any activity that should wake it up.  This also means auto deletion is not available without an agent.  The aim of this and
+future versions is to have a single configuration and a seamless transition between the two if you start with vCluster only and connect it to the platform
+at a later date.
+
+### Connecting to the platform
+
+When a vCluster, configured for sleep mode, is connected to the platform, it ceases trying to manage its own sleep mode actions, allowing the agent to take over.
+This requires compatible versions between vCluster and platform. Below is a table of compatibility and migration.
+
+
+| vCluster Version | Platform Version | Compatibility |  Installing an agent | Uninstalling an agent |
+| -- | -- | -- | -- | -- |
+| 0.22.x | 4.2.x | ✅ | Manually update the configuration, moving it from `experimental` to `external.platform`. Translate any durations like `90m` into equivalent seconds e.g. `5400`.  Schema validation prevents configuring both at the same time. | Configuration needs to be manual reverted. |
+| 0.23.x | 4.2.x | ✅ | Manually update the configuration, moving it from `experimental` to `external.platform`. Translate any durations like `90m` into equivalent seconds e.g. `5400`.  Schema validation prevents configuring both at the same time. | Configuration needs to be manual reverted. |
+| 0.24.0 | &lt; 4.3.0 | ❌ | These versions are not compatible, as the vCluster version is ahead of the platform, causing the vcluster creation to be rejected.   | N/A |
+| 0.24.0 | 4.3.0 | ✅ | No action required.  Platform reads the unified configuration and take over as though it had been configured for the platform all along. | The annotation `vcluster.loft.sh/agent-installed` needs to be removed from the vCluster configuration secret in the host cluster to inform the vCluster it needs to take over sleep mode again.  That secret's name has the form `vc-config-<vcluster-name>`. |
+| 0.24.0+ (future release) | 4.3.0 | ✅ | No action required.  Platform reads the unified configuration and take over as though it had been configured for the platform all along. | No action required, and the vCluster resumes sleep mode on only the workloads, not the control plane. |
+
+:::info
+ - In 0.23.0, the platform won't know how to wake a vCluster that put itself to sleep, so the vCluster should be resumed, before installing the agent to take over.
+ - In 0.24.0, the `autoDelete` configuration is still under `external.platform` to be moved under sleepMode in a future release.
+:::
+
+## Enable sleep mode
+
+To enable sleep mode, use the following configuration inside your `vcluster.yaml`:
+
+```yaml title="sleep mode configuration"
+sleepMode:
+  enabled: true
+  autoSleep:
+    afterInactivity: 1h
+```
+
+## Ingress configuration
+
+### Sync to host
+
+If you install your ingress controllers in the vCluster you'll need to exempt the controller from sleeping so it remains
+active for requests that would wake the vCluster.  If you install the `Ingress` controller in the host cluster, you'll need to
+enable syncing ingresses to the host.
+
+```yaml title="enable ingress syncing"
+sync:
+  toHost:
+    ingresses:
+      enabled: true
+```
+
+### Reachability
+
+For proper ingress activity detection:
+- The vCluster pod must be discoverable by the ingress controller
+- DNS lookup for `<vcluster-namespace>.<vcluster-svc-name>.svc.cluster.local` must resolve
+- Proper `dnsPolicy` configuration in the ingress controller Helm installation
+
+## Examples
+
+The below examples demonstrate how to configure sleep mode in a virtual cluster.
+Please make sure to install the necessary prerequisites before proceeding.
+
+### Prerequisites
+
+<BasePrerequisites />
+
+- `vCluster`: vCluster command-line tool to provision and manage virtual clusters.
+  <InstallCli />
+- `docker`: Container runtime [installation guide](https://www.docker.com/).
+- `kind`: Kubernetes in Docker [installation guide](https://kind.sigs.k8s.io/).
+- `curl`: Command-line tool for transferring data (pre-installed on most systems, see [installation guide](https://curl.se/) if needed)
+
+### Deployment
+
+<details>
+<summary>Sleep mode with deployment resource.</summary>
+<SleepModeDeploymentExample />
+</details>
+
+### Ingress controller
+
+<details>
+<summary>Sleep mode with ingress resource.</summary>
+<SleepModeIngressExample />
+</details>
+
+## Additional examples
+
+<details>
+<summary>Sleep mode label selectors and schedule.</summary>
+```yaml title="Sleep after 3 hours of inactivity, anything that does not have the label dont=sleep"
+sleepMode:
+  enabled: true
+  autoSleep:
+    afterInactivity: 3h  # Uses Go's Duration with a max unit of hour
+    exclude:
+      selector:
+        labels:
+          dont: sleep
+```
+
+```yaml title="Sleep every Friday at 17:30 and wake every Monday at 7:00 in Mountain timezone"
+sleepMode:
+  enabled: true
+  timezone: America/Denver
+  autoSleep:
+    schedule: 30 17 * * 5
+    wakeup:
+      schedule: 0 7 * * 1
+```
+</details>
+## Config reference
+
+<SleepMode />
