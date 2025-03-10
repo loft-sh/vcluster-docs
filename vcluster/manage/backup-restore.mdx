@@ -1,0 +1,277 @@
+---
+title: Snapshot & Restore vCluster
+sidebar_label: Snapshot & Restore
+sidebar_position: 3
+---
+
+There is multiple ways how to backup and restore a virtual cluster. vCluster provides a way to create a vCluster snapshot and restore the snapshot via its own CLI.
+
+:::warning
+If you are using an external database like MySQL or Postgresql that is **not** running inside the same namespace as vCluster, you need to create a separate backup for the datastore as well. Please refer to the appropriate docs for doing that.
+:::
+
+## Using vCluster CLI
+
+:::info
+This method requires vCluster version v0.24.0 or higher
+:::
+
+The easiest and recommended way to backup the etcd datastore of a vCluster is through the CLI. When using the CLI, vCluster creates a new pod to save the snapshot to the specified location. vCluster automatically determines the configured backing store. The following information is snapshotted:
+* Backing store data (e.g. etcd, sqlite)
+* vCluster helm release information
+* vCluster configuration (e.g. vcluster.yaml)
+
+:::info
+Currently the vCluster CLI backup method does not support backing up persistent volumes. If you require that please take a look at the velero backup method below.
+:::
+
+### Snapshot URL
+
+vCluster uses a snapshot URL to save the snapshot to a specific location. The snapshot URL is a string that contains the following information:
+
+* The protocol to use (e.g. `oci`, `s3`, `container`)
+* The location to save the snapshot (e.g. `oci://ghcr.io/my-user/my-repo:my-tag`, `s3://my-s3-bucket/my-snapshot-key`, `container:///data/my-snapshot.tar.gz`)
+* Optional flags to pass to the snapshot location (e.g. `skip-client-credentials=true`)
+
+The following protocols are supported:
+
+* `oci` - OCI image registry (e.g. docker hub or ghcr.io)
+* `s3` - s3 compatible bucket (e.g. AWS S3 or minio)
+* `container` - local file inside the vCluster container (or another PVC)
+
+For example, the following snapshot URL saves the snapshot to an OCI image registry:
+```bash
+vcluster snapshot my-vcluster "oci://ghcr.io/my-user/my-repo:my-tag"
+```
+
+#### oci
+
+The following flags are supported for the `oci` protocol:
+* `username` - The username to use to authenticate with the OCI image registry
+* `password` - The password to use to authenticate with the OCI image registry
+* `skip-client-credentials` - Do not use the local credentials to authenticate with the OCI image registry
+
+Example how to create a snapshot to an OCI image registry:
+```bash
+vcluster snapshot my-vcluster "oci://ghcr.io/my-user/my-repo:my-tag"
+
+# with custom credentials
+export OCI_USERNAME=my-username
+export OCI_PASSWORD=my-password
+vcluster snapshot my-vcluster "oci://ghcr.io/my-user/my-repo:my-tag?username=$OCI_USERNAME&password=$OCI_PASSWORD"
+```
+
+#### s3
+
+The following flags are supported for the `s3` protocol:
+* `access-key-id` - The access key id to use to authenticate with the s3 compatible bucket
+* `secret-access-key` - The secret access key to use to authenticate with the s3 compatible bucket
+* `session-token` - The session token to use to authenticate with the s3 compatible bucket
+* `region` - The region of the s3 compatible bucket
+* `profile` - The profile to use to authenticate with the s3 compatible bucket
+* `skip-client-credentials` - Do not use the local credentials to authenticate with the s3 compatible bucket
+
+Example how to create a snapshot to an s3 compatible bucket:
+```bash
+vcluster snapshot my-vcluster "s3://my-s3-bucket/my-bucket-key"
+
+# with custom credetials
+export AWS_ACCESS_KEY_ID=my-access-key-id
+export AWS_SECRET_ACCESS_KEY=my-secret-access-key
+export AWS_SESSION_TOKEN=my-session-token
+vcluster snapshot my-vcluster "s3://my-s3-bucket/my-bucket-key?access-key-id=$AWS_ACCESS_KEY_ID&secret-access-key=$AWS_SECRET_ACCESS_KEY&session-token=$AWS_SESSION_TOKEN"
+```
+
+#### container
+
+Example how to create a snapshot to the vCluster container:
+```bash
+vcluster snapshot my-vcluster "container:///data/my-snapshot.tar.gz"
+```
+
+### Create a snapshot
+
+Creating a snapshot can be done via the following command:
+```bash
+# create an OCI snapshot (use local credentials)
+vcluster snapshot my-vcluster "oci://ghcr.io/my-user/my-repo:my-tag"
+
+# create an OCI snapshot and mount an external image pull secret
+vcluster snapshot my-vcluster "oci://ghcr.io/my-user/my-repo:my-tag?skip-client-credentials=true" --pod-image-pull-secret=my-image-pull-secret
+
+# create an s3 snapshot
+vcluster snapshot my-vcluster "s3://my-s3-bucket/my-snapshot-key"
+
+# create a snapshot to local vCluster pvc (if using embedded storage)
+vcluster snapshot my-vcluster "container:///data/my-snapshot.tar.gz"
+
+# create a snapshot to another pvc (needs to be in the same namespace as vCluster)
+vcluster snapshot my-vcluster "container:///my-pvc/my-snapshot.tar.gz" --pod-mount "pvc:my-pvc:/my-pvc"
+```
+
+Using this command creates a new pod (with the same image as vCluster) that backups the used backing store. To not launch a separate pod and use `kubectl exec` instead you can specify the flag `--pod-exec`.
+
+### Restore from a snapshot
+
+Restoring from a snapshot **stops the vCluster and recreates all vCluster workload pods**. vCluster CLI pauses the vCluster, launch a pod to restore the snapshot and then resume the vCluster. This might cause temporary downtime as long as the restore takes place.
+
+You can restore a vCluster via the following command:
+```bash
+# restore from an OCI snapshot (use local credentials)
+vcluster restore my-vcluster oci://ghcr.io/my-user/my-repo:my-tag
+
+# restore from an s3 snapshot
+vcluster restore my-vcluster s3://my-s3-bucket/my-snapshot-key
+
+# restore from a local pvc snapshot (if using embedded storage)
+vcluster restore my-vcluster container:///data/my-snapshot.tar.gz
+```
+
+When creating a new vCluster, you can also create the vCluster from a snapshot via:
+```bash
+# restore from an OCI snapshot (use local credentials)
+vcluster create my-vcluster --restore oci://ghcr.io/my-user/my-repo:my-tag
+
+# migrate an existing vCluster by restoring from a snapshot and applying a new vcluster.yaml
+vcluster create my-vcluster --upgrade -f vcluster.yaml --restore oci://ghcr.io/my-user/my-repo:my-tag
+```
+
+If a restore should fail, the following happens:
+* If the restore was used with `vcluster create` the vCluster is deleted.
+* If the restore was used with `vcluster restore` the restore is aborted. Please make sure to retry the restore until it succeeds or otherwise the vCluster might end up in a broken state.
+
+:::tip
+Creating a vCluster from a snapshot can also be an effective method to clone a vCluster or migrate a vCluster to a new cluster.
+:::
+
+### Limitations
+
+There are a couple of limitations when using the vCluster CLI to backup and restore a vCluster:
+
+* The vCluster CLI does not support backing up persistent volumes or persistent volume claims.
+* Snapshotting a k0s vCluster only works with using the `pod-exec` flag.
+* Restoring a vCluster with the k0s distro is not supported.
+* When restoring a vCluster with the external database backend, vCluster doesn't truncate the external database before restoring the snapshot.
+* When restoring a vCluster within a different namespace or with a different name than the original vCluster, the vCluster certificates are changed. This is expected behavior to avoid having multiple vCluster use the same certificates.
+
+## Using Velero
+
+You can use [velero](https://velero.io/) to backup virtual clusters. Other backup solutions should usually work as well.
+
+Make sure your cluster supports [volume snapshots](https://kubernetes.io/docs/concepts/storage/volume-snapshots/) to allow velero to backup persistent volumes and persistent volume claims that save the virtual cluster state. Alternatively, you can use [velero's restic integration](https://velero.io/docs/main/restic/) to backup the virtual cluster state.
+
+### Backing up a vCluster
+
+Make sure to install the [velero CLI](https://velero.io/docs/main/basic-install/), [velero server components](https://velero.io/docs/v1.8/supported-providers/) and run the following command:
+```
+velero backup create <backup-name> --include-namespaces=my-vcluster-namespace
+```
+
+Verify backup was created successfully with:
+```
+velero backup describe <backup-name>
+```
+
+This should create a similar output to:
+```
+Name:         <backup-name>
+Namespace:    velero
+Labels:       velero.io/storage-location=default
+Annotations:  velero.io/source-cluster-k8s-gitversion=v1.24.0
+              velero.io/source-cluster-k8s-major-version=1
+              velero.io/source-cluster-k8s-minor-version=24
+
+Phase:  Completed
+
+Errors:    0
+Warnings:  0
+
+Namespaces:
+  Included:  test
+  Excluded:  <none>
+
+Resources:
+  Included:        *
+  Excluded:        <none>
+  Cluster-scoped:  auto
+
+...
+```
+
+### Restoring a vCluster
+
+After you have created a backup through either the velero CLI or a schedule, you can restore a vCluster from the created backup via the velero CLI:
+```
+velero restore create <restore-name> --from-backup <backup-name>
+```
+
+Verify the restore process via:
+```
+velero restore logs <restore-name>
+```
+
+This should recreate the vCluster workloads, configurations as well as vCluster state in the virtual cluster namespace.
+
+:::warning Moving vCluster
+Currently its quite difficult to move a vCluster from one namespace to another as there are objects that include a namespace reference such as the cluster role bindings or persistent volumes. velero supports namespace mapping that should work in most cases, but caution is still required as this might not work for every vCluster setup.
+:::
+
+## Using velero inside vCluster
+
+To use velero for making backups you need to enable the [hostpath-mapper](/docs/vcluster/configure/vcluster-yaml/control-plane/components/host-path-mapper) component of vCluster.
+
+If hostpath-mapper is installed, you need to install velero CLI as explained above and then connect to your vCluster, and install velero:
+```
+velero install --provider <provider> --bucket <bucket_name>  --secret-file <your_secret_file> --plugins velero/velero-plugin-for-<provider>:<semver> --use-restic
+```
+> Make sure to fill up the appropriate fields like `provider`, `bucket_name`, `secret-file` etc. depending on your installation.
+
+Once the installation is complete you can check the status of the velero resources:
+```
+$ kubectl get all -n velero
+NAME                          READY   STATUS    RESTARTS   AGE
+pod/restic-5szkb              1/1     Running   0          118s
+pod/velero-75c5479dfd-4x7sl   1/1     Running   0          118s
+
+NAME                    DESIRED   CURRENT   READY   UP-TO-DATE   AVAILABLE   NODE SELECTOR   AGE
+daemonset.apps/restic   1         1         1       1            1           <none>          118s
+
+NAME                     READY   UP-TO-DATE   AVAILABLE   AGE
+deployment.apps/velero   1/1     1            1           119s
+
+NAME                                DESIRED   CURRENT   READY   AGE
+replicaset.apps/velero-75c5479dfd   1         1         1       119s
+```
+
+Now you're ready to create a backup using `restic`:
+```
+velero backup create test1 --default-volumes-to-restic
+```
+
+Wait for the backup to complete and eventually you should see the following:
+```
+$ velero backup describe test1
+Name:         test1
+Namespace:    velero
+Labels:       velero.io/storage-location=default
+Annotations:  velero.io/source-cluster-k8s-gitversion=v1.25.0+k3s1
+              velero.io/source-cluster-k8s-major-version=1
+              velero.io/source-cluster-k8s-minor-version=25
+
+Phase:  Completed
+
+Errors:    0
+Warnings:  0
+
+Namespaces:
+  Included:  *
+  Excluded:  <none>
+
+Resources:
+  Included:        *
+  Excluded:        <none>
+  Cluster-scoped:  auto
+
+...
+```
+
