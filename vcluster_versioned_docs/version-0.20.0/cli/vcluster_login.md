@@ -1,6 +1,6 @@
 ---
-title: "vcluster login --help"
-sidebar_label: vcluster login
+title: "vcluster platform login --help"
+sidebar_label: vcluster platform login
 ---
 
 
@@ -9,18 +9,18 @@ Login to a vCluster platform instance
 ## Synopsis
 
 ```
-vcluster login [VCLUSTER_PLATFORM_HOST] [flags]
+vcluster platform login [VCLUSTER_PLATFORM_HOST] [flags]
 ```
 
 ```
 ########################################################
-#################### vcluster login ####################
+#################### vcluster platform login ####################
 ########################################################
 Login into vCluster platform
 
 Example:
-vcluster login https://my-vcluster-platform.com
-vcluster login https://my-vcluster-platform.com --access-key myaccesskey
+vcluster platform login https://my-vcluster-platform.com
+vcluster platform login https://my-vcluster-platform.com --access-key myaccesskey
 ########################################################
 ```
 
