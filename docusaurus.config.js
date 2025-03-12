@@ -127,13 +127,13 @@ const config = {
             badge: true,
           },
           "0.21.0": {
-            label: "v0.21",
-            banner: "none",
+            label: "v0.21 (EOL)",
+            banner: "unmaintained",
             badge: true,
           },
           "0.20.0": {
-            label: "v0.20",
-            banner: "none",
+            label: "v0.20 (EOL)",
+            banner: "unmaintained",
             badge: true,
           },
         },
