@@ -25,7 +25,7 @@ const config = {
   tagline: "Virtual Clusters for Kubernetes",
   url: "https://vcluster.com",
   baseUrl: __webpack_public_path__,
-  favicon: "/media/vCluster_favicon_docs_outline.svg",
+  favicon: "/media/rebranding/vCluster_favicon_docs_outline.svg",
   organizationName: "loft-sh", // Usually your GitHub org/user name.
   projectName: "vcluster-docs", // Usually your repo name.
 
@@ -194,7 +194,7 @@ const config = {
       navbar: {
         logo: {
           alt: "vcluster",
-          src: "/media/vCluster_horizontal-orange.svg",
+          src: "/media/rebranding/vCluster_horizontal-orange.svg",
           href: "https://vcluster.com/docs",
           target: "_self",
         },
