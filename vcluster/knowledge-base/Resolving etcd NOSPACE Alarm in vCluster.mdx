@@ -1,0 +1,111 @@
+# Resolving etcd NOSPACE Alarm in vCluster
+
+## Problem Description
+
+Some vClusters experience persistent etcd errors with logs showing:
+
+```
+etcdhttp/metrics.go:86 /health error ALARM NOSPACE status-code 503
+```
+
+These errors indicate that etcd has run out of space, causing etcd nodes to fail their health checks, leading to etcd crashes and rendering vCluster unusable.
+
+## Explanation
+
+Etcd may run out of disk space for multiple reasons. Some of the most common are:
+
+A very large vCluster implementation that includes many entries like deployments, config maps, secrets, and other objects.
+
+This could be addressed by increasing the etcd disk.
+
+A conflict between objects in vCluster and the host cluster that causes the vClsuter syncer to copy the object repeatedly. For example, a CRD that is set in vCluster, and when synced to the host is changed there, causing it to sync back to vCluster and so forth.
+
+To address this, first stop syncing the conflicting object and follow the below process to compact etcd and bring it back to health
+
+## Compacting etcd
+
+### 1\. Connect to etcd Pod
+
+```
+kubectl -n <namespace> exec -it <etcd-pod> -- sh
+```
+
+### 2\. Export Environment Variables
+
+```
+export ETCD_SRVNAME=<etcd-pod>
+```
+
+### 3\. Retrieve Current Revision Number
+
+```
+etcdctl endpoint status --write-out json \
+    --endpoints=https://$ETCD_SRVNAME:2379 \
+    --cacert=/run/config/pki/etcd-ca.crt \
+    --key=/run/config/pki/etcd-peer.key \
+    --cert=/run/config/pki/etcd-peer.crt
+```
+
+### 4\. Compact the Database
+
+```
+etcdctl --command-timeout=600s compact <revision-number> \
+    --endpoints=https://$ETCD_SRVNAME:2379 \
+    --cacert=/run/config/pki/etcd-ca.crt \
+    --key=/run/config/pki/etcd-peer.key \
+    --cert=/run/config/pki/etcd-peer.crt
+```
+
+(Update the revision number)
+
+### 5\. Defragment etcd
+
+```
+etcdctl --command-timeout=600s defrag \
+    --endpoints=https://$ETCD_SRVNAME:2379 \
+    --cacert=/run/config/pki/etcd-ca.crt \
+    --key=/run/config/pki/etcd-peer.key \
+    --cert=/run/config/pki/etcd-peer.crt
+```
+
+(Repeat steps 1 to 5 for each etcd pod.)
+
+### 6\. Verify Disk Usage Reduction
+
+```
+etcdctl endpoint status -w table \
+    --endpoints=https://$ETCD_SRVNAME:2379 \
+    --cacert=/run/config/pki/etcd-ca.crt \
+    --key=/run/config/pki/etcd-peer.key \
+    --cert=/run/config/pki/etcd-peer.crt
+```
+
+### 7\. Disarm NOSPACE Alarm
+
+```
+etcdctl alarm disarm \
+    --endpoints=https://$ETCD_SRVNAME:2379 \
+    --cacert=/run/config/pki/etcd-ca.crt \
+    --key=/run/config/pki/etcd-peer.key \
+    --cert=/run/config/pki/etcd-peer.crt
+```
+
+### 8\. Update vCluster etcd Configuration
+
+To prevent this from happening in the future, optimize the values for the vCluster etcd pod to include the following:
+
+```
+controlPlane:
+  backingStore:
+    etcd:
+      embedded:
+        enabled: false
+      deploy:
+        enabled: true
+        statefulSet:
+          enabled: true
+          extraArgs:
+            - '--auto-compaction-mode=periodic'
+            - '--auto-compaction-retention=30m'
+            - '--quota-backend-bytes=8589934592'
+```
