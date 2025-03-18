@@ -1,0 +1,185 @@
+import Highlight from "@site/src/components/Highlight/Highlight";
+
+import Flow, { Step } from "@site/src/components/Flow";
+
+
+
+## From host namespaced CustomResource example
+
+This guide shows how to sync k8s namespaced CustomResources from host cluster.
+Example CRD is used in this guide.
+
+### Set up cluster contexts
+
+Setting up the host and virtual cluster contexts makes it easier to switch
+between them.
+
+```bash title="set up kubectl contexts"
+export HOST_CTX="your-host-context"
+export VCLUSTER_CTX="vcluster-ctx"
+```
+
+then, create a namespace in your host cluster, use `foobar2` as an example:
+
+```bash title="create namespace"
+kubectl --context="${HOST_CTX}" create namespace foobar2
+```
+
+:::tip
+You can find your contexts by running `kubectl config get-contexts`
+:::
+
+
+### Create CustomResourceDefinition in the host
+
+Saved following Custom Resource Definition:
+
+```yaml title="example-crd.yaml"
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: examples.demo.loft.sh
+spec:
+  group: demo.loft.sh
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                image:
+                  type: string
+                replicas:
+                  type: integer
+      additionalPrinterColumns:
+      - name: Image
+        type: string
+        description: The image of an example
+        jsonPath: .spec.image
+      - name: Replicas
+        type: integer
+        description: The number of replicas in example
+        jsonPath: .spec.replicas
+  scope: Namespaced
+  names:
+    plural: examples
+    singular: example
+    kind: Example
+```
+
+save this file locally and then apply it in the host cluster:
+
+```bash title="Create Example CRD in the host"
+kubectl --context="${HOST_CTX}" create -f example-crd.yaml
+```
+
+### Enable from host syncing for your CustomResource
+
+Enable the from host syncing for Example CustomResources in your virtual cluster configuration:
+
+```yaml title="Enable from host syncing for CustomResource"
+sync:
+  fromHost:
+    customResources:
+      examples.demo.loft.sh:
+        enabled: true
+        scope: Namespaced
+        mappings:
+          byName:
+            "": "default"
+```
+
+This configuration:
+
+- Enables from host syncing of the examples.demo.loft.sh from the vCluster's host namespace
+- Automatically configures RBAC permissions for vCluster, so it can get, watch and list Examples in vCluster's host namespace.
+- Syncs all `Examples` from vCluster host namespace to the `default` namespace in your vCluster.
+
+:::tip create virtual cluster
+Create or update a `virtual Cluster` following the [vCluster quick start
+guide](/vcluster/#deploy-vcluster).
+:::
+
+### Sync namespaced CustomResource to virtual cluster
+
+<Flow id="namespaced-custom-resources-from-host-example">
+  <Step>
+    First, you create an example that you want to sync in the host cluster:
+
+    Copy this file and save it locally as `example-cr.yaml`
+
+    ```yaml title=example-cr.yaml
+    apiVersion: demo.loft.sh/v1
+    kind: Example
+    metadata:
+      name: my-example
+      namespace: vcluster
+    spec:
+      image: "my-image:latest"
+      replicas: 2
+    ```
+
+    then, create an example in the host cluster:
+
+    ```bash title="Create example in the host"
+    kubectl --context="${HOST_CTX}" create -f example-cr.yaml
+    ```
+  </Step>
+
+  #### Ensure that CustomResource got synced to the virtual cluster
+
+  Your CustomResource should be now accessible in the virtual cluster.
+  Keep in mind, that any edit made in the virtual object is overwritten by the host object data.
+
+  <Step>
+    Check CustomResource in the virtual cluster:
+
+    ```bash title="Get synced CustomResource"
+    kubectl --context="${VCLUSTER_CTX}" et examples.demo.loft.sh --namespace default
+    ```
+
+    you should see similar output:
+
+    ```bash title="examples in vCluster"
+    NAME         IMAGE             REPLICAS
+    my-example   my-image:latest   2
+    ```
+
+
+  </Step>
+
+  #### Edit CustomResource in the host
+
+  <Step>
+
+    Now, you can edit your example in the host and see that the change is synced to the vCluster.
+    To set replicas to 4, run:
+
+    ```bash title="Patch Example CR"
+    kubectl --context="${HOST_CTX}" patch examples.demo.loft.sh my-example --type='json' -p='[{"op": "replace", "path": "/spec/replicas", "value": 4}]'  --namespace vcluster
+    ```
+
+  </Step>
+
+  #### Verify that Example is updated in vCluster
+  <Step>
+    <Highlight color="green">Virtual Cluster</Highlight> Check number of replicas
+
+    ```bash title="Check example"
+    kubectl --context="${VCLUSTER_CTX}" get --namespace default examples.demo.loft.sh
+    ```
+    you should see number of replicas updated from host object:
+
+    ```bash title="Example updated in vCluster"
+    NAME         IMAGE             REPLICAS
+    my-example   my-image:latest   4
+    ```
+
+  </Step>
+
+</Flow>

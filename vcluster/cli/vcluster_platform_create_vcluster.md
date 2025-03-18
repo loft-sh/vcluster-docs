@@ -38,7 +38,6 @@ vcluster platform create vcluster test --namespace test
       --expose                            If true will create a load balancer service to expose the vcluster endpoint
   -h, --help                              help for vcluster
       --kube-config-context-name string   If set, will override the context name of the generated virtual cluster kube config with this name
-      --kubernetes-version string         The kubernetes version to use (e.g. v1.20). Patch versions are not supported
   -l, --labels strings                    Comma separated labels to apply to the virtualclusterinstance
       --link stringArray                  A link to add to the vCluster. E.g. --link 'prod=http://exampleprod.com'
       --parameters string                 If a template is used, this can be used to use a file for the parameters. E.g. --parameters path/to/my/file.yaml

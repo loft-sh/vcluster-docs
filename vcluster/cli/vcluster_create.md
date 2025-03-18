@@ -42,7 +42,6 @@ vcluster create test --namespace test
       --expose                            If true will create a load balancer service to expose the vcluster endpoint
   -h, --help                              help for create
       --kube-config-context-name string   If set, will override the context name of the generated virtual cluster kube config with this name
-      --kubernetes-version string         The kubernetes version to use (e.g. v1.20). Patch versions are not supported
   -l, --labels strings                    [PLATFORM] Comma separated labels to apply to the virtualclusterinstance
       --link stringArray                  [PLATFORM] A link to add to the vCluster. E.g. --link 'prod=http://exampleprod.com'
       --parameters string                 [PLATFORM] If a template is used, this can be used to use a file for the parameters. E.g. --parameters path/to/my/file.yaml
@@ -50,6 +49,7 @@ vcluster create test --namespace test
       --print                             If enabled, prints the context to the console
       --project string                    [PLATFORM] The vCluster platform project to use
       --recreate                          [PLATFORM] If enabled and there already exists a virtual cluster with this name, it will be deleted first
+      --restore string                    Restore the virtual cluster from a backup. E.g. --restore oci://ghcr.io/my-user/my-repo:my-tag
       --set stringArray                   Set values for helm. E.g. --set 'persistence.enabled=true'
       --set-param stringArray             [PLATFORM] If a template is used, this can be used to set a specific parameter. E.g. --set-param 'my-param=my-value'
       --set-parameter stringArray         [PLATFORM] If a template is used, this can be used to set a specific parameter. E.g. --set-parameter 'my-param=my-value'
