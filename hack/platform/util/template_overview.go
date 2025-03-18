@@ -53,14 +53,14 @@ import Delete from "{{ .RelativePath }}/_partials/resources/{{ .Resource }}/dele
 
 {{ .Description }}
 
-## Example {{ .Name }}
+## {{ .Name }} example
 
 An example {{ .Name }}:
 ` + "```yaml" + `
 {{ .YAMLObject }}
 ` + "```" + `
 
-## {{ .Name }} Reference
+## {{ .Name }} reference
 
 <Reference />
 
