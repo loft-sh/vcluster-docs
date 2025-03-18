@@ -46,7 +46,7 @@ VirtualClusterInstances managed with driver helm will be deleted, but the underl
       --ignore-not-found          Exit successfully if platform installation is not found
       --namespace string          The namespace vCluster Platform is installed in
       --non-interactive           Will not prompt for confirmation
-      --timeout-minutes int       How long to try deleting the platform before giving up. May increase when removing finalizers if --remove-finalizers is used (default 5)
+      --timeout-minutes int       How long to try deleting the platform before giving up. May increase when removing finalizers if --force-remove-finalizers is used (default 5)
 ```
 
 
