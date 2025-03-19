@@ -126,12 +126,12 @@ const config = {
             badge: true,
           },
           "0.22.0": {
-            label: "v0.22",
-            banner: "none",
+            label: "v0.22 (EOS)",
+            banner: "unmaintained",
             badge: true,
           },
           "0.21.0": {
-            label: "v0.21 (EOL)",
+            label: "v0.21 (EOS)",
             banner: "unmaintained",
             badge: true,
           },
