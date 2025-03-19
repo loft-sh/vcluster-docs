@@ -110,18 +110,18 @@ const config = {
         editUrl: ({ versionDocsDirPath, docPath }) =>
           `https://github.com/loft-sh/vcluster-docs/edit/main/${versionDocsDirPath}/${docPath}`,
         editCurrentVersion: true,
-        lastVersion: "0.23.0",
+        lastVersion: "0.24.0",
         versions: {
           current: {
             label: "main 🚧",
           },
           "0.24.0": {
-            label: "v0.24",
+            label: "v0.24 Stable",
             banner: "none",
             badge: true,
           },
           "0.23.0": {
-            label: "v0.23 Stable",
+            label: "v0.23",
             banner: "none",
             badge: true,
           },
