@@ -41,7 +41,7 @@ vcluster pro token
 ```
 
 
-## Global & Inherited Flags
+## Global and inherited flags
 
 ```
       --context string      The kubernetes config context to use

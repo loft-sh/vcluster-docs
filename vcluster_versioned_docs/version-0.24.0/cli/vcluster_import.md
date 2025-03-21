@@ -36,7 +36,7 @@ vcluster import my-vcluster --cluster connected-cluster \
 ```
 
 
-## Global & Inherited Flags
+## Global and inherited flags
 
 ```
       --context string      The kubernetes config context to use

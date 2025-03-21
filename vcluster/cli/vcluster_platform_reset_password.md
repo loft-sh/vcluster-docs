@@ -37,7 +37,7 @@ vcluster platform reset password --user admin
 ```
 
 
-## Global & Inherited Flags
+## Global and inherited flags
 
 ```
       --config string       The vcluster CLI config to use (will be created if it does not exist) (default "~/.vcluster/config.json")
