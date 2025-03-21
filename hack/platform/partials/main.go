@@ -272,7 +272,7 @@ isolation:
 		Title:       "Space Instance",
 		Name:        "Space",
 		Resource:    "spaceinstances",
-		Description: "Spaces are regular Kubernetes namespaces managed by Loft that are owned by a user or team. In Kubernetes, namespaces provide a mechanism for isolating groups of resources within a single cluster.",
+		Description: "Spaces are regular Kubernetes namespaces managed by the platform that are owned by a user or team. In Kubernetes, namespaces provide a mechanism for isolating groups of resources within a single cluster.",
 		File:        path.Join(util.BaseResourcesPath, "spaceinstance/spaceinstance.mdx"),
 		Object: &storagev1.SpaceInstance{
 			TypeMeta: metav1.TypeMeta{
@@ -592,7 +592,7 @@ spec:
 	util.GenerateObjectOverview(&util.ObjectInformation{
 		Name:        "App",
 		Resource:    "apps",
-		Description: "Apps in Loft are a way for admins to package applications and scripts in consumable packages. These Apps can then be deployed into clusters, spaces, or virtual clusters.",
+		Description: "Apps in the platform are a way for admins to package applications and scripts in consumable packages. These Apps can then be deployed into clusters, spaces, or virtual clusters.",
 		File:        path.Join(util.BaseResourcesPath, "apps.mdx"),
 		Object: &storagev1.App{
 			TypeMeta: metav1.TypeMeta{
@@ -635,7 +635,7 @@ spec:
 	util.GenerateObjectOverview(&util.ObjectInformation{
 		Name:        "Cluster",
 		Resource:    "clusters",
-		Description: "Connected Kubernetes clusters that can be managed through Loft. You can allow users and teams to access those clusters and they can create new spaces and virtual clusters inside them.",
+		Description: "Connected Kubernetes clusters that can be managed through the platform. You can allow users and teams to access those clusters and they can create new spaces and virtual clusters inside them.",
 		File:        path.Join(util.BaseResourcesPath, "clusters/clusters.mdx"),
 		Object: &storagev1.Cluster{
 			TypeMeta: metav1.TypeMeta{
@@ -706,7 +706,7 @@ spec:
 	util.GenerateObjectOverview(&util.ObjectInformation{
 		Name:        "User",
 		Resource:    "users",
-		Description: "Users that can access Loft.",
+		Description: "Users that can access the platform.",
 		File:        path.Join(util.BaseResourcesPath, "user.mdx"),
 		Object: &storagev1.User{
 			TypeMeta: metav1.TypeMeta{
@@ -738,7 +738,7 @@ spec:
 	util.GenerateObjectOverview(&util.ObjectInformation{
 		Name:        "Team",
 		Resource:    "teams",
-		Description: "Teams are composed of multiple users and define a way to manage cluster access or other objects for multiple users at once. You can assign users automatically to teams by their groups, which can be synced from an authentication provider. Teams can also access Loft through their own access keys and own spaces or other objects.",
+		Description: "Teams are composed of multiple users and define a way to manage cluster access or other objects for multiple users at once. You can assign users automatically to teams by their groups, which can be synced from an authentication provider. Teams can also access the platform through their own access keys and own spaces or other objects.",
 		File:        path.Join(util.BaseResourcesPath, "team.mdx"),
 		Object: &storagev1.Team{
 			TypeMeta: metav1.TypeMeta{
@@ -850,7 +850,7 @@ spec:
 		Title:       "Loft Config",
 		Name:        "Config",
 		Resource:    "config",
-		Description: "You can retrieve the Loft config through this API.",
+		Description: "You can retrieve the platform config through this API.",
 		File:        path.Join(util.BaseResourcesPath, "config.mdx"),
 		Object: &managementv1.Config{
 			TypeMeta: metav1.TypeMeta{

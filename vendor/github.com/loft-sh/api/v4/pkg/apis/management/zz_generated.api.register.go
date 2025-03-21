@@ -1453,6 +1453,11 @@ type AgentAuditEventSpec struct {
 type AgentAuditEventStatus struct {
 }
 
+type AgentCostControlConfig struct {
+	Enabled                  *bool `json:"enabled,omitempty"`
+	CostControlClusterConfig `json:",inline"`
+}
+
 // +genclient
 // +genclient:nonNamespaced
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
@@ -1733,14 +1738,15 @@ type ClusterAgentConfig struct {
 }
 
 type ClusterAgentConfigCommon struct {
-	Cluster                string             `json:"cluster,omitempty"`
-	Audit                  *AgentAuditConfig  `json:"audit,omitempty"`
-	DefaultImageRegistry   string             `json:"defaultImageRegistry,omitempty"`
-	TokenCaCert            []byte             `json:"tokenCaCert,omitempty"`
-	LoftHost               string             `json:"loftHost,omitempty"`
-	ProjectNamespacePrefix string             `json:"projectNamespacePrefix,omitempty"`
-	LoftInstanceID         string             `json:"loftInstanceID,omitempty"`
-	AnalyticsSpec          AgentAnalyticsSpec `json:"analyticsSpec"`
+	Cluster                string                  `json:"cluster,omitempty"`
+	Audit                  *AgentAuditConfig       `json:"audit,omitempty"`
+	DefaultImageRegistry   string                  `json:"defaultImageRegistry,omitempty"`
+	TokenCaCert            []byte                  `json:"tokenCaCert,omitempty"`
+	LoftHost               string                  `json:"loftHost,omitempty"`
+	ProjectNamespacePrefix string                  `json:"projectNamespacePrefix,omitempty"`
+	LoftInstanceID         string                  `json:"loftInstanceID,omitempty"`
+	AnalyticsSpec          AgentAnalyticsSpec      `json:"analyticsSpec"`
+	CostControl            *AgentCostControlConfig `json:"costControl,omitempty"`
 }
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
