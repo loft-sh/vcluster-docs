@@ -37,4 +37,4 @@ vcluster pro login [flags]
 
 
 ## Flags
-## Global & Inherited Flags
+## Global and inherited flags

@@ -34,4 +34,4 @@ vcluster platform get cluster [flags]
 
 
 ## Flags
-## Global & Inherited Flags
+## Global and inherited flags
