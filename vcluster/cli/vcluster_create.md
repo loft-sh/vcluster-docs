@@ -54,12 +54,12 @@ vcluster create test --namespace test
       --set-param stringArray             [PLATFORM] If a template is used, this can be used to set a specific parameter. E.g. --set-param 'my-param=my-value'
       --set-parameter stringArray         [PLATFORM] If a template is used, this can be used to set a specific parameter. E.g. --set-parameter 'my-param=my-value'
       --skip-wait                         [PLATFORM] If true, will not wait until the virtual cluster is running
-      --team string                       [PLATFORM] The team to create the space for
+      --team string                       [PLATFORM] The team to create the namespace for
       --template string                   [PLATFORM] The vCluster platform template to use
       --template-version string           [PLATFORM] The vCluster platform template version to use
       --upgrade                           If true will try to upgrade the vcluster instead of failing if it already exists
       --use                               [PLATFORM] If the platform should use the virtual cluster if its already there
-      --user string                       [PLATFORM] The user to create the space for
+      --user string                       [PLATFORM] The user to create the namespace for
   -f, --values stringArray                Path where to load extra helm values from
 ```
 
