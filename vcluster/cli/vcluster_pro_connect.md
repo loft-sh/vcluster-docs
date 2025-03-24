@@ -27,7 +27,7 @@ Connects a cluster to vCluster.Pro
 ```
 
 
-## Global & Inherited Flags
+## Global and inherited flags
 
 ```
       --context string      The kubernetes config context to use

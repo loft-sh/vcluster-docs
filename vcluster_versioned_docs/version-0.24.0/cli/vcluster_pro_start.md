@@ -61,7 +61,7 @@ before running this command:
 ```
 
 
-## Global & Inherited Flags
+## Global and inherited flags
 
 ```
       --debug               Prints the stack trace if an error occurs

@@ -23,7 +23,7 @@ Gets cluster related information
 ```
 
 
-## Global & Inherited Flags
+## Global and inherited flags
 
 ```
       --context string      The kubernetes config context to use
