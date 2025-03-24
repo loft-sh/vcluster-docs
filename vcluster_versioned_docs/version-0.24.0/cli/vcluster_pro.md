@@ -27,7 +27,7 @@ vCluster.Pro subcommands
 ```
 
 
-## Global & Inherited Flags
+## Global and inherited flags
 
 ```
       --context string      The kubernetes config context to use
