@@ -30,11 +30,11 @@ vcluster platform share vcluster myvcluster --project myproject --user admin
 
 ```
       --cluster string        The cluster to use
-      --cluster-role string   The cluster role which is assigned to the user or team for that space (default "loft-cluster-space-admin")
+      --cluster-role string   The cluster role which is assigned to the user or team for that namespace (default "loft-cluster-namespace-admin")
   -h, --help                  help for vcluster
       --project string        The project to use
-      --team string           The team to share the space with. The team needs to have access to the cluster
-      --user string           The user to share the space with. The user needs to have access to the cluster
+      --team string           The team to share the namespace with. The team needs to have access to the cluster
+      --user string           The user to share the namespace with. The user needs to have access to the cluster
 ```
 
 
