@@ -8,8 +8,8 @@ require (
 	github.com/gertd/go-pluralize v0.2.1
 	github.com/ghodss/yaml v1.0.0
 	github.com/invopop/jsonschema v0.12.1-0.20240219232115-a4467074499d
-	github.com/loft-sh/agentapi/v4 v4.2.3-rc.6
-	github.com/loft-sh/api/v4 v4.2.3-rc.6
+	github.com/loft-sh/agentapi/v4 v4.2.3
+	github.com/loft-sh/api/v4 v4.2.3
 	github.com/wk8/go-ordered-map/v2 v2.1.8
 	k8s.io/api v0.32.1
 	k8s.io/apimachinery v0.32.1
