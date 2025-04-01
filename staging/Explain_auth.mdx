@@ -1,0 +1,90 @@
+---
+ title: Overview of authentication and authorization in vCluster Platform
+  sidebar_label: Authentication and authorization
+  description: Understand the terms used in vCluster platform security
+  ---
+
+## Overview of authentication and authorization in vCluster Platform
+Main terms in the authentication and authorization context of the vCluster Platform:
+
+- a “User” - represents a person with platform access. A user may have Management Roles assigned to them explicitly (.spec.clusterRoles). A user may be a member of a Group. [API reference for User resource(CRD)](https://www.vcluster.com/docs/platform/api/resources/user).
+
+- a “Group” or “SSO Group” - is a platform representation of a group in the [SSO provider configured in the platform](https://www.vcluster.com/docs/platform/configure/single-sign-on/overview). There is no resource representing groups. The groups are captured from the SSO authentication payload when a user is logging into the platform via the SSO provider, they are saved in the .spec.ssoGroups field on the User CRD, and membership is regularly verified.
+
+- a “Team” - represents a group of platform users. A user belongs to a team either by explicit definition (.spec.users) or by being a member of an [SSO Group that is mapped to this team](https://www.vcluster.com/docs/platform/configure/single-sign-on/group-sync) (.spec.groups). A Team may have [Management Roles](https://www.vcluster.com/docs/platform/administer/users-permissions/permissions/platform) assigned to it (.spec.clusterRoles). [API reference for Team resource(CRD)](https://www.vcluster.com/docs/platform/api/resources/team).
+
+- a “Management Role” - defines a set of permissions that will be given to a subject within a specific scope. An example is attached at the end of this document. [API reference for the ClusterRoleTemplate resource(CRD)](https://www.vcluster.com/docs/platform/api/resources/clusterroletemplate).
+
+- a “Project” - an organizational unit within vCluster Platform. In the simplest form, projects can be thought of as folders for resources (e.g. virtual clusters), however, they also play an important role in enforcing role-based access and quotas within the platform. See docs for more information about “[What are projects](https://www.vcluster.com/docs/platform/understand/what-are-projects)”.
+
+The setup presented here is based on the best practices for the vCluster Platform and these additional requirements as an example:
+1. Microsoft Entra ID is used as an SSO provider
+2. The organization has requirements for authorization governance that must be met - platform-level permissions must be governed from a central GitOps repository. 
+3. Four levels of permissions for different personas were identified for this example. Breakdown by persona:
+    1. Platform Operations team - permissions to manage vCluster Platform at the highest level
+    2. Application team, DevOps role - permissions to create virtual clusters within their Platform project, permissions to connect to all virtual clusters within their project
+    3. Application team, Developer role - permissions to connect to virtual clusters within their Platform project
+    4. Automation account for GitOps - permissions to CRUD Management Roles, Projects, and Teams
+
+## Setup proposal
+- EntraID is configured as an SSO provider for the vCluster Platform (references: [OIDC client](https://www.vcluster.com/docs/platform/configure/single-sign-on/providers/microsoft), [SAML](https://www.vcluster.com/docs/platform/configure/single-sign-on/providers/saml)) 
+  - The client app within EntraID is configured to receive a list of groups that a user belongs to
+  - SSO configuration in vCluster Platform is configured with a list of groups that are allowed access to log into the platform
+- A Management Role is created for each type of persona
+  - These follow the same RBAC principles as Kubernetes Roles and ClusterRoles
+  - Exact permissions are out of the scope of this document
+  - For each SSO group, we will create a Team and associate it with said group
+  - Users who are members of an SSO group become members of a Team automatically upon logging in with the SSO provider
+- Each team that needs to have permissions with global platform scope (e.g. management of virtual cluster templates) is assigned a relevant Management Role (.spec.clusterRoles in the Team resource).
+  - These would be teams that represent the “Platform Operations team” or “Automation account for GitOps” personas.
+- A platform project is created for each “application” that the organization is developing
+  - Two teams will have permissions (via respective Management Roles) in each project. These would be teams that represent the “Application team, DevOps role” and “Application team, Developer role” personas.
+  - The project will have “allowed clusters” configured - e.g. the cluster(s) that belong to the particular application or overarching department, etc.
+  - Other limitations will be configured as necessary - allowed templates, quota, etc.
+- Projects, Management Roles, and certain Teams will be managed via GitOps to provide governance over the access permissions.
+
+## Diagram with example
+<figure>
+   <img src="/docs/media/diagrams/vcluster_platform_auth.png" alt="SSO diagram example"
+   <figcaption>Diagram of example</figcaption>
+ </figure>
+
+## Management Role Example
+Management roles are defined with the [ClusterRoleTemplate resource](https://www.vcluster.com/docs/platform/api/resources/clusterroletemplate). This resource follows the usual Kubernetes syntax for the Roles in the .spec.clusterRoleTemplate.rules field.
+
+```
+apiVersion: management.loft.sh/v1
+kind: ClusterRoleTemplate
+metadata:
+ name: loft-management-project-admin-custom
+ labels:
+   loft.sh/project-role: 'true'
+spec:
+ displayName: Custom Project Admin
+ description: >-
+   Allows the user or team to manage the project. Gives full access to
+   modifying the project and all objects inside it.
+ management: true
+ access:
+   - verbs:
+       - get
+     users:
+       - '*'
+ clusterRoleTemplate:
+   metadata:
+     creationTimestamp: null
+   rules:
+     - verbs:
+         - '*'
+       apiGroups:
+         - management.loft.sh
+       resources:
+         - virtualclusterinstances
+         - virtualclusterinstances/log
+         - virtualclusterinstances/kubeconfig
+         - virtualclusterinstances/accesskey
+         - virtualclusterinstances/restricted
+         - projectsecrets
+         - projects
+         - projects/spec.*
+```
