@@ -150,17 +150,20 @@ const config = {
         path: "platform",
         routeBasePath: "platform",
         sidebarPath: require.resolve("./sidebarsPlatform.js"),
-        editUrl: "https://github.com/loft-sh/vcluster-docs/edit/main/",
+        editUrl: ({ versionDocsDirPath, docPath }) =>
+          `https://github.com/loft-sh/vcluster-docs/edit/main/${versionDocsDirPath}/${docPath}`,
         editCurrentVersion: true,
-        lastVersion: "current",
+        lastVersion: "4.2.0",
         versions: {
           current: {
+            label: "main 🚧",
+          },
+          "4.2.0": {
             label: "v4.x (Stable: v4.2.0)",
             banner: "none",
-            badge: false,
+            badge: true,
           },
         },
-        // ... other options
       },
     ],
   ],

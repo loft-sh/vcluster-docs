@@ -1,0 +1,419 @@
+---
+title: Deploy using ArgoCD
+sidebar_label: Using ArgoCD
+sidebar_position: 3
+description: Learn how to deploy vCluster Platform in a GitOps style using ArgoCD.
+---
+
+import ListHelmVersions from "../_partials/install/list-helm-versions.mdx";
+import BasePrerequisites from '../_partials/install/base-prerequisites.mdx';
+import LoginAfterHelmInstall from '../_partials/install/login-after-helm-install.mdx';
+import InstallNextSteps from '../_partials/install/install-next-steps.mdx';
+import NetworkPorts from '../_partials/install/open-ports.mdx';
+
+
+The platform can be deployed using [GitOps](https://argoproj.github.io/cd/), just as you would for deploying applications in your Kubernetes clusters. This guide provides a quick overview of deploying the platform with GitOps. Since the platform is similar to other applications, standard GitOps practices are equally applicable.
+
+:::info
+This guide details deploying the platform using GitOps practices, specifically with ArgoCD. Although ArgoCD is used as an example, the principles are applicable to other GitOps tools.
+:::
+
+## Prerequisites
+
+<BasePrerequisites />
+
+### ArgoCD
+
+ArgoCD needs to be installed and configured on the host cluster. Follow the [Argo CD Installation Guide](https://argo-cd.readthedocs.io/en/stable/getting_started/) to install it.
+
+### Resource requirements
+
+<NetworkPorts />
+
+
+## Deployment
+
+### Basic deployment
+
+<!-- vale off -->
+:::note
+Before beginning, take a few minutes to review the [installation with Helm](./helm.mdx) section of the documentation.
+Helm is particularly well-suited for GitOps as it provides a standardized way to package and version Kubernetes applications.
+:::
+<!-- vale on -->
+
+The most basic GitOps platform deployment consists of an [ArgoCD Application](https://argo-cd.readthedocs.io/en/stable/operator-manual/declarative-setup/#applications) with the platform chart and your desired values.
+
+#### Create ArgoCD application
+
+Execute the following command to create a simple ArgoCD Application.
+
+```yaml title="Create platform ArgoCD Application"
+PLATFORM_VERSION=4.0.0
+cat <<EOF > gitops-application.yaml
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: vcluster-platform
+  namespace: argocd
+spec:
+  destination:
+    name: ""
+    namespace: vcluster-platform
+    server: "https://kubernetes.default.svc"
+  source:
+    path: ""
+    repoURL: "https://charts.loft.sh"
+    targetRevision: $PLATFORM_VERSION
+    chart: vcluster-platform
+    helm:
+      parameters:
+        # admin
+        - name: admin.create
+          value: "true"
+        - name: admin.username
+          value: admin
+        - name: admin.password
+          value: password
+
+        # ingress
+        - name: ingress.enabled
+          value: "true"
+        - name: ingress.host
+          value: "vcluster-platform.example"
+        - name: ingress.name
+          value: "vcluster-platform-ingress"
+
+        # audit
+        - name: audit.enableSideCar
+          value: "true"
+        - name: config.audit.level
+          value: "1"
+
+        # config
+        - name: config.loftHost
+          value: "https://vcluster-platform.example"
+
+  project: default
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+EOF
+```
+
+<!-- vale off -->
+
+#### Apply ArgoCD application
+
+<!-- vale on -->
+
+<ListHelmVersions />
+
+Apply the ArgoCD Application to your cluster using the `kubectl apply` command.
+
+```bash title="Apply the ArgoCD Application"
+kubectl apply -f gitops-application.yaml
+```
+
+Alternatively, follow the regular GitOps process and push the `gitops-application.yaml` file to your Git repository.
+
+The ArgoCD `Application` would deploy the platform into the
+current-context configured for your Kubernetes cluster, in the `vcluster-platform` namespace. In this example, values are being passed to set some basic configurations including:
+
+- Administrator user/password
+- Ingress configuration
+- Audit configuration
+
+The platform `Deployment` automatically installs the platform agent in the local cluster. To manage the agent deployment manually, refer to the [agent](#agents) section.
+
+:::warning ArgoCD and Helm Releases
+If you are using ArgoCD to manage your platform instance, you won't be able to update the platform configuration through the platform UI. This shouldn't be a problem if you're following a GitOps approach, as manual updates are typically avoided. However, it's important to note that ArgoCD does not deploy the Helm release secret.
+:::
+
+## Configuration
+
+One of the core tenets of the platform is that all platform resources are just "normal" Kubernetes resources. This means that you can manage any platform objects in the same way you'd manage any other Kubernetes resources in your GitOps workflow.
+
+To generate the appropriate manifests to manage each platform resource type, check out the [API documentation](../api/resources/project/project.mdx) where you can find example manifests and argument references for nearly all platform resource types. Alternatively, you can use the platform UI to build out your required objects and simply snag the YAML output from the build pane and use that as your manifest content.
+
+Here is an example of creating a `Team`, and a `Project` that the `Team` is a member of. You could manage these resources in your GitOps platform, then allow project users to create resources in the platform as they wish. This would put the core pieces under GitOps, freeing teams to control their own environments in the platform manually if they wish.
+
+The following manifests could be added into a custom Helm chart, or used as manifests in a repo connected to ArgoCD. This is a contrived example, of course, but the main point here is that all platform resources are just "normal" Kubernetes (custom) resources that can be managed with your GitOps tooling, or any other Kubernetes-centric tooling.
+
+```yaml title="Example Team and Project resources"
+---
+apiVersion: management.loft.sh/v1
+kind: Team
+metadata:
+  name: acme-team
+spec:
+  displayName: acme-team
+  owner:
+    user: admin
+  access:
+    - verbs:
+        - "*"
+      subresources:
+        - "*"
+      users:
+        - admin
+    - name: vcluster-platform-access
+      verbs:
+        - get
+        - bind
+      subresources:
+        - clusters
+      teams:
+        - acme-team
+
+---
+kind: Project
+apiVersion: management.loft.sh/v1
+metadata:
+  name: acme-team-project
+spec:
+  displayName: acme-team-project
+  owner:
+    user: admin
+  quotas: {}
+  allowedClusters:
+    - name: "*"
+  allowedTemplates:
+    - kind: VirtualClusterTemplate
+      group: storage.loft.sh
+      name: "*"
+    - kind: SpaceTemplate
+      group: storage.loft.sh
+      name: "*"
+  members:
+    - kind: Team
+      group: storage.loft.sh
+      name: acme-team
+      clusterRole: loft-management-project-admin
+  access:
+    - name: vcluster-platform-admin-access
+      verbs:
+        - get
+        - update
+        - patch
+        - delete
+      subresources:
+        - "*"
+      users:
+        - admin
+      teams:
+        - acme-team
+```
+
+
+### Connected clusters
+
+One of the benefits of the platform is that you can easily manage resources located in many physical clusters by adding them to the platform and using it as your central point of management.
+
+When you add a "connected" cluster to the platform, a `Cluster` resource is created and a platform Agent is installed in the cluster to handle local reconciliation tasks.
+
+If you are managing the platform via GitOps, you may also wish to manage these connected clusters in a similar fashion, rather than letting the platform install and manage the Agent.
+
+:::tip
+Managing connected clusters via GitOps offers several advantages:
+
+- Consistency: Ensures all clusters are configured identically.
+- Version Control: Keeps track of changes to cluster configurations over time.
+- Automation: Reduces manual intervention and potential for human error.
+- Auditability: Provides a clear record of who made changes and when.
+  :::
+
+### Cluster resources
+
+  If you would like to manage the platform _and_ its agents via your GitOps tooling, you likely also want to manage the connected cluster configurations that live inside the platform. For information about networking requirements, see [Networking](/docs/platform/administer/clusters/advanced/networking).
+
+  These configuration elements inform the platform of:
+
+  - The remotely connected clusters
+  - How to connect to those clusters to validate the agent installation
+  - How to proxy Kubernetes commands from the central platform instance to the remote clusters
+
+  Each cluster requires two resources:
+
+  - a `Cluster` object that simply defines the cluster name and the owner of the cluster inside the platform
+  - an associated `Secret` that contains relevant configuration information for the platform to connect to the cluster.
+
+  A common strategy for bundling cluster data with your primary platform `Application` (as in an ArgoCD `Application` object) is to write a simple "parent" Helm chart that includes the platform as a dependency. This parent chart can contain anything you'd like, but in this case would be used to include the `Cluster` objects and their associated `Secret` objects.
+
+  :::warning Cluster Secrets
+  The secret associated with a Cluster object necessarily includes authentication data to access the remote cluster, so take care to ensure that this information is handled appropriately.
+  :::
+
+  A simple `Chart.yaml` that includes the base platform chart as a dependency may look similar to this, but you'll need to update `$PLATFORM_VERSION` with a valid platform version.
+
+  ```yaml title="Chart.yaml"
+  apiVersion: v2
+  name: vcluster-platform-manager
+  description: A parent Helm chart for vCluster Platform
+  type: application
+  version: 1.0.0
+  dependencies:
+    - name: vcluster-platform
+      version: $PLATFORM_VERSION
+      repository: https://charts.loft.sh
+  ```
+
+  Values that need to be passed to the dependent platform chart can be passed by referring to the dependency name, in this case, `vcluster-platform`. For example, if you wanted to set the `replicaCount` value on the platform chart, you could do as follows in a `values.yaml` file:
+
+  ```yaml
+  vcluster-platform:
+    replicaCount: 3
+  ```
+
+  :::info Who is managing the agent?
+  Remember, if you want to manage the platform agent via your GitOps workflow,
+  make sure you set the `export DISABLE_AGENT=true` environment variable to `true` for your platform deployment.
+  :::
+
+  The "parent" Helm chart can now include any additional resources that you may want to deploy with your platform instance. In this case, the chart should include both the `Cluster` and `Secret` resources for any connected clusters. You can accomplish this by having a simple template that iterates over an array of clusters that users can provide via values, something like the following:
+
+  ```yaml title="Template for Cluster and Secret resources"
+{{ range .Values.clusters }}
+---
+apiVersion: management.loft.sh/v1
+kind: Cluster
+metadata:
+  name: "{{ .name }}"
+  annotations:
+    # highlight-next-line
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  access:
+    - subresources:
+        - '*' 
+      users:
+        - admin
+      verbs:
+        - '*'
+  config:
+    secretName: "loft-cluster-config-{{ .name }}"
+    secretNamespace: "vcluster-platform"
+  displayName: "{{ .name }}"
+  owner:
+    user: "admin"
+{{- end }}
+
+---
+{{- range .Values.clusters }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: "loft-cluster-config-{{ .name }}"
+  namespace: "vcluster-platform"
+type: Opaque
+data:
+  config: "{{ .config | default "" | b64enc }}"
+{{- end }}
+
+```
+
+With the preceding template, users would provide an array of maps containing a `name` and a `config` field. For example:
+
+```yaml title="Example cluster configuration"
+clusters:
+  - name: my-connected-cluster
+    config: |
+      apiVersion: v1
+      kind: Config
+      clusters:
+        - name: my-connected-cluster
+          cluster:
+            certificate-authority-data: YOUR-CA-DATA-HERE
+            server: https://1.2.3.4:6443
+      contexts:
+        - name: my-connected-cluster-context
+          context:
+            cluster: my-connected-cluster
+            namespace: kube-system
+            user: my-connected-cluster-user
+      current-context: my-connected-cluster-context
+      preferences: {}
+      users:
+        - name: my-connected-cluster-user
+          user:
+            token: YOUR-TOKEN-HERE
+```
+
+:::warning Missing CRDs?
+You may have noticed a strange annotation on the `Cluster` resource
+`argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true`.
+This annotation tells ArgoCD to skip the dry run/check of the resource.
+
+You need this
+for initial deployments as the platform itself is going to deploy the `Cluster` CRD
+into the cluster. Without this annotation, the `Application` is not going to
+sync.
+:::
+
+#### Agents
+
+If you've turned off agent installation on your platform, ensure you manually install the platform agent in each connected cluster. Without this, the platform cannot operate within the connected cluster.
+
+The most obvious difference in managing the agents compared to the platform manager is that the agents require installation in the connected "remote" clusters, not local to the platform manager. After adding the relevant clusters as available clusters in your ArgoCD configuration, you can simply create another ArgoCD `Application` to manage the agent.
+
+Here is a basic example
+:::info Remember to update `$PLATFORM_VERSION` variable with a valid platform version.
+:::
+
+<!-- vale off -->
+
+```yaml title="ArgoCD Application for platform agent"
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: vcluster-platform-agent-my-other-cluster
+  namespace: argocd
+spec:
+  destination:
+    name: ""
+    namespace: vcluster-platform
+    server: "https://my-other-cluster:6443"
+  source:
+    path: ""
+    repoURL: "https://charts.loft.sh"
+    targetRevision: "$PLATFORM_VERSION"
+    chart: vcluster-platform
+    helm:
+      parameters:
+        # Required parameter
+        - name: agentOnly
+          value: true
+
+        # Custom parameters
+        - name: env.SOMEVAR
+          value: my-value
+  project: default
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+```
+
+<!-- vale on -->
+
+Once again, note that when managing the agent deployments via ArgoCD or your GitOps tooling of choice, ensure that the `DISABLE_AGENT` environment variable is set to `true` for your platform deployment.
+
+
+## Login
+
+<LoginAfterHelmInstall />
+
+
+## Next steps
+
+### Create virtual clusters
+
+<InstallNextSteps />
+

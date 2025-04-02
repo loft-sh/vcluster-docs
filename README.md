@@ -58,6 +58,12 @@ Content locations:
 npm run docusaurus docs:version:vcluster 0.22.0
 ```
 
+### Generate new Platform version
+
+```bash
+npm run docs:version:platform 4.3.0
+```
+
 ### Generate vCluster partials
 
 ```bash
