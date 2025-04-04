@@ -105,8 +105,8 @@ func main() {
 
 	util.DefaultRequire = false
 	versionDir := os.Args[1]
-	jsonSchemaPath := filepath.Join(versionDir, "vcluster.schema.json")
-	defaultValues := filepath.Join(versionDir, "default_values.yaml")
+	jsonSchemaPath := filepath.Join(versionDir, "values.schema.json")
+	defaultValues := filepath.Join(versionDir, "values.yaml")
 	values, err := os.ReadFile(defaultValues)
 	if err != nil {
 		panic(fmt.Errorf("failed to read default values from %q: %w", defaultValues, err))
