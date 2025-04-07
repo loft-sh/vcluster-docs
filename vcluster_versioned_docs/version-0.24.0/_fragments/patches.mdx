@@ -3,15 +3,30 @@ import CodeBlock from '@theme/CodeBlock';
 
 <ProAdmonition/>
 
-You can modify the sync behaviour with patches that target specific paths. Currently there is 2 different kinds of patches supported.
+Patches override the default resource syncing rules in your vCluster YAML configurations.
 
-:::info Wildcard patches
-You can use `*` in paths to select all entries of an array or object, e.g. `spec.containers[*].name` or `spec.containers[*].volumeMounts[*]`. vCluster calls the patch multiple times when using the wildcard reference.
+By default, vCluster [syncs specific resources](https://www.vcluster.com/docs/vcluster/next/configure/vcluster-yaml/sync/) between virtual and host clusters. To modify the sync behavior, you can use patches to specify which fields to edit, exclude, or override during syncing.
+
+For example, vCluster can mirror resources from the virtual cluster to the host cluster—any changes made in the virtual cluster are automatically applied to the host cluster. The same applies in the other direction if syncing is set up from host to virtual cluster.
+
+vCluster supports two patch types:
+
+- [JavaScript expression patch](#javascript-expression-patch): Uses JavaScript ES6 expressions to dynamically modify fields during syncing. You can define how a field changes when syncing from a virtual cluster to a host cluster, or from a host cluster to a virtual cluster.
+- [Reference patch](#reference-patch): Modifies specific fields within a resource to point to different resources. If the referenced resource exists in the host cluster, vCluster automatically imports it into the virtual cluster. If the referenced resource exists in the virtual cluster and syncing is configured, vCluster can import it into the host cluster.
+
+:::info Using wildcards in patches
+You can apply a wildcard, using an asterisk (`*`) in a specified path, to modify all elements of an array or object.
+For instance, `spec.containers[*].name` selects the `name` field of every container in the `spec.containers` array, and `spec.containers[*].volumeMounts[*]` selects all `volumeMounts` for each container. 
+When using the asterisk (`*`) notation, vCluster applies changes individually to every element that matches the path.
 :::
 
-### JavaScript Expression Patches
+### JavaScript expression patch
 
-These are powerful JavaScript ES6 compatible expression patches that can be used to change a field while syncing. You define how it changes when syncing from the virtual cluster into the host cluster or when syncing from the host cluster into the virtual cluster. To change the path <span>{props.path}</span> you can do:
+A JavaScript expression patch allows you to use JavaScript ES6 expressions to change specific fields when syncing between virtual and host clusters. 
+This is useful when modifying resource configurations to align with differing environments or naming conventions between clusters. If your clusters use different container name prefixes, a JavaScript expression patch can automatically update them.
+
+You can define a path for <code>{props.path}</code> field in `vcluster.yaml` using the following configuration:
+
 <CodeBlock language="yaml">
 {`sync:
   toHost:
@@ -24,17 +39,39 @@ These are powerful JavaScript ES6 compatible expression patches that can be used
         # reverseExpression: 'value.slice("my-prefix".length)'`}
 </CodeBlock>
 
-There is also a variable called `context` besides `value` that can be used to access specific data of the virtual cluster:
-* `context.vcluster.name`: Name of the virtual cluster
-* `context.vcluster.namespace`: Namespace of the virtual cluster
-* `context.vcluster.config`: Config of the virtual cluster, basically `vcluster.yaml` merged with the defaults
-* `context.hostObject`: Host object (can be null if not available)
-* `context.virtualObject`: Virtual object (can be null if not available)
-* `context.path`: The matched path on the object, useful when using wildcard path selectors (*)
+In the example:
 
-### Reference patches
+  - The path targets the <code>{props.path}</code> field to override when syncing to the host cluster. The `*` wildcard applies the patch to each container individually.
+  - `"'my-prefix-' + value"` defines a JavaScript expression that prepends `"my-prefix-"` to the <code>{props.path}</code> field in the host cluster.
 
-A reference patch can be used to have a specific field of one resource point to a different resource that should get rewritten. vCluster automatically imports the referenced resource to the virtual cluster if it can find it in the host cluster. For example:
+:::note Reverse sync
+You can use the `reverseExpression` field to define how to revert changes when syncing from the host cluster back to the virtual cluster.
+For example, add `reverseExpression: {"value.slice('my-prefix'.length)"}` to `vcluster.yaml` to remove the `"my-prefix-"` prefix when syncing back from the host cluster to the virtual cluster in the previous example.
+:::
+
+#### Context variable
+
+The context variable is an object supported in JavaScript expression patches, that provides access to virtual cluster data during syncing. The context object includes the following properties:
+
+* `context.vcluster.name`: Name of the virtual cluster.
+* `context.vcluster.namespace`: Namespace of the virtual cluster.
+* `context.vcluster.config`: Configuration of the virtual cluster, basically `vcluster.yaml` merged with the defaults.
+* `context.hostObject`: Host object (`null` if not available).
+* `context.virtualObject`: Virtual object (`null` if not available).
+* `context.path`: Matched path on the object, useful when using wildcard path selectors (`*`).
+
+### Reference patch
+
+A reference patch links a field in one resource to another resource. During syncing, vCluster updates the reference and imports the linked resource from the virtual cluster to the host cluster or from the host cluster to the virtual cluster, depending on the sync direction and whether the resource exists.
+
+You can use reference patches to share resources, such as `Secrets` or `ConfigMaps`, between clusters without manually recreating or duplicating them.
+
+For example, if the host cluster contains a secret named `"my-example-secret"`, vCluster automatically imports it into the virtual cluster. 
+
+Workloads in the virtual cluster can then use the secret without manual syncing.
+
+You can sync between the virtual cluster and the host cluster by mapping `spec.secretName` to a secret in the host cluster:
+
 <CodeBlock language="yaml">
 {`sync:
   toHost:
@@ -47,8 +84,11 @@ A reference patch can be used to have a specific field of one resource point to 
           kind: Secret`}
 </CodeBlock>
 
-With this yaml, vCluster translates the path `metadata.annotations["my-secret-ref"]` as it points to a secret. If the secret is created in the host cluster, vCluster automatically imports it into the virtual cluster.
+In the example:
 
-:::info Multi-Namespace-Mode
-With multi-namespace-mode you only need to rewrite references that include a namespace. You can use the `namespacePath` option to specify the path of the namespace of the reference.
+- The code uses a patch to add `metadata.annotations["my-secret-ref"]` 
+- It references a `Secret` in the host cluster using the patch and ensures <code>{props.resource}</code> in the host cluster links to the correct `Secret`.
+
+:::info Multi-namespace mode
+With multi-namespace mode you only need to rewrite references that include a namespace. You can use the `namespacePath` option to specify the path of the namespace of the reference.
 :::
