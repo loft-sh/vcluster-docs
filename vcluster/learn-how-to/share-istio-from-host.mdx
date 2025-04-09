@@ -1,24 +1,32 @@
 ---
- title: Sharing Istio with vCluster From Host
-  sidebar_label: Instio from host cluster
-  description: Showing how to use Istio on host cluster with vCluster
-  ---
+title: Share Istio with vCluster from the host cluster
+sidebar_label: Share Istio from the host cluster
+description: How to use Istio on the host cluster with vCluster.
+---
 
-Leveraging a host cluster installation of Istio inside a vCluster is a popular use case, but severe limitations exist regarding the Istio features that may be used inside a vCluster.
+<!-- vale off -->
 
-The most severe limitation is the inability to use the Istio sidecar container, which prevents Istio intra-mesh communication and most of its service mesh capabilities.
+Sharing an Istio installation between a host cluster and vCluster is a practical approach for ingress, but comes with important limitations:
 
-Based on my testing it is fairly straightforward to sync Istio `Gateway` and `VirtualService` resources from the vCluster to the host cluster.
+- Istio sidecar containers cannot run within vCluster.
+- Service-to-service mesh communication isn't supported.
+- Advanced mesh features like mutual TLS and traffic policies are unavailable.
 
-**The examples below are based on the following software versions:**
-- vCluster v0.21.0-beta.5
-  - k8s v1.30.5
+You can, however, sync Istio `Gateway` and `VirtualService` resources from the vCluster to the host cluster.
+
+## Software versions
+
+This guide uses the following versions:
+- vCluster v0.21.0
+  - Kubernetes v1.30.5
 - Istio v1.22.3
 - Kubernetes Gateway API v1.1
 
-### Custom Resource Sync for Kubernetes Gateway API Gateway and HTTPRoute:
-_**Note**: This config also works with the Kubernetes Gateway API `GRPCRoute` custom resource._
-```
+## Configure Kubernetes Gateway API sync
+
+Use this configuration to sync Gateway API resources. This works with both `HTTPRoute` and `GRPCRoute` custom resources.
+
+```yaml
 sync:
   toHost:
     ingresses:
@@ -38,8 +46,12 @@ sync:
               kind: Service
               apiVersion: v1
 ```
-### Custom Resource Sync for Istio Gateway and VirtualService:
-```
+
+## Configure Istio Gateway and VirtualService sync
+
+Use this configuration to sync Istio-specific resources:
+
+```yaml
 sync:
   toHost:
     ingresses:
@@ -59,8 +71,12 @@ sync:
               kind: Service
               apiVersion: v1
 ```
-###Generic Sync for Istio Gateway and VirtualService:
-```
+
+## Set up generic sync for Istio resources
+
+For more advanced scenarios, use generic sync:
+
+```yaml
 experimental:
   genericSync:
     role:
@@ -95,34 +111,45 @@ experimental:
             fromPath: status
             path: status
 ```
-### Issues when Istio sidecar injection is enabled (either on the namespace or pod):
-The istio-proxy container has the following error and never reaches the `Running` status.
-```
-2024-10-24T15:52:58.785827Z     warn    xdsproxy        upstream terminated with unexpected error rpc error: code = PermissionDenied desc = authorization failed: no identities ([spiffe://cluster.local/ns/vcluster-abbea20e-2b732699/sa/vc-workload-istio-test-24]) matched httpbin/httpbin    id=14 
-```
-The `istio-proxy` container is setting two `env` with the `pod.metadata` that are being set to the vCluster values:
-```
-- name: istio-proxy
-      image: docker.io/istio/proxyv2:1.22.3
-      args:
-        - proxy
-        - sidecar
-        - '--domain'
-        - $(POD_NAMESPACE).svc.cluster.local
-        ...
-        - name: POD_NAME
-          valueFrom:
-            fieldRef:
-              apiVersion: v1
-              fieldPath: metadata.name
-        - name: POD_NAMESPACE
-          valueFrom:
-            fieldRef:
-              apiVersion: v1
-              fieldPath: metadata.namespace
-```
-## Here is a full example with the Istio sidecar enabled on the `Namespace` and Multi-Namespace mode enabled:
-```
+
+## Recognize sidecar injection issues
+
+When Istio sidecar injection is enabled (on the namespace or pod), the following errors can occur:
+
+- The istio-proxy container displays this error and never reaches `Running` status:
+  
+  ```bash
+  2024-10-24T15:52:58.785827Z     warn    xdsproxy        upstream terminated with unexpected error rpc error: code = PermissionDenied desc = authorization failed: no identities ([spiffe://cluster.local/ns/vcluster-abbea20e-2b732699/sa/vc-workload-istio-test-24]) matched httpbin/httpbin    id=14 
+  ```
+
+- The `istio-proxy` container sets two environment variables with vCluster values:
+
+  ```yaml
+  - name: istio-proxy
+    image: docker.io/istio/proxyv2:1.22.3
+    args:
+      - proxy
+      - sidecar
+      - '--domain'
+      - $(POD_NAMESPACE).svc.cluster.local
+      ...
+      - name: POD_NAME
+        valueFrom:
+          fieldRef:
+            apiVersion: v1
+            fieldPath: metadata.name
+      - name: POD_NAMESPACE
+        valueFrom:
+          fieldRef:
+            apiVersion: v1
+            fieldPath: metadata.namespace
+  ```
+
+## Full examples
+
+### Istio sidecar on namespace with multi-namespace mode
+
+```yaml 
 apiVersion: management.loft.sh/v1
 kind: App
 metadata:
@@ -201,7 +228,7 @@ spec:
             ingresses:
               enabled: true
 
-        # Checkout <https://vcluster.com/pro/docs/> for more config options
+        # Checkout <https://vcluster.com/pro/docs/> for more configuration options
     accessPoint:
       ingress: {}
     spaceTemplate:
@@ -462,15 +489,9 @@ spec:
         - admin
 ```
 
-## Additional Full Examples
-### Kubernetes API Gateway API GRPCRoute Full Example:
-- The following includes:
-  - vCluster Platform `Apps` for installing Istio
-  - A `VirtualClusterTemplate` that includes:
-  - An example gRPC application
-  - The `customerResources` configuration for the vCluster that will sync `gateways.gateway.networking.k8s.io` and [grpcroutes.gateway.networking.k8s.io](http://grpcroutes.gateway.networking.k8s.io/), and will patch `Gateway` and `Service` references of the `GRPCRoute`
+### Kubernetes gateway API gRPCRoute
 
-```
+```yaml
 apiVersion: management.loft.sh/v1
 kind: App
 metadata:
@@ -761,10 +782,14 @@ spec:
         - admin
 ```
 
-**NOTE** - To test that the `GRPCRoute` is working as expected, you can run the following commands.
-```
+### Test the GRPCRoute configuration
+
+To verify your GRPCRoute is working correctly:
+
+```bash
 export GATEWAY_HOST=$(kubectl get gateway/grpc-routing-gateway -o jsonpath='{.status.addresses[0].value}')
 ```
-```
+
+```bash
 grpcurl -plaintext -authority=grpc-example.com ${GATEWAY_HOST}:80 yages.Echo/Ping
 ```
