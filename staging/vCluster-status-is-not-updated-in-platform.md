@@ -1,8 +1,8 @@
-## vCluster platform Fails to Mark vCluster Status as Ready Due to TSNet Connection Failures
+## vCluster platform fails to mark vCluster status as ready due to TSNet connection failures
 
 ### **Issue Summary**
 
-Some users may encounter an issue where a vCluster appears to be **running** but vcluster is not marked as ready in vCluster platform UI. This blocks communication from vCluster platform to vcluster on connected cluster. The root cause is typically related to TSNet being **unable to establish a stable connection** with the vCluster platform.
+Some users may encounter an issue where a vCluster appears to be **running** but vcluster is not marked as ready in vCluster platform UI. The root cause is typically related to TSNet being **unable to establish a stable connection** with the vCluster platform. This blocks communication from  vcluster on connected cluster to Cluster platform.
 
 ---
 
