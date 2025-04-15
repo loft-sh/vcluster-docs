@@ -76,7 +76,7 @@ const InterpolatedCodeBlock = ({ code = '', language = 'bash' }) => {
           marginBottom: '8px',
           fontStyle: 'italic'
         }}>
-          Customize variable values for the command below:
+          Modify the following with your specific values to generate a copyable command:
         </div>
         {Object.entries(initialVariables).map(([key, defaultValue]) => (
           <div
