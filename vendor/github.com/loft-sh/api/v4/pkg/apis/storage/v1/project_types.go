@@ -211,7 +211,7 @@ type Member struct {
 	Name string `json:"name,omitempty"`
 
 	// ClusterRole is the assigned role for the above member
-	ClusterRole string `json:"clusterRole,omitempty"`
+	ClusterRole string `json:"clusterRole"`
 }
 
 type AllowedRunner struct {
