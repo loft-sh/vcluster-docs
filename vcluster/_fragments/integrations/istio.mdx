@@ -1,0 +1,437 @@
+import Highlight from "@site/src/components/Highlight/Highlight";
+
+import Flow, { Step } from "@site/src/components/Flow";
+import NavStep from "@site/src/components/NavStep";
+import Field from "@site/src/components/Field";
+import Tabs from "@theme/Tabs";
+import TabItem from "@theme/TabItem";
+
+import IstioPartial from "../../_partials/config/integrations/istio.mdx";
+import BasePrerequisites from "../../../platform/_partials/install/base-prerequisites.mdx";
+import CodeBlock from "@theme/CodeBlock";
+import Deploy from "../../_partials/deploy/deploy.mdx";
+import ProAdmonition from "../../_partials/admonitions/pro-admonition.mdx";
+
+<ProAdmonition />
+
+# Istio integration
+
+This guide shows how to set up Istio integration with your virtual cluster.
+This enables you to use one Istio installation from the host cluster instead of installing Istio in each virtual cluster.
+
+This integration creates a Gateway per virtual cluster, which results in Waypoint proxy deployed in the virtual cluster host namespace.
+
+You can include your virtual workloads in the mesh by setting `istio.io/dataplane-mode=ambient` label on the virtual Namespaces or Pods.
+You can exclude your virtual workloads from the mesh by setting `istio.io/dataplane-mode=none` label either on the Namespace or on the Pod.
+
+
+### Prerequisites
+
+<BasePrerequisites />
+
+- `istio` operator installed on your host cluster in ambient mode with DNS Capture disabled
+- `Gateway (gateway.networking.k8s.io/v1)` Custom Resource Definition installed on your host cluster
+
+:::tip
+To disable DNS capture, set `values.cni.ambient.dnsCapture: false` in your Istio configuration.
+:::
+
+:::info IMPORTANT
+This integration works only with Istio in Ambient mode. Sidecar mode is not supported.
+:::
+
+## Enable the integration
+
+Enable the Istio integration in your virtual cluster configuration:
+
+```yaml title="Enable istio integration"
+integrations:
+  istio:
+    enabled: true
+```
+
+This configuration:
+
+- Enables the integration.
+- Installs Resource Definitions for `DestinationRules`, `Gateways` and `VirtualServices` into the virtual cluster.
+- Creates Gateway (gateway.networking.k8s.io/v1) for Waypoint in the virtual cluster host namespace.
+- Exports `DestinationRules`, `Gateways` and `VirtualServices` from the virtual cluster to the host (and re-writes) service references to the services translated names in the host.
+- Adds `istio.io/dataplane-mode` label to the synced Pods based on the value of this label set in the virtual namespace.
+
+:::tip create virtual cluster
+Create or update a `virtual Cluster` following the [vCluster quick start
+guide](/vcluster/#deploy-vcluster).
+:::
+
+### Set up cluster contexts
+
+Setting up the host and virtual cluster contexts makes it easier to switch
+between them.
+
+```bash
+export HOST_CTX="your-host-context"
+export VCLUSTER_CTX="vcluster-ctx"
+```
+
+:::tip
+You can find your contexts by running `kubectl config get-contexts`
+:::
+
+## Route request based on the version label of the app
+
+<Flow id="istio-example">
+
+  ### Create virtual namespace with ambient mode enabled
+  <Step>
+    First, you create `test` namespace:
+
+    ```bash title="Create test namespace"
+    kubectl --context="${VCLUSTER_CTX}" create namespace test
+    ```
+
+    and label it with `istio.io/dataplane-mode: ambient`:
+
+    ```bash title="Label test namespace"
+    kubectl --context="${VCLUSTER_CTX}" label namespace test istio.io/dataplane-mode=ambient
+    ```
+
+  </Step>
+
+  ### Create two versions of your app
+
+  <Step>
+    Next, you create 3 deployments: two of them are nginx server and you will use third one to curl other two.
+
+    Create nginx deployments that will respond with different response body based on what's in the respective ConfigMaps:
+
+    ```yaml title="configmap1.yaml"
+    apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: nginx-configmap-v1
+      namespace: test
+    data:
+      index.html: |
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>Welcome to nginx v1!</title>
+    </head>
+    <body>
+    <h1>Hello from Nginx Version 1!</h1>
+    </body>
+    </html>
+    ```
+
+    ```yaml title="deployment1.yaml"
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: nginx-deployment-v1
+      namespace: test
+      labels:
+        app: nginx
+        version: v1
+    spec:
+      replicas: 1
+      selector:
+        matchLabels:
+          app: nginx
+          version: v1
+      template:
+        metadata:
+          labels:
+            app: nginx
+            version: v1
+        spec:
+          containers:
+          - name: nginx
+            image: nginx:latest
+            ports:
+            - containerPort: 80
+            volumeMounts:
+            - name: nginx-index-v1
+              mountPath: /usr/share/nginx/html/index.html
+              subPath: index.html
+          volumes:
+          - name: nginx-index-v1
+            configMap:
+              name: nginx-configmap-v1
+    ```
+
+    ```bash title="Create v1 config map"
+    kubectl --context="${VCLUSTER_CTX}" create -f configmap1.yaml --namespace test
+    ```
+
+    ```bash title="Create v1 deployment"
+    kubectl --context="${VCLUSTER_CTX}" create -f deployment1.yaml --namespace test
+    ```
+
+    make sure that this nginx app is up and running:
+
+    ```bash title="Wait for v1 pods"
+    kubectl --context="${VCLUSTER_CTX}" wait --for=condition=ready pod -l app=nginx --namespace test --timeout=300s
+    ```
+
+    then, create another nginx deployment that will respond with different body:
+
+    ```yaml title="configmap2.yaml"
+    apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: nginx-configmap-v2
+      namespace: test
+    data:
+     index.html: |
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>Welcome to nginx v2!</title>
+    </head>
+    <body>
+    <h1>Hello from Nginx Version 2!</h1>
+    </body>
+    </html>
+    ```
+
+    ```yaml title="deployment2.yaml"
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: nginx-deployment-v2
+      namespace: test
+      labels:
+        app: nginx
+        version: v2
+    spec:
+      replicas: 1
+      selector:
+        matchLabels:
+          app: nginx
+          version: v2
+      template:
+        metadata:
+          labels:
+            app: nginx
+            version: v2
+        spec:
+          containers:
+            - name: nginx
+              image: nginx:latest
+              ports:
+                - containerPort: 80
+              volumeMounts:
+                - name: nginx-index-v2
+                  mountPath: /usr/share/nginx/html/index.html
+                  subPath: index.html
+          volumes:
+            - name: nginx-index-v2
+              configMap:
+                name: nginx-configmap-v2
+    ```
+
+    ```bash title="Create v2 config map"
+    kubectl --context="${VCLUSTER_CTX}" create -f configmap2.yaml --namespace test
+    ```
+
+    ```bash title="Create v2 deployment"
+    kubectl --context="${VCLUSTER_CTX}" create -f deployment2.yaml --namespace test
+    ```
+
+    make sure that this nginx app is up and running:
+
+    ```bash title="Wait for v2 pods"
+    kubectl --context="${VCLUSTER_CTX}" wait --for=condition=ready pod -l app=nginx --namespace test --timeout=300s
+    ```
+
+    and create a Service that will match pods from both deployments:
+
+    ```yaml title="service.yaml"
+    apiVersion: v1
+    kind: Service
+    metadata:
+      name: nginx-service
+      namespace: test
+      labels:
+        app: nginx
+        istio.io/use-waypoint: "waypoint"
+    spec:
+      ports:
+        - port: 80
+          targetPort: 80
+      selector:
+        app: nginx
+    ```
+
+    pay attention to the `istio.io/use-waypoint: waypoint` label. It is crucial, as it will tell Istio that we want to use proxy named `waypoint` in the same namespace (it is deployed automatically by vCluster to the vCluster host namespace).
+
+    ```bash title="Create service"
+    kubectl --context="${VCLUSTER_CTX}" create -f service.yaml --namespace test
+    ```
+
+    last, but not least, you deploy a pod that you will use to curl the other two:
+
+    ```yaml title="client_deployment.yaml"
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: client
+      namespace: test
+      labels:
+        app: client
+    spec:
+      replicas: 1
+      selector:
+        matchLabels:
+          app: client
+      template:
+        metadata:
+          labels:
+            app: client
+        spec:
+          containers:
+            - name: nginx
+              image: nginx:latest
+              ports:
+                - containerPort: 80
+    ```
+
+    ```bash title="Create client deployment"
+    kubectl --context="${VCLUSTER_CTX}" create -f client_deployment.yaml --namespace test
+    ```
+
+  </Step>
+
+  ### Configure your desired traffic routing using DestinationRule and VirtualService.
+
+  <Step>
+
+    Now, your can create DestinationRules and VirtualService in the virtual cluster.
+
+    You create a pair that will route our request based on the request path:
+    1. Requesting `/v2` endpoint should route our request to pods with `version=v2` label
+    2. All other requests will be routed to `version=v1` pods.
+
+    Save this DestinationRule and VirtualService definition and apply it in the virtual cluster:
+
+    ```yaml title="destination_rule.yaml"
+    apiVersion: networking.istio.io/v1
+    kind: DestinationRule
+    metadata:
+      name: nginx-destination
+      namespace: test
+    spec:
+      host: nginx-service.test.svc.cluster.local # vCluster will translate it to the host service automatically
+      subsets:
+        - name: v1
+          labels:
+            version: v1
+        - name: v2
+          labels:
+            version: v2
+    ```
+
+    ```yaml title="virtual_service.yaml"
+    apiVersion: networking.istio.io/v1
+    kind: VirtualService
+    metadata:
+      name: nginx-service
+      namespace: test
+    spec:
+      hosts:
+        - nginx-service.test.svc.cluster.local # vCluster will translate it to the host service automatically
+      http:
+        - name: "nginx-v2"
+          match:
+            - uri:
+                prefix: "/v2"
+          rewrite:
+            uri: "/"
+          route:
+            - destination:
+                host: nginx-service.test.svc.cluster.local # vCluster will translate it to the host service automatically
+                subset: v2
+        - name: "nginx-v1"
+          route:
+            - destination:
+                host: nginx-service.test.svc.cluster.local # vCluster will translate it to the host service automatically
+                subset: v1
+
+    ```
+
+    then, create it in the virtual cluster:
+
+    ```bash title="Create destination rule"
+    kubectl --context="${VCLUSTER_CTX}" create -f destination_rule.yaml
+    ```
+
+    ```bash title="Create virtual service"
+    kubectl --context="${VCLUSTER_CTX}" create -f virtual_service.yaml
+    ```
+
+  </Step>
+
+  ### Verify that DestinationRule and VirtualService is synced to host cluster
+
+  <Step>
+    ```bash title="Check destination rule in the host cluster"
+    kubectl --context="${HOST_CTX}" get destinationrules --namespace vcluster
+    ```
+
+    ```bash title="Check virtual service in the host cluster"
+    kubectl --context="${HOST_CTX}" get virtualservices --namespace vcluster
+    ```
+
+    you should see DestinationRule named `nginx-destination-x-test-x-vcluster` and VirtualService named `nginx-service-x-test-x-vcluster`
+
+
+  </Step>
+
+  ### Test traffic routing
+
+  <Step>
+    Now, you can exec into the client pod, and check if we will get a response containing "Hello from Nginx Version 2!" or "Hello from Nginx Version 1!" depending on request path:
+
+    ```bash title="Query version 2"
+    kubectl --context="${VCLUSTER_CTX}" exec -it -n test deploy/client -- curl nginx-service/v2
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>Welcome to nginx v2!</title>
+    </head>
+    <body>
+    <h1>Hello from Nginx Version 2!</h1>
+    </body>
+    </html>
+    ```
+
+    ```bash title="Query version 1"
+    kubectl --context="${VCLUSTER_CTX}" exec -it -n test deploy/client -- curl nginx-service
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>Welcome to nginx v1!</title>
+    </head>
+    <body>
+    <h1>Hello from Nginx Version 1!</h1>
+    </body>
+    </html>
+    ```
+
+    seeing the same output means that request was intercepted by Istio and routed as we specified in the DestinationRule and VirtualService.
+
+  </Step>
+
+  ### Summary
+  <Step>
+
+    Istio integration enables you to re-use one Istio instance from the host cluster for multiple virtual clusters.
+    Virtual Cluster users can define their own Gateways, DestinationRules and VirtualServices without interfering with each other.
+
+  </Step>
+</Flow>
+
+
+## Config reference
+
+<IstioPartial />
