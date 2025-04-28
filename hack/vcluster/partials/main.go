@@ -56,6 +56,7 @@ var paths = []string{
 	"integrations/metricsServer",
 	"integrations/externalSecrets",
 	"integrations/certManager",
+	"integrations/istio",
 	"integrations",
 	"networking/resolveDNS",
 	"networking/replicateServices",
