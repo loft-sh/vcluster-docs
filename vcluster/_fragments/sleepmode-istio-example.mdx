@@ -3,103 +3,93 @@ import CodeBlock from '@theme/CodeBlock'
 import SleepmodeIstioConfig from '!!raw-loader!@site/vcluster/configure/vcluster-yaml/_code/sleepmode-istio-config.yaml'
 import SleepmodeIstioExample from '!!raw-loader!@site/vcluster/configure/vcluster-yaml/experimental/_code/sleepmode-istio-examples.yaml'
 
-### Configure sleep mode for use with Istio
+:::info
+This example picks up where the [Istio Integration](../vcluster-yaml/integrations/istio) example leaves off.
+:::
 
 <Flow id="sleepmode-ingress-example">
   <Step>
-Create the `kind` cluster.
-
-Here we are pinning the ports 80, 443 and the status port 15021 to specific ports in the Kubernetes node port range.  These
- are used by Istio Gateway and needed for running this example with `kind`.
-
-```shell title="Create a kind cluster"
-kind create cluster --name istio-demo --config - <<EOF
-kind: Cluster
-apiVersion: kind.x-k8s.io/v1alpha4
-nodes:
-  - role: control-plane
-    extraPortMappings:
-      - containerPort: 30000
-        listenAddress: 127.0.0.1
-        hostPort: 80
-        protocol: TCP
-      - containerPort: 31000
-        listenAddress: 127.0.0.1
-        hostPort: 443
-        protocol: TCP
-      - containerPort: 32000
-        listenAddress: 127.0.0.1
-        hostPort: 15021
-        protocol: TCP
-EOF
-```
+    Complete the [Istio Integration](../vcluster-yaml/integrations/istio) example.
   </Step>
   <Step>
-    Install istio
+    Install the Istio ingress gateway controller to allow routing from outside the cluster.
 
-    ```shell title="Install istio"
-    istioctl install -y
-    ```
+    Save the following manifest as `ingress.yaml`
 
-    or
-
-    ```shell title="Install with ambient"
-    istioctl install --set profile=ambient --set "components.ingressGateways[0].enabled=true" --set "components.ingressGateways[0].name=istio-ingressgateway" --skip-confirmation
-    ```
-  </Step>
-
-  <Step>
-The Istio Gateway service starts with some random node ports.  To line them up with the kind cluster configuration, patch the Istio gateway service.
-
-```shell title="Patch ingress service ports"
-kubectl patch service istio-ingressgateway -n istio-system --patch "$(cat <<EOF
+```yaml
+apiVersion: install.istio.io/v1alpha1
+kind: IstioOperator
+metadata:
+  name: ingress
 spec:
-  type: NodePort
-  ports:
-  - name: http2
-    port: 80
-    nodePort: 30000
-  - name: https
-    port: 443
-    nodePort: 31000
-  - name: status-port
-    port: 15021
-    targetPort: 15021
-    nodePort: 32000
-EOF
-)"
+  profile: empty # Do not install CRDs or the control plane
+  components:
+    ingressGateways:
+    - name: istio-ingressgateway
+      namespace: istio-ingress
+      enabled: true
+      label:
+        istio: ingressgateway
+  values:
+    gateways:
+      istio-ingressgateway:
+        injectionTemplate: gateway
+```
+    and run
+    ```shell
+    kubectl create namespace istio-ingress                                                                                                                                        (vcluster_istio-demo_vcluster-istio-demo_orbstack/default)
+    istioctl install -f ingress.yaml
+    ```
+  </Step>
+
+  <Step>
+    Create a gateway with a selector for the newly installed Ingress gateway in your vCluster.
+
+```yaml
+apiVersion: networking.istio.io/v1
+kind: Gateway
+metadata:
+  name: istio-sm-gateway
+  namespace: test
+spec:
+  # The selector matches the ingress gateway pod labels.
+  # If you installed Istio using Helm following the standard documentation, this would be "istio=ingress"
+  selector:
+    istio: ingressgateway
+  servers:
+  - port:
+      number: 80
+      name: http
+      protocol: HTTP
+    hosts:
+    - "smdemo.local"
+
 ```
   </Step>
 
   <Step>
-    Create the vCluster.
+    Update the vCluster with sleepMode enabled.
 
-    Use the following `vcluster.yaml` to create a virtual cluster on your host cluster. Save this file as `vcluster.yaml`
+    Use the following `vcluster.yaml` to update your virtual cluster on your host cluster with `--upgrade`.
+    Save this file as `vcluster.yaml`
 
     <CodeBlock title="vCluster config for auto sleep" language="yaml">{SleepmodeIstioConfig}</CodeBlock>
     And run the following command:
 
     ```bash title="Create vCluster with autoSleep config"
-    vcluster create my-vcluster -f vcluster.yaml
+    vcluster create <your-vcluster-name> -f vcluster.yaml --upgrade
     ```
   </Step>
 
   <Step>
     Enable local DNS resolution for the virtual cluster.
 
-    Add `127.0.0.1 	httpbin.example.com` to your `/etc/hosts` file to match the host configured in the `Gateway` configuration.
+    Add `127.0.0.1 	smdemo.local` to your `/etc/hosts` file to match the host configured in the `Gateway` configuration.
   </Step>
 
   <Step>
-    Create resources for the `Ingress` such as a `Deployment` and `Service`.
-
-    Use the following manifest to create:
-
-    - `ServiceAccount`
-    - `Service`
-    - `Deployment`
-    - `Gateway` for `httpbin.example.com`
-    - `VirtualService` to route from the above gateway
+    Update the `VirtualService` from the [Istio Integration](../vcluster-yaml/integrations/istio) by adding the `Gateway`
+    from above and the `smdemo.local` host so that it looks like this.
 
     <CodeBlock title="Example resources" language="yaml">{SleepmodeIstioExample}</CodeBlock>
   </Step>
@@ -107,12 +97,12 @@ EOF
   <Step>
     Verify the `Gateway` is working properly with `curl`.
 
-    Test the `Gate` endpoint within the 30-second activity window by running `curl --silent httpbin.example.com/status/418` to see the response "I'm a teapot!"
+    Test the `Gateway` endpoint within the 30-second activity window by running `curl --silent smdemo.local/v1` of `curl --silent smdemo.local/v2`
   </Step>
 
   <Step>
     Allow the virtual cluster to go to sleep.
 
-    Wait 30 seconds for the cluster to sleep, then run the `curl` command again. For convenience, run `watch -d curl --silent httpbin.example.com/status/418` to repeatedly test the endpoint. While asleep, or during wake a `503` will be returned.
+    Wait 30 seconds for the cluster to sleep, then run the `curl` command again. For convenience, run `watch -d curl --silent curl --silent smdemo.local/v2` to repeatedly test the endpoint. While asleep, or during wake a `503` will be returned.
   </Step>
 </Flow>
