@@ -1,5 +1,5 @@
 import React from 'react';
-import {useHistory, useLocation} from '@docusaurus/router';
+import {useLocation} from '@docusaurus/router';
 import Content from '@theme-original/DocSidebar/Desktop/Content';
 import DocsVersionDropdownNavbarItem from '@theme-original/NavbarItem/DocsVersionDropdownNavbarItem';
 import DropdownNavbarItem from '@theme-original/NavbarItem/DropdownNavbarItem';

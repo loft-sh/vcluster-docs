@@ -8,7 +8,7 @@ import { themes as prismThemes } from "prism-react-renderer";
 
 const __webpack_public_path__ = "/docs/";
 
-const resolveGlob = require("resolve-glob");
+import resolveGlob from "resolve-glob";
 
 const newDocTemplate = `---
 title: Your Document Title
@@ -187,6 +187,13 @@ const config = {
     {
       mermaid: {
         theme: { light: "default", dark: "dark" },
+        options: {
+          flowchart: {
+            htmlLabels: true,
+            curve: 'basis'
+          },
+          fontSize: 14
+        },
       },
       tableOfContents: {
         // default is ##, ### so add ####
