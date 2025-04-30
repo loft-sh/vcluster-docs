@@ -26,6 +26,13 @@ This document details the prerequisites and steps to install vCluster Pro into
 an `air-gapped` Kubernetes cluster without the platform agent running on the host
 cluster.
 
+## Overview of artifacts to download
+
+To complete an air-gapped deployment, you'll need:
+
+- The vCluster Helm chart
+- The container images required by vCluster
+
 ## Prerequisites
 
 <BasePrerequisites />
@@ -37,6 +44,7 @@ cluster.
 - Optionally: Private docker registry that the installer system and the
 air-gapped Kubernetes cluster can access (for example, `x-private-registry:5000` or
 `gcr.io/x-team`)
+  
   <details>
     <summary>Example local registry setup</summary>
 
@@ -78,18 +86,25 @@ The `vCluster` Helm chart is a tarball that contains all the necessary images
 to deploy the vCluster control plane.
 :::
 
-### Deploy vCluster using a private web server
-
-:::note Alternative approach
-This section provides an alternative method for air-gapped environments by hosting the Helm chart on your own private web server.
-:::
+### Option 1: Mirror the Helm repo with a web server
 
 The standard method for installing vCluster is using Helm with the LoftLabs charts repository. For air-gapped environments without internet access, you'll need to host the Helm chart locally. This guide demonstrates how to use a private GitLab instance as a web server to host the vCluster Helm chart.
 
 #### Prerequisites
 - A web server accessible through HTTP or HTTPS to store the Helm chart and `index.yaml`.
 - A private GitLab instance (used in this example).
-- A machine with internet access that has the Helm CLI installed.
+- Helm CLI installed.
+  ##### Install with Helm CLI
+
+```bash
+helm upgrade --install my-vcluster vcluster \
+  --values vcluster.yaml \
+  --repo https://your-private-server.com/your-username/your-private-project/path-to-vcluster-chart-directory \
+  --version 0.23.0 \
+  --namespace my-namespace \
+  --repository-config=''
+```
+
 
 #### Download and host the Helm chart
 
@@ -102,15 +117,13 @@ The standard method for installing vCluster is using Helm with the LoftLabs char
     helm repo update
     ```
   </Step>
-
   <Step>
-    Download the Helm chart to your local disk:
+    Download the Helm chart:
     
     ```bash
     helm pull loft/vcluster --version 0.23.0
     ```
   </Step>
-
   <Step>
     Store the chart on your web server:
     
@@ -121,7 +134,6 @@ The standard method for installing vCluster is using Helm with the LoftLabs char
     mv vcluster-0.23.0.tgz vcluster/
     ```
   </Step>
-
   <Step>
     Create an `index.yaml` file and push it to the GitLab repository:
     
@@ -137,19 +149,161 @@ The standard method for installing vCluster is using Helm with the LoftLabs char
    Ensure the URL you specify points to the location where `vcluster-0.23.0.tgz` can be accessible to the target cluster.
    :::
 
-#### Deploy vCluster with the private chart
+### Option 2: Use an OCI-compatible registry
 
-After hosting the chart, deploy vCluster using either the Helm CLI or the vCluster platform.
+You can use offline Helm Charts.
 
-##### Install with Helm CLI
+#### Prerequisites
+
+- OCI-compatible image registry
+
+#### Offline Helm charts
 
 ```bash
-helm upgrade --install my-vcluster vcluster \
+helm chart save ./vcluster-${CHART_VERSION}.tgz <your-registry>/vcluster:v${CHART_VERSION}
+helm chart push <your-registry>/vcluster:v${CHART_VERSION}
+```
+
+Then install using:
+
+```bash
+helm registry login <your-registry>
+helm install vcluster oci://<your-registry>/vcluster --version ${CHART_VERSION}
+```
+
+## vCluster images
+
+### Download vCluster images
+
+<Flow id="offline-images">
+  <Step>
+    Set environment variables:
+    ```bash
+    export VCLUSTER_SERVICE="vcluster"
+    export VCLUSTER_NAMESPACE="vcluster"
+    export REGISTRY=ecr.io/myteam
+    ```
+  </Step>
+  <Step>
+    Retrieve or set the version:
+    ```bash
+    CHART=$(kubectl get svc ${VCLUSTER_SERVICE} -n ${VCLUSTER_NAMESPACE} -o jsonpath={.metadata.labels.chart})
+    export VERSION=${CHART#vcluster-}
+    # or manually:
+    export VERSION=0.21.1
+    ```
+  </Step>
+  <Step>
+    Download artifacts:
+    ```bash
+    wget https://github.com/loft-sh/vcluster/releases/download/v${VERSION}/vcluster-images.txt
+    wget https://github.com/loft-sh/vcluster/releases/download/v${VERSION}/download-images.sh
+    wget https://github.com/loft-sh/vcluster/releases/download/v${VERSION}/push-images.sh
+    chmod +x *.sh
+    ```
+  </Step>
+  <Step>
+    Download images:
+    ```bash
+    ./download-images.sh --image-list vcluster-images.txt
+    ```
+  </Step>
+  <Step>
+    Push to your registry:
+    ```bash
+    ./push-images.sh --registry ${REGISTRY}
+    ```
+  </Step>
+</Flow>
+
+:::info
+You can remove images from `vcluster-images.txt` that you don't need.
+:::
+
+## Configure vcluster.yaml
+
+### Configuring your vCluster to point to the appropriate Helm chart location and image registry
+
+```yaml
+controlPlane:
+  advanced:
+    defaultImageRegistry: ${REGISTRY}
+  distro:
+    k8s:
+      version: v1.31.1
+```
+
+:::info
+Example registry path: `ecr.io/myteam/ghcr.io/loft-sh/vcluster:0.21.0`
+:::
+
+:::info
+To override the Alpine init image:
+```yaml
+sync:
+  toHost:
+    pods:
+      rewriteHosts:
+        initContainer:
+          image: your-registry/your-image:1.0.0
+```
+The replacement image must support `sh` and basic `sed`.
+:::
+
+### Configuring image pull secret for image registry
+
+```yaml
+controlPlane:
+  advanced:
+    serviceAccount:
+      imagePullSecrets:
+        - name: your-image-pull-secret
+```
+
+## Connecting to the platform
+
+### Configure the API key
+
+```yaml
+external:
+  platform:
+    apiKey:
+      secretName: vcluster-platform-api-key
+      namespace: vcluster-ns
+      createRBAC: true
+```
+
+```bash
+export VCLUSTER_LICENSE_KEY="YOUR_BASE64_ENCODED_LICENSE_KEY"
+kubectl create namespace vcluster-ns
+kubectl create -f - <<EOF
+apiVersion: v1
+kind: Secret
+metadata:
+  name: vcluster-platform-api-key
+  namespace: vcluster-ns
+type: Opaque
+data:
+  license: ${VCLUSTER_LICENSE_KEY}
+EOF
+```
+
+## Configuring FIPS images
+
+Refer to the [FIPS configuration guide](/vcluster/deploy/security/fips).
+
+<details>
+  <summary>FIPS configuration example</summary>
+  <FipsConfig />
+</details>
+
+## Deploy vCluster
+
+```bash
+helm upgrade --install vcluster vcluster-${VERSION}.tgz \
+  --version ${VERSION} \
   --values vcluster.yaml \
-  --repo https://your-private-server.com/your-username/your-private-project/path-to-vcluster-chart-directory \
-  --version 0.23.0 \
-  --namespace my-namespace \
-  --repository-config=''
+  --namespace vcluster-ns
 ```
 
 ##### Configure with vCluster platform
@@ -283,6 +437,7 @@ vCluster prepends the image registry to all images used by vCluster, such as syn
     </Step>
 
 </Flow>
+
 ## Configure vCluster for air-gapped install
 
 The `vcluster.yaml` file holds your vCluster configuration and allows overriding the vCluster Helm chart default values.
@@ -336,7 +491,7 @@ Args:    []string{"-c", "sed -E -e 's/^(\\d+.\\d+.\\d+.\\d+\\s+)" + fromHost + "
 
 ## Create an image pull secret
 
-  Optionally create an image pull secret if your registry requires authentication. The `imagePullSecrets` setting defines extra image pull secrets for the vCluster control plane `ServiceAccount`.
+Optionally create an image pull secret if your registry requires authentication. The `imagePullSecrets` setting defines extra image pull secrets for the vCluster control plane `ServiceAccount`.
 
 :::note
 This configuration is only necessary if your registry requires
@@ -378,7 +533,7 @@ external:
 EOF
 ```
 
-## Deploy vCluster Pro
+## Deploy vCluster
 
 <Flow>
   <Step>
@@ -459,9 +614,9 @@ helm upgrade --install "${VCLUSTER_PRO_NAME}" vcluster-${VERSION}.tgz \
 ```
 
 </Step>
-
 </Flow>
-## Air-gapped vCluster Pro with FIPS images
+
+## Air-gapped vCluster with FIPS images
 
 To run vCluster in a FIPS compliant environment, the `vcluster.yaml` needs to be configured to use the Loft GitHub Container Registry with the FIPS compliant images for the syncer (vCluster control plane `StatefulSet`) and the Kubernetes distro images and configured to use the vCluster Pro embedded CoreDNS.
 
