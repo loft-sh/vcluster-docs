@@ -251,7 +251,8 @@ const config = {
         style: "light",
         links: [
           {
-            title: "Contribute",
+            // Use a non-breaking space to prevent any title from showing
+            title: "\u00A0",
             items: [
               {
                 html: `
@@ -268,7 +269,7 @@ const config = {
                 `
               }
             ]
-          }
+          },
         ],
         copyright: `Copyright © ${
           new Date().getFullYear()
