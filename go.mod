@@ -8,8 +8,8 @@ require (
 	github.com/gertd/go-pluralize v0.2.1
 	github.com/ghodss/yaml v1.0.0
 	github.com/invopop/jsonschema v0.12.1-0.20240219232115-a4467074499d
-	github.com/loft-sh/agentapi/v4 v4.2.3
-	github.com/loft-sh/api/v4 v4.2.3
+	github.com/loft-sh/agentapi/v4 v4.2.4-rc.4
+	github.com/loft-sh/api/v4 v4.2.4-rc.4
 	github.com/wk8/go-ordered-map/v2 v2.1.8
 	k8s.io/api v0.32.1
 	k8s.io/apimachinery v0.32.1
@@ -85,14 +85,14 @@ require (
 	go.opentelemetry.io/proto/otlp v1.3.1 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/zap v1.27.0 // indirect
-	golang.org/x/crypto v0.35.0 // indirect
+	golang.org/x/crypto v0.36.0 // indirect
 	golang.org/x/exp v0.0.0-20250106191152-7588d65b2ba8 // indirect
-	golang.org/x/net v0.36.0 // indirect
+	golang.org/x/net v0.38.0 // indirect
 	golang.org/x/oauth2 v0.25.0 // indirect
-	golang.org/x/sync v0.11.0 // indirect
-	golang.org/x/sys v0.30.0 // indirect
-	golang.org/x/term v0.29.0 // indirect
-	golang.org/x/text v0.22.0 // indirect
+	golang.org/x/sync v0.12.0 // indirect
+	golang.org/x/sys v0.31.0 // indirect
+	golang.org/x/term v0.30.0 // indirect
+	golang.org/x/text v0.23.0 // indirect
 	golang.org/x/time v0.9.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20240930140551-af27646dc61f // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20240930140551-af27646dc61f // indirect

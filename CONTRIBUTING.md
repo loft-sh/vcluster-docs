@@ -225,7 +225,7 @@ trademark, e.g. it cannot be used in plural. **Do not use "vClusters"**.
 
 ### Products
 
-- vCluster:
+- vCluster: open source project that helps you create virtual clusters
 - vCluster Pro: a single enhanced/paid/upgraded virtual cluster that uses Pro
   functionality (as labeled "Pro")
 - vCluster Platform: the management platform and UI for managing open source and
