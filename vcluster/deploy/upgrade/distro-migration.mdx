@@ -1,0 +1,149 @@
+---
+title: Migrate from k3s to Kubernetes
+sidebar_label: k3s to k8s Migration
+sidebar_position: 2.2
+description: Learn how to migrate your virtual clusters from k3s distro to Kubernetes (k8s) distro.
+---
+
+import BasePrerequisites from '../../../docs/_partials/base-prerequisites.mdx';
+
+Starting with vCluster 0.25.0, you can migrate an existing virtual cluster from k3s distro to Kubernetes (k8s) distro. This feature allows you to benefit from the full Kubernetes implementation while preserving your existing workloads and configuration.
+
+## Prerequisites {#prerequisites}
+
+<BasePrerequisites />
+
+Additionally, you need:
+- `vCluster` CLI version 0.25.0 or higher
+- An existing virtual cluster using k3s distro
+
+## Migration process {#migration-process}
+
+The migration happens automatically when you change the distro from k3s to k8s during an upgrade. There are two supported methods for initiating the migration:
+
+1. Using the CLI with direct flags (`--distro=k8s`)
+<!-- vale off -->
+2. Using a configuration file (vcluster.yaml) with updated Kubernetes distro settings
+<!-- vale on -->
+
+:::info Supported migration methods
+Both approaches trigger the same underlying migration process. Choose the method that best fits your workflow and preferences.
+:::
+
+Regardless of the method you choose, the vCluster system performs these actions during migration:
+
+- Detects that you are switching from k3s to k8s
+- Copies all relevant certificates and configuration from k3s paths to k8s paths
+- Preserves database content (for both SQLite and embedded etcd backing stores)
+- Adds an annotation to prevent accidental re-migration
+- Launches the new control plane with k8s distro
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant CLI as vCluster CLI
+    participant CP as Control Plane
+
+    User->>CLI: vcluster --upgrade my-vcluster --distro=k8s
+    CLI->>CP: Initiate distro migration (k3s → k8s)
+    Note over CP: Migration process
+    CP-->>CP: 1. Preserve workloads & data
+    CP-->>CP: 2. Copy certificates & configs
+    CP-->>CP: 3. Update paths & annotate
+    CP->>User: Migration complete
+```
+
+All your existing workloads, services, and resources remain available after migration without interruption. Both migration methods are covered in detail in the [Migrate a virtual cluster](#migrate-a-virtual-cluster) section below.
+
+:::warning Migration limitations
+The automated migration process only supports migrating from k3s to k8s distro. Migration between other distro types is not supported. Migration is one-way - you cannot migrate back from k8s to k3s.
+:::
+
+## Migrate a virtual cluster {#migrate-a-virtual-cluster}
+
+<!-- vale off -->
+### Use the vCluster CLI {#use-vcluster-cli}
+<!-- vale on -->
+
+You can migrate using the CLI by specifying the k8s distro during upgrade:
+
+```bash title="Migrate using vcluster CLI"
+vcluster --upgrade my-vcluster --distro=k8s
+```
+
+<!-- vale off -->
+### Use a vcluster.yaml file {#use-vcluster-yaml}
+<!-- vale on -->
+
+<!-- vale off -->
+If you're managing your virtual cluster with a vcluster.yaml file, modify it to use k8s distro:
+<!-- vale on -->
+
+Original configuration:
+
+```yaml title="Original vcluster.yaml with k3s"
+controlPlane:
+  distro:
+    k3s:
+      enabled: true
+```
+
+New configuration:
+
+```yaml title="Updated vcluster.yaml with k8s"
+controlPlane:
+  distro:
+    k8s:
+      enabled: true
+```
+
+Then apply the changes:
+
+```bash title="Apply the updated configuration"
+vcluster --upgrade my-vcluster --values vcluster.yaml
+```
+
+## Important notes {#important-notes}
+
+- Migration is one-way: you cannot migrate back from k8s to k3s
+- The k3s-specific resources and directories are preserved after migration for safety
+- Migration supports both SQLite and embedded etcd backing stores
+- High-availability configurations are fully supported
+
+## After migration {#after-migration}
+
+After a successful migration, the control plane pod uses the Kubernetes distro instead of k3s. You can verify this by checking the container image of the control plane pod, which now shows a Kubernetes image.
+
+### Clean up k3s resources {#clean-up-k3s-resources}
+
+The migration process preserves the k3s configuration and certificates on the control plane pod. These resources are located in specific directories on the control plane pod and are safe to delete once you've confirmed the migration was successful:
+
+```bash title="k3s resource directories on the control plane pod"
+/data/k3s-config    # Contains the k3s kubeconfig and other configuration files
+/data/agent         # Contains k3s agent credentials, certificates and keys
+```
+
+You can remove these directories using a kubectl exec command:
+
+```bash title="Removing k3s resources after successful migration"
+kubectl exec -n <vcluster-namespace> <vcluster-control-plane-pod> -- rm -rf /data/k3s-config /data/agent
+```
+
+:::tip
+Consider keeping these resources for some time after migration before deleting them. They can be useful for:
+- Troubleshooting any issues that might arise after migration
+- Providing a reference for certificate paths and configurations
+- Enabling potential recovery options if needed
+:::
+
+The storage impact of these directories is typically minimal, so there's usually no urgency to remove them immediately.
+
+## Troubleshoot migration issues {#troubleshoot-migration-issues}
+
+If you encounter issues during migration, check the control plane pod logs for error messages:
+
+```bash title="Check control plane logs"
+kubectl logs -n <namespace> <vcluster-control-plane-pod> -c syncer
+```
+
+Look for log entries that include "Migrating k3s distro certificates to k8s" to trace the migration process.
