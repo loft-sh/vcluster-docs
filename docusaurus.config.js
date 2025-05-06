@@ -273,7 +273,7 @@ const config = {
         ],
         copyright: `Copyright © ${
           new Date().getFullYear()
-        } <a href="https://loft.sh/">Loft Labs, Inc.</a> | Documentation released under <a href="https://creativecommons.org/publicdomain/zero/1.0/">CC0 1.0 Universal</a>.`,
+        } <a href="https://loft.sh/">LoftLabs, Inc.</a> | Documentation released under <a href="https://creativecommons.org/publicdomain/zero/1.0/">CC0 1.0 Universal</a>.`,
       },
       prism: {
         theme: prismThemes.dracula,

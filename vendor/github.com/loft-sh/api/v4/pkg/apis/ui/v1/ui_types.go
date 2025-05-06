@@ -42,7 +42,7 @@ type UISettingsSpec struct {
 	DefaultVClusterVersion string `json:"defaultVClusterVersion,omitempty"`
 
 	// LoftHosted indicates whether the vCluster Platform instance
-	// is hosted and operated by Loft Labs Inc.
+	// is hosted and operated by LoftLabs Inc.
 	LoftHosted bool `json:"loftHosted,omitempty"`
 }
 
