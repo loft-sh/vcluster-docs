@@ -217,7 +217,7 @@ in the code to highlight lines. See .
 
 ### vCluster terms
 
-Loft Labs is the company. Do not use "Loft" or "Loft Platform" to refer to
+LoftLabs is the company. Do not use "Loft" or "Loft Platform" to refer to
 vCluster products.
 
 "vCluster" is a trademark. There are strict legal frameworks around how to use a
