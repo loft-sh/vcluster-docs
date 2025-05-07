@@ -19,8 +19,6 @@ import ProAdmonition from "../../_partials/admonitions/pro-admonition.mdx";
 This guide shows how to set up Istio integration with your virtual cluster.
 This enables you to use one Istio installation from the host cluster instead of installing Istio in each virtual cluster.
 
-This integration creates a Gateway per virtual cluster, which results in Waypoint proxy deployed in the virtual cluster host namespace.
-
 You can include your virtual workloads in the mesh by setting `istio.io/dataplane-mode=ambient` label on the virtual Namespaces or Pods.
 You can exclude your virtual workloads from the mesh by setting `istio.io/dataplane-mode=none` label either on the Namespace or on the Pod.
 
@@ -30,13 +28,9 @@ You can exclude your virtual workloads from the mesh by setting `istio.io/datapl
 <BasePrerequisites />
 
 - `istio` operator installed on your host cluster in ambient mode with DNS Capture disabled
-- `Gateway (gateway.networking.k8s.io/v1)` Custom Resource Definition installed on your host cluster
-
-:::tip
-To disable DNS capture, set `values.cni.ambient.dnsCapture: false` in your Istio configuration.
-:::
 
 :::info IMPORTANT
+To disable DNS capture, set `values.cni.ambient.dnsCapture: false` in your Istio configuration.
 This integration works only with Istio in Ambient mode. Sidecar mode is not supported.
 :::
 
@@ -54,12 +48,11 @@ This configuration:
 
 - Enables the integration.
 - Installs Resource Definitions for `DestinationRules`, `Gateways` and `VirtualServices` into the virtual cluster.
-- Creates Gateway (gateway.networking.k8s.io/v1) for Waypoint in the virtual cluster host namespace.
 - Exports `DestinationRules`, `Gateways` and `VirtualServices` from the virtual cluster to the host (and re-writes) service references to the services translated names in the host.
 - Adds `istio.io/dataplane-mode` label to the synced Pods based on the value of this label set in the virtual namespace.
 
 :::info IMPORTANT
-Only DestinationRules, Gateways, and VirtualServices are synced to the host clusters. Other kinds are not yet supported.
+Only DestinationRules, Gateways, and VirtualServices from `networking.istio.io/v1` API Version are synced to the host clusters. Other kinds are not yet supported.
 :::
 
 ### Set up cluster contexts
@@ -80,6 +73,42 @@ You can find your contexts by running `kubectl config get-contexts`
 ## Route request based on the version label of the app
 
 <Flow id="istio-example">
+
+  ### Create waypoint proxy in the host
+  <Step>
+    In this tutorial, you set Kubernetes service name as a host in the VirtualService `spec.hosts`.
+    To make it work, you need a Waypoint proxy in the virtual cluster's host namespace.
+    In many cases it is optional however. Refer to Istio documentation for more information on Waypoint proxies.
+    Install Gateway CRD first in the host:
+
+    ```bash title="Install Gateway CRD"
+    kubectl --context="${HOST_CTX}" get crd gateways.gateway.networking.k8s.io &> /dev/null || \
+    kubectl --context="${HOST_CTX}" apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.1/standard-install.yaml
+    ```
+
+    this is a Gateway for Waypoint you need:
+    ```yaml title="waypoint-gateway.yaml"
+    apiVersion: gateway.networking.k8s.io/v1
+    kind: Gateway
+    metadata:
+      name: waypoint
+      labels:
+        istio.io/waypoint-for: service
+    spec:
+      gatewayClassName: istio-waypoint
+      listeners:
+      - name: mesh
+        port: 15008
+        protocol: HBONE
+    ```
+
+    create it in the host cluster:
+
+    ```bash title="Create Waypoint Gateway"
+    kubectl --context="${HOST_CTX}" create -f waypoint-gateway.yaml --namespace="${VCLUSTER_HOST_NAMESPACE}"
+    ```
+
+  </Step>
 
   ### Create virtual namespace with ambient mode enabled
   <Step>
@@ -263,7 +292,7 @@ You can find your contexts by running `kubectl config get-contexts`
         app: nginx
     ```
 
-    pay attention to the `istio.io/use-waypoint: waypoint` label. It is crucial, as it will tell Istio that we want to use proxy named `waypoint` in the same namespace (it is deployed automatically by vCluster to the vCluster host namespace).
+    pay attention to the `istio.io/use-waypoint: waypoint` label. It is crucial, as it will tell Istio that we want to use proxy named `waypoint` in the same namespace (you created it in the first step).
 
     ```bash title="Create service"
     kubectl --context="${VCLUSTER_CTX}" create -f service.yaml --namespace test
