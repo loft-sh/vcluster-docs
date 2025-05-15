@@ -1,0 +1,278 @@
+---
+title: EKS Pod Identity
+sidebar_label: EKS Pod Identity
+sidebar_position: 1
+---
+
+import CodeBlock from '@theme/CodeBlock';
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem'
+
+import Deploy from '../../_partials/deploy/deploy.mdx'
+import GetResourceName from '../pod-identity/_partials/get-resource-name.mdx'
+import EKSPodIdentityScript from '!!raw-loader!../pod-identity/_code/eks-pod-identity.sh'
+import EKSPodIdentityTerraform from '!!raw-loader!../pod-identity/_code/eks-pod-identity.tf'
+import VClusterYaml from '!!raw-loader!../pod-identity/_code/pod-identity-vcluster.yaml'
+
+import ProAdmonition from '../../_partials/admonitions/pro-admonition.mdx'
+
+<ProAdmonition/>
+
+# Integrating EKS Pod Identity with vCluster
+
+This tutorial guides you through the process of integrating AWS Service Accounts with your vCluster using Pod Identity.
+
+Setting up Pod Identity requires you to link an AWS Service Account with the Kubernetes Service Account (KSA) used by your workloads.
+This KSA needs to be available in the host cluster in which your vCluster instance runs.
+
+To achieve this setup, we'll need to use the [sync.toHost feature][sync-toHost-docs] in order to expose the KSA in the host cluster together with the vCluster Platform API to retrieve the updated name of the KSA in the host cluster.
+
+### Prerequisites
+This guide assumes you have the following prerequisites:
+- `kubectl` installed
+- `aws` CLI installed and configured
+- An existing EKS cluster with the CSI driver set up, IAM OIDC provider, and Pod Identity agent deployed
+
+### Step-by-Step Guide
+
+#### 1. Start vCluster Platform and create an access key
+
+In order to integrate your workloads with EKS Pod Identity, you'll need a vCluster Platform instance running.
+If you don't have one already, follow the [vCluster Platform installation guide][vcluster-platform-install-link].
+
+Once you're done, you'll need to create a new access key. This will allow you to use the vCluster Platform API.
+Please follow this [guide to create a new access key][access-key-link].
+
+
+#### 2. Set Up Variables
+
+<Tabs>
+
+<TabItem value="bash">
+Define the necessary environment variables for your EKS cluster, service accounts, and authentication details.
+
+```bash
+#!/bin/bash
+
+# Set up environment variables
+export AWS_REGION="eu-central-1"  # Replace with your AWS region
+export CLUSTER_NAME="pod-identity-1"  # Replace with your EKS cluster name
+export SERVICE_ACCOUNT_NAME="demo-sa"
+export SERVICE_ACCOUNT_NAMESPACE="default"
+export VCLUSTER_NAME="my-vcluster"
+export HOST=https://your.loft.host  # Replace with your host
+export ACCESS_KEY=abcd1234  # Replace with your access key
+export AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+```
+</TabItem>
+
+<TabItem value="Terraform">
+```hcl
+variable "aws_region" {
+  description = "The AWS region to deploy the EKS cluster"
+  type        = string
+  default     = "eu-central-1"
+}
+
+variable "cluster_name" {
+  description = "The name of the EKS cluster"
+  type        = string
+  default     = "pod-identity-1"
+}
+
+variable "service_account_name" {
+  description = "K8s SA name for Pod Identity binding"
+  type        = string
+  default     = "demo-sa"
+}
+
+variable "service_account_namespace" {
+  description = "Namespace in which k8s SA is created"
+  type        = string
+  default     = "default"
+}
+
+variable "vcluster_name" {
+  description = "Name of virtual cluster"
+  type        = string
+  default     = "my-vcluster"
+}
+
+variable "auth_token" {
+  description = "Auth token for vCluster.Pro API"
+  type        = string
+  default     = "abcd1234"
+}
+```
+</TabItem>
+
+</Tabs>
+
+#### 3. Create vCluster Configuration
+
+Create the `vcluster.yaml` file with following content:
+
+```yaml
+sync:
+  toHost:
+    serviceAccounts:
+      enabled: true
+```
+
+#### 4. Deploy vCluster
+
+<Deploy />
+
+
+#### 5. Connect to vCluster
+
+Establish a connection to your vCluster instance:
+
+```bash
+vcluster connect ${VCLUSTER_NAME}
+```
+
+#### 6. Create Example Workload
+
+Create an example workload to list S3 buckets.
+
+```bash
+# Create example-workload.yaml content dynamically
+cat <<EOF > example-workload.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: demo-sa
+  namespace: default
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: s3-list-buckets
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: s3-list-buckets
+  template:
+    metadata:
+      labels:
+        app: s3-list-buckets
+    spec:
+      serviceAccountName: demo-sa
+      containers:
+      - image: public.ecr.aws/aws-cli/aws-cli
+        command:
+          - "aws"
+          - "s3"
+          - "ls"
+        name: aws-pod
+EOF
+
+kubectl apply -f example-workload.yaml
+```
+
+#### 7. Read Updated Name From vCluster Platform API
+
+<GetResourceName />
+
+#### 8. Create IAM Policy and Role for Pod Identity
+
+<Tabs>
+
+<TabItem value="bash">
+
+Create IAM policy and role for pod identity.
+
+```bash
+cat >my-policy.json <<EOF
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": "s3:GetObject",
+            "Resource": "arn:aws:s3:::*"
+        }
+    ]
+}
+EOF
+
+aws iam create-policy --policy-name my-policy --policy-document file://my-policy.json
+
+cat >trust-relationship.json <<EOF
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "AllowEksAuthToAssumeRoleForPodIdentity",
+            "Effect": "Allow",
+            "Principal": {
+                "Service": "pods.eks.amazonaws.com"
+            },
+            "Action": [
+                "sts:AssumeRole",
+                "sts:TagSession"
+            ]
+        }
+    ]
+}
+EOF
+
+aws iam create-role --role-name my-role --assume-role-policy-document file://trust-relationship.json --description "my-role-description"
+
+aws iam attach-role-policy --role-name my-role --policy-arn=arn:aws:iam::${AWS_ACCOUNT_ID}:policy/my-policy
+```
+
+Create the pod identity association.
+
+```bash
+aws eks create-pod-identity-association --cluster-name ${CLUSTER_NAME} --role-arn arn:aws:iam::${AWS_ACCOUNT_ID}:role/my-role --namespace ${VCLUSTER_NAME} --service-account ${KSA_NAME}
+```
+
+</TabItem>
+
+<TabItem value="Terraform">
+```hcl
+data "aws_iam_policy_document" "assume_role" {
+  statement {
+    effect = "Allow"
+
+    principals {
+      type        = "Service"
+      identifiers = ["pods.eks.amazonaws.com"]
+    }
+
+    actions = [
+      "sts:AssumeRole",
+      "sts:TagSession"
+    ]
+  }
+}
+
+resource "aws_iam_role" "example" {
+  name               = "eks-pod-identity-example"
+  assume_role_policy = data.aws_iam_policy_document.assume_role.json
+}
+
+resource "aws_iam_role_policy_attachment" "example_s3" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess"
+  role       = aws_iam_role.example.name
+}
+```
+</TabItem>
+
+</Tabs>
+
+#### 9. Verify the Setup
+
+Verify the setup by checking the logs.
+
+```bash
+kubectl logs -l app=s3-list-buckets -n default
+```
+
+[vcluster-platform-install-link]: /platform/install/quick-start-guide
+[access-key-link]: /docs/platform/administer/users-permissions/access-keys
+[sync-toHost-docs]: ../../configure/vcluster-yaml/sync/to-host/README.mdx
