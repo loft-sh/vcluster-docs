@@ -61,14 +61,18 @@ const InterpolatedCodeBlock = ({ code = '', language = 'bash' }) => {
     return <CodeBlock language={language}>{code}</CodeBlock>;
   }
 
+  // Simple wrapper with light grey background
   return (
-    <div style={{ marginBottom: 'var(--ifm-leading)' }}>
-      <div style={{ 
-        backgroundColor: 'var(--prism-background)',
-        borderRadius: 'var(--ifm-code-border-radius)',
-        padding: 'var(--ifm-pre-padding)',
-        marginBottom: '0',
-        position: 'relative'
+    <div className="interpolated-code-wrapper" style={{ 
+      marginBottom: 'var(--ifm-leading)',
+      border: '1px solid var(--ifm-color-emphasis-300)',
+      borderRadius: 'var(--ifm-code-border-radius)',
+      backgroundColor: 'rgba(0, 0, 0, 0.02)',
+      padding: '1rem'
+    }}>
+      {/* Variable Input Container */}
+      <div className="interpolated-code-inputs" style={{
+        marginBottom: '1rem'
       }}>
         <div style={{
           fontSize: '0.8rem',
@@ -105,7 +109,7 @@ const InterpolatedCodeBlock = ({ code = '', language = 'bash' }) => {
               onChange={(e) => setValues(prev => ({ ...prev, [key]: e.target.value }))}
               placeholder={defaultValue}
               style={{ 
-                backgroundColor: 'rgba(255, 255, 255, 0.07)',
+                backgroundColor: 'rgba(255, 255, 255, 0.7)',
                 border: '1px solid var(--ifm-color-emphasis-300)',
                 borderRadius: 'var(--ifm-global-radius)',
                 padding: '0.3rem 0.5rem',
@@ -128,9 +132,13 @@ const InterpolatedCodeBlock = ({ code = '', language = 'bash' }) => {
           </div>
         ))}
       </div>
-      <CodeBlock language={language} style={{ marginTop: '0' }}>
-        {processedCode}
-      </CodeBlock>
+      
+      {/* Code Block Container */}
+      <div>
+        <CodeBlock language={language}>
+          {processedCode}
+        </CodeBlock>
+      </div>
     </div>
   );
 };
