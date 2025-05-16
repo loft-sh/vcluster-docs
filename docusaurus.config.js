@@ -21,7 +21,7 @@ Write your content here...
 
 /** @type {import('@docusaurus/types').Config} */
 const config = {
-  title: "vcluster docs | Virtual Clusters for Kubernetes",
+  title: "vCluster docs | Virtual Clusters for Kubernetes",
   tagline: "Virtual Clusters for Kubernetes",
   url: "https://vcluster.com",
   baseUrl: __webpack_public_path__,
@@ -59,7 +59,7 @@ const config = {
           lastVersion: "current",
           versions: {
             current: {
-              label: "v0.24",
+              label: "v0.25",
               banner: "none",
               badge: false,
             },
@@ -136,7 +136,7 @@ const config = {
             badge: true,
           },
           "0.21.0": {
-            label: "v0.21 (EOS)",
+            label: "v0.21 (EOL)",
             banner: "unmaintained",
             badge: true,
           },
@@ -212,7 +212,7 @@ const config = {
       },
       navbar: {
         logo: {
-          alt: "vcluster",
+          alt: "vCluster",
           src: "/media/rebranding/vCluster_horizontal-orange.svg",
           href: "https://vcluster.com/docs",
           target: "_self",
@@ -287,7 +287,7 @@ const config = {
       announcementBar: {
         id: "platform-upgrade",
         content:
-          '🚀 <strong>New releases: <a href="https://www.vcluster.com/releases/en/changelog?hideLogo=true&hideMenu=true&theme=dark&embed=true&c=vCluster" target="_blank">platform 4.2 and vCluster 0.25</a></strong>',
+          '🚀 <strong>New releases: <a href="https://www.vcluster.com/releases/en/changelog?hideLogo=true&hideMenu=true&theme=dark&embed=true&c=vCluster" target="_blank">vCluster Platform 4.2 and vCluster 0.25</a></strong>',
         backgroundColor: "#4a90e2",
         textColor: "#ffffff",
         isCloseable: true,
