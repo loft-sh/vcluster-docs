@@ -136,7 +136,7 @@ const config = {
             badge: true,
           },
           "0.21.0": {
-            label: "v0.21 (EOl)",
+            label: "v0.21 (EOL)",
             banner: "unmaintained",
             badge: true,
           },
