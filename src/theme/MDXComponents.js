@@ -3,9 +3,12 @@
   import MDXComponents from '@theme-original/MDXComponents';
   import Columns from '@site/src/components/Columns';
   import Column from '@site/src/components/Column';
+  import GlossaryTerm from '@site/src/components/GlossaryTerm';
+  
   export default {
     // Reusing the default mapping
     ...MDXComponents,
     Columns,
     Column,
+    GlossaryTerm,
   };
