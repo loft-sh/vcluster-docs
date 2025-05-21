@@ -3,8 +3,9 @@
 /**
  * validate-glossary-terms.js
  * 
- * This script scans MDX files for <GlossaryTerm> tags and validates that 
- * the referenced terms exist in the glossary.yaml file.
+ * This script scans MDX files for <GlossaryTerm> tags and validates that:
+ * 1. The referenced terms exist in the glossary.yaml file
+ * 2. Each term is only wrapped once per document (first occurrence only)
  * 
  * Usage:
  *   npm run validate-glossary
@@ -35,19 +36,29 @@ let hasErrors = false;
 mdxFiles.forEach(filePath => {
   const content = fs.readFileSync(filePath, 'utf8');
   let match;
+  const usedTermsInFile = new Set();
   
   while ((match = glossaryTermPattern.exec(content)) !== null) {
     const term = match[1];
     
+    // Check if term exists in glossary
     if (!glossaryData[term]) {
       console.error(`Error: Term "${term}" not found in glossary, but referenced in ${filePath}`);
       hasErrors = true;
     }
+    
+    // Check if term has already been used in this file
+    if (usedTermsInFile.has(term)) {
+      console.error(`Error: Term "${term}" is wrapped multiple times in ${filePath}. Only wrap the first occurrence.`);
+      hasErrors = true;
+    }
+    
+    usedTermsInFile.add(term);
   }
 });
 
 if (hasErrors) {
-  console.error('\nValidation failed. Some terms referenced in MDX files do not exist in the glossary.');
+  console.error('\nValidation failed. Please fix the errors above before continuing.');
   process.exit(1);
 } else {
   console.log('\nValidation successful! All glossary terms referenced in MDX files exist in the glossary.');
