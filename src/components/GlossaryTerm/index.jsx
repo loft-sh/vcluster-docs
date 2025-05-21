@@ -2,37 +2,14 @@ import React from 'react';
 import styles from './styles.module.css';
 import glossaryData from '@site/src/data/glossary.yaml';
 
-// Track terms used per page
-const usedTerms = {};
-
 const GlossaryTerm = ({ term, children }) => {
-  // Get current page path
-  const pagePath = typeof window !== 'undefined' ? window.location.pathname : 'default';
-  
-  // Initialize page tracking if needed
-  if (!usedTerms[pagePath]) {
-    usedTerms[pagePath] = new Set();
-  }
   
   // Get term data
   const termData = glossaryData[term];
   
-  // Check if first occurrence
-  const isFirstOccurrence = !usedTerms[pagePath].has(term);
-  
-  // Mark as used if valid
-  if (isFirstOccurrence && termData) {
-    usedTerms[pagePath].add(term);
-  }
-  
   // Handle missing term data
   if (!termData) {
     return <>{children || term}</>;
-  }
-  
-  // If not first occurrence, just render normally
-  if (!isFirstOccurrence) {
-    return <>{children || termData.term}</>;
   }
   
   // For first occurrence, render with tooltip
@@ -40,7 +17,7 @@ const GlossaryTerm = ({ term, children }) => {
   const hasUrl = termData.url && termData.url.length > 0;
   
   return (
-    <div className={styles.termWrapper}>
+    <span className={styles.termWrapper}>
       {hasUrl ? (
         <a href={termData.url} className={styles.term}>
           {termContent}
@@ -50,8 +27,8 @@ const GlossaryTerm = ({ term, children }) => {
           {termContent}
         </span>
       )}
-      <div className={styles.tooltip}>
-        <div className={styles.tooltipHeader}>
+      <span className={styles.tooltip}>
+        <span className={styles.tooltipHeader}>
           {hasUrl ? (
             <a href={termData.url} className={styles.tooltipHeaderLink}>
               {termData.term}
@@ -59,16 +36,30 @@ const GlossaryTerm = ({ term, children }) => {
           ) : (
             termData.term
           )}
-        </div>
-        <div className={styles.tooltipDefinition}>{termData.definition}</div>
+        </span>
+        <span className={styles.tooltipDefinition}>{termData.definition}</span>
         {termData.related && (
-          <div className={styles.related}>
+          <span className={styles.related}>
             <span>Related: </span>
-            {termData.related.join(', ')}
-          </div>
+            {termData.related.map((relatedTermId, index) => {
+              const relatedTerm = glossaryData[relatedTermId];
+              return (
+                <span key={relatedTermId}>
+                  {index > 0 && ', '}
+                  {relatedTerm ? (
+                    <span className={styles.relatedTerm}>
+                      {relatedTerm.term}
+                    </span>
+                  ) : (
+                    relatedTermId
+                  )}
+                </span>
+              );
+            })}
+          </span>
         )}
-      </div>
-    </div>
+      </span>
+    </span>
   );
 };
 
