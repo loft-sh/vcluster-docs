@@ -16,9 +16,9 @@ import CertManagerConfig from '!!raw-loader!@site/vcluster/configure/vcluster-ya
 
 vCluster allows you to sync custom resources from the virtual cluster to the host cluster. This allows you to sync arbitrary resources that are by default not synced by vCluster. This only works for resources that have a custom resource definition in the host cluster.
 
-If those custom resources will create other resources inside the host cluster, vCluster will try to find them and sync them back to the host cluster as well. E.g. a [cert-manager](https://cert-manager.io/) certificate creates a secret which will be synced back automatically into the virtual cluster.
+If those custom resources create other resources inside the host cluster, vCluster tries to find them and syncs them back to the host cluster as well. E.g. a [cert-manager](https://cert-manager.io/) certificate creates a secret which syncs back automatically into the virtual cluster.
 
-vCluster will automatically add the required cluster and namespace RBAC permissions for retrieving the custom resource definition and syncing the resources from the virtual cluster to the host cluster.
+vCluster automatically adds the required cluster and namespace RBAC permissions for retrieving the custom resource definition and syncing the resources from the virtual cluster to the host cluster.
 <br />
 
 :::info Only Namespace-Scoped Resource
@@ -29,7 +29,7 @@ This feature currently only works for namespace-scoped resources only.
 If you want to sync many custom resources, consider using [multi-namespace-mode](../../../experimental/multi-namespace-mode).
 :::
 
-## Enable Custom Resource Syncing
+## Enable custom resource syncing {#enable-custom-resource-syncing}
 
 To enable custom resource syncing from the virtual cluster to the host cluster, figure out what CRDs you want to sync via `kubectl get crds`. Add the name into the `customResources` section in the sync section. Even though vCluster syncs custom resources from the virtual cluster to the host cluster, the CRDs are also copied from the host cluster to the virtual cluster. 
 
@@ -45,7 +45,7 @@ sync:
 
 ## Patches
 
-You can modify the sync behaviour with patches that target specific paths. Currently there is 2 different kinds of patches supported.
+You can modify the sync behavior with patches that target specific paths. Currently there are 2 different kinds of patches supported.
 
 :::info Wildcard patches
 You can use `*` in paths to select all entries of an array or object, e.g. `spec.containers[*].name` or `spec.containers[*].volumeMounts[*]`. vCluster calls the patch multiple times.
@@ -75,9 +75,12 @@ vCluster translates the path `spec.secretName` as it points to a secret. If the 
 With multi-namespace-mode you only need to rewrite references that include a namespace. You can use the `namespacePath` option to specify the path of the namespace of the reference.
 :::
 
-### JavaScript Expression Patches
+<!-- vale off -->
+### JavaScript expression patches {#javascript-expression-patches}
+<!-- vale on -->
 
-These are powerful JavaScript ES6 compatible expression patches that can be used to change a field while syncing. You define how it changes when syncing from the virtual cluster into the host cluster or when syncing from the host cluster into the virtual cluster. To add a suffix to certificate DNS names you can do:
+These are JavaScript ES6 compatible expression patches that can be used to change a field while syncing. You define how it changes when syncing from the virtual cluster into the host cluster or when syncing from the host cluster into the virtual cluster. To add a suffix to certificate DNS names you can:
+
 ```yaml
 sync:
   toHost:
@@ -93,14 +96,15 @@ sync:
 ```
 
 There is also a variable called `context` besides `value` that can be used to access vCluster specific data:
-* `context.vcluster.name`: Name of the virtual cluster
-* `context.vcluster.namespace`: Namespace of the virtual cluster
-* `context.vcluster.config`: Config of the virtual cluster, basically `vcluster.yaml` merged with the defaults
-* `context.hostObject`: Host object (can be null if not available)
-* `context.virtualObject`: Virtual object (can be null if not available)
-* `context.path`: The matched path on the object, useful when using wildcard path selectors (*)
+- `context.vcluster.name`: Name of the virtual cluster
+- `context.vcluster.namespace`: Namespace of the virtual cluster
+- `context.vcluster.config`: Config of the virtual cluster, basically `vcluster.yaml` merged with the defaults
+- `context.hostObject`: Host object (can be null if not available)
+- `context.virtualObject`: Virtual object (can be null if not available)
+- `context.path`: The matched path on the object, useful when using wildcard path selectors (*)
 
-For example, let's assume you want to add `www.` to every DNS name specified in a cert-manager certificate in the path `spec.dnsNames`, you could use the following patch:
+For example, to add `www.` to every DNS name specified in a cert-manager certificate in the path `spec.dnsNames`, you can use the following patch:
+
 ```yaml
 sync:
   toHost:
@@ -115,7 +119,8 @@ sync:
           reverseExpression: "value.startsWith('www.') ? value.slice(4) : value"
 ```
 
-With that patch, creating a new certificate within the vCluster like this:
+The patch creates a new certificate within the vCluster:
+
 ```yaml
 apiVersion: cert-manager.io/v1
 kind: Certificate
@@ -126,7 +131,8 @@ spec:
     - example.com
 ```
 
-Would create the following certificate in the host cluster:
+vCluster syncs the host cluster and applies your patch, creating this modified certificate:
+
 ```yaml
 apiVersion: cert-manager.io/v1
 kind: Certificate
@@ -137,7 +143,8 @@ spec:
     - www.example.com # the patch added www. to this field
 ```
 
-When you change now the certificate in the host cluster like this:
+If you directly edit the certificate in the host cluster and change the domain:
+
 ```yaml
 apiVersion: cert-manager.io/v1
 kind: Certificate
@@ -148,7 +155,8 @@ spec:
     - www.other-domain.com # changed from www.example.com
 ```
 
-vCluster would sync back the certificate like this:
+vCluster detects the change, applies the reverse patch, and updates the certificate in your virtual cluster:
+
 ```yaml
 apiVersion: cert-manager.io/v1
 kind: Certificate
@@ -159,13 +167,43 @@ spec:
     - other-domain.com # the patch removed the www. from www.other-domain.com
 ```
 
-## Full Example: Using cert-manager custom resource in Single-Namespace-Mode (default)
+## Configure Kubernetes Gateway API sync
 
-<CertManagerExample singleNamespace />
+To use the Kubernetes Gateway API with custom resources, follow these steps:
 
-## Full Example: Using cert-manager custom resource in Multi-Namespace-Mode
+### Install Gateway CRD in the host
 
-<CertManagerExample />
+```bash title="Install Gateway CRD"
+kubectl --context="${HOST_CTX}" get crd gateways.gateway.networking.k8s.io &> /dev/null || \
+kubectl --context="${HOST_CTX}" apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.1/standard-install.yaml
+```
+
+### Create waypoint gateway {#create-waypoint-gateway}
+
+Create a waypoint gateway configuration:
+
+```yaml title="waypoint-gateway.yaml"
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: waypoint
+  labels:
+    istio.io/waypoint-for: service
+spec:
+  gatewayClassName: istio-waypoint
+  listeners:
+  - name: mesh
+    port: 15008
+    protocol: HBONE
+```
+
+Apply it to your host cluster:
+
+```bash title="Create Waypoint Gateway"
+kubectl --context="${HOST_CTX}" create -f waypoint-gateway.yaml --namespace="${VCLUSTER_HOST_NAMESPACE}"
+```
+
+Once configured, you can configure your custom resources to sync Gateway API resources between the virtual and host clusters.
 
 ## Config reference
 
