@@ -99,6 +99,23 @@ const config = {
   plugins: [
     "docusaurus-plugin-sass",
     "plugin-image-zoom",
+    function(context, options) {
+      return {
+        name: 'yaml-loader',
+        configureWebpack() {
+          return {
+            module: {
+              rules: [
+                {
+                  test: /\.ya?ml$/,
+                  use: 'yaml-loader',
+                },
+              ],
+            },
+          };
+        },
+      };
+    },
 
     [
       "@docusaurus/plugin-content-docs",
