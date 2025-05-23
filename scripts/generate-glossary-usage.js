@@ -31,8 +31,12 @@ const usageData = {};
 
 // Initialize each term with an empty array of usages and include type information
 Object.keys(glossaryData).forEach(term => {
+  // Handle both single string type and array of types
+  const typeValue = glossaryData[term].type || 'general';
+  const typeArray = Array.isArray(typeValue) ? typeValue : [typeValue];
+  
   usageData[term] = {
-    type: glossaryData[term].type || 'general',
+    type: typeArray,
     term: glossaryData[term].term,
     usages: []
   };
@@ -87,16 +91,26 @@ fs.writeFileSync(outputPath, JSON.stringify(usageData, null, 2));
 // Generate summary statistics
 const termsByType = {
   vcluster: {
-    total: Object.keys(glossaryData).filter(k => glossaryData[k].type === 'vcluster').length,
-    used: Object.keys(usageData).filter(k => 
-      glossaryData[k].type === 'vcluster' && usageData[k].usages.length > 0
-    ).length
+    total: Object.keys(glossaryData).filter(k => {
+      const typeValue = glossaryData[k].type;
+      return Array.isArray(typeValue) ? typeValue.includes('vcluster') : typeValue === 'vcluster';
+    }).length,
+    used: Object.keys(usageData).filter(k => {
+      const typeValue = glossaryData[k].type;
+      const hasType = Array.isArray(typeValue) ? typeValue.includes('vcluster') : typeValue === 'vcluster';
+      return hasType && usageData[k].usages.length > 0;
+    }).length
   },
   platform: {
-    total: Object.keys(glossaryData).filter(k => glossaryData[k].type === 'platform').length,
-    used: Object.keys(usageData).filter(k => 
-      glossaryData[k].type === 'platform' && usageData[k].usages.length > 0
-    ).length
+    total: Object.keys(glossaryData).filter(k => {
+      const typeValue = glossaryData[k].type;
+      return Array.isArray(typeValue) ? typeValue.includes('platform') : typeValue === 'platform';
+    }).length,
+    used: Object.keys(usageData).filter(k => {
+      const typeValue = glossaryData[k].type;
+      const hasType = Array.isArray(typeValue) ? typeValue.includes('platform') : typeValue === 'platform';
+      return hasType && usageData[k].usages.length > 0;
+    }).length
   }
 };
 
