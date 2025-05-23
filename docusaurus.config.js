@@ -239,13 +239,19 @@ const config = {
             href: "https://vcluster.com/",
             label: "Website",
             position: "right",
-            target: "_self",
+            target: "_blank",
           },
           {
             href: "https://loft.sh/blog",
             label: "Blog",
             position: "right",
-            target: "_self",
+            target: "_blank",
+          },
+          {
+            href: "https://www.vcluster.com/releases/en/changelog?hideLogo=true&hideMenu=true&theme=dark&embed=true&c=vCluster",
+            label: "Changelog",
+            position: "right",
+            target: "_blank",
           },
           {
             href: "https://slack.loft.sh/",
