@@ -75,3 +75,26 @@ go run hack/vcluster/partials/main.go
 ```bash
 go run hack/platform/partials/main.go
 ```
+
+### Wrap glossary terms
+
+To automatically wrap glossary terms in MDX files with `<GlossaryTerm>` components:
+
+```bash
+# Wrap terms in a single file
+npm run wrap-glossary vcluster/deploy/basics.mdx
+
+# Wrap terms in all files in a directory (recursive)
+npm run wrap-glossary vcluster/deploy/
+
+# Or use the script directly
+node scripts/wrap-glossary-terms.js platform/understand/
+```
+
+The script will:
+
+- Only wrap terms that exist in `src/data/glossary.yaml`
+- Only wrap the first occurrence of each term in a document
+- Respect the glossary type setting (vcluster, platform, or both)
+- Skip terms in front matter, code blocks, links, and HTML/JSX tags
+- Preserve the original case of matched terms
