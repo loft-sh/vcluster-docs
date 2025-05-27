@@ -129,10 +129,10 @@ exportKubeConfig:
   # Specify the secret where the KubeConfig is stored
   secret:
     name: vcluster-flux-kubeconfig
-syncer:
-  extraArgs:
-    # Add TLS SAN for the server URL to ensure certificate validity
-    - --tls-san=vcluster-name.vcluster-namespace.svc.cluster.local
+controlPlane:
+  proxy:
+    extraSANs:
+      - "vcluster-demo.vcluster-demo.svc.cluster.local"
 ```
 
 This configuration:
@@ -164,9 +164,10 @@ When using vCluster with Flux, proper TLS certificate configuration is essential
 
 ```yaml
 # In your vCluster configuration
-syncer:
-  extraArgs:
-    - --tls-san=vcluster-name.vcluster-namespace.svc.cluster.local
+controlPlane:
+  proxy:
+    extraSANs:
+      - "vcluster-demo.vcluster-demo.svc.cluster.local"
 
 exportKubeConfig:
   server: https://vcluster-name.vcluster-namespace.svc.cluster.local:443
@@ -187,7 +188,7 @@ Create a source for the vCluster Helm charts in your Git repository:
 
 ```yaml title="clusters/sources/vcluster-repository.yaml"
 ---
-apiVersion: source.toolkit.fluxcd.io/v1beta2
+apiVersion: source.toolkit.fluxcd.io/v1
 kind: HelmRepository
 metadata:
   name: vcluster
@@ -224,9 +225,12 @@ spec:
         namespace: flux-system
   values:
     # Configure TLS SAN for the certificate
-    syncer:
-      extraArgs:
-        - --tls-san=vcluster-demo.vcluster-demo.svc.cluster.local
+    controlPlane:
+      proxy:
+        extraSANs:
+          - "vcluster-demo.vcluster-demo.svc.cluster.local"
+      coredns:
+        enabled: true
 
     exportKubeConfig:
       # Set a meaningful context name
@@ -242,14 +246,7 @@ spec:
       toHost:
         ingresses:
           enabled: true
-    controlPlane:
-      coredns:
-        enabled: true
-        embedded: true
-      backingStore:
-        etcd:
-          embedded:
-            enabled: true
+      
 ```
 
 You can include any standard vCluster configuration in the `values` section.
@@ -294,7 +291,7 @@ After the vCluster is up and running, use Flux to deploy applications directly i
 
 ```yaml title="vcluster-apps/sources/podinfo-repository.yaml"
 ---
-apiVersion: source.toolkit.fluxcd.io/v1beta2
+apiVersion: source.toolkit.fluxcd.io/v1
 kind: HelmRepository
 metadata:
   name: podinfo
@@ -331,9 +328,6 @@ spec:
     secretRef:
       name: vcluster-flux-kubeconfig
       key: config
-    # Skip TLS verification for the target cluster
-    # Available in Flux v0.40.0 and later
-    skipTLSVerify: true
   releaseName: podinfo
   targetNamespace: podinfo
   install:
@@ -351,11 +345,14 @@ spec:
 ```
 
 :::tip Handling TLS certificate verification
-The `kubeConfig` section references the `Secret` created by the vCluster using the `exportKubeConfig` setting. There are several approaches to handle TLS certificate verification:
+The `kubeConfig` section references the `Secret` created by the vCluster using the `exportKubeConfig` setting. To allow Flux to connect to the virtual cluster with a self-signed certificate, you must configure both Flux and vCluster to permit insecure TLS connections:
 
-- **Recommended approach (Flux v0.40.0+)**: Use `skipTLSVerify: true` in the `kubeConfig` section as shown above, which tells Flux to skip certificate verification when connecting to the virtual cluster.
+- **Flux Helm Controller configuration**:  
+  Add the `--insecure-kubeconfig-tls` flag to the [Helm Controller configuration](https://fluxcd.io/flux/components/helm/options/). This allows Flux to honor `insecure-skip-tls-verify: true` in the referenced kubeconfig and skip certificate verification when connecting to the virtual cluster.  
+  > **Warning:** This approach skips TLS certificate verification and is not recommended for production environments.
 
-- **Alternative approach**: Configure both the TLS SAN and `insecure: true` in your vCluster configuration as we did in the example.
+- **vCluster configuration**:  
+  Ensure your vCluster config includes both the TLS SAN and `insecure: true` settings, as shown in the previous example. This enables the vCluster API server to serve with a self-signed (or otherwise untrusted) certificate and accept insecure connections.
 
 - **If you still encounter certificate errors**: Use a modified `Secret` created with the solution in the [troubleshooting section](#tls-certificate-verification-errors):
 
@@ -661,9 +658,10 @@ This is a common issue when Flux attempts to connect to a vCluster, because the 
 The most reliable approach is to configure proper TLS SANs when deploying vCluster:
 
 ```yaml title="vCluster configuration with proper TLS SANs"
-syncer:
-  extraArgs:
-    - --tls-san=vcluster-name.vcluster-namespace.svc.cluster.local
+controlPlane:
+  proxy:
+    extraSANs:
+      - "vcluster-demo.vcluster-demo.svc.cluster.local"
 
 exportKubeConfig:
   server: https://vcluster-name.vcluster-namespace.svc.cluster.local:443
@@ -741,41 +739,27 @@ spec:
 ##### Solution 3: Use Flux's built-in TLS verification options
 <!-- vale on -->
 
-For later versions of Flux (v0.40.0+), you can use Flux's native TLS verification options in your `HelmRelease` or `Kustomization` resources:
+To allow Flux (v2+) to connect to a virtual cluster with a self-signed certificate, you must configure the Flux Helm Controller to permit insecure TLS connections:
 
-```yaml title="Configure HelmRelease with skipTLSVerify"
-apiVersion: helm.toolkit.fluxcd.io/v2
-kind: HelmRelease
-metadata:
-  name: podinfo
-  namespace: vcluster-demo
-spec:
-  # Other fields...
-  kubeConfig:
-    secretRef:
-      name: vcluster-flux-kubeconfig
-      key: config
-    # Skip TLS verification for target cluster
-    skipTLSVerify: true
-```
+- **Add `--insecure-kubeconfig-tls` to the Helm Controller**  
+  Ensure the Helm Controller is started with the `--insecure-kubeconfig-tls` flag. This enables Flux to honor `insecure-skip-tls-verify: true` inside the referenced kubeconfig Secret and skip certificate verification for the target (virtual) cluster.
 
-```yaml title="Configure Kustomization with skipTLSVerify"
-apiVersion: kustomize.toolkit.fluxcd.io/v1
+```yaml title="Patch Helm Controller with --insecure-kubeconfig-tls"
+apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-metadata:
-  name: app-deployment
-  namespace: vcluster-demo
-spec:
-  # Other fields...
-  kubeConfig:
-    secretRef:
-      name: vcluster-flux-kubeconfig
-      key: config
-    # Skip TLS verification for target cluster
-    skipTLSVerify: true
-```
+resources:
+- gotk-components.yaml
+- gotk-sync.yaml
 
-This approach has the advantage of not requiring you to modify the KubeConfig `Secret` manually while still resolving TLS certificate verification issues.
+patches:
+  - patch: |
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
+        value: --insecure-kubeconfig-tls  
+    target:
+      kind: Deployment
+      name: "helm-controller"
+```
 
 #### Connection refused errors
 
