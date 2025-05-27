@@ -1,0 +1,172 @@
+---
+title: Resolve vCluster TSNet connection failures
+sidebar_label: Resolve TSNet connection failures
+description: Fix TSNet connectivity issues that prevent vClusters from showing as ready in the Platform UI.
+---
+
+import Flow, { Step } from "@site/src/components/Flow";
+
+# Resolve vCluster TSNet connection failures
+
+The [TSNet (Tailscale Network)](https://tailscale.com/kb/1244/tsnet) connection failure prevents the vCluster Platform from properly marking vClusters as ready, even when they are running successfully. When this occurs, TSNet cannot establish a stable connection with the platform, which blocks communication between the vCluster on the connected cluster and the platform. As a result, the vCluster appears it is running in the host cluster but shows as it is not ready in the platform UI, which prevents proper management and monitoring.
+
+## Error message
+
+You might find the following error in the logs of your vCluster pods when TSNet fails to connect:
+
+```
+ERROR ts-net-controller tsnet/tsnet.go:148 Check if TSNet is online { 
+  "component": "vcluster", 
+  "failCounter": 5, 
+  "error": "vcluster tsnet server is not online: ... Tailscale could not connect to any relay server. ... The last login error was: register request: Post \"https://vcluster-test.io/coordinator/machine/register\": connection attempts aborted by context: context deadline exceeded"
+}
+```
+
+## Issue
+
+When the TSNet connection fails, you might observe the following:
+
+- **vCluster status discrepancy**: The vCluster shows as `Running` in the remote host cluster but is not marked as ready in the vCluster Platform UI.
+
+- **Successful local connection**: You can successfully connect to the vCluster using `vcluster connect` command.
+
+- **Platform communication blocked**: The vCluster cannot communicate with the platform for status updates and management operations.
+
+To verify TSNet connection issues, check the vCluster logs:
+
+```bash
+kubectl -n <namespace> logs <vcluster-pod> | grep -i "tsnet\|ts-net"
+```
+
+Look for errors related to connection timeouts or relay server failures.
+
+
+## Causes
+
+TSNet connection failures might occur due to the following:
+
+- **Restricted egress policies**: Host clusters with strict network policies (common in GKE, EKS, and other managed Kubernetes services) might block outbound connections to the coordination server.
+
+- **Ingress controller interference**: Ingress controllers like Istio might block or interfere with WebSocket upgrades required for TSNet communication.
+
+- **Direct connection attempts**: TSNet defaults to attempting direct peer-to-peer connections, which often fail in cloud environments with network restrictions.
+
+- **Firewall restrictions**: Corporate firewalls or cloud security groups might block the required ports and protocols for TSNet communication.
+
+
+## Solution
+
+To resolve TSNet connection failures, disable direct connection mode and configure TSNet to use the platform agent for communication. This approach works better in restricted network environments.
+
+<Flow id="Resolve TSNet connection failures">
+
+<Step title="Configure TSNet to disable direct connections">
+
+Configure TSNet to disable direct connections
+
+Update your vCluster configuration to explicitly disable direct peer-to-peer connections:
+
+```yaml title="vcluster.yaml"
+controlPlane:
+  statefulSet:
+    env:
+      - name: "TS_DEBUG_DIAL_DIRECT"
+        value: "false"
+```
+</Step>
+
+<Step title="Apply the configuration">
+
+Update your existing vCluster with the new configuration:
+
+```bash
+vcluster create <vcluster-name> -f vcluster.yaml --upgrade
+```
+
+Or if using Helm directly:
+
+```bash
+helm upgrade <vcluster-name> vcluster --repo https://charts.loft.sh -f vcluster.yaml -n <namespace>
+```
+</Step>
+
+<Step title="Restart the vCluster pods">
+
+Force a restart of the vCluster pods to ensure the new environment variable takes effect:
+
+```bash
+kubectl -n <namespace> rollout restart statefulset <vcluster-name>
+```
+</Step>
+
+<Step title="Verify network connectivity">
+
+Ensure the vCluster can reach the platform coordination server:
+
+```bash
+kubectl -n <namespace> exec -it <vcluster-pod> -- nslookup <your-platform-host>
+```
+</Step>
+</Flow>
+
+## Verification
+
+After completing the solution steps:
+
+- **Check vCluster pod status**:
+  ```bash
+  kubectl -n <namespace> get pods | grep <vcluster-name>
+  ```
+
+- **Verify TSNet connectivity**:
+  ```bash
+  kubectl -n <namespace> logs <vcluster-pod> | grep -i "tsnet" | tail -10
+  ```
+
+- **Confirm platform status**: Check that the vCluster now shows as ready in the vCluster Platform UI.
+
+- **Test vCluster functionality**:
+  ```bash
+  vcluster connect <vcluster-name> -n <namespace>
+  kubectl get nodes
+  ```
+
+## Prevention
+
+To prevent future TSNet connection issues, you can apply the following preventive measures in your vCluster configuration:
+
+```yaml title="vcluster.yaml"
+controlPlane:
+  statefulSet:
+    env:
+      - name: "TS_DEBUG_DIAL_DIRECT"
+        value: "false"
+      - name: "TS_DEBUG_NETCHECK"
+        value: "true"
+    resources:
+      requests:
+        memory: "256Mi"
+        cpu: "100m"
+      limits:
+        memory: "512Mi"
+        cpu: "500m"
+```
+
+This configuration:
+- Disables direct peer-to-peer connections
+- Sets appropriate resource limits for stable operation
+
+
+## Best practices
+
+To ensure reliable TSNet connectivity in the platform:
+
+- **Always disable direct connections**: Set `TS_DEBUG_DIAL_DIRECT=false` in environments to avoid connection issues.
+
+- **Monitor network policies**: Ensure your host cluster's network policies allow outbound connections to the platform coordination server.
+
+- **Configure appropriate timeouts**: Set reasonable timeout values for network operations in restricted environments.
+
+- **Use resource limits**: Configure appropriate CPU and memory limits to prevent resource contention that could affect network connectivity.
+
+- **Test connectivity during deployment**: Verify platform connectivity as part of your vCluster deployment process to catch issues early.
