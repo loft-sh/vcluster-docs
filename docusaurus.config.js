@@ -143,7 +143,7 @@ const config = {
             badge: true,
           },
           "0.23.0": {
-            label: "v0.23",
+            label: "v0.23 (EOS)",
             banner: "none",
             badge: true,
           },
