@@ -307,6 +307,12 @@ const config = {
         theme: prismThemes.dracula,
         additionalLanguages: ["bash", "hcl"],
       },
+      mermaid: {
+        theme: {
+          light: 'default',
+          dark: 'dark',
+        },
+      },
       announcementBar: {
         id: "platform-upgrade",
         content:
@@ -317,6 +323,14 @@ const config = {
       },
     }
   ),
+  
+  // Enable experimental faster features with required v4 flags
+  future: {
+    experimental_faster: true,
+    v4: {
+      removeLegacyPostBuildHeadAttribute: true,
+    },
+  },
 };
 
 export default config;
