@@ -354,7 +354,9 @@ func GenerateFromPath(schema *jsonschema.Schema, basePath string, schemaPath str
 			refSplit := strings.Split(ref, "/")
 			fieldSchema, ok = schema.Definitions[refSplit[len(refSplit)-1]]
 			if !ok {
-				panic("Couldn't find schema definition " + refSplit[len(refSplit)-1])
+				// Related to error: https://linear.app/loft/issue/OPS-170/fix-failure-in-linear-sync-issues-job-on-024x-line
+				fmt.Printf("Warning: Skipping schema path '%s' (schema definition '%s' not found)\n", schemaPath, refSplit[len(refSplit)-1])
+				return
 			}
 		}
 	}
