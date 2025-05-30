@@ -1,55 +1,317 @@
 ---
-title: Deploy in Air-Gapped Environments
+title: Deploy in air-gapped environments
 sidebar_label: Using Air-Gapped Installation
 sidebar_position: 1
+toc_max_heading_level: 3
 description: Learn how to install vCluster platform in air-gapped, offline, or VPC environments with restricted network connectivity.
 ---
 
 import Flow, { Step } from "@site/src/components/Flow";
-import PartialAdminSetVersion from "../../_partials/install/set-version.mdx";
-import PartialAdminUpgrade from "../../_partials/install/upgrade.mdx";
 import Mark from "@site/src/components/Mark";
 
 import BasePrerequisites from '../../_partials/install/base-prerequisites.mdx';
-import LoginAfterHelmInstall from '../../_partials/install/login-after-helm-install.mdx';
-import InstallNextSteps from '../../_partials/install/install-next-steps.mdx';
 import NetworkPorts from '../../_partials/install/open-ports.mdx';
 
-
-If your cluster is air-gapped, within a VPC, or has restricted network connectivity, you may encounter issues validating the platform license and pulling required container images.
-
-To solve the licensing issue, you can either use allow HTTP requests from
-the platform pods to
-`https://admin.loft.sh/*` (this is the preferred option), or use an
-[offline license key](#offline-license-key).
-
-To address image pulling issues from Docker Hub, you can [use a private image
-registry](#offline-images) to host your own copies of the platform images
-accessible to your cluster.
+This guide walks you through installing vCluster Platform and deploying virtual clusters in environments without internet access, referred to as air-gapped environments. It covers setting up a private OCI-compliant registry, populating it with container images and Helm charts, configuring vCluster Platform and agents to pull from the registry, and deploying virtual clusters securely and offline.
 
 ## Prerequisites
 
-<BasePrerequisites />
+- **OCI-compliant private registry with a `/charts` folder** - A private registry accessible to both the Kubernetes cluster for the platform and connected host clusters and a separate, internet-connected machine.
+- **An offline license key for vCluster Platform** - A LoftLabs license key is required to install vCluster Platform.
+    :::info
+    Contact sales@loft.sh to purchase an offline license key or request a trial license key for offline use.
+    :::
 
--  A private Docker registry accessible to both the installer computer and the air-gapped Kubernetes cluster
+## Overview
 
-### Optional prerequisites
+There are several artifacts that are typically accessed using an internet connection. To complete an air-gapped install, these artifacts need to be accessible by the Kubernetes cluster through a private registry.
 
-- On the installation computer:
-  - `docker` (verify with `docker version`)
-  - An offline license key for the platform (provided by Loft)
+<!-- vale off -->
+- **vCluster Platform Helm chart** - This Helm chart is typically accessed through the LoftLabs charts repository and is used for installing vCluster Platform and connecting hosts (for example installing agents).
+- **vCluster Helm chart** - This Helm chart is typically accessed through the LoftLabs charts repository and is used for deploying virtual clusters.
+- **Images used in the Helm charts**  - These images are typically accessed through different container registries.
 
-### Supported Kubernetes versions
+After populating the registry with the artifacts, install vCluster Platform, connect host clusters and then deploy virtual clusters. Each step requires additional configuration to use your private registry.
 
-- A running air-gapped Kubernetes cluster with one of the [supported versions](/docs/vcluster/deploy/upgrade/supported_versions#kubernetes-compatibility-matrix)
+## Populate images to private registry
 
-:::note
-Although the platform might work with other versions, using the supported versions is recommended to avoid potential issues.
+Each [vCluster Platform GitHub release](https://github.com/loft-sh/loft/releases) and [vCluster GitHub release](https://github.com/loft-sh/vcluster/releases) provides multiple release assets to help you upload images to a private registry. These assets include text files listing all necessary images and scripts to automate downloading (pulling) and pushing them.
+
+### Image text files
+
+Each [vCluster Platform release](https://github.com/loft-sh/loft/releases) includes a file that lists all container images required for installing vCluster Platform:
+
+- `images.txt` — Required images for installing vCluster Platform.
+
+In vCluster releases v0.25.0 and later, two files list the container images needed to deploy a vCluster:
+
+- `images.txt` — Required images for deploying vCluster with the default Kubernetes version.
+- `images-optional.txt` — Additional images for deploying vCluster with a different Kubernetes version.
+
+In vCluster releases **earlier than v0.25.0**, a single file is provided:
+
+- `vcluster-images.txt` — Required images for deploying vCluster with the default Kubernetes version.
+
+### Scripts to pull and push images
+
+Both product releases contain one script which helps download and package the list of images and another script that pushes images to the private registry. The script from either release can be used
+to populate the registry.
+
+The difference between the scripts in the different releases is the default name of the tarball that is created. These instructions override the defaults to ensure the correct image text file and tarball is created.
+
+- `download-images.sh` - A bash script that quickly iterates over all the images files to pull them and package them into a tarball to a machine that has internet access.
+- `push-images.sh` - A bash script that takes the tarball generated from the download script to push them to your private registry.
+
+:::tip
+Both releases include `download-images.sh` and `push-images.sh`, but you only need to download the scripts once.
 :::
 
-### Resource requirements
+### Pull and push images for vCluster Platform
 
-- Pod Resource Requirements:
+Download the required platform images from public registries and upload them to your private registry for air-gapped installation.
+
+#### Prerequisites
+
+- Access to the internet
+- Ability to push to your OCI-compliant private registry
+- Logged in to GitHub Container Registry
+- `wget` installed
+- `docker` installed
+
+#### Populate the registry with images
+
+Follow these steps to populate the registry with the required platform images.
+
+<Flow id="offline-platform-images">
+  <Step>
+
+  Set environment variables for the version of vCluster Platform that you want to deploy and the private registry.
+
+        ```bash title="Export environment variables"
+        export PLATFORM_VERSION=4.3.0 # Replace with desired version
+        export REGISTRY=ecr.io/myteam # This should be a prefix; do not include any image paths
+        ```
+  </Step>
+  <Step>
+
+  Download the assets from the [vCluster Platform GitHub release](https://github.com/loft-sh/loft/releases) and make the scripts executable.
+
+  :::warning
+  The `images.txt` contains a `vcluster-pro` image for the default vCluster version, but doesn't contain all the images required
+  to deploy vCluster. An additional step is required to retrieve all vCluster images.
+  :::
+
+  ```bash title="Download assets and prepare scripts"
+  wget https://github.com/loft-sh/loft/releases/download/v${PLATFORM_VERSION}/loft-images.txt
+  wget https://github.com/loft-sh/loft/releases/download/v${PLATFORM_VERSION}/download-images.sh
+  wget https://github.com/loft-sh/loft/releases/download/v${PLATFORM_VERSION}/push-images.sh
+
+  chmod +x ./download-images.sh
+  chmod +x ./push-images.sh
+  ```
+
+  </Step>
+  <Step>
+
+  Run `download-images.sh` to pull all images and create a tarball of the images.
+
+  Review the output to confirm all images were pulled successfully and packaged in the tarball.
+
+  ```bash title="Download and package images"
+  ./download-images.sh --image-list loft-images.txt --images loft-images.tar.gz
+  ```
+
+  </Step>
+  <Step>
+
+  Run `push-images.sh` to upload all required images to your private registry.
+
+  When pushing images to your private registry, references to the original (public) image registry are removed. Only the image name and repository are preserved. This enables vCluster to pull all images from your configured private registry.
+
+  ```bash title="Push images to private registry"
+  ./push-images.sh --registry ${REGISTRY} --images loft-images.tar.gz
+  ```
+
+  </Step>
+</Flow>
+
+
+### Pull and push images for vCluster
+
+Follow these steps to populate the registry with the specific images needed for deploying vCluster.
+
+<Flow id="offline-vcluster-images">
+  <Step>
+
+  Set environment variables for the version of vCluster that you want to deploy and the private registry.
+
+  :::tip
+  You can review the `tag` of the `vcluster-pro` image in
+  `images.txt` to pick the default vCluster version.
+  :::
+
+    ```bash title="Export environment variables"
+    export VCLUSTER_VERSION=0.25.0 # Replace with desired version
+    # Setting the REGISTRY environment is redundant from the steps in populating vCluster Platform images
+    # export REGISTRY=ecr.io/myteam # This should be a prefix; do not include any image paths
+    ```
+  </Step>
+  <Step>
+
+  Download the text files from the [vCluster GitHub release](https://github.com/loft-sh/vcluster/releases).
+
+  The `images.txt` or `vcluster-images.txt` files contain multiple Kubernetes versions and distributions. You can edit the file and remove the images for any unwanted versions and distributions.
+    
+  ```bash title="Download image text file for vCluster v0.25.0+ versions"
+  wget https://github.com/loft-sh/vcluster/releases/download/v${VCLUSTER_VERSION}/images.txt
+  ```
+
+  ```bash title="Download image text file for vCluster < v0.25.0 versions"
+  wget https://github.com/loft-sh/vcluster/releases/download/v${VCLUSTER_VERSION}/vClusterimages.txt
+  ```
+  
+  </Step>
+  <Step>
+
+  **Optional**: Download the scripts from the [vCluster GitHub release](https://github.com/loft-sh/vcluster/releases) and make them executable. 
+  
+  :::note
+  If you've already completed this as part of populating the platform images, you can skip this step.
+  ::: 
+  
+  ```bash title="Download prepare scripts"
+   wget https://github.com/loft-sh/vcluster/releases/download/v${VCLUSTER_VERSION}/download-images.sh
+   wget https://github.com/loft-sh/vcluster/releases/download/v${VCLUSTER_VERSION}/push-images.sh
+   chmod +x ./download-images.sh
+   chmod +x ./push-images.sh
+  ```
+
+  </Step>
+  <Step>
+
+  Run `download-images.sh` to pull all images and create a tarball of the images.
+
+  Review the output to confirm all images were pulled successfully and packaged in the tarball.
+
+  ```bash title="Download and package images for vCluster v0.25.0+ versions"
+  ./download-images.sh --image-list images.txt --images vcluster-images.tar.gz
+  ```
+
+    ```bash title="Download and package images for vCluster < v0.25.0 versions"
+  ./download-images.sh --image-list vcluster-images.txt --images vcluster-images.tar.gz
+  ```
+
+  </Step>
+  <Step>
+
+  Run `push-images.sh` to upload all required images to your private registry.
+
+  Images are pushed to your private registry without public registry references, preserving only the repository and image name. 
+  You can configure vCluster to use your private registry for all deployments.
+
+  ```bash title="Push images to private registry"
+  ./push-images.sh --registry ${REGISTRY} --images vcluster-images.tar.gz
+  ```
+
+  </Step>
+
+  <Step>
+  **Optional**: If you want to deploy vCluster v0.25.0 or later with a different Kubernetes version, download the `images-optional.txt` file from the [vCluster GitHub release](https://github.com/loft-sh/vcluster/releases). Additional container images for the version must be downloaded and uploaded to your private registry.
+
+  The `images-optional.txt` contains multiple Kubernetes distributions and versions. You can edit the file and remove the images for the unwanted distributions and versions.
+
+    ```bash title "Pull, package, and push all optional images"
+    wget https://github.com/loft-sh/vcluster/releases/download/v${VCLUSTER_VERSION}/images-optional.txt
+    ./download-images.sh --image-list images-optional.txt --images vcluster-images-optional.tar.gz
+    ./push-images.sh --registry ${REGISTRY} --images vcluster-images-optional.tar.gz
+    ```
+
+  </Step>
+</Flow>
+
+## Populate the Helm charts to a private registry
+
+You can push the following Helm charts to your OCI-compliant private registry:
+
+- **vCluster Platform Helm chart**: The core chart for deploying the vCluster platform.
+- **Version-specific Helm charts**: Charts required for each vCluster version you intend to deploy.
+- **Application Helm charts**: Charts for applications you plan to deploy with vCluster. See [Apps documentation](../../understand/what-are-apps) for details.
+- **Experimental configuration charts**: Charts needed when using `experimental.deploy.vcluster.helm` [configuration settings](/docs/vcluster/configure/vcluster-yaml/#experimental-deploy-vcluster).
+
+:::warning
+Detailed steps are only provided for how to pull and push the vCluster Platform and vCluster Helm chart.
+:::
+
+#### Prerequisites
+
+- Access to the internet
+- Ability to push to your OCI-compliant private registry
+- `helm` installed: Helm v3.10+
+
+### Pull and push the vCluster Platform Helm chart
+
+<Flow id="offline-platform-helm-chart">
+  <Step>
+
+  :::note
+  If you haven’t already set the environment variables, set them now before continuing.
+  :::
+
+  The private registry requires a `/charts` folder, where you must push all Helm charts.
+
+   ```bash title="Export environment variables"
+   export PLATFORM_VERSION=4.3.0 # Replace with desired version
+   export REGISTRY=ecr.io/myteam # A charts folder is expected
+   ```
+
+  </Step>
+  <Step>
+  Pull the platform Helm chart and push it to your private registry with the OCI protocol:
+
+  ```bash title="Pull and push the Helm chart to your private registry"
+  helm pull vcluster-platform --repo https://charts.loft.sh --version ${PLATFORM_VERSION}
+  helm push vcluster-platform-${PLATFORM_VERSION}.tgz oci://${REGISTRY}/charts
+  ```
+  </Step>
+</Flow>
+
+### Pull and push the vCluster Helm chart
+
+<Flow id="offline-helm-chart">
+  <Step>
+
+  :::notes
+  If you haven’t already set the environment variables, set them now before continuing.
+  :::
+
+ The private registry assumes having a `/charts` folder, which is where to push all the Helm charts.
+
+   ```bash title="Export environment variables"
+   export VCLUSTER_VERSION=0.25.0 # Replace with desired version
+   export REGISTRY=ecr.io/myteam # A charts folder is expected
+   ```
+
+  </Step>
+   <Step>
+  Pull the vCluster Helm chart and push it into your private registry with the OCI protocol.
+
+  ```bash title="Pull and push the Helm chart to your private registry"
+  helm pull vcluster --repo https://charts.loft.sh --version ${VCLUSTER_VERSION}
+  helm push vcluster-${VCLUSTER_VERSION}.tgz oci://${REGISTRY}/charts
+  ```
+  </Step>
+</Flow>
+
+## Configure and install vCluster Platform and agent {#configure-install-platform-agent}
+
+To install the platform and connect hosts, you must configure a `vcluster-platform.yaml` file.
+This YAML file is used as the `values.yaml` for the vCluster Platform Helm chart.
+
+### Prerequisites
+
+- The cluster must have access to pull the **vCluster Platform images** from the private registry.
+<BasePrerequisites />
+- vCluster Platform Pod Resource Requirements
 
   - Requests
     - memory: `256Mi`
@@ -57,112 +319,458 @@ Although the platform might work with other versions, using the supported versio
   - Limits
     - memory: `4Gi`
     - cpu: `2`
-  
+
 <NetworkPorts />
 
+### vCluster Platform and agent configuration
 
-## Deployment
+The `vcluster-platform.yaml` file contains all configuration settings for your vCluster Platform and connected hosts (agents) installation.
 
-### Offline images
+<details>
+  <summary>Reference the offline license key</summary>
 
-For clusters unable to pull images from Docker Hub, you must push the platform images to your private registry. Each platform release includes a `loft-images.txt` file that lists the necessary images.
-
-:::warning
-When using virtual clusters in air-gapped environments, the
-`config.experimental.deploy.vcluster.helm` [configuration setting](/docs/vcluster/configure/vcluster-yaml/#experimental-deploy-vcluster) does not work with external Helm repositories since they cannot be accessed. This means custom Helm charts from repositories like `charts.bitnami.com` cannot be used for virtual cluster deployments.
-:::
-
-Follow these instructions to download all platform images and import them to your private registry:
-
-<Flow id="offline-images">
-    <Step>
-        <PartialAdminSetVersion/>
-  </Step>
-  <Step>
-
-Set your private registry as a variable:
-
-```bash title="Set private registry"
-REGISTRY=ecr.io/myteam      # This should be a prefix; do not include any LOFT_IMAGE paths
-```
-
-  </Step>
-  <Step>
-
-Download the `loft-images.txt` file and the required scripts `download-images.sh` and `push-images.sh`, then make them executable:
-
-```bash title="Download and prepare scripts"
-wget https://github.com/loft-sh/loft/releases/download/v${VERSION}/loft-images.txt
-wget https://github.com/loft-sh/loft/releases/download/v${VERSION}/download-images.sh
-wget https://github.com/loft-sh/loft/releases/download/v${VERSION}/push-images.sh
-
-chmod +x ./download-images.sh
-chmod +x ./push-images.sh
-```
-
-  </Step>
-  <Step>
-
-Run `download-images.sh` to download all images locally:
-
-```bash title="Download images"
-./download-images.sh --image-list loft-images.txt
-```
-
-  </Step>
-  <Step>
-
-Run `push-images.sh` to push all downloaded images to your private registry:
-
-```bash title="Push images to private registry"
-./push-images.sh --registry ${REGISTRY}
-```
-
-    </Step>
-    <Step>
-
-Edit your existing `vcluster-platform.yaml` file or create a new one with the following content:
-
-```yaml title="vcluster-platform.yaml"
-image: ${REGISTRY}/ghcr.io/loft-sh/loft:${VERSION} # Replace ${REGISTRY} and ${VERSION}
-env:
-  DEFAULT_IMAGE_REGISTRY: ${REGISTRY} # Replace ${REGISTRY}
-```
-
-:::info Example of a fully formed registry path
-If your `REGISTRY` is set to `ecr.io/myteam`, a fully formed registry path might look like:
-`ecr.io/myteam/ghcr.io/loft-sh/loft:3.0.0`
-:::
-
-    </Step>
-    <Step>
-        <PartialAdminUpgrade/>
-    </Step>
-
-</Flow>
-
-
-## Configuration
-
-#### Offline license key
-
-If your cluster does not allow the platform pod to connect to the platform license server (`https://admin.loft.sh/*`), contact [sales@loft.sh](mailto:sales@loft.sh) to purchase an offline license key or request a trial license key for offline use.
-
-Edit the platform install values as follows to use your offline license key:
+Reference the license key so that the platform can start with all your enterprise features enabled.
 
 ```yaml title="Offline license configuration"
 env:
   LICENSE_KEY: "YOUR_LICENSE_KEY"
 ```
 
-:::info
-Apply this configuration during the initial installation process or when upgrading the platform. Include it in your `vcluster-platform.yaml` file or pass it as a value to the Helm install or upgrade command.
+</details>
+
+<details>
+  <summary>Use a private registry without credentials</summary>
+
+- Set the **image** to be used by the vCluster Platform Helm chart to the image in the private registry.
+- Set the **default registry** for pulling images used in installing vCluster Platform or connecting hosts (i.e. deploying agents).
+- Set the **default chart registry** in the `vcluster-platform.yaml` as the
+default Helm repository when creating virtual clusters. This should prefix with `oci://` to ensure it's being
+deployed using OCI protocol as well as the `/charts` folder.
+
+```yaml title="Setting the image for vCluster Platform and the default  private registry"
+image: ecr.io/myteam/loft-sh/vcluster-platform:<PLATFORM_VERSION> # Replace with the fully formed image name based on your private registry
+
+env:
+  DEFAULT_IMAGE_REGISTRY: ecr.io/myteam
+  DEFAULT_VCLUSTER_CHART_REPO: oci://ecr.io/myteam/charts
+
+# The agent values are needed to keep the agent up to date with the same settings
+agentValues:
+  env:
+    DEFAULT_IMAGE_REGISTRY: ecr.io/myteam
+    DEFAULT_VCLUSTER_CHART_REPO: oci://ecr.io/myteam/charts
+```
+
+</details>
+
+<details>
+  <summary>Use an authenticated private registry</summary>
+
+- Set the **image** to be used by the vCluster Platform Helm chart to the image in the private registry.
+- Set the **default registry** for pulling images used in installing vCluster Platform or connecting hosts (i.e. deploying agents).
+- Set the **default chart registry** in the `vcluster-platform.yaml` as the
+default Helm repository when creating virtual clusters. This should prefix with `oci://` to ensure it's being
+deployed using OCI protocol as well as the `/charts` folder.
+- For registries that require authentication, create a Kubernetes secret in the namespace where you deploy the vCluster Platform or agent.
+- Reference the **secret** to use those credentials for the registries.
+
+```yaml title="Setting the image for vCluster Platform and the default  private registry"
+image: ecr.io/myteam/loft-sh/vcluster-platform:v<PLATFORM_VERSION> # Replace with the fully formed image name based on your private registry
+
+env:
+  DEFAULT_IMAGE_REGISTRY: ecr.io/myteam
+  DEFAULT_VCLUSTER_CHART_REPO: oci://ecr.io/myteam/charts
+  HELM_REGISTRY_CONFIG: /loft/helm/.dockerconfigjson
+
+volumes:
+  - name: helm-pull-secret
+    secret:
+      secretName: registry-credentials-secret-name # Replace with the name of the secret deployed on the host cluster of where the Platform is deployed
+
+volumeMounts:
+  - name: helm-pull-secret
+    mountPath: /loft/helm
+    readOnly: true
+
+# The agent values are needed to keep the agent up to date with the same settings
+agentValues:
+  env:
+    DEFAULT_IMAGE_REGISTRY: ecr.io/myteam
+    DEFAULT_VCLUSTER_CHART_REPO: oci://ecr.io/myteam/charts
+    HELM_REGISTRY_CONFIG: /loft/helm/.dockerconfigjson
+
+  volumes:
+  - name: helm-pull-secret
+    secret:
+      secretName: registry-credentials-secret-name # Replace with the name of the secret deployed on the host cluster of where the Platform is deployed
+
+  volumeMounts:
+  - name: helm-pull-secret
+    mountPath: /loft/helm
+    readOnly: true
+```
+
+:::warning
+This only configures the registry authentication for managing virtual clusters with Helm.
+- See [App Reference](../../api/resources/apps#app-reference) to configure the chart [repository URL](../../api/resources/apps#spec-config-chart-repoURL) with [username](../../api/resources/apps#spec-config-chart-usernameRef) and [password](../../api/resources/apps#spec-config-chart-passwordRef) authentication.
+- See `experimental.deploy.vcluster.helm` [configuration](/docs/vcluster/configure/vcluster-yaml/#experimental-deploy-vcluster) to configure [repository](/docs/vcluster/configure/vcluster-yaml/#experimental-deploy-vcluster-helm-chart-repo) with [username](/docs/vcluster/configure/vcluster-yaml/#experimental-deploy-vcluster-helm-chart-username) and [password](/docs/vcluster/configure/vcluster-yaml/#experimental-deploy-vcluster-helm-chart-password) authentication.
 :::
 
-## Log in
+</details>
 
-<LoginAfterHelmInstall />
+<details>
+  <summary>Use different vCluster Platform login credentials</summary>
 
-## Next steps
-### Create virtual clusters
-<InstallNextSteps />
+If the username and password are not set in your `vcluster-platform.yaml`, the default credentials are:
+
+- Username: `admin`
+- Password: `my-password`
+
+```yaml title="Set different vCluster Platform login credentials"
+admin:
+  create: true
+  username: newadmin
+  password: "newpassword"
+```
+
+</details>
+
+### Install the platform {#install-platform}
+
+It is recommended to install vCluster Platform on its own host cluster.
+
+#### Prerequisites
+- The machine that is running the install commands must have access to pull the Helm chart from the private registry.
+- The host cluster where the vCluster Platform is being installed on must have access to pull images from the private registry.
+<BasePrerequisites />
+
+#### Install vCluster Platform {#install-vcluster-platform}
+
+<Flow id="install-vcluster-platform">
+  <Step>
+  On the host cluster, create the namespace for the platform, where vCluster Platform and optionally login credentials are to be deployed in.
+
+  ```bash title="Create vCluster Platform namespace"
+  export PLATFORM_NAMESPACE=vcluster-platform
+  kubectl create namespace ${PLATFORM_NAMESPACE}
+  ```
+
+  </Step>
+  <Step>
+  **Optional**: create a secret to authenticate to your private registry.
+
+  If your private registry requires authentication, create a Kubernetes secret that stores your login credentials.
+  Place this secret in the same namespace where the vCluster Platform is deployed. There are multiple ways to create your registry credentials as a secret.
+
+  Read more about how to quickly create a [secret from your docker login](https://kubernetes.io/docs/reference/kubectl/generated/kubectl_create/kubectl_create_secret_docker-registry/).
+
+  ```bash title="Example of how to create a Kubernetes secret for login credentials"
+  kubectl create -f - <<EOF
+  apiVersion: v1
+  kind: Secret
+  metadata:
+    name: registry-credentials-secret-name
+    namespace: ${PLATFORM_NAMESPACE}
+  type: Opaque
+  data:
+    # Credentials based on your private registry
+  EOF
+  ```
+
+  </Step>
+  <Step>
+
+  Deploy vCluster Platform into the same namespace.
+
+  ```bash title="Deploy vCluster with Helm"
+  export PLATFORM_VERSION=4.3.0 # Replace with the chart version that was pushed into your private registry
+  export REGISTRY=myecr.io/team # Replace with the private registry
+
+  helm upgrade --install vcluster-platform oci://${REGISTRY}/charts/vcluster-platform:${PLATFORM_VERSION} \
+    --version ${PLATFORM_VERSION} \
+    --values vcluster-platform.yaml \
+    --namespace ${PLATFORM_NAMESPACE}
+  ```
+
+  </Step>
+
+</Flow>
+
+### Connect host clusters
+
+After installing the platform, connect host clusters by deploying an agent on each host. The host clusters must be able to access the domain where vCluster Platform is hosted.
+
+Deploying an agent is deploying the vCluster Platform Helm chart and `vcluster-platform.yaml`.  The only difference is when deploying the vCluster Platform Helm
+chart is adding additional variables to figure out how to connect to the platform.
+
+#### Prerequisites
+
+- The machine that is running the install commands must have access to pull the Helm chart from the private registry.
+- The host cluster where the vCluster Platform is being installed on must have access to pull images from the private registry.
+<BasePrerequisites />
+
+#### Deploy agents to connect host clusters
+
+<Flow id="install-agent">
+  <Step>
+  On the host cluster, create the namespace for the agent installation, where the agent and optionally login credentials are to be deployed in.
+
+  ```bash title="Create vCluster Platform namespace"
+  export AGENT_NAMESPACE=vcluster-platform
+  kubectl create namespace ${AGENT_NAMESPACE}
+  ```
+
+  </Step>
+  <Step>
+  **Optional**: Create a Secret to authenticate with your private registry.
+
+  If your private registry requires authentication, create a Kubernetes Secret that stores your login credentials.
+  Place this secret in the same namespace where the agent is deployed. There are multiple ways to create your registry credentials as a Secret.
+
+  For more details, see [Create a Secret from your Docker login](https://kubernetes.io/docs/reference/kubectl/generated/kubectl_create/kubectl_create_secret_docker-registry/).
+
+  ```bash title=" Create a Kubernetes secret for login credentials example"
+  kubectl create -f - <<EOF
+  apiVersion: v1
+  kind: Secret
+  metadata:
+    name: registry-credentials-secret-name
+    namespace: ${AGENT_NAMESPACE}
+  type: Opaque
+  data:
+    # Credentials based on your private registry
+  EOF
+  ```
+
+  </Step>
+  <Step>
+
+  Deploy the agent into the same namespace.
+
+  ```bash title="Deploy vCluster with Helm"
+  export PLATFORM_VERSION=4.3.0 # Replace with the chart version that was pushed into your private registry
+  export REGISTRY=myecr.io/team # Replace with the private registry
+
+  export PLATFORM_DOMAIN=https://myvclusterplatform.com
+  export PLATFORM_TOKEN=<YOUR_PLATFORM_ACCESS_TOKEN>
+
+  helm upgrade --install vcluster-platform oci://${REGISTRY}/charts/vcluster-platform:${PLATFORM_VERSION} \
+    --version ${PLATFORM_VERSION} \
+    --values vcluster-platform.yaml \
+    --namespace ${AGENT_NAMESPACE} \
+    --set agentOnly=true \
+    --set url=$PLATFORM_DOMAIN \
+    --set token=$PLATFORM_TOKEN
+  ```
+
+  </Step>
+</Flow>
+
+## Configure and deploy virtual clusters {#configure-deploy-virtual-clusters}
+
+#### Prerequisites
+
+Before deploying a virtual cluster, ensure the following:
+
+- The host cluster must have access to pull vCluster images from the private registry.
+
+### Virtual cluster configuration {#virtual-cluster-configuration}
+
+The `vcluster.yaml` file defines all configuration settings for your virtual cluster deployment.
+
+<details>
+  <summary>Use a private registry without credentials</summary>
+
+Set the default private registry that does **not** have authentication.
+
+```yaml title="Setting the private registry"
+controlPlane:
+ advanced:
+   defaultImageRegistry: ecr.io/myteam # Replace with your private registry
+```
+</details>
+
+<details>
+  <summary>Use an authenticated private registry</summary>
+
+For registries that require authentication, create a Kubernetes secret in the namespace where you deploy the vCluster.
+Assign the secret as an image pull secret for the vCluster control plane to access required images.
+
+Optionally, you can use the same image pull secret for workloads inside the vCluster that pull from the same registry.
+
+```yaml title="Image pull secrets configuration"
+controlPlane:
+  advanced:
+    defaultImageRegistry: ecr.io/myteam # Replace with your private image registry
+    serviceAccount:
+      imagePullSecrets: # Uses credentials for the vCluster control plane
+        - name: registry-credentials-secret-name # Replace with the name of the secret deployed on the host cluster of where the vCluster is deployed
+    workloadServiceAccount: # Uses credentials for any workloads created in the vCluster
+      imagePullSecrets:
+        - name: registry-credentials-secret-name # Replace with the name of the secret deployed on the host cluster of where your vCluster is deployed
+```
+
+:::warning
+When using virtual clusters in air-gapped environments, the
+`config.experimental.deploy.vcluster.helm` [configuration setting](/docs/vcluster/configure/vcluster-yaml/#experimental-deploy-vcluster) does not work with external Helm repositories since they cannot be accessed. This means custom Helm charts from repositories like `charts.bitnami.com` cannot be used for virtual cluster deployments.
+:::
+
+</details>
+
+<details>
+  <summary>Use a non-default Kubernetes version</summary>
+
+For vCluster v0.25.0+, if you downloaded `images-optional.txt` to use a different Kubernetes version, configure vCluster to use that version in your deployment.
+
+```yaml title="Specific Kubernetes version configuration"
+controlPlane:
+  distro:
+    k8s:
+      image:
+        tag: v1.31.1 # Replace with the Kubernetes version that you have chosen
+```
+
+For other versions, refer to the vCluster docs on how to set your image versions.
+
+</details>
+
+<details>
+  <summary>Replace the alpine image</summary>
+
+If you use the `sync.toHost.pods.rewriteHosts` feature, manually replace the full path of the [alpine image](https://hub.docker.com/_/alpine) with your private registry path.
+The `defaultImageRegistry` setting does not apply to this image.
+
+```yaml title="Replace the alpine image"
+sync:
+  toHost:
+    pods:
+      rewriteHosts:
+        initContainer:
+          image: ecr.io/myteam/library/alpine:3.20
+```
+
+</details>
+
+### Deploy vCluster through the platform 
+
+When deploying vCluster through the platform console, you'll must add your `vcluster.yaml`.
+
+#### Use an authenticated private registry
+
+If you are using a private registry with authentication, you'll need to create a Kubernetes secret that stores your login credentials.  Place this secret in the same namespace where the vCluster is deployed so the control plane can pull the required container images.
+
+In the options for the config, there is a section called `Host namespace`, add the yaml for the secret in the `Kubernetes objects` section.
+
+  ```yaml title="Kubernetes secret for login credentials"
+  apiVersion: v1
+  kind: Secret
+  metadata:
+    name: registry-credentials-secret-name
+    namespace: ${VCLUSTER_NAMESPACE}
+  type: Opaque
+  data:
+    # Credentials based on your private registry
+  ```
+
+### Deploy vCluster using Helm
+
+#### Prerequisites
+
+<BasePrerequisites />
+
+<Flow>
+  <Step>
+
+  In the platform UI, create an [access key](../../administer/users-permissions/access-keys) to connect vCluster to the platform. Save the **access key**.
+
+  </Step>
+  <Step>
+
+  Create a Kubernetes secret using the **access key** in a namespace on the host cluster.
+
+ ```bash title="Create platform API key namespace and secret for platform API key"
+  export APIKEY_NAMESPACE=api-key-namespace
+  kubectl create namespace ${APIKEY_NAMESPACE}
+
+
+  kubectl create -f - <<EOF
+  apiVersion: v1
+  kind: Secret
+  metadata:
+    name: vcluster-platform-api-key
+    namespace: ${APIKEY_NAMESPACE}
+  type: Opaque
+  data:
+    accessKey: # Access key from the Platform UI
+    host: # domain name of platform
+    insecure: # ???
+  EOF
+```
+
+  </Step>
+
+  <Step>
+  **Optional**: Create a secret to authenticate to your private registry.
+
+  If your private registry requires authentication, create a Kubernetes secret that stores your login credentials.
+  Place this secret in the same namespace where the vCluster is deployed so the control plane can pull the required container images.
+
+  ```bash title="Create Kubernetes secret for login credentials"
+  export VCLUSTER_NAMESPACE=vcluster-my-vcluster  # Replace with the name of the namespace you want to deploy your vCluster into
+  kubectl create namespace ${VCLUSTER_NAMESPACE}
+
+  kubectl create -f - <<EOF
+  apiVersion: v1
+  kind: Secret
+  metadata:
+    name: registry-credentials-secret-name
+    namespace: ${VCLUSTER_NAMESPACE}
+  type: Opaque
+  data:
+    # Credentials based on your private registry
+  EOF
+  ```
+
+  </Step>
+  <Step>
+  Review your `vcluster.yaml` file.
+
+  ```yaml title="vcluster.yaml configuration"
+  controlPlane:
+    advanced:
+      defaultImageRegistry: ecr.io/myteam # Replace with your private image registry
+      serviceAccount:
+        imagePullSecrets:
+          - name: registry-credentials-secret-name # Replace with the name of the registry credentials secret
+      workloadServiceAccount:
+        imagePullSecrets:
+          - name: registry-credentials-secret-name # Replace with the name of the registry credentials secret
+
+  external:
+    platform:
+      apiKey:
+        namespace: api-key-namespace # Replace with the namespace that the secret of the access key was deployed in
+        secretName: vcluster-platform-api-key # Replace with the name of the secret of the access key
+        createRBAC: true # Sets up RBAC so that the vcluster can access the secret of the access key
+  ```
+  </Step>
+  <Step>
+  Deploy vCluster.
+
+  ```bash title="Deploy vCluster with Helm"
+  export VCLUSTER_NAME="my-vcluster" # Replace with what you want to name your vCluster
+  export VCLUSTER_VERSION=0.25.0 # Replace with the chart version that was pushed into your private registry
+  export REGISTRY=myecr.io/team # Replace with the private registry
+
+  # Uncomment and create a namespace if you didn't already create one for a secret for the registry
+  # export VCLUSTER_NAMESPACE=vcluster-my-vcluster  # Replace with the name of the namespace you want to deploy your vCluster into
+  # kubectl create namespace ${VCLUSTER_NAMESPACE}
+
+  helm upgrade --install "${VCLUSTER_NAME}" oci://${REGISTRY}/charts/vcluster:${VCLUSTER_VERSION} \
+    --version ${VCLUSTER_VERSION} \
+    --values vcluster.yaml \
+    --namespace ${VCLUSTER_NAMESPACE}
+  ```
+
+  </Step>
+</Flow>
