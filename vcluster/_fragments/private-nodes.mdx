@@ -1,14 +1,15 @@
 
 import PrivateNodes from '../_partials/config/privateNodes.mdx'
+import AutoUpgrade from '../_partials/config/privateNodes/autoUpgrade.mdx'
 import Networking from '../_partials/config/networking.mdx'
 import ControlPlane from '../_partials/config/controlPlane.mdx'
 import ProAdmonition from '../_partials/admonitions/pro-admonition.mdx'
 
 <ProAdmonition/>
 
-Enabling the private nodes feature in vCluster will turn off syncing of resources and instead transform vCluster into a regular hosted control plane you can join nodes into. In this case, the control plane will still run in a host cluster, but actual worker nodes need to be joined into the vCluster either via kubeadm or cluster-api. As soon as nodes are joined into the vCluster, vCluster can automatically upgrade the nodes and take over the lifecycle of them.
+Enabling the private nodes feature in vCluster will turn off syncing of resources and instead transform vCluster into a regular hosted control plane you can join regular worker nodes into. In this case, the control plane will still run as a pod in a host cluster, but actual worker nodes need to be joined into the vCluster for it to be able to schedule workloads to. As soon as nodes are joined into the vCluster, vCluster can automatically upgrade the nodes and take over the lifecycle of them.
 
-To allow actual nodes to join the vCluster control plane, the vCluster can be exposed by a LoadBalancer and this endpoint is used for joining worker nodes. Worker nodes must only be able to reach each other and the exposed vCluster, vCluster does not need to reach the nodes directly and instead uses [konnectivity](https://kubernetes.io/docs/tasks/extend-kubernetes/setup-konnectivity/) to tunnel requests from the vCluster to the nodes (e.g. for `kubectl logs` etc.). vCluster automatically deploys the Konnectivity service into the cluster.
+To allow actual nodes to join the vCluster control plane, the vCluster can be exposed by a LoadBalancer and this endpoint is used for joining worker nodes. Worker nodes must be able to reach the exposed vCluster. vCluster does not need to reach the nodes directly and instead uses [konnectivity](https://kubernetes.io/docs/tasks/extend-kubernetes/setup-konnectivity/) to tunnel requests from the vCluster to the nodes (e.g. for `kubectl logs` etc.).
 
 <br />
 
@@ -19,6 +20,24 @@ width='500'
 alt="Overview"
 />
 </center>
+
+## Comparison Private Nodes vs Resource Syncing
+
+For an overview of what is possible with private nodes mode vs regular resource syncing, see the following table:
+
+<br />
+
+|  | Private Nodes | Resource Syncing |
+|---|---|---|
+| Control Plane as Pods | Yes | Yes |
+| Isolated Control Plane | Yes | Yes |
+| Install Custom CNI | Yes | No |
+| Install Custom CSI Drivers | Yes | No |
+| Separate Network | Yes | No |
+| Completely Isolated Nodes | Yes | No |
+| Reuse Host Nodes | No | Yes |
+| Reuse Host Controllers | No | Yes |
+| See vCluster Resources in Host Cluster | No | Yes |
 
 ## Create vCluster with Private Nodes
 
@@ -90,12 +109,26 @@ curl -sfL https://raw.githubusercontent.com/loft-sh/init-node/main/init.sh | sh 
 After the installation is complete, simply run the above command to join a node into the vCluster:
 ```bash
 # Command obtained via running 'vcluster token create'
-kubeadm join --token <token> <control-plane-host>:<control-plane-port> --discovery-token-ca-cert-hash sha256:<hash>
+$ kubeadm join --token <token> <control-plane-host>:<control-plane-port> --discovery-token-ca-cert-hash sha256:<hash>
+[preflight] Running pre-flight checks
+[preflight] Reading configuration from the cluster...
+[preflight] FYI: You can look at this config file with 'kubectl -n kube-system get cm kubeadm-config -o yaml'
+[kubelet-start] Writing kubelet configuration to file "/var/lib/kubelet/config.yaml"
+[kubelet-start] Writing kubelet environment file with flags to file "/var/lib/kubelet/kubeadm-flags.env"
+[kubelet-start] Starting the kubelet
+[kubelet-start] Waiting for the kubelet to perform the TLS Bootstrap...
+
+This node has joined the cluster:
+* Certificate signing request was sent to apiserver and a response was received.
+* The Kubelet was informed of the new secure connection details.
+
+Run 'kubectl get nodes' on the control-plane to see this node join the cluster.
+
 ```
 
 ### Join Worker Nodes via Cluster API
 
-For automatically joining nodes via Cluster API, please setup the cluster via:
+For automatically joining nodes via Cluster API, please setup the cluster via the following command to install the [vCluster Cluster API provider](https://github.com/loft-sh/cluster-api-provider-vcluster):
 ```yaml
 clusterctl init --infrastructure vcluster
 ```
@@ -111,8 +144,8 @@ Then apply the manifests to the cluster and Cluster API should create the vClust
 
 ## vCluster Control Plane upgrades
 
-:::warning Single Minor Version Upgrades
-Keep in mind to not upgrade multiple minor versions at the same time. Instead always upgrade a single minor version, wait until the cluster becomes healthy and then upgrade to the next minor version. E.g. v1.26 -> v1.27 -> v1.28
+:::warning Kubernetes Version Skew Policy applies
+Keep in mind to not upgrade multiple minor versions at the same time for the control plane as outlined in the [Kubernetes Version Skew Policy](https://kubernetes.io/releases/version-skew-policy/). Instead always upgrade a single minor version, wait until the cluster becomes healthy and then upgrade to the next minor version. E.g. v1.26 -> v1.27 -> v1.28
 :::
 
 Upgrading the vCluster control plane is super simple and only requires exchanging the Kubernetes init container version, vCluster will then automatically upgrade the control plane and if configured automatically upgrade all the worker nodes. To exchange the Kubernetes version, specify the following in your `vcluster.yaml`:
@@ -127,31 +160,76 @@ controlPlane:
 
 ## vCluster Worker upgrades
 
+:::warning Kubernetes Version Skew Policy applies
+Keep in mind to follow the [Kubernetes Version Skew Policy](https://kubernetes.io/releases/version-skew-policy/) for worker upgrades.
+:::
+
 There is two modes of how worker upgrades can be done:
-* Automatically by vCluster when the control-plane was updated
-* Manually via Kubeadm
+* Automatically by vCluster when the control-plane was updated (recommended)
+* Manually via vCluster CLI or kubeadm
 
 ### Automatic Upgrades by vCluster
 
-To enable automatic worker upgrades, configure the following:
-```yaml
-...
-privateNodes:
-  enabled: true
-  automaticUpgrades:
-    enabled: true
-...
+Automatic worker node upgrades are enabled by default and vCluster will try to upgrade nodes as soon as it detects a mismatch between control-plane and worker nodes. By default vCluster will upgrade a single node at a time.
+
+The upgrade pod will run directly on the node and do the following steps on the node:
+1. Download the Kubernetes binary bundle from https://github.com/loft-sh/kubernetes/releases (this can be configured via the `bundleRepository` option)
+2. Exchange kubeadm binary
+3. Run kubeadm upgrade node
+4. Cordon the node
+5. Exchange other binaries such as containerd, kubelet etc.
+6. Restart containerd and kubelet if needed
+7. Uncordon the node
+
+<AutoUpgrade />
+
+:::warning 
+Node upgrades usually shouldn't restart any pods, but depending on the Kubernetes version upgrade it might be possible.
+:::
+
+### Manual Upgrades
+
+You can either upgrade a node via vCluster CLI by running the following command:
+```bash
+vcluster node upgrade my-node
 ```
 
-As soon as this is configured, vCluster will consistently check if the node versions do not match the control plane version. It will then loop over the nodes and upgrade each node one after another. To do the actual upgrade, vCluster will create a small container on the node that will update the binaries, upgrade via kubeadm, drain the node and then restart the kubelet (and optionally containerd).
+Or by manually using the [Kubeadm Kubernetes guide](https://kubernetes.io/docs/tasks/administer-cluster/kubeadm/upgrading-linux-nodes/) from the official documentation. 
 
-### Manual Kubeadm Upgrades
+## Addons
 
-Please follow the guide in the [Kubernetes documentation](https://kubernetes.io/docs/tasks/administer-cluster/kubeadm/upgrading-linux-nodes/). 
+### CNI
 
-## vCluster Private Nodes Mode without a Hosted Cluster
+vCluster will install [Flannel](https://github.com/flannel-io/flannel) by default, if you want to install your own custom CNI, you can disable that via:
+```yaml
+privateNodes:
+  cni:
+    flannel:
+      enabled: false
+```
 
-Coming soon...
+### CoreDNS
+
+vCluster will install [CoreDNS](https://coredns.io/) by default to allow cluster dns resolving of services and pods.
+
+### Konnectivity
+
+vCluster uses [Konnectivity](https://kubernetes.io/docs/tasks/extend-kubernetes/setup-konnectivity/) to establish a connection between control-plane and worker nodes for commands like `kubectl logs`, `kubectl exec`, `kubectl port-forward` etc. The Konnectivity server runs as part of the vCluster control plane, while an agent is deployed inside the vCluster. If not needed or wanted, you can disable Konnectivity in the vCluster config.
+
+### Kube Proxy
+
+vCluster installs [Kube Proxy](https://kubernetes.io/docs/reference/command-line-tools-reference/kube-proxy/) by default to ensure that services are configured on the nodes. Some CNI implement their own kube-proxy functionality, so you can optionally disable kube-proxy deployment in the vCluster config.
+
+### Local Path Provisioner
+
+vCluster installs [Local Path Provisioner](https://github.com/rancher/local-path-provisioner) by default to allow stateful workloads within the vCluster.
+
+## Load Docker Image into a Node
+
+To load a local docker image into a worker node you can use the following command:
+```bash
+vcluster node load-image my-node --image nginx:latest
+```
 
 ## Config reference
 
