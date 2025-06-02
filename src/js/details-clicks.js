@@ -1,6 +1,7 @@
 import ExecutionEnvironment from "@docusaurus/ExecutionEnvironment";
 
-const copyToClipboard = async (text) => {
+// Only define browser-specific functions when in browser environment
+const copyToClipboard = ExecutionEnvironment.canUseDOM ? async (text) => {
   if (navigator.clipboard && window.isSecureContext) {
     try {
       await navigator.clipboard.writeText(text);
@@ -41,9 +42,9 @@ const copyToClipboard = async (text) => {
     console.warn('Fallback clipboard method failed:', err);
     return false;
   }
-};
+} : async () => false;
 
-const addCopyButtons = function() {
+const addCopyButtons = ExecutionEnvironment.canUseDOM ? function() {
   document.querySelectorAll('details.config-field').forEach(function(el) {
     if (el.getAttribute('data-copy-button') !== 'true') {
       el.setAttribute('data-copy-button', 'true');
@@ -122,7 +123,7 @@ copyButton.style.cssText = `
       });
     }
   });
-};
+} : () => {};
 
 const parseMapValue = function(mapStr) {
   console.log('Parsing map:', mapStr);
@@ -511,7 +512,7 @@ const generateYaml = function (element, processedElements = new Set()) {
   return yaml;
 };
 
-const preserveExpansionStates = function(skipEventListener) {
+const preserveExpansionStates = ExecutionEnvironment.canUseDOM ? function(skipEventListener) {
   const state = new URLSearchParams(window.location.search.substring(1));
 
   if (document.querySelectorAll('.markdown').length == 0) {
@@ -607,10 +608,9 @@ const preserveExpansionStates = function(skipEventListener) {
     }
   });
 
-  setTimeout(function() {
-    preserveExpansionStates();
-  }, 300);
-};
+  // Remove the infinite recursion - this was causing browser errors
+  // The function is already called initially and on relevant events
+} : () => {};
 
 if (ExecutionEnvironment.canUseDOM) {
   preserveExpansionStates();
@@ -631,4 +631,4 @@ if (ExecutionEnvironment.canUseDOM) {
   }
 }
 
-export default preserveExpansionStates;
+export default ExecutionEnvironment.canUseDOM ? preserveExpansionStates : () => {};
