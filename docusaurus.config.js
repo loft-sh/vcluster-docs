@@ -299,19 +299,11 @@ const config = {
             ]
           },
         ],
-        copyright: `Copyright © ${
-          new Date().getFullYear()
-        } <a href="https://loft.sh/">LoftLabs, Inc.</a> | Documentation released under <a href="https://creativecommons.org/publicdomain/zero/1.0/">CC0 1.0 Universal</a>.`,
+        copyright: `Copyright © ${new Date().getFullYear()}<span class="footer-space-before"><a href="https://loft.sh/">LoftLabs</a></span><span class="footer-separator">|</span>Documentation released under<span class="footer-space-before"><a href="https://creativecommons.org/publicdomain/zero/1.0/">CC0 1.0 Universal</a></span>.`,
       },
       prism: {
         theme: prismThemes.dracula,
         additionalLanguages: ["bash", "hcl"],
-      },
-      mermaid: {
-        theme: {
-          light: 'default',
-          dark: 'dark',
-        },
       },
       announcementBar: {
         id: "platform-upgrade",
@@ -323,7 +315,7 @@ const config = {
       },
     }
   ),
-  
+
   // Enable experimental faster features with required v4 flags
   future: {
     experimental_faster: true,
