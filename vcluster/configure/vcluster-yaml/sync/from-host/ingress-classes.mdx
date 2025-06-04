@@ -13,9 +13,15 @@ import EnableSwitch from '../../../../_partials/config/sync/fromHost/ingressClas
 - original issue: https://github.com/loft-sh/vcluster/issues/663
 */}
 
-By default, this is disabled.
+By default, IngressClass synchronization is disabled.
 
-Sync `IngressClass` resources from the host cluster to the virtual cluster.
+You can enable this feature to sync `IngressClass` resources from the host cluster to the virtual cluster.
+
+This is useful in scenarios where selective access to ingress configurations is required. Common use cases include:
+
+- **Development environments**: Sync only the IngressClasses required for development clusters to reduce noise and avoid unnecessary exposure.
+- **Multi-tenancy**: Enable teams to use their own IngressClasses while sharing a single host cluster.
+- **Security**: Restrict the IngressClasses available in the virtual cluster to enforce access control and prevent unintended configurations.
 
 ## Enable syncing IngressClasses from the host to virtual cluster
 
@@ -26,6 +32,7 @@ sync:
       enabled: true
 ```
 
+<!-- vale off -->
 ### Example
 
 The following configuration syncs all `IngressClasses` that match the specified labels and expressions from the host cluster to the virtual cluster:
@@ -57,6 +64,7 @@ The `selector` field follows the same syntax as Kubernetes label selectors. Use 
 All specified label conditions must match for an `IngressClass` to be included in the sync.
 :::
 
+
 ## Use selectors to filter IngressClasses
 
 Use `matchLabels` and `matchExpressions` to filter which `IngressClass` resources are synced based on their labels.
@@ -86,7 +94,7 @@ Use `matchLabels` and `matchExpressions` to filter which `IngressClass` resource
 
 For more details on how to use label selectors effectively, refer to the [Kubernetes documentation on label selectors](https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/#resources-that-support-set-based-requirements).
 
-### Considerations
+## Sync behavior and considerations
 
 When `IngressClass` synchronization is enabled, the vCluster syncer uses selector criteria to control which `IngressClasses` are synchronized between the host and virtual clusters.
 
@@ -96,17 +104,21 @@ The selector configuration creates a bidirectional filter:
 
 - **From virtual cluster to host**: `Ingress` resources created in the virtual cluster are synchronized to the host only if they reference `IngressClasses` that match the selector criteria.
 
+### Resource availability and updates
 
+- Synced `IngressClass` resources appear in the virtual cluster and can be referenced by `Ingress` resources.
+- When an `IngressClass` in the host cluster is modified, the selector is re-evaluated:
+  - If it still matches, the resource is updated in the virtual cluster.
+  - If it no longer matches, it is removed from the virtual cluster.
+- If an `IngressClass` fails to meet the selector criteria, a warning is logged in the vCluster syncer pod’s output.
 
-- `IngressClass` resources synced from the host are available in the virtual cluster. You can create `Ingress` resources in the virtual cluster that reference these synced classes.
+### Orphaned Ingress resources
 
-- When an `IngressClass` in the host cluster is modified (e.g., patched or updated), the selector is re-evaluated. If it still matches the criteria, the synced `IngressClass` is updated in the virtual cluster. If it no longer matches, it is removed from the virtual cluster.
+- If a synced `IngressClass` is removed from the virtual cluster (due to selector mismatch or deletion), any `Ingress` resources referencing it remain in the virtual cluster.
+- These `Ingress` resources stop receiving updates but are not automatically deleted.
+- To remove them, you must delete them manually in the host cluster.
 
-- If an `IngressClass` cannot be synced because it doesn't meet the selector criteria, a warning is logged in the vCluster syncer pod's stdout.
-
-- Existing `Ingress` resources in the virtual cluster are not automatically deleted if their associated `IngressClass` is removed or no longer matches the selector. However, they will no longer receive updates. To remove them, you must delete them manually in the host cluster.
-
-### Constraint enforcement
+## Constraint enforcement
 
 The selector acts as both a filter and a validation mechanism:
 
@@ -116,14 +128,15 @@ The selector acts as both a filter and a validation mechanism:
 
 - **Sync restriction**: Ingress resources referencing non-matching `IngressClasses` are blocked from synchronizing to the host cluster.
 
-### Error handling
+## Error handling
 
 When an `Ingress` resource references an `IngressClass` that doesn't match the selector criteria:
+
 - The `Ingress` synchronization to the host cluster fails.
 - An event is recorded on the `Ingress` resource in the virtual cluster.
 - The event indicates that the specified `IngressClass` is not available in the host.
 
-This should look like this:
+The event output looks similar to the following:
 
 ```shell
 vcluster-virtual-cluster-1:~$ kubectl describe ingress my-ingress
@@ -135,11 +148,6 @@ Events:
   ----     ------            ----  ----                -------
   Warning  SyncWarning       10s   ingress-syncer      did not sync ingress "my-ingress" to host because it does not match the selector under 'sync.fromHost.ingressClasses.selector'
 ```
-
-### Use cases
-- **Development Environments**: Sync specific IngressClasses that are used in development environments.
-- **Multi-Tenancy**: Allow different teams to use their own IngressClasses while still sharing the same host cluster resources.
-- **Security**: Limit the IngressClasses available in the virtual cluster to only those that are necessary.
 
 ## Config reference
 
