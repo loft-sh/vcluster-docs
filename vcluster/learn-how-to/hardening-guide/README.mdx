@@ -1,0 +1,324 @@
+---
+title: CIS Hardening Guide    
+sidebar_label: Harden your vCluster for the CIS Benchmark
+description: How to harden your vCluster for the CIS Benchmark
+---
+
+<!-- vale Google.Headings = NO -->
+# CIS Hardening Guide
+<!-- vale Google.Headings = YES -->
+
+This document outlines a set of hardening guidelines for securing vCluster deployments in alignment with the [Center for Internet Security (CIS) Kubernetes Benchmark](https://www.cisecurity.org/benchmark/kubernetes). It is intended for Platform engineers, DevOps, and security teams responsible for managing and securing virtual Kubernetes clusters deployed within a multi-tenant or production environment. It is also meant to help you evaluate the level of security of the hardened cluster against each control in the benchmark.
+
+vCluster provides a lightweight, namespaced Kubernetes control plane that runs within a host Kubernetes cluster. This unique architecture introduces specific security considerations, as some components are virtualized while others remain dependent on the underlying host infrastructure. As such, certain CIS benchmark controls may apply differently or require alternative implementations within the context of vCluster.
+
+The objectives of this guide are to:
+- Identify applicable CIS controls and best practices for vCluster environments,
+- Highlight configuration options that improve the security posture of deployed vCluster,
+- Distinguish between responsibilities of the host cluster and vCluster with respect to benchmark compliance,
+- Recommend alternative techniques for evaluating and enforcing hardening policies.
+
+By following the practices outlined in this guide, organizations can improve the security and compliance readiness of their vCluster deployments while maintaining flexibility and operational efficiency.
+
+:::note
+This guide assumes that the host Kubernetes cluster is already hardened in accordance with the CIS benchmark. The focus here is on securing the vCluster environment itself, including its API server, control plane components, and access controls.
+:::
+
+This guide is intended to be used with the following versions of CIS Kubernetes Benchmark, Kubernetes, and vCluster:
+<br/>
+
+| vCluster Version | CIS Benchmark Version | Kubernetes Version |
+| --- | --- | --- |
+| v0.26.0 | v1.10.0 | v1.31 |
+
+:::important  
+This guide currently supports the K8S distribution for the vCluster API Server and Embedded Etcd as the backing store.
+Other Kubernetes distributions or backing store setups are **not covered** and may require different hardening approaches.
+:::
+
+## vCluster runtime requirements
+### Configure `default` service account
+**Set `automountServiceAccountToken: false` for 'default' service accounts in all namespaces**
+
+Kubernetes provides a default service account which is used by cluster workloads
+where no specific service account is assigned to the pod.
+Where access to the Kubernetes API from a pod is required, a specific service account
+should be created for that pod, and rights granted to that service account.
+The default service account should be configured such that it does not provide a service
+account token and does not have any explicit rights assignments.
+
+Hence, the default service account in all the namespaces must include this value
+```yaml
+automountServiceAccountToken: false
+```
+
+To achieve the same, run the below command in the virtual cluster context
+```bash
+for ns in $(kubectl get ns -o jsonpath='{.items[*].metadata.name}'); do
+  for sa in $(kubectl get sa -n $ns -o jsonpath='{.items[*].metadata.name}'); do
+    kubectl patch serviceaccount "$sa" \
+      -p '{"automountServiceAccountToken": false}' \
+      -n "$ns"
+  done
+done
+```
+### API Server audit configuration
+**Enable auditing on the Kubernetes API Server and set the desired audit log path**
+
+Control 1.2.16 of the benchmark recommends enabling auditing on the Kubernetes API Server. Auditing the Kubernetes API Server provides a security-relevant chronological set of records documenting the sequence of activities that have affected system by individual users, administrators, or other components of the system.
+Additionally, a minimal audit policy should be in place for the auditing to be carried out.
+
+Create a config map with a minimal audit policy.
+```yaml title="audit-config-configmap.yaml"
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: audit-config
+  namespace: <vcluster-namespace>
+data:
+  audit-policy.yaml: |
+    apiVersion: audit.k8s.io/v1
+    kind: Policy
+    rules:
+    - level: Metadata
+```
+
+Pass both configurations as arguments to the API Server while creating the vCluster as:
+```yaml title="vcluster.yaml"
+controlPlane:
+  distro:
+    k8s:
+      enabled: true
+      apiServer:
+        extraArgs: 
+        - --audit-policy-file=/etc/kubernetes/audit-policy.yaml
+        - --audit-log-path=/var/log/audit.log
+        - --audit-log-maxage=30
+        - --audit-log-maxbackup=10
+        - --audit-log-maxsize=100
+  statefulSet:
+    persistence:
+      addVolumes:
+      - name: audit-log
+        emptyDir: {}
+      - name: audit-policy
+        configMap:
+          name: audit-config
+      addVolumeMounts:
+      - name: audit-log
+        mountPath: /var/log
+      - name: audit-policy
+        mountPath: /etc/kubernetes
+```
+
+### API Server encryption configuration
+
+**Ensure that encryption providers are appropriately configured**
+
+Where etcd encryption is used, it is important to ensure that the appropriate set of encryption providers are utilized. Currently, the aescbc, kms, and secretbox are likely to be appropriate options.
+
+Generate a 32-bit key using the below command
+```bash
+head -c 32 /dev/urandom | base64
+```
+
+Create an encryption configuration file with base64 encoded key created previously.
+
+```yaml title="encryption-config.yaml"
+apiVersion: apiserver.config.k8s.io/v1
+kind: EncryptionConfiguration
+resources:
+  - resources:
+      - secrets
+    providers:
+      - aescbc:
+          keys:
+            - name: key1
+              secret: <base64-encoded-32-byte-key>
+      - identity: {}
+```
+
+Create a secret in the vCluster namespace from the configuration file.
+```bash
+kubectl create secret generic encryption-config --from-file=encryption-config.yaml -n <vcluster-namespace>
+```
+
+Finally, create the vCluster referring the secret as:
+```yaml title="vcluster.yaml"
+controlPlane:
+  distro:
+    k8s:
+      enabled: true
+      apiServer:
+        extraArgs: 
+        - --encryption-provider-config=/etc/encryption/encryption-config.yaml
+  statefulSet:
+    persistence:
+      addVolumes:
+      - name: encryption-config
+        secret:
+          secretName: encryption-config
+      addVolumeMounts:
+      - name: encryption-config
+        mountPath: /etc/encryption
+        readOnly: true
+```
+
+<!-- vale Google.Headings = NO -->
+### API Server setting EventRateLimit
+<!-- vale Google.Headings = YES -->
+
+**Ensure that the admission control plugin EventRateLimit is set**
+
+<!-- vale Google.Will = NO -->
+Using EventRateLimit admission control enforces a limit on the number of events that the API Server will accept in a given time slice. A misbehaving workload could overwhelm and DoS the API Server, making it unavailable. This particularly applies to a multi-tenant cluster, where there might be a small percentage of misbehaving tenants which could have a significant impact on the performance of the cluster overall. Hence, it is recommended to limit the rate of events that the API server will accept.
+<!-- vale Google.Will = YES -->
+
+Create a config map in the vCluster namespace that contains the configuration file.
+```yaml title="admission-control.yaml"
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: admission-control
+  namespace: <vcluster-namespace>
+data:
+  admission-control.yaml: |
+    apiVersion: apiserver.config.k8s.io/v1
+    kind: AdmissionConfiguration
+    plugins:
+    - name: EventRateLimit
+      configuration:
+        apiVersion: eventratelimit.admission.k8s.io/v1alpha1
+        kind: Configuration
+        limits:
+        - type: Server
+          qps: 50
+          burst: 100
+```
+
+Finally, create the vCluster referring the ConfigMap as:
+```yaml title="vcluster.yaml"
+controlPlane:
+  distro:
+    k8s:
+      enabled: true
+      apiServer:
+        extraArgs: 
+        - --enable-admission-plugins=EventRateLimit
+        - --admission-control-config-file=/etc/kubernetes/admission-control.yaml
+  statefulSet:
+    persistence:
+      addVolumes:
+      - name: admission-control
+        configMap:
+          name: admission-control
+      addVolumeMounts:
+      - name: admission-control
+        mountPath: /etc/kubernetes
+```
+
+## Reference hardened vCluster configuration
+
+Below is a reference vCluster values file with minimum required configuration for a hardened installation. This needs to be used in combination with the above runtime level settings and other measures to achieve full compliance.
+
+```yaml title="vcluster.yaml"
+controlPlane:
+  distro:
+    k8s:
+      enabled: true
+      apiServer:
+        extraArgs:
+        - --admission-control-config-file=/etc/kubernetes/admission-control.yaml
+        - --anonymous-auth=false
+        - --audit-policy-file=/etc/kubernetes/audit-policy.yaml
+        - --audit-log-path=/var/log/audit.log
+        - --audit-log-maxage=30
+        - --audit-log-maxbackup=10
+        - --audit-log-maxsize=100
+        - --enable-admission-plugins=AlwaysPullImages,DenyServiceExternalIPs,EventRateLimit,NodeRestriction
+        - --encryption-provider-config=/etc/encryption/encryption-config.yaml
+        - --request-timeout=300s
+        - --service-account-lookup=true
+        - --tls-cipher-suites=TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256
+      controllerManager:
+        extraArgs:
+        - --terminated-pod-gc-threshold=12500
+        - --profiling=false
+      scheduler:
+        extraArgs:
+        - --profiling=false
+  advanced:
+    virtualScheduler:
+      enabled: true
+  backingStore:
+    etcd:
+      embedded:
+        enabled: true
+  statefulSet:
+    persistence:
+      addVolumes:
+      - name: audit-log
+        emptyDir: {}
+      - name: audit-policy
+        configMap:
+          name: audit-config
+      - name: encryption-config
+        secret:
+          secretName: encryption-config
+      - name: admission-control
+        configMap:
+          name: admission-control
+      addVolumeMounts:
+      - name: audit-log
+        mountPath: /var/log
+      - name: audit-policy
+        mountPath: /etc/kubernetes/audit-policy.yaml
+        subPath: audit-policy.yaml
+      - name: encryption-config
+        mountPath: /etc/encryption
+        readOnly: true
+      - name: admission-control
+        mountPath: /etc/kubernetes/admission-control.yaml
+        subPath: admission-control.yaml
+sync:
+  fromHost:
+    nodes:
+      enabled: true
+```   
+
+## Assessment guides
+If you have followed this guide, your vCluster would be configured to pass the CIS Kubernetes Benchmark. You can review the below guides to understand the expectations of each of the benchmark's checks and how you can do the same on your cluster. 
+While not every control applies directly due to the namespaced and virtualized nature of vCluster, the recommended practices in this document address the subset of controls that are applicable or adaptable.
+
+:::important Note on Validation Tools
+While tools like [kube-bench](https://github.com/aquasecurity/kube-bench) are commonly used to validate CIS benchmark compliance in traditional Kubernetes deployments, they cannot be directly applied to vCluster environments due to the fundamental differences in how vCluster operates. vCluster's virtualized control plane architecture means that many components run as containers within the host cluster rather than as traditional system processes, making standard automated assessment tools incompatible with this deployment model.
+
+For vCluster environments, manual verification of controls and custom assessment approaches are necessary to ensure compliance with the benchmark requirements.
+:::
+
+The following sections provide detailed assessment guidance for each area of the CIS Kubernetes Benchmark:
+
+- [**Section 1: Control Plane Security Configuration**<br/>](./control-plane-components)
+
+- [**Section 2: Etcd Node Configuration**<br/>](./etcd)
+
+- [**Section 3: Control Plane Configuration**<br/>](./control-plane)
+
+- [**Section 4: Worker Node Security Configuration**<br/>](./worker-node)
+
+- [**Section 5: Kubernetes Policies**<br/>](./policies)
+
+### Test controls methodology
+
+Each control in the CIS Kubernetes Benchmark was evaluated against a vCluster that was configured according to this hardening guide.
+
+Where control audits differ from the original CIS benchmark, the audit commands specific to vCluster are provided for testing.
+
+These are the possible results for each control:
+
+- PASS - The vCluster under test passed the audit outlined in the benchmark.
+- NOT APPLICABLE - The control is not applicable to vCluster because of how it is designed to operate. The remediation section contains explaination of why this is so.
+- WARN - The control is manual in the CIS benchmark and it depends on the cluster's use case or some other factor that must be determined by the cluster operator. These controls have been evaluated to ensure vCluster does not prevent their implementation, but no further configuration or auditing of the cluster under test has been performed.
+
+
+By reviewing these assessment sections and mapping them to your vCluster configuration, you can ensure that your hardened deployment not only follows security best practices but is also auditable and defensible in a compliance context.
