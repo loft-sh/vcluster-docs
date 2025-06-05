@@ -175,13 +175,18 @@ const config = {
         editUrl: ({ versionDocsDirPath, docPath }) =>
           `https://github.com/loft-sh/vcluster-docs/edit/main/${versionDocsDirPath}/${docPath}`,
         editCurrentVersion: true,
-        lastVersion: "4.2.0",
+        lastVersion: "4.3.0",
         versions: {
           current: {
             label: "main 🚧",
           },
+          "4.3.0": {
+            label: "v4.3 Stable",
+            banner: "none",
+            badge: true,
+          },
           "4.2.0": {
-            label: "v4.x (Stable: v4.2.0)",
+            label: "v4.2",
             banner: "none",
             badge: true,
           },
@@ -299,31 +304,23 @@ const config = {
             ]
           },
         ],
-        copyright: `Copyright © ${
-          new Date().getFullYear()
-        } <a href="https://loft.sh/">LoftLabs, Inc.</a> | Documentation released under <a href="https://creativecommons.org/publicdomain/zero/1.0/">CC0 1.0 Universal</a>.`,
+        copyright: `Copyright © ${new Date().getFullYear()}<span class="footer-space-before"><a href="https://loft.sh/">LoftLabs</a></span><span class="footer-separator">|</span>Documentation released under<span class="footer-space-before"><a href="https://creativecommons.org/publicdomain/zero/1.0/">CC0 1.0 Universal</a></span>.`,
       },
       prism: {
         theme: prismThemes.dracula,
         additionalLanguages: ["bash", "hcl"],
       },
-      mermaid: {
-        theme: {
-          light: 'default',
-          dark: 'dark',
-        },
-      },
       announcementBar: {
         id: "platform-upgrade",
         content:
-          '🚀 <strong>New releases: <a href="https://www.vcluster.com/releases/en/changelog?hideLogo=true&hideMenu=true&theme=dark&embed=true&c=vCluster" target="_blank">vCluster Platform 4.2 and vCluster 0.25</a></strong>',
+          '🚀 <strong>New releases: <a href="https://www.vcluster.com/releases/en/changelog?hideLogo=true&hideMenu=true&theme=dark&embed=true&c=vCluster" target="_blank">vCluster Platform 4.3 and vCluster 0.25</a></strong>',
         backgroundColor: "#4a90e2",
         textColor: "#ffffff",
         isCloseable: true,
       },
     }
   ),
-  
+
   // Enable experimental faster features with required v4 flags
   future: {
     experimental_faster: true,

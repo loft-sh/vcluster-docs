@@ -1,0 +1,154 @@
+---
+title: Upgrade guide for pre-v4.0 to v4.0+
+sidebar_label: Upgrade Guide for pre-v4.0 to v4.0+
+description: How to upgrade from pre-v4.0 to v4.0 release
+sidebar_position: 1
+---
+
+import Tabs from "@theme/Tabs";
+import TabItem from "@theme/TabItem";
+
+These docs cover upgrading from pre v4.0 to v4.0. After you upgrade to v4.0+, you must follow the upgrade docs. 
+
+## Upgrade to the latest Loft version
+
+Before attempting to perform this major upgrade, upgrade to the latest v3.x version. 
+Review the [older upgrade docs](https://loft.sh/docs/admin/upgrade-loft) on how to upgrade. It is recommended to upgrade using the CLI and not the UI as there are known issues to upgrade versions through the UI.
+
+## Pre-upgrade recommendations 
+
+### Read through the v4.0 Release Notes
+
+Review the [release notes for v4.0](https://github.com/loft-sh/loft-enterprise/releases/tag/v4.0.0) to read the updates in the release and understand any behavior changes. 
+
+### vCluster versions are required on virtual clusters and virtual cluster templates
+
+One of the breaking changes in v4.0 is the requirement of a vCluster version defined on your virtual cluster. Previously if you deployed a vCluster version or used a vCluster version without editing the version field, the version was not set in the `spec` of the resource. With each upgrade of the Platform,
+the vCluster would automatically upgrade these virtual clusters to the latest default vCluster version. Due to the [breaking changes introduced in v0.20](https://roadmap.vcluster.com/changelog/vcluster-v020-ga), 
+automatic upgrades of vCluster version are no longer supported and a vCluster version must be set in the spec of a virtual cluster or virtual cluster template. 
+
+Confirm that the resource YAML includes the versions of your virtual clusters and virtual cluster templates before upgrading.
+Otherwise, your virtual clusters might encounter errors that require you to define these versions after the upgrade. 
+Because it is not known which version you upgraded from, it cannot set the correct version automatically, and you must manually determine and set it.
+
+#### Define the vCluster version on Existing Virtual Clusters
+
+In the UI, for each virtual cluster, edit the configuration and type the version of the virtual cluster or virtual cluster template in the textbox and the resource YAML automatically updates the spec to include the version.
+
+If the resource YAML of your virtual cluster or virtual cluster template has `spec.template.helmRelease.chart.version` set, then the virtual cluster version is defined.
+
+`spec` Example:
+
+```
+spec:
+  template:
+    helmRelease:
+      chart:
+        version: 0.19.7
+```
+
+## Download the latest vCluster CLI
+
+With the deprecation of the Loft CLI, review the [Loft CLI to vCluster CLI Migration docs](https://vcluster.com/docs/vcluster/reference/migrations/loft-cli-vcluster-cli-migration).
+
+## Required changes in your platform configuration before upgrading
+
+A new feature has been added to support the ability to change the prefix of the namespace created for projects. In previous versions, the 
+prefix was `loft-p`, but in v4.0.0, the new default is `p-`. Due to the change in defaults, the previous prefix needs to be set in the Platform configuration as 
+part of the upgrade command. Since future upgrades reuse the values of the configuration, you only need to apply it once.
+
+### Append the project prefix to upgrade commands
+
+<Tabs
+  defaultValue="cli"
+  values={[
+    { label: 'CLI', value: 'cli', },
+    { label: 'Helm', value: 'helm', },
+  ]
+}>
+<TabItem value="cli">
+
+To upgrade the Platform from v3 to v4 via vCluster CLI, run. Update `$PLATFORM_VERSION` with a valid vCluster Platform version.
+
+:::info Platform Namespace
+The following steps assume the existing installation is in the default namespace `loft`. The default namespace for v4 is vcluster-platform, so we specify the namespace in the steps.
+:::
+
+```bash
+PLATFORM_NAMESPACE="loft" # Update if the platform is installed to a different namespace
+PLATFORM_VERSION="" # Specify a version or it upgrades to latest stable version
+
+vcluster platform start --upgrade --namespace $PLATFORM_NAMESPACE --version=$PLATFORM_VERSION --values=<(cat <<EOF
+config:
+  projectNamespacePrefix: loft-p-
+EOF
+)
+```
+
+</TabItem>
+<TabItem value="helm">
+
+To upgrade vCluster Platform from v3 to v4 via `helm`, run. Update `$PLATFORM_VERSION` with a valid vCluster Platform version.
+
+```bash
+PLATFORM_RELEASE_NAME="loft" # Update if the Helm release has a different name
+PLATFORM_NAMESPACE="loft" # Update if the platform is installed to a different namespace
+PLATFORM_VERSION="" # Specify a version or it upgrades to latest stable version
+
+helm upgrade $PLATFORM_RELEASE_NAME vcluster-platform -n $PLATFORM_NAMESPACE --repository-config '' --repo https://charts.loft.sh \
+  --version $PLATFORM_VERSION \
+  --reuse-values \
+  -f <(cat <<EOF
+config:
+  projectNamespacePrefix: loft-p-
+EOF
+)
+```
+
+</TabItem>
+</Tabs>
+
+### Adding the project prefix to your values file
+
+If you upgrade the Platform with another method, an alternative method is to extend your config file and include the project prefix requirement for this upgrade.
+
+```
+config:
+  projectNamespacePrefix: loft-p-
+```
+
+## Post-upgrade recommendations
+
+### Migrate vCluster Platform OIDC provider clients
+
+vCluster Platform can be used as an OIDC provider. Formerly, to add clients to the vCluster Platform OIDC provider a user woulld add them to the `oidc.clients` array field
+in the vCluster Platform config. This could be done either through the `Admin > Config` UI or through editing the `loft-manager-config` secret found in the namespace vCluster Platform
+is installed in. Editing this config causes loft to restart which should be unnecessary for adding OIDC platform clients. Therefore, managing vCluster Platform OIDC clients has
+been moved to its own UI and the clients their own objects. These new OIDC clients can be managed either through the OIDC Provider tab of the admin page or through Kubernetes Secrets,
+see [Adding OIDC Clients to vCluster Platform OIDC Using Secrets](/platform/how-to/oidc-provider#adding-oidc-clients-to-vcluster-platform-oidc-using-secrets). The `oidc.clients` field
+is deprecated in vCluster Platform version 4.0 and is removed in version 5.0.
+
+#### Migrate OIDC clients from admin config to new OIDC clients
+
+1. Navigate to `Admin > OIDC Provider`.
+2. Select `Add Client`.
+3. In a separate tab navigate to `Admin > Config`.
+4. Copy over the `name`, `clientID`, and `clientSecrets` fields from the first element of `oidc.clients` to the open editor on the `OIDC Provider` page.
+5. Copy each value from the `oidc.clients.redirectURIs` list to the `Allowed redirect URIs` editor field on the OIDC Provider page. Separate each URI by a newline.
+6. Select "Save".
+7. Repeat steps 1-6 for all clients.
+8. Copy the `oidc.clients` to a safe location. These can be discard once all steps have been successful.
+9. Delete the `oidc.clients` field. This causes vCluster Platform to restart.
+10. Validate OIDC clients function normally.
+
+## Troubleshooting tips 
+
+### Forgot the project prefix
+
+If you accidentially performed the upgrade without setting the `projectNamespacePrefix`, then the pod of the platform is in a `CrashLoopBackoff` with a log similar to:
+
+```bash
+cmd/main.go:107 error executing root command    {"component": "loft", "error": "init (4): set default project namespace prefix: seems like you have upgraded the platform from an earlier version that uses 'loft-p-' as a project namespace prefix. This has been changed to be 'p-' in the current version. Please set 'projectNamespacePrefix: loft-p-' in the platform config to get rid of this error"}
+```
+
+Follow the instructions on how to [append the project prefix](#append-the-project-prefix-to-upgrade-commands) and upgrade again. 
