@@ -181,7 +181,7 @@ const config = {
             label: "main 🚧",
           },
           "4.3.0": {
-            label: "v4.x (Stable: v4.3.0)",
+            label: "v4.3 Stable",
             banner: "none",
             badge: true,
           },
