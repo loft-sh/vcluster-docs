@@ -1,0 +1,578 @@
+---
+title: Deploy vcluster with namespace sync enabled
+sidebar_label: Namespace Sync
+sidebar_position: 6
+sidebar_class_name: pro
+---
+
+import HiddenCodeBlock from '@site/src/components/HiddenCodeBlock';
+
+import ProAdmonition from '../../_partials/admonitions/pro-admonition.mdx'
+
+<ProAdmonition/>
+
+By default, all namespaced resources that need to be synced to the host cluster are created in the namespace where vCluster is
+installed. vCluster avoids naming conflicts where multiple resources could have the same name in different namespaces by
+rewriting the name of the resource in the host cluster.
+
+For example, a pod within the vCluster called `test` in namespace `my-namespace` is rewritten for the host cluster to
+`test-x-my-namespace-x-my-vcluster` to avoid conflicts with other pods that would be named `test` in another namespace within
+the vCluster.
+
+Because vCluster rewrites the resource name, all references from other objects to that resource need to get rewritten as
+well. vCluster does this already for all core resources, e.g. mounting a secret in a pod within the vCluster is automatically
+rewritten to the correct secret name on the host cluster (without seeing that inside the vCluster).
+
+However, when using features such as [syncing custom resources](../configure/vcluster-yaml/sync/to-host/advanced/custom-resources.mdx), it can be tedious to add all used references, or it can become very difficult or even impossible to rewrite certain references.
+
+Hence, vCluster offers an option to sync namespaces to host using custom mapping rules defined by user.
+
+## Namespace syncing
+You enable namespace syncing by setting sync.toHost.namespaces.enabled: true in your `vcluster.yaml` file.
+```yaml
+sync:
+  toHost:
+    namespaces:
+      enabled: true
+```
+When enabled, vCluster attempts to create namespaces on the host cluster that correspond to namespaces created within the
+vCluster, based on the defined mapping rules.
+
+
+### `mappings`
+Namespace syncing supports several types of mapping rules under the mappings.byName field:
+
+- Exact mappings: Map a specific virtual namespace name to a specific host namespace name.
+- Pattern mappings: Use a single wildcard `*` character to map a range of virtual namespaces to a corresponding range of host
+namespaces. The wildcard content is mirrored.
+- `${name}` variable: This variable is automatically substituted with the vCluster instance's name. This is useful for
+creating predictable host namespaces that are clearly associated with a particular vCluster instance.
+
+
+The `${name}` variable can be combined with pattern mappings.
+
+*Important Rule*: You can only define exact-to-exact or pattern-to-pattern mappings. Mixing these (e.g., an exact virtual
+namespace to a patterned host namespace, or a patterned virtual namespace to an exact host namespace) is not supported.
+
+Here's an example `vcluster.yaml` configuration showcasing different mapping types:
+
+```yaml
+# vcluster-mappings-example.yaml
+sync:
+  toHost:
+    namespaces:
+      enabled: true
+      mappings:
+        byName:
+          # Exact mapping:
+          # Virtual NS "frontend-prod" -> Host NS "customer-project-alpha-prod"
+          "frontend-prod": "customer-project-alpha-prod"
+
+          # Pattern mapping:
+          # Virtual NS "team-a-*" -> Host NS "h-team-a-*"
+          # e.g., vNS "team-a-dev" -> hNS "h-team-a-dev"
+          # e.g., vNS "team-a-staging" -> hNS "h-team-a-staging"
+          "team-a-*": "h-team-a-*"
+
+          # Pattern mapping using ${name} variable:
+          # Assumes vCluster name is "my-vc"
+          # Virtual NS "datasets-*" -> Host NS "my-vc-data-*"
+          # e.g., vNS "datasets-raw" -> hNS "my-vc-data-raw"
+          # e.g., vNS "datasets-processed" -> hNS "my-vc-data-processed"
+          "datasets-*": "${name}-data-*"
+```
+
+#### Example
+
+This scenario demonstrates how the mappings work in practice.
+
+1. Deploy a vCluster named `mapping-demo` using the `vcluster-mappings-example.yaml` file above.
+```bash
+vcluster create mapping-demo -f vcluster-mappings-example.yaml
+```
+2. Inside the vCluster, create a namespace that matches the `team-a-*` pattern.
+```bash
+kubectl create namespace team-a-ns1
+```
+3. Create another namespace that matches the exact frontend-prod rule.
+```bash
+kubectl create namespace frontend-prod
+```
+
+4. Finally, create a namespace that does not match any mapping rule.
+```bash
+kubectl create namespace some-other-namespace
+```
+5. Verify the namespaces on the host cluster.
+```bash
+kubectl --context kind-vcluster-pro get namespace
+```
+
+```bash
+NAME                              STATUS   AGE
+customer-project-alpha-prod       Active   12s
+default                           Active   45h
+h-team-a-ns1                      Active   20s
+kube-node-lease                   Active   45h
+kube-public                       Active   45h
+kube-system                       Active   45h
+local-path-storage                Active   45h
+vcluster-mapping-demo             Active   2m11s
+```
+
+As you can see - only namespaces matched by mappings where directly synced to host cluster.
+
+6. Run a pod inside mapped namespace
+```bash
+kubectl -n team-a-ns1 run nginx-from-team-a --image nginx
+```
+
+7. Run a pod inside non-mapped namespace
+```bash
+kubectl -n some-other-namespace run nginx-from-other-namespace --image nginx
+```
+
+8. Verify both pods are running inside vCluster:
+```bash
+kubect get pods -A
+```
+
+```bash
+NAMESPACE              NAME                         READY   STATUS    RESTARTS   AGE
+kube-system            coredns-94f599b5-wdgzg       1/1     Running   0          1m
+some-other-namespace   nginx-from-other-namespace   1/1     Running   0          11s
+team-a-ns1             nginx-from-team-a            1/1     Running   0          18s
+```
+
+9. Verify pods running on host cluster
+```bash
+kubectl --context kind-vcluster-pro get pods -A
+```
+
+```bash
+NAMESPACE                         NAME                                                              READY   STATUS    RESTARTS      AGE
+h-team-a-ns1                      nginx-from-team-a                                                 1/1     Running   0             58s
+kube-system                       coredns-787d4945fb-5ljfb                                          1/1     Running   1 (20h ago)   45h
+kube-system                       coredns-787d4945fb-zh9q7                                          1/1     Running   1 (20h ago)   45h
+kube-system                       etcd-vcluster-pro-control-plane                                   1/1     Running   1 (20h ago)   45h
+kube-system                       kindnet-8mmjr                                                     1/1     Running   1 (20h ago)   45h
+kube-system                       kube-apiserver-vcluster-pro-control-plane                         1/1     Running   1 (20h ago)   45h
+kube-system                       kube-controller-manager-vcluster-pro-control-plane                1/1     Running   1 (20h ago)   45h
+kube-system                       kube-proxy-jnwfv                                                  1/1     Running   1 (20h ago)   45h
+kube-system                       kube-scheduler-vcluster-pro-control-plane                         1/1     Running   1 (20h ago)   45h
+local-path-storage                local-path-provisioner-75f5b54ffd-j6pjj                           1/1     Running   1 (20h ago)   45h
+vcluster-mapping-demo             coredns-94f599b5-wdgzg-x-kube-system-x-default-namespace-sync     1/1     Running   0             1m
+vcluster-mapping-demo             mapping-demo-0                                                    1/1     Running   0             86s
+vcluster-default-namespace-sync   nginx-from-other-namespace-x-some-other-namespace-x--4b96e8f948   1/1     Running   0             51s
+```
+
+as you can see - pod from mapped namespace was synced directly without renaming, while pod from non-mapped namespace was handled with default
+translation logic.
+
+### `mappingsOnly`
+
+By default (`mappingsOnly: false`), if you create a resource in a virtual namespace that does not match any of the defined
+mappings, vCluster will sync those resources to its own namespace on the host cluster using the standard name-rewriting
+strategy described at the beginning of this page.
+
+You can change this behavior to strictly enforce that operations within the vCluster only occur for namespaces defined by your
+mappings. If a virtual namespace is not covered by a mapping, attempts to create or sync resources in such namespaces will be
+blocked.
+
+To enable this stricter mode, use `mappingsOnly: true`.
+
+```yaml
+# vcluster-mappings-only-example.yaml
+sync:
+  toHost:
+    namespaces:
+      enabled: true
+      mappingsOnly: true # Enable strict mapping
+      mappings:
+        byName:
+          # Only virtual namespaces starting with "synced-" will be mapped
+          "synced-*": "host-${name}-synced-*"
+          # And the virtual namespace "important-configs" maps to "host-configs-critical"
+          "important-configs": "host-configs-critical"
+
+```
+
+#### Example
+
+This scenario shows how `mappingsOnly: true` restricts operations within vCluster to only mapped namespaces.
+
+1. Deploy a vCluster named `strict-vc` with the `vcluster-mappings-only-example.yaml` configuration.
+
+```bash
+vcluster create strict-vc -f vcluster-mappings-only-example.yaml
+```
+
+2. Inside the vCluster, create a namespace that matches a mapping rule.
+
+```bash
+kubectl create namespace synced-data-alpha
+```
+
+This matches `synced-*`. vCluster creates `host-strict-vc-synced-data-alpha` namespace on the host, and resources created in the virtual `synced-data-alpha` namespace will appear there.
+
+3. Now, try to create a namespace that does not match any rule.
+
+```bash
+kubectl create namespace experimental-app
+```
+
+```bash
+Error from server (Forbidden): Virtual namespace 'experimental-app' is not allowed by vcluster mappings. Allowed namespaces are important-configs, synced-* (post namespaces)
+```
+
+As you can see, this namespaces is not allowed. Any operation on namespace not defined in mappings will be blocked when `mappingsOnly` mode is enabled.
+
+
+### `hostNamespaces`
+
+#### `cleanup`
+
+You can configure a policy that will be used when removing the vCluster for cleaning up namespaces on the host cluster that
+were matched by mappings. The possible values are:
+
+- `synced`: (Default) Only host namespaces that were actually created by vCluster as a result of syncing a virtual
+namespace will be removed. Pre-existing and imported host namespaces that were not created by this vCluster instance
+will not be touched.
+- `all`: Any host namespace that matches any of the host-side mapping targets (the right-hand side of your `mappings.byName`
+rules) will be removed from the host cluster when this vCluster instance is deleted. This is a destructive option and
+should be used with caution, as it can delete namespaces (and all their contents) that might be shared or managed by
+other processes if they match the pattern.
+- `none`: No host namespaces will be touched by vCluster during its deletion, regardless of whether they were created by
+vCluster or matched by mappings. You will be responsible for cleaning up these namespaces manually if needed.
+
+##### Example 1 - `synced`
+
+This example demonstrates the `synced` cleanup policy. A namespace created directly on the host (`host-from-host`) will remain
+after vCluster deletion, while the namespace created by vCluster due to sync (`host-from-vcluster`) will be removed.
+
+```yaml
+# vcluster-cleanup-synced.yaml
+sync:
+  toHost:
+    namespaces:
+      enabled: true
+      mappingsOnly: false
+      mappings:
+        byName:
+          "sync-*": "host-*"
+      hostNamespaces:
+        cleanup: synced
+```
+
+1. Create a namespace directly on the host cluster:
+
+```bash
+kubectl --context kind-vcluster-pro create namespace host-from-host
+kubectl --context kind-vcluster-pro -n host-from-host run nginx-from-host --image nginx
+```
+
+Verify that pod started properly
+```bash
+kubectl --context kind-vcluster-pro -n host-from-host get po
+```
+
+```bash
+NAME              READY   STATUS    RESTARTS   AGE
+nginx-from-host   1/1     Running   0          13s
+```
+
+
+2. Deploy vCluster (e.g., named `cleanup-synced`) using `vcluster-cleanup-synced.yaml`:
+```bash
+vcluster create cleanup-synced -f vcluster-cleanup-synced.yaml
+```
+3. Inside the vCluster, create a namespace that matches the `sync-*` pattern:
+```bash
+kubectl create namespace sync-from-vcluster
+```
+4. Observe namespaces on the vCluster and host cluster:
+```bash
+kubectl get ns
+```
+
+```bash
+NAME                 STATUS   AGE
+default              Active   28s
+kube-node-lease      Active   28s
+kube-public          Active   28s
+kube-system          Active   28s
+sync-from-host       Active   20s
+sync-from-vcluster   Active   13s
+```
+
+```bash
+kubectl --context kind-vcluster-pro get ns
+```
+
+```bash
+NAME                      STATUS   AGE
+default                   Active   47h
+host-from-host            Active   2m16s
+host-from-vcluster        Active   45s
+kube-node-lease           Active   47h
+kube-public               Active   47h
+kube-system               Active   47h
+local-path-storage        Active   47h
+vcluster-cleanup-synced   Active   78s
+```
+
+5. Delete the vCluster:
+```bash
+vcluster delete cleanup-synced
+```
+
+```bash
+15:25:48 info Stopping background proxy...
+15:25:49 info Delete vcluster cleanup-synced...
+15:25:49 done Successfully deleted virtual cluster cleanup-synced in namespace vcluster-cleanup-synced
+15:25:49 info Starting cleanup of vCluster 'cleanup-synced' namespaces.
+15:25:49 info Namespace host-from-host was imported, cleaning up import.
+15:25:49 info Attempting to delete virtual cluster namespace host-from-vcluster.
+15:25:49 done Successfully deleted virtual cluster namespace host-from-vcluster.
+15:25:49 info Cleanup of vCluster 'cleanup-synced' namespaces finished.
+15:25:49 done Successfully deleted virtual cluster namespace vcluster-cleanup-synced
+15:25:49 info Waiting for virtual cluster to be deleted...
+15:26:00 done Virtual Cluster is deleted
+```
+
+6. Observe host namespaces again:
+```bash
+kubectl --context kind-vcluster-pro get ns
+```
+
+```bash
+NAME                 STATUS   AGE
+default              Active   47h
+host-from-host       Active   3m21s
+kube-node-lease      Active   47h
+kube-public          Active   47h
+kube-system          Active   47h
+local-path-storage   Active   47h
+```
+
+Importet namespace was left untouched while synced one was removed.
+
+7. Manually clean up the host-created namespace:
+```bash
+kubectl --context kind-vcluster-pro delete ns host-from-host
+```
+
+##### Example 2 - `none`
+
+This example demonstrates the `none` cleanup policy. Both the namespace created directly on the host (`host-from-host`)
+and the namespace created on the host due to vCluster sync (`host-sync-from-vcluster-none`) will remain after vCluster
+deletion.
+
+```yaml
+# vcluster-cleanup-all.yaml
+sync:
+  toHost:
+    namespaces:
+      enabled: true
+      mappingsOnly: false
+      mappings:
+        byName:
+          "sync-*": "host-*"
+      hostNamespaces:
+        cleanup: none
+```
+
+1. Create a namespace directly on the host cluster:
+
+```bash
+kubectl --context kind-vcluster-pro create namespace host-from-host
+kubectl --context kind-vcluster-pro -n host-from-host run nginx-from-host --image nginx
+```
+
+2. Deploy vCluster `cleanup-none` using `vcluster-cleanup-all.yaml`:
+```bash
+vcluster create cleanup-none -f vcluster-cleanup-none.yaml
+```
+
+3. Inside the vCluster, create a namespace:
+```bash
+kubectl create namespace sync-from-vcluster-with-cleanup-none
+```
+
+4. Observe namespaces on vCluster and host cluster.
+```bash
+kubectl get ns
+```
+
+```bash
+NAME                                   STATUS   AGE
+default                                Active   40s
+kube-node-lease                        Active   40s
+kube-public                            Active   40s
+kube-system                            Active   40s
+sync-from-host                         Active   32s
+sync-from-vcluster-with-cleanup-none   Active   3s
+```
+
+```bash
+kubectl --context kind-vcluster-pro get ns
+```
+
+```bash
+NAME                                   STATUS   AGE
+default                                Active   47h
+host-from-host                         Active   88s
+host-from-vcluster-with-cleanup-none   Active   24s
+kube-node-lease                        Active   47h
+kube-public                            Active   47h
+kube-system                            Active   47h
+local-path-storage                     Active   47h
+vcluster-cleanup-none                  Active   79s
+```
+
+5. Delete the vCluster:
+```bash
+vcluster delete cleanup-none
+```
+
+```bash
+15:39:31 info Stopping background proxy...
+15:39:32 info Delete vcluster cleanup-none...
+15:39:32 done Successfully deleted virtual cluster cleanup-none in namespace vcluster-cleanup-none
+15:39:32 done Successfully deleted virtual cluster namespace vcluster-cleanup-none
+15:39:32 info Waiting for virtual cluster to be deleted...
+15:39:43 done Virtual Cluster is deleted
+```
+
+6. Observe host namespaces again:
+```bash
+kubectl --context kind-vcluster-pro get ns
+```
+
+```bash
+NAME                                   STATUS   AGE
+default                                Active   47h
+host-from-host                         Active   2m22s
+host-from-vcluster-with-cleanup-none   Active   78s
+kube-node-lease                        Active   47h
+kube-public                            Active   47h
+kube-system                            Active   47h
+local-path-storage                     Active   47h
+```
+
+All namespaces remained untouched.
+
+7. Manually clean up:
+```bash
+kubectl --context kind-vcluster-pro delete ns host-from-host
+kubectl --context kind-vcluster-pro delete ns host-from-vcluster-with-cleanup-none
+```
+
+##### Example 3 - `all`
+
+This example demonstrates the `all` cleanup policy. *Any* host namespace matching the `host-*` pattern (defined in mappings)
+will be deleted, regardless of whether it was created by this vCluster or existed beforehand.
+
+```yaml
+# vcluster-cleanup-all.yaml
+sync:
+  toHost:
+    namespaces:
+      enabled: true
+      mappingsOnly: false
+      mappings:
+        byName:
+          "sync-*": "host-*"
+      hostNamespaces:
+        cleanup: all
+```
+
+1. Create namespaces directly on the host cluster that will match the `host-*` pattern:
+```bash
+kubectl --context kind-vcluster-pro create namespace host-preexisting-data
+kubectl --context kind-vcluster-pro create namespace host-another-preexisting
+kubectl --context kind-vcluster-pro create namespace safe-namespace # this namespace won't get deleted
+```
+
+2. Deploy vCluster `cleanup-all` using `vcluster-cleanup-all.yaml`:
+```bash
+vcluster create cleanup-all -f vcluster-cleanup-all.yaml
+```
+
+3. Inside the vCluster, create a namespace that matches `sync-*`:
+```bash
+kubectl create namespace sync-from-vcluster-with-cleanup-all
+```
+
+4. Observe namespaces on vCluster and host cluster:
+```bash
+kubectl get ns
+```
+
+```bash
+NAME                                  STATUS   AGE
+default                               Active   31s
+kube-node-lease                       Active   31s
+kube-public                           Active   31s
+kube-system                           Active   31s
+sync-another-preexisting              Active   22s
+sync-from-vcluster-with-cleanup-all   Active   8s
+sync-preexisting-data                 Active   22s
+```
+
+```bash
+kubectl --context kind-vcluster-pro get ns
+```
+
+```bash
+NAME                                  STATUS   AGE
+default                               Active   47h
+host-another-preexisting              Active   82s
+host-from-vcluster-with-cleanup-all   Active   34s
+host-preexisting-data                 Active   82s
+kube-node-lease                       Active   47h
+kube-public                           Active   47h
+kube-system                           Active   47h
+local-path-storage                    Active   47h
+safe-namespace                        Active   82s
+vcluster-cleanup-all                  Active   72s
+```
+
+5. Delete the vCluster:
+```bash
+vcluster delete cleanup-all
+```
+
+```bash
+15:43:00 info Stopping background proxy...
+15:43:00 info Delete vcluster cleanup-all...
+15:43:00 done Successfully deleted virtual cluster cleanup-all in namespace vcluster-cleanup-all
+15:43:00 info Starting cleanup of vCluster 'cleanup-all' namespaces.
+15:43:00 info Attempting to delete virtual cluster namespace host-another-preexisting.
+15:43:00 done Successfully deleted virtual cluster namespace host-another-preexisting.
+15:43:00 info Attempting to delete virtual cluster namespace host-from-vcluster-with-cleanup-all.
+15:43:00 done Successfully deleted virtual cluster namespace host-from-vcluster-with-cleanup-all.
+15:43:00 info Attempting to delete virtual cluster namespace host-preexisting-data.
+15:43:00 done Successfully deleted virtual cluster namespace host-preexisting-data.
+15:43:00 info Cleanup of vCluster 'cleanup-all' namespaces finished.
+15:43:00 done Successfully deleted virtual cluster namespace vcluster-cleanup-all
+15:43:00 info Waiting for virtual cluster to be deleted...
+15:43:11 done Virtual Cluster is deleted
+```
+
+6. Observe host namespaces again:
+```bash
+kubectl --context kind-vcluster-pro get ns
+```
+
+```bash
+NAME                 STATUS   AGE
+default              Active   47h
+kube-node-lease      Active   47h
+kube-public          Active   47h
+kube-system          Active   47h
+local-path-storage   Active   47h
+safe-namespace       Active   2m1s
+```
+
+All namespaces on host that matched our pattern where removed.
