@@ -608,12 +608,47 @@ const preserveExpansionStates = ExecutionEnvironment.canUseDOM ? function(skipEv
     }
   });
 
-  // Remove the infinite recursion - this was causing browser errors
-  // The function is already called initially and on relevant events
+  if (!skipEventListener) {
+    window.addEventListener('hashchange', function() {
+      if (document.querySelectorAll('details.config-field').length > 0) {
+        setTimeout(addCopyButtons, 200);
+      }
+    });
+    
+    document.addEventListener('visibilitychange', function() {
+      if (!document.hidden && document.querySelectorAll('details.config-field').length > 0) {
+        setTimeout(addCopyButtons, 100);
+      }
+    });
+    
+    // Use interval check instead of MutationObserver to avoid React conflicts
+    let checkCount = 0;
+    const maxChecks = 10;
+    const recheckCopyButtons = function() {
+      if (checkCount < maxChecks) {
+        checkCount++;
+        const fieldsWithoutButtons = document.querySelectorAll('details.config-field:not([data-copy-button="true"])');
+        if (fieldsWithoutButtons.length > 0) {
+          addCopyButtons();
+        }
+        setTimeout(recheckCopyButtons, 1000);
+      }
+    };
+    setTimeout(recheckCopyButtons, 500);
+  }
 } : () => {};
 
 if (ExecutionEnvironment.canUseDOM) {
   preserveExpansionStates();
+  
+  // Ensure copy buttons are added when DOM is fully loaded
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', function() {
+      setTimeout(addCopyButtons, 100);
+    });
+  } else {
+    setTimeout(addCopyButtons, 100);
+  }
 
   if (location.hash) {
     setTimeout(() => {
