@@ -2,22 +2,27 @@
 title: Storage Classes
 sidebar_label: storageClasses
 sidebar_position: 4
-description: Configuration for ...
+description: Configuration for Storage Classes in vCluster
 ---
 
 import EnableSwitch from '../../../../_partials/config/sync/fromHost/storageClasses.mdx'
 
-By default, this is disabled. 
+By default, StorageClass synchronization is disabled.
 
 vCluster does not sync storage classes from the host cluster to the virtual cluster. While it's not strictly required when you're syncing PersistentVolume and PersistentVolumeClaim resources, syncing StorageClass resources may be required for informational purposes or ensuring that storage is handled consistently between the host and virtual clusters.
 
+This is useful in scenarios where selective access to PersistentVolume and PersistentVolumeClaim configurations is required. Common use cases include:
+
+- **Development environments**: Sync only the StorageClasses required for development clusters to reduce noise and avoid unnecessary exposure.
+- **Multi-tenancy**: Enable teams to use their own StorageClasses while sharing a single host cluster.
+- **Security**: Restrict the StorageClasses available in the virtual cluster to enforce access control and prevent unintended configurations.
 
 {/*
 `storageClasses.enabled`:
 - covered by the generic section here: https://www.vcluster.com/docs/syncer/config#enable-or-disable-synced-resources
 - more context behind this config: https://github.com/loft-sh/vcluster/pull/378
 - looks like this is a rare resource that is scheduled both from and to the host cluster
-  - my understanding is that you can simply use the host cluster's storage classes by default, and the from host syncing is for referenctial integrity
+  - my understanding is that you can simply use the host cluster's storage classes by default, and the from host syncing is for referential integrity
   - if one needs to customize the storage used by vCluster persistent volumes, this would be a reason to define a storage class in the vCluster that then gets synced to the host
   - may want to verify this assessment with Rohan / Fabian
 */}
@@ -29,6 +34,120 @@ sync:
   fromHost:
     storageClasses:
       enabled: true
+```
+
+<!-- vale off -->
+### Example
+
+The following configuration syncs all `StorageClasses` that match the specified labels and expressions from the host cluster to the virtual cluster:
+
+```YAML
+sync:
+  fromHost:
+    storageClasses:
+      enabled: true
+      selector:
+        matchLabels:
+          # Match all StorageClasses with the label `environment` with value `development`
+          environment: "development"
+        matchExpressions:
+          # Match StorageClasses with the label `kubernetes.io/storage.class` that are either `network-nas` or `fast-sdd`
+          - key: "kubernetes.io/storage.class"
+            operator: In
+            values:
+              - network-nas
+              - fast-ssd
+```
+
+The `selector` field follows the same syntax as Kubernetes label selectors. Use it to filter which `StorageClass` resources are synced from the host cluster based on their labels.
+
+:::note
+All specified label conditions must match for an `StorageClass` to be included in the sync.
+:::
+
+
+## Use selectors to filter StorageClasses
+
+Use `matchLabels` and `matchExpressions` to filter which `StorageClass` resources are synced based on their labels.
+
+- `matchLabels`: Defines exact label key-value pairs.
+
+For example, to sync only `StorageClasses` labeled `environment: development`:
+
+```yaml
+matchLabels:
+  environment: development
+  ```
+
+- `matchExpressions`: Allows more flexible, set-based filtering.
+
+For example, to sync `StorageClasses` where the label `kubernetes.io/storage.class` is either `network-nas` or `fast-ssd`:
+
+```yaml
+matchExpressions:
+  - key: kubernetes.io/storage.class
+    operator: In
+    values:
+      - network-nas
+      - fast-ssd
+  ```
+Supported operators are `In`, `NotIn`, `Exists`, and `DoesNotExist`.
+
+For more details on how to use label selectors effectively, refer to the [Kubernetes documentation on label selectors](https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/#resources-that-support-set-based-requirements).
+
+## Sync behavior and considerations
+
+When `StorageClass` synchronization is enabled, the vCluster syncer uses selector criteria to control which `StorageClasses` are synchronized between the host and virtual clusters.
+
+The selector configuration creates a bidirectional filter:
+
+- **From host to virtual cluster**: Only `StorageClasses` matching the selector criteria are synchronized from the host cluster to the virtual cluster.
+
+- **From virtual cluster to host**: `PersistentVolume` and `PersistentVolumeClaim` resources created in the virtual cluster are synchronized to the host only if they reference `StorageClasses` that match the selector criteria.
+
+### Resource availability and updates
+
+- Synced `StorageClass` resources appear in the virtual cluster and can be referenced by `PersistentVolume` or `PersistentVolumeClaim` resources.
+- When an `StorageClass` in the host cluster is modified, the selector is re-evaluated:
+- If it still matches, the resource is updated in the virtual cluster.
+- If it no longer matches, it is removed from the virtual cluster.
+- If an `StorageClass` fails to meet the selector criteria, a warning is logged in the vCluster syncer pod’s output.
+
+### Orphaned PersistentVolume and PersistentVolumeClaim resources
+
+- If a synced `StorageClass` is removed from the virtual cluster (due to selector mismatch or deletion), any `PersistentVolume` or `PersistentVolumeClaim` resources referencing it remain in the virtual cluster.
+- These `PersistentVolume` and `PersistentVolumeClaim` resources stop receiving updates but are not automatically deleted.
+- To remove them, you must delete them manually in the host cluster.
+
+## Constraint enforcement
+
+The selector acts as both a filter and a validation mechanism:
+
+- **Resource filtering**: Only `StorageClasses` that match the selector criteria are made available in the virtual cluster's API server.
+
+- **Creation validation**: `PersistentVolume` and `PersistentVolumeClaim` resources in the virtual cluster can only reference `StorageClasses` that exist in the filtered set.
+
+- **Sync restriction**: `PersistentVolume` and `PersistentVolumeClaim` resources referencing non-matching `StorageClasses` are blocked from synchronizing to the host cluster.
+
+## Error handling
+
+When a `PersistentVolume` or `PersistentVolumeClaim` resource references a `StorageClass` that doesn't match the selector criteria:
+
+- The `PersistentVolume` and `PersistentVolumeClaim` synchronization to the host cluster fails.
+- An event is recorded on the `PersistentVolume` and `PersistentVolumeClaim` resource in the virtual cluster.
+- The event indicates that the specified `StorageClass` is not available in the host.
+
+The event output looks similar to the following:
+
+```shell
+vcluster-virtual-cluster-1:~$ kubectl describe pvc my-pvc
+Name:             my-pvc
+Namespace:        default
+Storage Class:    fast-ssd
+Events:
+  Type     Reason            Age   From                Message
+  ----     ------            ----  ----                -------
+  Warning  SyncWarning       10s   pvc-syncer          did not sync pvc "my-pvc" to host because it does not match the selector under 'sync.fromHost.StorageClasses.selector'
 ```
 
 ## Config reference
