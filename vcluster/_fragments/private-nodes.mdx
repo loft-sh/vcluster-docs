@@ -49,9 +49,34 @@ The following table outlines the differences between using private nodes and usi
 | Reuse host controllers             | No            | Yes              |
 | View vCluster resources in host    | No            | Yes              |
 
-## Configure vcluster.yaml behavior
+## vcluster.yaml Configuration
 
-### Enable scheduling
+To create a vCluster with private nodes, you'll need to enable the feature as well as set some other configuration options in preparation for worker nodes to join. 
+
+```yaml title="Enable private nodes"
+# Enable private nodes
+privateNodes:
+  enabled: true
+
+# vCluster control plane options
+controlPlane:
+  distro:
+    k8s:
+      image:
+        tag: v1.31.2 # Kubernetes version you want to use
+  service:
+    spec:
+      type: LoadBalancer # If you want to expose vCluster via LoadBalancer (recommended option)
+
+# Networking configuration
+networking:
+  # Specify the pod cidr
+  podCIDR: 10.64.0.0/16
+  # Specify the service cidr
+  serviceCIDR: 10.128.0.0/16
+```
+
+### Scheduling enabled by default
 
 When private nodes are enabled, scheduling is handled by the virtual cluster. As a result, the virtual scheduler is automatically enabled. You do not need to manually configure this in your `vcluster.yaml`.
 
@@ -64,7 +89,7 @@ controlPlane:
       enabled: true
 ```
 
-### Understand feature limitations
+### Other vCluster feature limitations
 
 When private nodes are enabled, the following `vcluster.yaml` options are no longer supported.
 
@@ -96,9 +121,17 @@ controlPlane:
 
 ## Create vCluster with private nodes
 
-To create a virtual cluster with private nodes, enable the feature:
+### Pre-Requisities
 
-```yaml title="Enable private nodes in vCluster configuration"
+* vCluster CLI installed on your local machine
+* Access to a Host Cluster
+* Worker Nodes 
+
+### Create the vCluster Control Plane
+
+Before joining private nodes to a vCluster, you need to create vCluster to deploy the control plane on a host cluster. 
+
+```yaml title="vcluster.yaml for private nodes"
 # Enable private nodes
 privateNodes:
   enabled: true
@@ -125,32 +158,63 @@ networking:
 Follow [this guide](https://www.vcluster.com/docs/vcluster/next/configure/vcluster-yaml/external/platform/api-key#connect-virtual-clusters-to-the-vcluster-platform) to create an access key and set up the vCluster for deployment using Helm or other tools.
 :::
 
-## Join worker nodes to the vCluster
+### Join worker nodes to the virtual cluster
 
-vCluster currently supports two modes of joining nodes into it:
-- Automatically using the [Cluster API](https://github.com/kubernetes-sigs/cluster-api)
-- Manually using [`kubeadm`](https://kubernetes.io/docs/reference/setup-tools/kubeadm/)
+vCluster allows two methods to join worker nodes:
 
-### Join worker nodes using kubeadm
+- Automatically add worker nodes using [Cluster API](https://github.com/kubernetes-sigs/cluster-api)
+- Manually add worker nodes 
 
-Before you can join actual nodes into the vCluster, you must create a token for the nodes to join. You can either use a single token for all nodes or create a token for each node.
+#### Join worker nodes using Cluster API
 
-To create a new token, run the following command while connected to the vCluster:
+For automatically joining nodes using the Cluster API, set up the cluster using the following command to install the [vCluster Cluster API provider](https://github.com/loft-sh/cluster-api-provider-vcluster):
 
-```bash title="Create a join token for worker nodes"
+```bash title="Initialize Cluster API with vCluster provider"
+clusterctl init --infrastructure vcluster
+```
+
+As soon as the Cluster API provider is running, you can install a provider to handle node creation—for example, KubeVirt.
+
+```bash title="Generate cluster configuration with KubeVirt"
+VCLUSTER_VERSION=v0.26.0-alpha.9
+
+clusterctl generate cluster test \
+  --kubernetes-version v1.31.2 \
+  -n test \
+  --from https://raw.githubusercontent.com/loft-sh/cluster-api-provider-vcluster/refs/heads/main/hack/kubevirt/template.yaml
+```
+
+Then apply the manifests to the cluster and Cluster API should create the vCluster and join the worker nodes using the KubeVirt provider.
+
+#### Join worker nodes 
+
+*Pre-requisities on worker nodes*
+
+- `curl` installed 
+
+In order to join worker nodes, a token from the vCluster must be created to provide access and permissions to join the vCluster. A single token can be used for any worker nodes to join, or if you wanted to, you could create a token for each node. 
+
+```bash title="Create a token for worker nodes"
+export VCLUSTER_NAME=my-vcluster
+
+# Connect to your vcluster
+vcluster connect $VCLUSTER_NAME
+
+# Create a token
 vcluster token create
 ```
 
-The output is similar to the following:
-```bash title="Example join command output"
+The output provided will give you a command to run on your worker node. 
+
+```bash title="Example output from creating a token"
 curl -sfLk https://<vcluster-endpoint>/node/join?token=<token> | sh -
 ```
 
-Run the command to join a node into the vCluster:
+For each worker node that you want to join vCluster, run the command on the worker node. 
 
-```bash title="Example successful node join output"
+```bash title="Example output on worker node"
 Preparing node for Kubernetes installation...
-Kubernetes version: v1.30.1
+Kubernetes version: v1.31.2
 Installing Kubernetes binaries...
 Enabling containerd and kubelet...
 Created symlink /etc/systemd/system/multi-user.target.wants/containerd.service → /etc/systemd/system/containerd.service.
@@ -172,31 +236,6 @@ This node has joined the cluster:
 
 Run 'kubectl get nodes' on the control-plane to see this node join the cluster.
 ```
-
-:::info Using vanilla kubeadm
-To view the raw `kubeadm join` command, use the `--kubeadm` flag.
-:::
-
-### Join worker nodes using the Cluster API
-
-For automatically joining nodes using the Cluster API, set up the cluster using the following command to install the [vCluster Cluster API provider](https://github.com/loft-sh/cluster-api-provider-vcluster):
-
-```bash title="Initialize Cluster API with vCluster provider"
-clusterctl init --infrastructure vcluster
-```
-
-As soon as the Cluster API provider is running, you can install a provider to handle node creation—for example, KubeVirt.
-
-```bash title="Generate cluster configuration with KubeVirt"
-VCLUSTER_VERSION=v0.26.0-alpha.9
-
-clusterctl generate cluster test \
-  --kubernetes-version v1.31.2 \
-  -n test \
-  --from https://raw.githubusercontent.com/loft-sh/cluster-api-provider-vcluster/refs/heads/main/hack/kubevirt/template.yaml
-```
-
-Then apply the manifests to the cluster and Cluster API should create the vCluster and join the worker nodes using the KubeVirt provider.
 
 ## Upgrade vCluster control plane
 
