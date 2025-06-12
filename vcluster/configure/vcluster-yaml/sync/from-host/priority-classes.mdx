@@ -1,0 +1,151 @@
+---
+title: Priority Classes
+sidebar_label: priorityClasses
+sidebar_position: 3
+description: Configuration for Priority Classes in vCluster
+---
+
+import EnableSwitch from '../../../../_partials/config/sync/fromHost/priorityClasses.mdx'
+
+{/*
+`priorityClasses.enabled`:
+- covered by the generic section here: https://www.vcluster.com/docs/syncer/config#enable-or-disable-synced-resources
+*/}
+
+By default, PriorityClass synchronization is disabled.
+
+You can enable this feature to sync `PriorityClass` resources from the host cluster to the virtual cluster.
+
+This is useful in scenarios where selective access to Pod configurations is required. Common use cases include:
+
+- **Development environments**: Sync only the PriorityClasses required for development clusters to reduce noise and avoid unnecessary exposure.
+- **Multi-tenancy**: Enable teams to use their own PriorityClasses while sharing a single host cluster.
+- **Security**: Restrict the PriorityClasses available in the virtual cluster to enforce access control and prevent unintended configurations.
+
+### Enable Syncing priority classes from the host to virtual cluster
+
+
+```YAML
+sync:
+  fromHost:
+    priorityClasses:
+      enabled: true
+```
+
+<!-- vale off -->
+### Example
+
+The following configuration syncs all `PriorityClasses` that match the specified labels and expressions from the host cluster to the virtual cluster:
+
+```YAML
+sync:
+  fromHost:
+    priorityClasses:
+      enabled: true
+      selector:
+        matchLabels:
+          # Match all PriorityClasses with the label `environment` with value `development`
+          environment: "development"
+        matchExpressions:
+          # Match PriorityClasses with the label `kubernetes.io/priority.class` that are either `low` or `medium`
+          - key: "kubernetes.io/priority.class"
+            operator: In
+            values:
+              - low
+              - medium
+```
+
+The `selector` field follows the same syntax as Kubernetes label selectors. Use it to filter which `PriorityClass` resources are synced from the host cluster based on their labels.
+
+:::note
+All specified label conditions must match for an `PriorityClass` to be included in the sync.
+:::
+
+
+## Use selectors to filter PriorityClasses
+
+Use `matchLabels` and `matchExpressions` to filter which `PriorityClass` resources are synced based on their labels.
+
+- `matchLabels`: Defines exact label key-value pairs.
+
+For example, to sync only `PriorityClasses` labeled `environment: development`:
+
+```yaml
+matchLabels:
+  environment: development
+  ```
+
+- `matchExpressions`: Allows more flexible, set-based filtering.
+
+For example, to sync `PriorityClasses` where the label `kubernetes.io/priority.class` is either `low` or `medium`:
+
+```yaml
+matchExpressions:
+  - key: kubernetes.io/priority.class
+    operator: In
+    values:
+      - low
+      - medium
+  ```
+Supported operators are `In`, `NotIn`, `Exists`, and `DoesNotExist`.
+
+For more details on how to use label selectors effectively, refer to the [Kubernetes documentation on label selectors](https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/#resources-that-support-set-based-requirements).
+
+## Sync behavior and considerations
+
+When `PriorityClass` synchronization is enabled, the vCluster syncer uses selector criteria to control which `PriorityClasses` are synchronized between the host and virtual clusters.
+
+The selector configuration creates a bidirectional filter:
+
+- **From host to virtual cluster**: Only `PriorityClasses` matching the selector criteria are synchronized from the host cluster to the virtual cluster.
+
+- **From virtual cluster to host**: `Pod` resources created in the virtual cluster are synchronized to the host only if they reference `PriorityClasses` that match the selector criteria.
+
+### Resource availability and updates
+
+- Synced `PriorityClass` resources appear in the virtual cluster and can be referenced by `Pod` resources.
+- When an `PriorityClass` in the host cluster is modified, the selector is re-evaluated:
+- If it still matches, the resource is updated in the virtual cluster.
+- If it no longer matches, it is removed from the virtual cluster.
+- If an `PriorityClass` fails to meet the selector criteria, a warning is logged in the vCluster syncer pod’s output.
+
+### Orphaned Pod resources
+
+- If a synced `PriorityClass` is removed from the virtual cluster (due to selector mismatch or deletion), any `Pod` resources referencing it remain in the virtual cluster.
+- These `Pod` resources stop receiving updates but are not automatically deleted.
+- To remove them, you must delete them manually in the host cluster.
+
+## Constraint enforcement
+
+The selector acts as both a filter and a validation mechanism:
+
+- **Resource filtering**: Only `PriorityClasses` that match the selector criteria are made available in the virtual cluster's API server.
+
+- **Creation validation**: `Pod` resources in the virtual cluster can only reference `PriorityClasses` that exist in the filtered set.
+
+- **Sync restriction**: `Pod` resources referencing non-matching `PriorityClasses` are blocked from synchronizing to the host cluster.
+
+## Error handling
+
+When a `Pod` resource references a `PriorityClass` that doesn't match the selector criteria:
+
+- The `Pod` synchronization to the host cluster fails.
+- An event is recorded on the `Pod` resource in the virtual cluster.
+- The event indicates that the specified `PriorityClass` is not available in the host.
+
+The event output looks similar to the following:
+
+```shell
+vcluster-virtual-cluster-1:~$ kubectl describe pod my-pod
+Name:             my-pod
+Namespace:        default
+Priority Class:   high
+Events:
+  Type     Reason            Age   From                Message
+  ----     ------            ----  ----                -------
+  Warning  SyncWarning       10s   pod-syncer          did not sync pod "my-pod" to host because it does not match the selector under 'sync.fromHost.priorityClasses.selector'
+```
+
+## Config reference
+
+<EnableSwitch/>
