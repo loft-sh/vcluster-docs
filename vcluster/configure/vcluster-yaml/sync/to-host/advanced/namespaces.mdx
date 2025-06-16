@@ -123,7 +123,7 @@ kubectl create namespace some-other-namespace
 Verify the namespaces on the host cluster.
 
 ```bash
-kubectl --context kind-vcluster-pro get namespace
+kubectl --context kind-vcluster get namespace
 ```
 
 ```bash
@@ -176,7 +176,7 @@ team-a-ns1             nginx-from-team-a            1/1     Running   0         
 Verify pods running on the host cluster.
 
 ```bash
-kubectl --context kind-vcluster-pro get pods -A
+kubectl --context kind-vcluster get pods -A
 ```
 
 ```bash
@@ -212,14 +212,14 @@ Create a namespace matching one of the mappings on host
 This will match `"team-a-*": "h-team-a-*"` mapping
 
 ```bash
-kubectl --context kind-vcluster-pro create namespace  h-team-a-namespace-synced-from-host
+kubectl --context kind-vcluster create namespace  h-team-a-namespace-synced-from-host
 ```
 </Step>
 <Step>
 Start a pod inside this namespace on host cluster
 
 ```bash
-kubectl --context kind-vcluster-pro -n h-team-a-namespace-synced-from-host run nginx-from-host --image nginx
+kubectl --context kind-vcluster -n h-team-a-namespace-synced-from-host run nginx-from-host --image nginx
 ```
 </Step>
 <Step>
@@ -316,408 +316,176 @@ vCluster blocks this namespace. Any operation on namespaces not defined in mappi
 </Step>
 </Flow>
 
-## Configure host namespace cleanup
+## Deleting vCluster
 
-You can set a cleanup policy to control what happens to host cluster namespaces when an associated vCluster is deleted.
+When deleting vCluster, all namespaces created on host as a result of syncing from vCluster as well as all resources running inside of them
+will get removed from host. All resources that were started on host and imported into vCluster as result of namespace syncing will remain on
+host untouched.
 
-### Set a cleanup policy
+We can test this behaviour by deploying vCluster with following configuration:
 
-Control what happens to mapped host cluster namespaces when you delete a vCluster. Configure the cleanup policy to determine whether these namespaces are automatically removed or preserved on the host cluster.
-
-Configure the policy that controls cleanup of mapped host cluster namespaces when the vCluster is removed. The possible values are:
-
-- **`synced`** (_Default_): vCluster removes only host namespaces that it actually created as a result of syncing a virtual namespace. Pre-existing and imported host namespaces that this vCluster instance did not create remain untouched.
-- **`all`**: vCluster removes any host namespace that matches any of the host-side mapping targets (the right-hand side of your `mappings.byName` rules) when this vCluster instance is deleted. This is a destructive option that requires caution, as it can delete namespaces (and all their contents) that might be shared or managed by other processes if they match the pattern.
-- **`none`**: vCluster does not touch host namespaces during deletion, regardless of whether vCluster created them or they matched mappings. You become responsible for cleaning up these namespaces manually if needed.
-
-#### Test synced cleanup policy
-
-The following wxample demonstrates the `synced` cleanup policy. A namespace created directly on the host (`host-from-host`) remains after vCluster deletion, while the namespace created by vCluster due to sync (`host-from-vcluster`) gets removed.
-
-```yaml title="vcluster-cleanup-synced.yaml"
+```yaml
+# vcluster-test-cleanup.yaml
 sync:
   toHost:
     namespaces:
       enabled: true
-      mappingsOnly: false
       mappings:
         byName:
-          "sync-*": "host-*"
-      hostNamespaces:
-        cleanup: synced
+          sync-*: host-*
 ```
 
 <Flow>
+
 <Step>
-Create a namespace directly on the host cluster.
+First, create a namespace on your host cluster that matches host-side mappings in our configuration and start a pod inside of it.
 
-```bash title="Create host namespace and pod"
-kubectl --context kind-vcluster-pro create namespace host-from-host
-kubectl --context kind-vcluster-pro -n host-from-host run nginx-from-host --image nginx
+```bash
+kubectl --context kind-vcluster create namespace host-namespace-from-host
+kubectl --context kind-vcluster -n host-namespace-from-host run nginx-from-host --image nginx
 ```
 
-Verify that the pod started properly:
+</Step>
 
-```bash title="Check pods in host namespace"
-kubectl --context kind-vcluster-pro -n host-from-host get po
+<Step>
+Verify that the pod started in host cluster
+
+```bash
+kubectl --context kind-vcluster -n host-namespace-from-host get pods
 ```
 
-```bash title="Pod status output"
+```bash
 NAME              READY   STATUS    RESTARTS   AGE
-nginx-from-host   1/1     Running   0          13s
+nginx-from-host   1/1     Running   0          50s
+```
+
+</Step>
+
+<Step>
+Create vCluster using values from above:
+
+```bash
+vcluster create test-cleanup -f values-test-cleanup.yml
+```
+
+</Step>
+
+<Step>
+Create namespace inside vCluster and start a pod in it:
+
+```bash
+kubectl create namespace sync-namespace-from-vcluster
+kubectl -n sync-namespace-from-vcluster run nginx-from-vcluster --image nginx
 ```
 </Step>
 
 <Step>
-Deploy vCluster named `cleanup-synced` using `vcluster-cleanup-synced.yaml`:
+Verify both namespaces are available in both host cluster and vCluster:
 
-```bash title="Create vCluster with cleanup configuration"
-vcluster create cleanup-synced -f vcluster-cleanup-synced.yaml
-```
-</Step>
-
-<Step>
-In the vCluster, create a namespace that matches the `sync-*` pattern:
-
-```bash title="Create namespace in vCluster"
-kubectl create namespace sync-from-vcluster
-```
-</Step>
-
-<Step>
-Observe namespaces on the vCluster and host cluster:
-
-```bash title="List vCluster namespaces"
+```bash
 kubectl get ns
 ```
 
-```bash title="vCluster namespace list output"
-NAME                 STATUS   AGE
-default              Active   28s
-kube-node-lease      Active   28s
-kube-public          Active   28s
-kube-system          Active   28s
-sync-from-host       Active   20s
-sync-from-vcluster   Active   13s
+```bash
+NAME                           STATUS   AGE
+default                        Active   3m35s
+kube-node-lease                Active   3m35s
+kube-public                    Active   3m35s
+kube-system                    Active   3m35s
+sync-namespace-from-host       Active   2m21s
+sync-namespace-from-vcluster   Active   5s
 ```
 
-```bash title="List host cluster namespaces"
+```bash
+kubectl --context kind-vcluster get ns
+```
+
+```bash
+NAME                           STATUS   AGE
+default                        Active   6d23h
+host-namespace-from-host       Active   3m3s
+host-namespace-from-vcluster   Active   47s
+kube-node-lease                Active   6d23h
+kube-public                    Active   6d23h
+kube-system                    Active   6d23h
+local-path-storage             Active   6d23h
+vcluster-test-cleanup          Active   4m43s
+```
+
+```bash
+kubectl get po -A | grep nginx
+```
+
+```bash
+sync-namespace-from-host       nginx-from-host          1/1     Running   0          3m58s
+sync-namespace-from-vcluster   nginx-from-vcluster      1/1     Running   0          114s
+```
+
+```bash
+kubectl --context kind-vcluster-pro get po -A | grep nginx
+```
+
+```bash
+host-namespace-from-host       nginx-from-host                                       1/1     Running             0          4m7s
+host-namespace-from-vcluster   nginx-from-vcluster                                   1/1     Running             0          2m3s
+```
+
+</Step>
+
+
+<Step>
+Delete vCluster
+
+```bash
+vcluster delete test-cleanup
+```
+
+```bash
+12:29:31 info Stopping background proxy...
+12:29:31 info Delete vcluster test-cleanup...
+12:29:31 done Successfully deleted virtual cluster test-cleanup in namespace vcluster-test-cleanup
+12:29:31 info Starting cleanup of vCluster 'test-cleanup' namespaces.
+12:29:31 info Namespace 'host-namespace-from-host' was imported, cleaning up its resources and metadata...
+12:29:36 info Deleting virtual cluster namespace 'host-namespace-from-vcluster'
+12:29:36 info Successfully deleted virtual cluster namespace 'host-namespace-from-vcluster'
+12:29:36 info Cleanup of vCluster 'test-cleanup' namespaces finished.
+12:29:36 done Successfully deleted virtual cluster namespace vcluster-test-cleanup
+12:29:36 info Waiting for virtual cluster to be deleted...
+12:29:47 done Virtual Cluster is deleted
+```
+
+</Step>
+
+<Step>
+Verify namespaces and resources left on host
+
+```bash
 kubectl --context kind-vcluster-pro get ns
 ```
 
-```bash title="Host cluster namespace list output"
-NAME                      STATUS   AGE
-default                   Active   47h
-host-from-host            Active   2m16s
-host-from-vcluster        Active   45s
-kube-node-lease           Active   47h
-kube-public               Active   47h
-kube-system               Active   47h
-local-path-storage        Active   47h
-vcluster-cleanup-synced   Active   78s
+```bash
+NAME                       STATUS   AGE
+default                    Active   6d23h
+host-namespace-from-host   Active   6m55s
+kube-node-lease            Active   6d23h
+kube-public                Active   6d23h
+kube-system                Active   6d23h
+local-path-storage         Active   6d23h
 ```
+
+```bash
+kubectl --context kind-vcluster-pro get pods -n host-namespace-from-host
+```
+
+```bash
+NAME              READY   STATUS    RESTARTS   AGE
+nginx-from-host   1/1     Running   0          6m48s
+```
+
+Resources synced from vCluster are gone while all resources created on host cluster remained untouched.
+
+
 </Step>
 
-<Step>
-Delete the vCluster.
 
-```bash title="Delete vCluster"
-vcluster delete cleanup-synced
-```
-
-```bash title="Deletion output with cleanup details"
-15:25:48 info Stopping background proxy...
-15:25:49 info Delete vcluster cleanup-synced...
-15:25:49 done Successfully deleted virtual cluster cleanup-synced in namespace vcluster-cleanup-synced
-15:25:49 info Starting cleanup of vCluster 'cleanup-synced' namespaces.
-15:25:49 info Namespace host-from-host was imported, cleaning up import.
-15:25:49 info Attempting to delete virtual cluster namespace host-from-vcluster.
-15:25:49 done Successfully deleted virtual cluster namespace host-from-vcluster.
-15:25:49 info Cleanup of vCluster 'cleanup-synced' namespaces finished.
-15:25:49 done Successfully deleted virtual cluster namespace vcluster-cleanup-synced
-15:25:49 info Waiting for virtual cluster to be deleted...
-15:26:00 done Virtual Cluster is deleted
-```
-</Step>
-
-<Step>
-Observe host namespaces again.
-
-```bash title="Check remaining host namespaces"
-kubectl --context kind-vcluster-pro get ns
-```
-
-```bash title="Host namespace status after cleanup"
-NAME                 STATUS   AGE
-default              Active   47h
-host-from-host       Active   3m21s
-kube-node-lease      Active   47h
-kube-public          Active   47h
-kube-system          Active   47h
-local-path-storage   Active   47h
-```
-
-The imported namespace remains untouched while the synced one is removed.
-</Step>
-
-<Step>
-Manually clean up the host-created namespace.
-
-```bash title="Clean up remaining host namespace"
-kubectl --context kind-vcluster-pro delete ns host-from-host
-```
-</Step>
-</Flow>
-
-#### Test none cleanup policy
-
-This example demonstrates the `none` cleanup policy. Both the namespace created directly on the host (`host-from-host`) and the namespace created on the host due to vCluster sync (`host-from-vcluster-with-cleanup-none`) remain after vCluster deletion.
-
-```yaml title="vcluster-cleanup-none.yaml"
-sync:
-  toHost:
-    namespaces:
-      enabled: true
-      mappingsOnly: false
-      mappings:
-        byName:
-          "sync-*": "host-*"
-      hostNamespaces:
-        cleanup: none
-```
-
-<Flow>
-<Step>
-Create a namespace directly on the host cluster.
-
-```bash title="Create host namespace and pod"
-kubectl --context kind-vcluster-pro create namespace host-from-host
-kubectl --context kind-vcluster-pro -n host-from-host run nginx-from-host --image nginx
-```
-</Step>
-
-<Step>
-Deploy vCluster `cleanup-none` using `vcluster-cleanup-none.yaml`.
-
-```bash title="Deploy vCluster with none cleanup policy"
-vcluster create cleanup-none -f vcluster-cleanup-none.yaml
-```
-</Step>
-
-<Step>
-Inside the vCluster, create a namespace.
-
-```bash title="Create namespace in vCluster"
-kubectl create namespace sync-from-vcluster-with-cleanup-none
-```
-</Step>
-
-<Step>
-Observe namespaces on vCluster and host cluster.
-
-```bash title="List vCluster namespaces"
-kubectl get ns
-```
-
-```bash title="vCluster namespace output"
-NAME                                   STATUS   AGE
-default                                Active   40s
-kube-node-lease                        Active   40s
-kube-public                            Active   40s
-kube-system                            Active   40s
-sync-from-host                         Active   32s
-sync-from-vcluster-with-cleanup-none   Active   3s
-```
-
-```bash title="List host cluster namespaces"
-kubectl --context kind-vcluster-pro get ns
-```
-
-```bash title="Host cluster namespace output"
-NAME                                   STATUS   AGE
-default                                Active   47h
-host-from-host                         Active   88s
-host-from-vcluster-with-cleanup-none   Active   24s
-kube-node-lease                        Active   47h
-kube-public                            Active   47h
-kube-system                            Active   47h
-local-path-storage                     Active   47h
-vcluster-cleanup-none                  Active   79s
-```
-</Step>
-
-<Step>
-Delete the vCluster.
-
-```bash title="Delete vCluster with none policy"
-vcluster delete cleanup-none
-```
-
-```bash title="Deletion output for no namespace cleanup"
-15:39:31 info Stopping background proxy...
-15:39:32 info Delete vcluster cleanup-none...
-15:39:32 done Successfully deleted virtual cluster cleanup-none in namespace vcluster-cleanup-none
-15:39:32 done Successfully deleted virtual cluster namespace vcluster-cleanup-none
-15:39:32 info Waiting for virtual cluster to be deleted...
-15:39:43 done Virtual Cluster is deleted
-```
-</Step>
-
-<Step>
-Observe host namespaces again.
-
-```bash title="Check host namespaces after deletion"
-kubectl --context kind-vcluster-pro get ns
-```
-
-```bash title="All namespaces remain intact"
-NAME                                   STATUS   AGE
-default                                Active   47h
-host-from-host                         Active   2m22s
-host-from-vcluster-with-cleanup-none   Active   78s
-kube-node-lease                        Active   47h
-kube-public                            Active   47h
-kube-system                            Active   47h
-local-path-storage                     Active   47h
-```
-
-All namespaces remain untouched.
-</Step>
-
-<Step>
-Manually clean up.
-
-```bash title="Manual cleanup of remaining namespaces"
-kubectl --context kind-vcluster-pro delete ns host-from-host
-kubectl --context kind-vcluster-pro delete ns host-from-vcluster-with-cleanup-none
-```
-</Step>
-</Flow>
-
-#### Test all cleanup policy
-
-This example demonstrates the `all` cleanup policy. vCluster deletes any host namespace matching the `host-*` pattern (defined in mappings), regardless of whether this vCluster created it or it existed beforehand.
-
-```yaml title="vcluster-cleanup-all.yaml"
-
-sync:
-  toHost:
-    namespaces:
-      enabled: true
-      mappingsOnly: false
-      mappings:
-        byName:
-          "sync-*": "host-*"
-      hostNamespaces:
-        cleanup: all
-```
-
-<Flow>
-<Step>
-Create namespaces directly on the host cluster that match the `host-*` pattern.
-
-```bash title="Create test namespaces on host"
-kubectl --context kind-vcluster-pro create namespace host-preexisting-data
-kubectl --context kind-vcluster-pro create namespace host-another-preexisting
-kubectl --context kind-vcluster-pro create namespace safe-namespace # this namespace won't get deleted
-```
-</Step>
-
-<Step>
-Deploy vCluster `cleanup-all` using `vcluster-cleanup-all.yaml`.
-
-```bash title="Deploy vCluster with all cleanup policy"
-vcluster create cleanup-all -f vcluster-cleanup-all.yaml
-```
-</Step>
-
-<Step>
-Inside the vCluster, create a namespace that matches `sync-*`.
-
-```bash title="Create namespace in vCluster"
-kubectl create namespace sync-from-vcluster-with-cleanup-all
-```
-</Step>
-
-<Step>
-Observe namespaces on vCluster and host cluster.
-
-```bash title="List vCluster namespaces"
-kubectl get ns
-```
-
-```bash title="vCluster namespace output"
-NAME                                  STATUS   AGE
-default                               Active   31s
-kube-node-lease                       Active   31s
-kube-public                           Active   31s
-kube-system                           Active   31s
-sync-another-preexisting              Active   22s
-sync-from-vcluster-with-cleanup-all   Active   8s
-sync-preexisting-data                 Active   22s
-```
-
-```bash title="List host cluster namespaces"
-kubectl --context kind-vcluster-pro get ns
-```
-
-```bash title="Host cluster namespace output"
-NAME                                  STATUS   AGE
-default                               Active   47h
-host-another-preexisting              Active   82s
-host-from-vcluster-with-cleanup-all   Active   34s
-host-preexisting-data                 Active   82s
-kube-node-lease                       Active   47h
-kube-public                           Active   47h
-kube-system                           Active   47h
-local-path-storage                    Active   47h
-safe-namespace                        Active   82s
-vcluster-cleanup-all                  Active   72s
-```
-</Step>
-
-<Step>
-Delete the vCluster.
-
-```bash title="Delete vCluster with all policy"
-vcluster delete cleanup-all
-```
-
-```bash title="Deletion output for all matching namespaces cleaned"
-15:43:00 info Stopping background proxy...
-15:43:00 info Delete vcluster cleanup-all...
-15:43:00 done Successfully deleted virtual cluster cleanup-all in namespace vcluster-cleanup-all
-15:43:00 info Starting cleanup of vCluster 'cleanup-all' namespaces.
-15:43:00 info Attempting to delete virtual cluster namespace host-another-preexisting.
-15:43:00 done Successfully deleted virtual cluster namespace host-another-preexisting.
-15:43:00 info Attempting to delete virtual cluster namespace host-from-vcluster-with-cleanup-all.
-15:43:00 done Successfully deleted virtual cluster namespace host-from-vcluster-with-cleanup-all.
-15:43:00 info Attempting to delete virtual cluster namespace host-preexisting-data.
-15:43:00 done Successfully deleted virtual cluster namespace host-preexisting-data.
-15:43:00 info Cleanup of vCluster 'cleanup-all' namespaces finished.
-15:43:00 done Successfully deleted virtual cluster namespace vcluster-cleanup-all
-15:43:00 info Waiting for virtual cluster to be deleted...
-15:43:11 done Virtual Cluster is deleted
-```
-</Step>
-
-<Step>
-Observe host namespaces again.
-
-```bash title="Check host namespaces after all cleanup"
-kubectl --context kind-vcluster-pro get ns
-```
-
-```bash title="Only safe namespace remains output"
-NAME                 STATUS   AGE
-default              Active   47h
-kube-node-lease      Active   47h
-kube-public          Active   47h
-kube-system          Active   47h
-local-path-storage   Active   47h
-safe-namespace       Active   2m1s
-```
-
-vCluster removes all namespaces on the host that matched the pattern.
-</Step>
 </Flow>
