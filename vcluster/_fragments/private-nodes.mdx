@@ -33,23 +33,22 @@ alt="Overview"
 
 <!-- vale off -->
 
-## Compare private nodes and resource syncing
+## Private nodes vs. shared nodes
 
-The following table outlines the differences between using private nodes and using resource syncing:
+The following table outlines the differences between using private nodes and shared nodes: 
 
-| Feature                            | Private Nodes | Resource Syncing |
-|------------------------------------|---------------|------------------|
-| Control plane runs as Pods         | Yes           | Yes              |
-| Isolated control plane             | Yes           | Yes              |
-| Install custom CNI                 | Yes           | No               |
-| Install custom CSI drivers         | Yes           | No               |
-| Separate network                   | Yes           | No               |
-| Completely isolated nodes          | Yes           | No               |
-| Reuse host nodes                   | No            | Yes              |
-| Reuse host controllers             | No            | Yes              |
-| View vCluster resources in host    | No            | Yes              |
+| Feature                                    | Private Nodes                | Shared Nodes                 |
+|--------------------------------------------|------------------------------|------------------------------|
+| Control plane runs as pods                 | Yes                          | Yes                          |
+| Isolated control plane                     | Yes                          | Yes                          |
+| Ability to install custom CNI              | Yes                          | No                           |
+| Ability to install custom CSI drivers      | Yes                          | No                           |
+| Isolated network                           | Yes                          | No                           |
+| Worker Nodes                               | Isolated to the vCluster     | Shared from the host cluster |
+| Ability to re-use host controllers         | No                           | Yes                          |
+| Ability to view vCluster resources in host | No                           | Yes                          |
 
-## vcluster.yaml Configuration
+## vcluster.yaml configuration
 
 To create a vCluster with private nodes, you'll need to enable the feature as well as set some other configuration options in preparation for worker nodes to join.
 
@@ -66,13 +65,13 @@ controlPlane:
         tag: v1.31.2 # Kubernetes version you want to use
   service:
     spec:
-      type: LoadBalancer # If you want to expose vCluster via LoadBalancer (recommended option)
+      type: LoadBalancer # If you want to expose vCluster using LoadBalancer (Recommended option)
 
 # Networking configuration
 networking:
-  # Specify the pod cidr
+  # Specify the pod CIDR
   podCIDR: 10.64.0.0/16
-  # Specify the service cidr
+  # Specify the service CIDR
   serviceCIDR: 10.128.0.0/16
 ```
 
@@ -89,45 +88,98 @@ controlPlane:
       enabled: true
 ```
 
-### Other vCluster feature limitations
+### Configure add-ons
 
-When private nodes are enabled, the following `vcluster.yaml` options are no longer supported.
+vCluster supports add-ons that extends the functionality of your virtual cluster. You can configure these add-ons during deployment to adjust networking, observability, and other features for your environment and requirements.
 
-```yaml title="Unsupported vcluster.yaml options with private nodes"
-# No syncing is supported
-sync:
+#### CNI
 
-# No integration is supported as integrations rely on syncing
-integrations:
+By default, vCluster installs [flannel](https://github.com/flannel-io/flannel) as the CNI. You can install your own CNI by disabling flannel.
 
-# No services are replicated
-networking:
-  replicateServices:
-
-controlPlane:
-  distro:
-    # k3s distro is not supported, only k8s is supported
-    k3s:
-
-  # Embedded coreDNS is not supported as changing CNI options is one of the benefits of private nodes
-  coredns:
-    embedded: true
-
-  advanced:
-    # Disabling the virtual scheduler is not possible
-    virtualScheduler:
+```yaml title="Disable default flannel CNI "
+privateNodes:
+  cni:
+    flannel:
       enabled: false
 ```
 
-## Create vCluster with private nodes
+#### CoreDNS
 
-### Pre-Requisities
+vCluster installs [CoreDNS](https://coredns.io/) by default to allow cluster DNS resolving of services and pods.
 
-* vCluster CLI installed on your local machine
-* Access to a Host Cluster
-* Worker Nodes
+#### Konnectivity
 
-### Create the vCluster Control Plane
+vCluster uses [Konnectivity](https://kubernetes.io/docs/tasks/extend-kubernetes/setup-konnectivity/) to establish a connection between the control plane and worker nodes for commands such as `kubectl logs`, `kubectl exec`, `kubectl port-forward`. The Konnectivity server runs as part of the vCluster control plane, while an agent is deployed inside the vCluster. If it is not needed or wanted, you can disable Konnectivity in the vCluster config.
+
+#### Kube proxy
+
+vCluster installs [Kube Proxy](https://kubernetes.io/docs/reference/command-line-tools-reference/kube-proxy/) by default to ensure that services are configured on the nodes. Some CNI implement their own kube-proxy functionality. Optionally, you can disable kube-proxy deployment in the vCluster config.
+
+#### Local Path Provisioner
+
+vCluster installs the [Local Path Provisioner](https://github.com/rancher/local-path-provisioner) by default to allow stateful workloads within the vCluster.
+
+### Other vCluster feature limitations
+
+When private nodes are enabled, certain vCluster features are automatically disabled or unavailable. If you include these options in your `vcluster.yaml`, they are ignored or might cause configuration errors.
+
+The following features are not available when using private nodes:
+
+- `sync.*` - No resource syncing between virtual and host clusters
+- `integrations.*` - Integrations depend on syncing functionality  
+- `networking.replicateServices` - Services are not replicated to host
+- `controlPlane.distro.k3s` - Only standard Kubernetes (k8s) is supported
+- `controlPlane.coredns.embedded: true` - Embedded CoreDNS conflicts with custom CNI
+- `controlPlane.advanced.virtualScheduler.enabled: false` - Virtual scheduler cannot 
+
+```yaml title="Unsupported vcluster.yaml options with private nodes"
+# These configurations are NOT supported with private nodes
+
+# Resource syncing between virtual and host clusters is disabled
+sync:
+  services:
+    enabled: false  # Services cannot be synced to host cluster
+  secrets:
+    enabled: false  # Secrets cannot be synced to host cluster
+                    # All other sync options (pods, configmaps, etc.) are also disabled
+
+# Platform integrations require syncing functionality
+integrations:
+  metricsServer:
+    enabled: false  # Metrics server integration not supported
+                    # All other integrations are disabled due to sync dependency
+
+# Service replication to host cluster is not available
+networking:
+  replicateServices:
+    enabled: false  # Services run entirely within virtual cluster
+
+# Distribution restrictions
+controlPlane:
+  distro:
+    k3s:
+      enabled: false  # k3s distribution not supported
+    k8s:
+      enabled: true   # Only standard Kubernetes works
+
+  # DNS configuration limitations
+  coredns:
+    embedded: false   # Embedded CoreDNS conflicts with custom CNI options
+  advanced:
+    # Virtual scheduler is required for workload placement
+    virtualScheduler:
+      enabled: true   # Always enabled (cannot be disabled)
+```
+
+## Create vCluster and manually add private nodes
+
+### Prerequisites
+
+- vCluster CLI installed on your local machine
+- Access to a host cluster
+- Worker nodes 
+
+### Create the vCluster control plane
 
 Before joining private nodes to a vCluster, you need to create vCluster to deploy the control plane on a host cluster.
 
@@ -160,17 +212,11 @@ Follow [this guide](https://www.vcluster.com/docs/vcluster/next/configure/vclust
 
 ### Join worker nodes to the virtual cluster
 
-vCluster allows two methods to join worker nodes:
+:::info Prerequisite
+Worker nodes must have `curl` installed before they can join the vCluster.
+:::
 
-- Manually add worker nodes
-
-#### Join worker nodes
-
-*Pre-requisities on worker nodes*
-
-- `curl` installed
-
-In order to join worker nodes, a token from the vCluster must be created to provide access and permissions to join the vCluster. A single token can be used for any worker nodes to join, or if you wanted to, you could create a token for each node.
+To join worker nodes, a token from the vCluster must be created to provide access and permissions to join the vCluster. A single token can be used for any worker nodes to join, or if you wanted to, you could create a token for each node. 
 
 ```bash title="Create a token for worker nodes"
 export VCLUSTER_NAME=my-vcluster
@@ -182,7 +228,7 @@ vcluster connect $VCLUSTER_NAME
 vcluster token create
 ```
 
-The output provided will give you a command to run on your worker node.
+The output provides a command to run on your worker node:
 
 ```bash title="Example output from creating a token"
 curl -sfLk https://<vcluster-endpoint>/node/join?token=<token> | sh -
@@ -215,7 +261,38 @@ This node has joined the cluster:
 Run 'kubectl get nodes' on the control-plane to see this node join the cluster.
 ```
 
-## Upgrade vCluster control plane
+## Create vCluster and worker nodes using CAPI 
+
+For automatically creating virtual cluster and private nodes using the [Cluster API](https://github.com/kubernetes-sigs/cluster-api), set up the cluster using the following command to install the [vCluster Cluster API provider](https://github.com/loft-sh/cluster-api-provider-vcluster):
+
+```bash title="Initialize Cluster API with vCluster provider"
+clusterctl init --infrastructure vcluster
+```
+
+As soon as the Cluster API provider is running, you can install a provider to handle node creation—for example, KubeVirt.
+
+```bash title="Generate cluster configuration with KubeVirt"
+VCLUSTER_VERSION=v0.26.0-alpha.9
+
+clusterctl generate cluster test \
+  --kubernetes-version v1.31.2 \
+  -n test \
+  --from https://raw.githubusercontent.com/loft-sh/cluster-api-provider-vcluster/refs/heads/main/hack/kubevirt/template.yaml
+```
+
+Then apply the manifests to the cluster and Cluster API should create the vCluster and join the worker nodes using the KubeVirt provider.
+
+## Load Docker images 
+
+To load a local Docker image on to a worker node you can use the following command:
+
+```bash title="Load Docker image into specific node"
+vcluster node load-image my-node --image nginx:latest
+```
+
+## Upgrade vCluster 
+
+### Upgrade vCluster control plane
 
 :::warning Kubernetes Version Skew Policy applies
 Do not upgrade multiple minor versions at the same time for the control plane as outlined in the [Kubernetes Version Skew Policy](https://kubernetes.io/releases/version-skew-policy/). Instead always upgrade a single minor version, wait until the cluster becomes healthy and then upgrade to the next minor version. For example: `v1.26` -> `v1.27` -> `v1.28`.
@@ -235,7 +312,7 @@ controlPlane:
 ...
 ```
 
-## Upgrade vCluster workers
+### Upgrade vCluster workers
 
 :::warning Kubernetes Version Skew Policy applies
 Use the [Kubernetes Version Skew Policy](https://kubernetes.io/releases/version-skew-policy/) for worker upgrades.
@@ -245,7 +322,7 @@ There are two modes of how worker upgrades can be done:
 - (_Recommended_) Automatically by vCluster when the control-plane was updated
 - Manually using vCluster CLI or kubeadm
 
-### Use automatic upgrades
+#### Use automatic upgrades
 
 Automatic worker node upgrades are enabled by default. vCluster upgrades each node when it detects a version mismatch between the control plane and the worker node. By default, one node is upgraded at a time.
 
@@ -266,7 +343,7 @@ You can also skip specific nodes from the automatic update by adding the label `
 Node upgrades typically do not restart pods. However, depending on the Kubernetes version change, restarts might occur in some cases.
 :::
 
-### Perform manual upgrades
+#### Perform manual upgrades
 
 You can either upgrade a node using the vCluster CLI by running the following command:
 
@@ -276,46 +353,7 @@ vcluster node upgrade my-node
 
 Alternatively, you can manually upgrade by following the [official Kubeadm Kubernetes guide](https://kubernetes.io/docs/tasks/administer-cluster/kubeadm/upgrading-linux-nodes/).
 
-## Configure addons
-
-vCluster supports addons that extend the functionality of your virtual cluster. You can configure these addons during deployment to adjust networking, observability, and other features for your environment and requirements.
-
-### CNI
-
-vCluster installs [Flannel](https://github.com/flannel-io/flannel) by default, if you want to install your own custom CNI, you can disable Flannel using the following:
-
-```yaml title="Disable default Flannel CNI"
-privateNodes:
-  cni:
-    flannel:
-      enabled: false
-```
-
-### CoreDNS
-
-vCluster installs [CoreDNS](https://coredns.io/) by default to allow cluster DNS resolving of services and pods.
-
-### Konnectivity
-
-vCluster uses [Konnectivity](https://kubernetes.io/docs/tasks/extend-kubernetes/setup-konnectivity/) to establish a connection between the control plane and worker nodes for commands such as `kubectl logs`, `kubectl exec`, `kubectl port-forward`. The Konnectivity server runs as part of the vCluster control plane, while an agent is deployed inside the vCluster. If it is not needed or wanted, you can disable Konnectivity in the vCluster config.
-
-### Kube proxy
-
-vCluster installs [Kube Proxy](https://kubernetes.io/docs/reference/command-line-tools-reference/kube-proxy/) by default to ensure that services are configured on the nodes. Some CNI implement their own kube-proxy functionality. Optionally, you can disable kube-proxy deployment in the vCluster config.
-
-### Local Path Provisioner
-
-vCluster installs the [Local Path Provisioner](https://github.com/rancher/local-path-provisioner) by default to allow stateful workloads within the vCluster.
-
-## Load Docker images into nodes
-
-To load a local Docker image into a worker node you can use the following command:
-
-```bash title="Load Docker image into specific node"
-vcluster node load-image my-node --image nginx:latest
-```
-
-## Review configuration reference
+## Config reference
 
 <PrivateNodes />
 <Networking />
