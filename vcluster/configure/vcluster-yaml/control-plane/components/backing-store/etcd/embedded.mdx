@@ -84,22 +84,256 @@ Recovery procedures depend on whether the first replica (the pod ending with `-0
 <Tabs>
 <TabItem value="first-replica-working" label="First replica is not failing">
 
-1. Scale down the vCluster `StatefulSet` to a single replica
-2. vCluster rebuilds a single-replica etcd cluster
-3. After vCluster is running, scale up to the desired number of replicas
+<Flow>
+<Step title="Scale down the vCluster StatefulSet to a single replica">
+Scale the StatefulSet to one replica:
+
+```bash
+kubectl scale statefulset <vcluster-name> --replicas=1 -n <namespace>
+```
+
+- Replace `<vcluster-name>` with your actual vCluster StatefulSet name
+- Replace `<namespace>` with your actual namespace name
+
+Verify only one pod is running:
+
+```bash
+kubectl get pods -l <vcluster-label> -n <namespace>
+```
+
+- Replace `<vcluster-label>` with your actual vCluster pod label (for example `app=vcluster`)
+- Replace `<namespace>` with your actual namespace name
+</Step>
+
+<Step title="Monitor the etcd cluster rebuild">
+Monitor the rebuild process:
+
+```bash
+kubectl logs -f <vcluster-name>-0 -n <namespace>
+```
+
+- Replace `<vcluster-name>` with your actual vCluster StatefulSet name
+- Replace `<namespace>` with your actual namespace name
+
+Watch for log messages indicating etcd is ready and the cluster is healthy.
+</Step>
+
+<Step title="Scale up to the desired number of replicas">
+Scale back up to your target replica count:
+
+```bash
+kubectl scale statefulset <vcluster-name> --replicas=<desired-replica-count> -n <namespace>
+```
+
+- Replace `<vcluster-name>` with your actual vCluster StatefulSet name
+- Replace `<desired-replica-count>` with your target number (for example `3`)
+- Replace `<namespace>` with your actual namespace name
+
+Verify all replicas are running:
+
+```bash
+kubectl get pods -l <vcluster-label> -n <namespace>
+kubectl logs <vcluster-name>-0 -n <namespace> | grep "cluster is ready"
+```
+
+- Replace `<vcluster-label>` with your actual vCluster pod label (for example `app=vcluster`)
+- Replace `<namespace>` with your actual namespace name
+- Replace `<vcluster-name>` with your actual vCluster StatefulSet name
+</Step>
+</Flow>
 
 </TabItem>
+
 <TabItem value="first-replica-failing" label="First replica is failing">
 
-1. Scale down vCluster to 0 replicas
-2. Delete the `PersistentVolumeClaim` of the first replica
-3. [Copy the `PersistentVolumeClaim`](https://kubernetes.io/docs/concepts/storage/persistent-volumes/#volume-cloning) from a working replica to the first replica `PersistentVolumeClaim`
-4. Scale up vCluster to a single replica
+<Flow>
+<Step title="Scale down vCluster to 0 replicas">
+Stop all vCluster instances:
+
+```bash
+kubectl scale statefulset <vcluster-name> --replicas=0 -n <namespace>
+```
+
+- Replace `<vcluster-name>` with your actual vCluster StatefulSet name
+- Replace `<namespace>` with your actual namespace name
+
+Confirm all pods have terminated:
+
+```bash
+kubectl get pods -l <vcluster-label> -n <namespace>
+```
+
+- Replace `<vcluster-label>` with your actual vCluster pod label (for example `app=vcluster`)
+- Replace `<namespace>` with your actual namespace name
+</Step>
+
+<Step title="Delete the PersistentVolumeClaim of the first replica">
+Delete the corrupted PVC for the first replica:
+
+```bash
+kubectl delete pvc <pvc-prefix>-<vcluster-name>-0 -n <namespace>
+```
+
+- Replace `<pvc-prefix>` with your actual PVC prefix (commonly `data`)
+- Replace `<vcluster-name>` with your actual vCluster StatefulSet name
+- Replace `<namespace>` with your actual namespace name
+
+Verify the PVC has been deleted:
+
+```bash
+kubectl get pvc -l <vcluster-label> -n <namespace>
+```
+
+- Replace `<vcluster-label>` with your actual vCluster pod label (for example `app=vcluster`)
+- Replace `<namespace>` with your actual namespace name
+</Step>
+
+<Step title="Copy the PersistentVolumeClaim from a working replica">
+Create a new PVC by [copying from a working replica](https://kubernetes.io/docs/concepts/storage/persistent-volumes/#volume-cloning):
+
+```yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: <pvc-prefix>-<vcluster-name>-0
+  namespace: <namespace>
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: <storage-size>
+  dataSource:
+    name: <pvc-prefix>-<vcluster-name>-1
+    kind: PersistentVolumeClaim
+  storageClassName: <storage-class>
+```
+
+- Replace `<pvc-prefix>-<vcluster-name>-0` with your actual target PVC name (for example `data-my-vcluster-0`)
+- Replace `<namespace>` with your actual namespace name
+- Replace `<storage-size>` with your actual storage size (for example `5Gi`)
+- Replace `<pvc-prefix>-<vcluster-name>-1` with your actual source PVC name (for example `data-my-vcluster-1`)
+- Replace `<storage-class>` with your actual storage class name (for example `gp2`)
+
+Apply the PVC:
+
+```bash
+kubectl apply -f <pvc-restore-file>.yaml
+```
+
+- Replace `<pvc-restore-file>` with your actual YAML filename (for example `restore-pvc.yaml`)
+</Step>
+
+<Step title="Scale up vCluster to a single replica">
+Start with one replica to verify the restored data:
+
+```bash
+kubectl scale statefulset <vcluster-name> --replicas=1 -n <namespace>
+```
+
+- Replace `<vcluster-name>` with your actual vCluster StatefulSet name
+- Replace `<namespace>` with your actual namespace name
+
+Monitor the startup:
+
+```bash
+kubectl logs -f <vcluster-name>-0 -n <namespace>
+```
+
+- Replace `<vcluster-name>` with your actual vCluster StatefulSet name
+- Replace `<namespace>` with your actual namespace name
+
+After it's stable, scale up to the desired number of replicas.
+</Step>
+</Flow>
 
 </TabItem>
+
 <TabItem value="complete-data-loss" label="Complete data loss scenario">
 
-If all replicas are damaged or corrupted, recover from a snapshot or backup.
+<Flow>
+<Step title="Assess the damage" danger>
+Verify all PVCs are corrupted or inaccessible:
+
+:::warning
+This recovery method results in data loss up to the last backup point.
+:::
+
+```bash
+kubectl get pvc -l <vcluster-label> -n <namespace>
+```
+
+- Replace `<vcluster-label>` with your actual vCluster pod label (for example `app=vcluster`).
+- Replace `<namespace>` with your actual namespace name.
+
+```bash
+kubectl describe pvc <pvc-prefix>-<vcluster-name>-0 <pvc-prefix>-<vcluster-name>-1 <pvc-prefix>-<vcluster-name>-2 -n <namespace>
+```
+
+- Replace `<pvc-prefix>` with your actual PVC prefix (commonly `data`)
+- Replace `<vcluster-name>` with your actual vCluster StatefulSet name
+- Replace `<namespace>` with your actual namespace name
+</Step>
+
+<Step title="Scale down to zero replicas">
+Stop all vCluster instances before beginning recovery:
+
+```bash
+kubectl scale statefulset <vcluster-name> --replicas=0 -n <namespace>
+```
+
+- Replace `<vcluster-name>` with your actual vCluster StatefulSet name
+- Replace `<namespace>` with your actual namespace name
+</Step>
+
+<Step title="Restore from backup or snapshot">
+Follow your backup restoration procedure. This typically involves:
+
+1. Delete all existing corrupted PVCs
+2. Restore PVCs from your backup solution (Velero, CSI snapshots, etc.)
+3. Ensure the restored PVCs have the correct names and labels
+
+Delete corrupted PVCs:
+
+```bash
+kubectl delete pvc <pvc-prefix>-<vcluster-name>-0 <pvc-prefix>-<vcluster-name>-1 <pvc-prefix>-<vcluster-name>-2 -n <namespace>
+```
+
+- Replace `<pvc-prefix>` with your actual PVC prefix (commonly `data`)
+- Replace `<vcluster-name>` with your actual vCluster StatefulSet name
+- Replace `<namespace>` with your actual namespace name
+
+Restore from snapshot:
+
+```bash
+kubectl apply -f <backup-restore-file>.yaml
+```
+
+- Replace `<backup-restore-file>` with your actual backup restoration filename (for example `backup-restore.yaml`)
+</Step>
+
+<Step title="Start vCluster with restored data">
+Scale up to a single replica to verify the restoration:
+
+```bash
+kubectl scale statefulset <vcluster-name> --replicas=1 -n <namespace>
+```
+
+- Replace `<vcluster-name>` with your actual vCluster StatefulSet name
+- Replace `<namespace>` with your actual namespace name
+
+Monitor logs and verify the cluster starts successfully:
+
+```bash
+kubectl logs -f <vcluster-name>-0 -n <namespace>
+```
+
+- Replace `<vcluster-name>` with your actual vCluster StatefulSet name
+- Replace `<namespace>` with your actual namespace name
+
+After it is verified, scale to the desired number of replicas.
+</Step>
+</Flow>
 
 </TabItem>
 </Tabs>
