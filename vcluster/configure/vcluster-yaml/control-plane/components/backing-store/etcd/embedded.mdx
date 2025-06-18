@@ -24,6 +24,45 @@ controlPlane:
         enabled: true
 ```
 
+## Overview
+
+When using embedded etcd, vCluster will start the etcd binary alongside the k8s control plane inside the vCluster pod. This has the advantage that vCluster can run in HA scenarios without requiring a separate statefulset or deployment. Embedded etcd is fully managed by vCluster and has the following capabilities:
+* Dynamically scale the etcd cluster up or down with the amount of vCluster replicas
+* Automatically recover etcd in failure scenarios (e.g. etcd member is corrupted)
+* Automatically migrate from SQLite or deployed Etcd to embedded etcd
+* No additional statefulset / deployments needed
+
+Based on the number of desired replicas, vCluster will dynmaically build the etcd cluster. For example, if vCluster is scaled from 1 to 3 replicas, vCluster will automatically add the new replicas as members to the existing 1 member cluster. Similarilly vCluster will remove the etcd members when vCluster is scaled down. If scaling down will break quorum (e.g. scaling from 3 to 1 replicas), vCluster will rebuild the etcd cluster without any data loss or interruption. This makes it possible to allow dynamic up and down scaling of vCluster.
+
+## Disaster Recovery
+
+In most failure scenarios, vCluster is able to recover the etcd cluster automatically by removing and then readding the crashing member. This will be done automatically in one of the following cases:
+* Etcd member is unresponsive for more than 2 minutes
+* Corruption or another alarm is detected on the etcd member
+
+vCluster will always only try to recover a single replica at a time. If recovering an etcd member would result in quorum loss, vCluster will not recover the member automatically.
+
+### Manually recover single embedded etcd replica
+
+If a single etcd replica fails, vCluster should be able to almost always recover the replica automatically. This includes:
+* Replica database gets corrupted
+* Replica database is deleted
+* Replica PVC is deleted
+* Replica is deleted from etcd cluster via `etcdctl member remove ID`
+* Replica is stuck as a learner
+
+If vCluster cannot recover the single replica automatically because of some other reason, make sure to wait at least 10 minutes before deleting the replica pod and pvc, which then will lead to vCluster rejoining the etcd member.
+
+### Manually recover whole embedded etcd cluster
+
+There are certain cases where the whole etcd  will need to be recovered manually. This should be a super rare case that we have never encountered in reality, but if you should run into this, this section outlines how to recover the whole etcd manually, given that at least a single replica is still up and running (not corrupted or damaged). If all replicas are damaged or corrupted, you will need to recover from a snapshot or backup.
+
+If the majority of etcd member replicas gets corrupted or deleted at the same time (e.g. 2 of 3, 3 of 5, 4 of 7 etc.), etcd will fail to startup. Note that restarting or killing vCluster pods is not a failure scenario as that will just lead to a leader reelection. Instead the etcd database needs to get corrupted, deleted or truncated at the same time on multiple replicas. vCluster cannot recover etcd automatically in this case anymore.
+
+To recover etcd manually, there are 2 cases depending if the first replica (the pod that ends with `-0`) is among the failing replicas:
+* **First replica is *not* failing:** you can just scale down the vCluster statefulset to a single replica which results in vCluster rebuilding a single replica etcd cluster. After vCluster is up and running again, you can scale up vCluster to the desired amount of replicas again.
+* **First replica is failing:** you should scale down the vCluster to 0 replicas, then delete the persistent volume claim of the first replica, [copy the persistentvolumeclaim](https://kubernetes.io/docs/concepts/storage/persistent-volumes/#volume-cloning) of a working replica to the first replica persistent volume claim, and then scale up vCluster to a single replica again.
+
 ## Config reference
 
 <ConfigReference/>
