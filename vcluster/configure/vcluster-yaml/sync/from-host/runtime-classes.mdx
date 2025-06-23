@@ -1,29 +1,35 @@
 ---
-title: Runtime Classes
+title: Runtime classes
 sidebar_label: runtimeClasses
 sidebar_position: 3
-description: Configuration for Runtime Classes in vCluster
+description: Configure runtime classes in vCluster
 ---
 
 import EnableSwitch from '../../../../_partials/config/sync/fromHost/runtimeClasses.mdx'
 
-{/*
-`runtimeClasses.enabled`:
-- covered by the generic section here: https://www.vcluster.com/docs/syncer/config#enable-or-disable-synced-resources
-*/}
+<!-- vale off -->
 
 By default, RuntimeClass synchronization is disabled.
 
-You can enable this feature to sync `RuntimeClass` resources from the host cluster to the virtual cluster.
+RuntimeClass syncing allows virtual clusters to use runtime classes from the host cluster. RuntimeClass resources define container runtime configurations including security sandboxes, alternative runtimes like gVisor or Kata Containers, and runtime-specific settings.
 
-This is useful in scenarios where selective access to Pod configurations is required. Common use cases include:
+Virtual clusters are isolated from each other; a RuntimeClass created in one virtual cluster does not exist in another. For more details on enabling and disabling synced resources, see the [sync configuration documentation](https://www.vcluster.com/docs/syncer/config#enable-or-disable-synced-resources).
 
-- **Development environments**: Sync only the RuntimeClasses required for development clusters to reduce noise and avoid unnecessary exposure.
-- **Multi-tenancy**: Enable teams to use their own RuntimeClasses while sharing a single host cluster.
-- **Security**: Restrict the RuntimeClasses available in the virtual cluster to enforce access control and prevent unintended configurations.
+You can enable this feature to sync RuntimeClass resources from the host cluster to the virtual cluster. Add labels to RuntimeClass resources in your host cluster and configure vCluster to sync only those matching specific selectors. When you create a Pod that references a synced RuntimeClass, the host cluster uses that runtime configuration.
 
-### Enable Syncing runtime classes from the host to virtual cluster
+This approach provides centralized control over runtime configurations and ensures consistent container runtime behavior across virtual clusters. Common use cases include:
 
+- **Security isolation**: Control which security runtimes different teams can access while sharing a single host cluster. Only authorized workloads can use enhanced security runtimes such as gVisor or Kata Containers. This prevents unauthorized access to privileged runtime configurations.
+
+- **Development environments**: Sync only required RuntimeClasses to reduce noise and avoid unnecessary exposure to production runtime configurations.
+
+- **Multi-tenancy**: Enable teams to use specific runtime configurations while preventing access to incompatible or resource-intensive runtimes that could affect other tenants. Each team gets only the runtime classes appropriate for their workloads and security requirements.
+
+- **Compliance**: Maintain strict control over container runtime configurations by defining runtime classes once in the host cluster and making only approved runtime configurations available to virtual clusters. All workloads use compliant runtime settings.
+
+- **Resource optimization**: Prevent teams from using resource-intensive runtime configurations that could impact cluster performance without proper oversight. Access to high-overhead runtimes is restricted and used only when necessary.
+
+### Enable RuntimeClass syncing
 
 ```YAML
 sync:
@@ -32,27 +38,117 @@ sync:
       enabled: true
 ```
 
-<!-- vale off -->
-
 :::note
-When `sync.fromHost.runtimeClasses.enabled` is enabled, any `RuntimeClass` created in the virtual cluster will be immediately deleted.
+When `sync.fromHost.runtimeClasses.enabled` is enabled, any RuntimeClass created in the virtual cluster is immediately deleted. This prevents conflicts between locally created RuntimeClasses and those synced from the host cluster.
 :::
 
-### Example
+## How RuntimeClass syncing works
 
-The following configuration syncs all `RuntimeClasses` that match the specified labels and expressions from the host cluster to the virtual cluster:
+When RuntimeClass synchronization is enabled, vCluster uses selector criteria to control which RuntimeClasses are synchronized between clusters. This affects two different resource flows:
 
-```YAML
+**RuntimeClass resources (host → virtual)**: Only RuntimeClasses matching the selector criteria are synchronized from the host cluster to the virtual cluster. You cannot create RuntimeClass resources directly in the virtual cluster. If no selector is specified, all RuntimeClass resources from the host cluster are synced.
+
+**Pod resources (virtual → host)**: Pod resources created in the virtual cluster are synchronized to the host only if they reference RuntimeClasses that match the selector criteria. Pod resources also sync if they have an empty runtimeClassName field or if no selector is specified.
+
+**Unified selector control**: The same selector determines which RuntimeClass resources are imported into the virtual cluster and which Pod resources can sync to the host cluster. If a Pod references a RuntimeClass that was not synced to the virtual cluster, that Pod cannot sync to the host cluster.
+
+## Using selectors to filter RuntimeClasses
+
+Selectors provide precise control over which RuntimeClass resources get synced from the host cluster. vCluster supports two types of selector criteria that follow standard Kubernetes label selector syntax.
+
+The `matchLabels` selector defines exact label key-value pairs that must be present on a RuntimeClass for it to be synced. This provides straightforward filtering based on specific label values and is ideal for simple categorization schemes.
+
+The `matchExpressions` selector allows more flexible, set-based filtering with support for multiple operators:
+
+- `In`: Matches RuntimeClass resources where the label value exists within a specified list
+- `NotIn`: Excludes resources with certain label values
+- `Exists`: Requires the presence of a label key regardless of its value
+- `DoesNotExist`: Excludes resources that have a particular label key
+
+All specified label conditions must match for a RuntimeClass to be included in the sync. This means that if you define both `matchLabels` and `matchExpressions`, a RuntimeClass must satisfy all criteria to be synced to the virtual cluster.
+
+For more details on label selectors, refer to the [Kubernetes documentation on label selectors](https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/#resources-that-support-set-based-requirements).
+
+## Sync behavior and considerations
+
+### Resource lifecycle and validation
+
+Synced RuntimeClass resources function like any other Kubernetes resource in the virtual cluster. You can view them with `kubectl get runtimeclass` and reference them in Pod specifications using the runtimeClassName field.
+
+When a RuntimeClass in the host cluster is modified, vCluster re-evaluates whether it still matches the selector criteria. If the RuntimeClass continues to match, vCluster updates the corresponding resource in the virtual cluster. If the RuntimeClass no longer matches the selector criteria, vCluster removes it from the virtual cluster.
+
+The selector system acts as both a resource filter and a validation mechanism. As a resource filter, it ensures that vCluster makes only RuntimeClass resources matching the selector criteria available in the virtual cluster. The selector also functions as a creation validation mechanism - Pod resources in the virtual cluster can only reference RuntimeClass resources that exist in the filtered set.
+
+### Error handling and troubleshooting
+
+When a RuntimeClass fails to meet the selector criteria during evaluation, vCluster logs a warning in the syncer pod's output. When you create a Pod resource that references a RuntimeClass not matching the selector criteria, several things occur:
+
+- The Pod synchronization to the host cluster fails
+- vCluster records an event on the Pod resource in the virtual cluster
+- The event indicates that the specified RuntimeClass is not available according to the current selector configuration
+
+The error output appears as a Kubernetes event that you can view using `kubectl describe`.
+
+### Orphaned resources and cleanup
+
+When vCluster removes a synced RuntimeClass from the virtual cluster due to selector changes or deletion from the host cluster, any Pod resources that reference it remain in the virtual cluster. These orphaned Pod resources stop receiving updates but vCluster does not automatically delete them to prevent unintended data loss. To remove these orphaned resources, you must delete them manually in the host cluster.
+
+## Examples
+
+### Filter with matchLabels
+
+To sync only RuntimeClass resources labeled `environment: development`:
+
+```yaml
 sync:
+  toHost:
+    pods:
+      enabled: true
   fromHost:
     runtimeClasses:
       enabled: true
       selector:
         matchLabels:
-          # Match all RuntimeClasses with the label `environment` with value `development`
+          environment: development
+```
+
+### Flexible filter with matchExpressions
+
+To sync RuntimeClass resources where the label `kubernetes.io/runtime.class` is either `gvisor` or `youki`:
+
+```yaml
+sync:
+  toHost:
+    pods:
+      enabled: true
+  fromHost:
+    runtimeClasses:
+      enabled: true
+      selector:
+        matchExpressions:
+          - key: kubernetes.io/runtime.class
+            operator: In
+            values:
+              - gvisor
+              - youki
+```
+
+### Combined filter criteria
+
+The following configuration syncs RuntimeClass resources that match both label and expression criteria:
+
+```yaml
+sync:
+  toHost:
+    pods:
+      enabled: true
+  fromHost:
+    runtimeClasses:
+      enabled: true
+      selector:
+        matchLabels:
           environment: "development"
         matchExpressions:
-          # Match RuntimeClasses with the label `kubernetes.io/runtime.class` that are either `gvisor` or `youki`
           - key: "kubernetes.io/runtime.class"
             operator: In
             values:
@@ -60,87 +156,11 @@ sync:
               - youki
 ```
 
-The `selector` field follows the same syntax as Kubernetes label selectors. Use it to filter which `RuntimeClass` resources are synced from the host cluster based on their labels.
+### Error handling
 
-:::note
-All specified label conditions must match for an `RuntimeClass` to be included in the sync.
-:::
+When a Pod resource references a RuntimeClass that doesn't match the selector criteria, the error output looks like this:
 
-
-## Use selectors to filter RuntimeClasses
-
-Use `matchLabels` and `matchExpressions` to filter which `RuntimeClass` resources are synced based on their labels.
-
-- `matchLabels`: Defines exact label key-value pairs.
-
-For example, to sync only `RuntimeClasses` labeled `environment: development`:
-
-```yaml
-matchLabels:
-  environment: development
-  ```
-
-- `matchExpressions`: Allows more flexible, set-based filtering.
-
-For example, to sync `RuntimeClasses` where the label `kubernetes.io/runtime.class` is either `gvisor` or `youki`:
-
-```yaml
-matchExpressions:
-  - key: kubernetes.io/runtime.class
-    operator: In
-    values:
-      - gvisor
-      - youki
-  ```
-Supported operators are `In`, `NotIn`, `Exists`, and `DoesNotExist`.
-
-For more details on how to use label selectors effectively, refer to the [Kubernetes documentation on label selectors](https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/#resources-that-support-set-based-requirements).
-
-## Sync behavior and considerations
-
-When `RuntimeClass` synchronization is enabled, the vCluster syncer uses selector criteria to control which `RuntimeClasses` are synchronized between the host and virtual clusters.
-
-The selector configuration creates a bidirectional filter:
-
-- **From host to virtual cluster**: Only `RuntimeClasses` matching the selector criteria are synchronized from the host cluster to the virtual cluster.
-
-- **From virtual cluster to host**: `Pod` resources created in the virtual cluster are synchronized to the host only if they reference `RuntimeClasses` that match the selector criteria.
-
-### Resource availability and updates
-
-- Synced `RuntimeClass` resources appear in the virtual cluster and can be referenced by `Pod` resources.
-- When an `RuntimeClass` in the host cluster is modified, the selector is re-evaluated:
-- If it still matches, the resource is updated in the virtual cluster.
-- If it no longer matches, it is removed from the virtual cluster.
-- If an `RuntimeClass` fails to meet the selector criteria, a warning is logged in the vCluster syncer pod’s output.
-
-### Orphaned Pod resources
-
-- If a synced `RuntimeClass` is removed from the virtual cluster (due to selector mismatch or deletion), any `Pod` resources referencing it remain in the virtual cluster.
-- These `Pod` resources stop receiving updates but are not automatically deleted.
-- To remove them, you must delete them manually in the host cluster.
-
-## Constraint enforcement
-
-The selector acts as both a filter and a validation mechanism:
-
-- **Resource filtering**: Only `RuntimeClasses` that match the selector criteria are made available in the virtual cluster's API server.
-
-- **Creation validation**: `Pod` resources in the virtual cluster can only reference `RuntimeClasses` that exist in the filtered set.
-
-- **Sync restriction**: `Pod` resources referencing non-matching `RuntimeClasses` are blocked from synchronizing to the host cluster.
-
-## Error handling
-
-When a `Pod` resource references a `RuntimeClass` that doesn't match the selector criteria:
-
-- The `Pod` synchronization to the host cluster fails.
-- An event is recorded on the `Pod` resource in the virtual cluster.
-- The event indicates that the specified `RuntimeClass` is not available in the host.
-
-The event output looks similar to the following:
-
-```shell
+```bash
 vcluster-virtual-cluster-1:~$ kubectl describe pod my-pod
 Name:             my-pod
 Namespace:        default
