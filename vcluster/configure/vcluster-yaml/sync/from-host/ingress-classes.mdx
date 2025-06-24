@@ -6,6 +6,8 @@ description: Configuration for IngressClasses in vCluster
 ---
 
 import EnableSwitch from '../../../../_partials/config/sync/fromHost/ingressClasses.mdx'
+import ClassSyncing from '../../../../_fragments/sync/class-syncing.mdx'
+import Patches from '../../../../_fragments/patches.mdx'
 
 
 By default, this is disabled.
@@ -22,153 +24,11 @@ This approach is useful in scenarios where selective access to ingress configura
 - **Multi-tenancy**: Enable teams to use their own IngressClass resources while sharing a single host cluster.
 - **Security**: Restrict the IngressClass resources available in the virtual cluster to enforce access control and prevent unintended configurations.
 
-## Enable IngressClasses syncing
+<ClassSyncing showResource="true" lowercaseResource="ingress" resource="Ingress" pluralResource="ingresses" lowercaseResourceClass="ingressclass" resourceClass="IngressClass" pluralResourceClass="ingressClasses" resourceClassName="IngressClassName" expressionKey="kubernetes.io/ingress.class" expressionValue1="nginx" expressionValue2="traefik" />
 
-To enable IngressClass syncing from the host cluster without filtering:
+## Patches
 
-```YAML
-sync:
-  fromHost:
-    ingressClasses:
-      enabled: true
-```
-
-<!-- vale off -->
-
-:::note
-When `sync.fromHost.ingressClasses.enabled` is set to `true`, vCluster takes control of all IngressClass resources in the virtual cluster. It only allows IngressClass resources that are synced from the host cluster to exist.
-If you try to create an IngressClass directly in the virtual cluster, using for example `kubectl create` or `kubectl apply`, vCluster detects it and deletes it immediately. This prevents conflicts between locally-created IngressClasses and those synced from the host cluster, ensuring that only approved IngressClass resources (those made available through the host cluster) exist in the virtual cluster.
-:::
-
-## How IngressClass syncing works
-
-When IngressClass sync is enabled, vCluster uses selector criteria to control which resources are synced between clusters. This affects two different resource types that flow in opposite directions.
-
-- **IngressClass resources (host → virtual)**: Flow from host cluster to virtual cluster only. You cannot create IngressClass resources in the virtual cluster. vCluster copies IngressClass resources from the host cluster based on your selector criteria to make them available for you to reference in their Ingress configurations. If no `selector` is specified, all IngressClass resources from the host cluster are synced.
-
-- **Ingress resources (virtual → host)**: Flow from virtual cluster to host cluster where ingress controllers process them. An Ingress syncs only if it references an IngressClass that matches your selector criteria. Ingress resources also sync if they have an empty `ingressClassName` field or if no `selector` is specified in the configuration.
-
-- **How selectors control both flows**: The selector determines which IngressClass resources get copied from host to virtual cluster. The same selector also determines which Ingress resources can sync from virtual to host cluster. If an Ingress references an IngressClass that wasn't synced to the virtual cluster, that Ingress cannot sync to the host cluster.
-
-## Use selectors to filter IngressClasses
-
-Selectors provide precise control over which IngressClass resources get synced from the host cluster. vCluster supports two types of selector criteria that follow standard Kubernetes label selector syntax.
-
-The `matchLabels` selector defines exact label key-value pairs that must be present on an IngressClass for it to be synced. This provides straightforward filtering based on specific label values. For example, setting `matchLabels` to `environment: development` syncs only IngressClass resources that have exactly that label and value.
-
-The `matchExpressions` selector allows more flexible, set-based filtering with support for multiple operators:
-
-- `In`: Matches IngressClass resources where the label value exists within a specified list
-- `NotIn`: Excludes resources with certain label values  
-- `Exists`: Requires the presence of a label key regardless of its value
-- `DoesNotExist`: Excludes resources that have a particular label key
-
-All specified label conditions must match for an IngressClass to be included in the sync. This means that if you define both `matchLabels` and `matchExpressions`, an IngressClass must satisfy all criteria to be synced to the virtual cluster.
-
-## Sync behavior considerations
-
-### Resource lifecycle
-
-Synced IngressClass resources function like any other Kubernetes resource in the virtual cluster. You can view them with `kubectl get ingressclass` and reference them in your Ingress specifications. When you modify an IngressClass in the host cluster, vCluster re-evaluates whether it still matches the selector criteria. If the IngressClass continues to match, vCluster updates the corresponding resource in the virtual cluster to reflect the changes. If the IngressClass no longer matches the selector criteria, vCluster removes it from the virtual cluster.
-
-The selector system acts as both a resource filter and a validation mechanism. As a resource filter, it ensures that vCluster makes only IngressClass resources matching the selector criteria available in the virtual cluster's API server. The selector also functions as a creation validation mechanism - when you create Ingress resources in the virtual cluster, the resources can only reference IngressClass resources that exist in the filtered set.
-
-### Error handling and troubleshooting
-
-When an IngressClass fails to meet the selector criteria during evaluation, vCluster logs a warning in the syncer pod's output to help with troubleshooting and monitoring. This logging provides visibility into which resources are being filtered out and why.
-
-When you creates an Ingress resource that references an IngressClass not matching the selector criteria, several things occur to provide clear feedback:
-
-- The Ingress synchronization to the host cluster fails
-- vCluster records an event on the Ingress resource in the virtual cluster  
-- The event indicates that the specified IngressClass is not available according to the current selector configuration
-
-The error output appears as a Kubernetes event that you can view using `kubectl describe`. The event message clearly states that the ingress was not synced because the referenced IngressClass does not match the configured selector criteria.
-
-### Remove orphaned resources
-
-When vCluster removes a synced IngressClass from the virtual cluster due to selector changes or deletion from the host cluster, any Ingress resources that reference it remain in the virtual cluster. These orphaned Ingress resources stop receiving updates but vCluster does not automatically delete them to prevent unintended data loss. To remove these orphaned resources, you must delete them manually in the host cluster. This manual approach ensures that you maintain full control over resource cleanup and can verify that deletions are intentional.
-
-## Examples
-
-### Filter with matchLabels
-
-To sync only IngressClass resources labeled `environment: development`:
-
-```yaml title="Filter example IngressClass"
-sync:
-  toHost:
-    ingresses:
-      enabled: true
-  fromHost:
-    ingressClasses:
-      enabled: true
-      selector:
-        matchLabels:
-          environment: development
-```
-
-### Flexible filter with matchExpressions
-
-To sync IngressClass resources where the label `kubernetes.io/ingress.class` is either `nginx` or `traefik`:
-
-```yaml title="Flexible filter example IngressClass"
-sync:
-  toHost:
-    ingresses:
-      enabled: true
-  fromHost:
-    ingressClasses:
-      enabled: true
-      selector:
-        matchExpressions:
-          - key: kubernetes.io/ingress.class
-            operator: In
-            values:
-              - nginx
-              - traefik
-```
-
-### Combined filter criteria
-
-The following configuration syncs IngressClass resources that match both label and expression criteria:
-
-```yaml title="Combined filter example IngressClass"
-sync:
-  toHost:
-    ingresses:
-      enabled: true
-  fromHost:
-    ingressClasses:
-      enabled: true
-      selector:
-        matchLabels:
-          environment: "development"
-        matchExpressions:
-          - key: "kubernetes.io/ingress.class"
-            operator: In
-            values:
-              - nginx
-              - traefik
-```
-
-### Error handling
-
-When an Ingress resource references an IngressClass that doesn't match the selector criteria, the error output looks like this:
-
-```bash title"Error handling example IngressClass"
-vcluster-virtual-cluster-1:~$ kubectl describe ingress my-ingress
-Name:             my-ingress
-Namespace:        default
-Ingress Class:    nginx
-Events:
-  Type     Reason            Age   From                Message
-  ----     ------            ----  ----                -------
-  Warning  SyncWarning       10s   ingress-syncer      did not sync ingress "my-ingress" to host because it does not match the selector under 'sync.fromHost.ingressClasses.selector'
-```
-
-For more details on how to use label selectors effectively, refer to the [Kubernetes documentation on label selectors](https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/#resources-that-support-set-based-requirements).
-
+<Patches resource="ingressClasses" path="metadata.annotations[*]" direction="fromHost"  />
 
 ## Config reference
 

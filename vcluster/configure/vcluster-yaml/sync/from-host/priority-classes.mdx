@@ -6,6 +6,8 @@ description: Configure priority classes in vCluster
 ---
 
 import EnableSwitch from '../../../../_partials/config/sync/fromHost/priorityClasses.mdx'
+import ClassSyncing from '../../../../_fragments/sync/class-syncing.mdx'
+import Patches from '../../../../_fragments/patches.mdx'
 
 <!-- vale off -->
 
@@ -15,155 +17,17 @@ By default, this is disabled.
 
 PriorityClass resources set which pods get scheduled first when resources are limited. High-priority pods can kick out low-priority pods to get resources.
 
-By default, each virtual cluster needs its own copy of every PriorityClass. This means creating the same PriorityClass multiple times-once per virtual cluster. You must update each copy separately when changes are needed.
+Typically, each virtual cluster needs its own copy of every PriorityClass. This means creating the same PriorityClass multiple times-once per virtual cluster. If anything changes in your PriorityClass, you must update each copy in each virtual cluster. 
+PriorityClass syncing eliminates this duplication and maintenance by making host cluster PriorityClass resources available to virtual clusters. You define priority classes once in the host cluster, and vCluster automatically makes them accessible to virtual clusters.
 
-PriorityClass syncing eliminates this duplication by making host cluster PriorityClass resources available to virtual clusters. You define priority classes once in the host cluster, and vCluster automatically makes them accessible to virtual clusters based on your configuration.
+You can either sync all PriorityClass resources or configure syncing using label selectors. When a virtual cluster pod references a `priorityClassName`, vCluster validates that the corresponding PriorityClass exists in the virtual cluster through the syncing process. If the referenced PriorityClass is not synced (either because it does not exist in the host cluster or does not match your label selector), the pod is not scheduled on the host cluster.
 
-You can configure syncing using label selectors on your host cluster PriorityClass resources. Add labels to the PriorityClass resources you want to share, then configure vCluster to sync only those whose labels match your selector criteria. Virtual clusters can then reference these synced priority classes in their pod specifications without creating local copies.
+<ClassSyncing lowercaseResource="pod" resource="Pod" pluralResource="pods" lowercaseResourceClass="priorityclass" resourceClass="PriorityClass" pluralResourceClass="priorityClasses" resourceClassName="priorityClassName" expressionKey="kubernetes.io/priority.class" expressionValue1="low" expressionValue2="medium" />
 
-When a virtual cluster pod references a `priorityClassName`, vCluster validates that the corresponding PriorityClass exists in the virtual cluster through the syncing process. If the referenced PriorityClass is not synced (either because it does not exist in the host cluster or does not match your label selector), the pod is not scheduled on the host cluster.
+## Patches
 
-## Enable PriorityClass syncing
+<Patches resource="priorityClasses" path="metadata.annotations[*]" direction="fromHost"  />
 
-To enable PriorityClass syncing from the host cluster without filtering:
-
-```yaml
-sync:
-  fromHost:
-    priorityClasses:
-      enabled: true
-```
-
-:::note
-When `sync.fromHost.priorityClasses.enabled` is set to `true`, vCluster takes control of all PriorityClass resources in the virtual cluster. It only allows PriorityClass resources that are synced from the host cluster to exist.
-
-If you try to create a PriorityClass directly in the virtual cluster, using for example `kubectl create` or `kubectl apply`, vCluster detects it and deletes it immediately. This prevents conflicts between locally created PriorityClasses and those synced from the host cluster, ensuring that only approved PriorityClass resources (those made available through the host cluster) exist in the virtual cluster.
-:::
-
-## How PriorityClass syncing works
-
-When PriorityClass syncing is enabled, vCluster uses a label selector to control which PriorityClass and Pod resources are synchronized between the host and virtual clusters. This affects two resource types with separate unidirectional sync flows:
-
-- **PriorityClass resources (host → virtual)**: vCluster copies PriorityClass resources from the host cluster to the virtual cluster if they match the selector. You cannot create PriorityClass resources directly in the virtual cluster. If no selector is defined, all PriorityClass resources from the host cluster are synced and made available for reference in Pods.
-
-- **Pod resources (virtual → host)**: vCluster syncs Pod resources from the virtual cluster to the host cluster only if one of the following is true:
-   - The Pod's `priorityClassName` matches a PriorityClass allowed by the selector.
-   - The Pod has an empty `priorityClassName` field.
-   - No selector is defined, which disables PriorityClass filtering entirely and allows all Pods to sync regardless of their priorityClassName.
-
-The same selector controls both sync flows. The selector determines which PriorityClass resources are imported from the host cluster and which Pod resources can sync to the host cluster based on their priorityClassName field.
-
-If a Pod references a PriorityClass that is not synced into the virtual cluster, the Pod cannot sync to the host cluster. This ensures Pods only use explicitly allowed priority classes. 
-
-## Use selectors to filter PriorityClasses
-
-Selectors provide precise control over which PriorityClass resources get synced from the host cluster. vCluster supports two types of selector criteria that follow standard Kubernetes label selector syntax.
-
-The `matchLabels` selector defines exact label key-value pairs that must be present on a PriorityClass for it to be synced. This provides straightforward filtering based on specific label values. For example, setting `matchLabels` to `environment: development` syncs only PriorityClass resources that have exactly that label and value.
-
-The `matchExpressions` selector allows more flexible, set-based filtering with support for multiple operators:
-
-- `In`: Matches PriorityClass resources where the label value exists within a specified list
-- `NotIn`: Excludes resources with certain label values  
-- `Exists`: Requires the presence of a label key regardless of its value
-- `DoesNotExist`: Excludes resources that have a particular label key
-
-All specified label conditions must match for a PriorityClass to be included in the sync. This means that if you define both `matchLabels` and `matchExpressions`, a PriorityClass must satisfy all criteria to be synced to the virtual cluster.
-
-## Sync behavior considerations
-
-### Resource lifecycle
-
-Synced PriorityClass resources function like any other Kubernetes resource in the virtual cluster. You can view them with `kubectl get priorityclass` and reference them in their Pod specifications. When you modify a PriorityClass in the host cluster, vCluster re-evaluates whether it still matches the selector criteria. If the PriorityClass continues to match, vCluster updates the corresponding resource in the virtual cluster to reflect the changes. If the PriorityClass no longer matches the selector criteria, vCluster removes it from the virtual cluster.
-
-The selector acts as both a resource filter and a validation mechanism. As a resource filter, it ensures that vCluster makes only PriorityClass resources matching the selector criteria available in the virtual cluster's API server. The selector also functions as a creation validation mechanism - when you create Pod resources in the virtual cluster, the resources can only reference PriorityClass resources that exist in the filtered set.
-
-For more details on how to use label selectors effectively, refer to the [Kubernetes documentation on label selectors](https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/#resources-that-support-set-based-requirements).
-
-### Error handling and troubleshooting
-
-When a PriorityClass fails to meet the selector criteria during evaluation, vCluster logs a warning in the syncer pod's output to help with troubleshooting and monitoring. This logging provides visibility into which resources are being filtered out and why.
-
-If you create a Pod resource that references a PriorityClass not matching the selector criteria, several things occur to provide feedback:
-
-- The Pod sync to the host cluster fails.
-- vCluster records an event on the Pod resource in the virtual cluster.
-- The event indicates that the specified PriorityClass is not available according to the current selector configuration.
-
-The error output appears as a Kubernetes event that you can view using `kubectl describe`. The event message states that the pod was not synced because the referenced PriorityClass does not match the configured selector criteria. This immediate feedback can help you understand why Pod resources are not working.
-
-### Remove orphaned resources
-
-When vCluster removes a synced PriorityClass from the virtual cluster due to selector changes or deletion from the host cluster, any Pod resources that reference it remain in the virtual cluster. These orphaned Pod resources stop receiving updates but vCluster does not automatically delete them to prevent unintended data loss. To remove these orphaned resources, you must delete them manually in the host cluster. This manual approach ensures that you maintain full control over resource cleanup and can verify that deletions are intentional.
-
-## Examples
-
-### Filter with matchLabels
-
-To sync only PriorityClass resources labeled `environment: development`:
-
-```yaml title="Filter example PriorityClass"
-sync:
-  fromHost:
-    priorityClasses:
-      enabled: true
-      selector:
-        matchLabels:
-          environment: development
-```
-
-### Flexible filter with matchExpressions
-
-To sync PriorityClass resources where the label `kubernetes.io/priority.class` is either `low` or `medium`:
-
-```yaml title="Flexible filter example PriorityClass"
-sync:
-  fromHost:
-    priorityClasses:
-      enabled: true
-      selector:
-        matchExpressions:
-          - key: kubernetes.io/priority.class
-            operator: In
-            values:
-              - low
-              - medium
-```
-
-### Combined filter criteria
-
-The following configuration syncs PriorityClass resources that match both label and expression criteria:
-
-```yaml title="Combined filter example PriorityClass"
-sync:
-  fromHost:
-    priorityClasses:
-      enabled: true
-      selector:
-        matchLabels:
-          environment: "development"
-        matchExpressions:
-          - key: "kubernetes.io/priority.class"
-            operator: In
-            values:
-              - low
-              - medium
-```
-
-### Error handling
-
-When a Pod resource references a PriorityClass that doesn't match the selector criteria, the error output looks like this:
-
-```bash title="Error handling example PriorityClass"
-vcluster-virtual-cluster-1:~$ kubectl describe pod my-pod
-Name:             my-pod
-Namespace:        default
-Priority Class:   high
-Events:
-  Type     Reason            Age   From                Message
-  ----     ------            ----  ----                -------
-  Warning  SyncWarning       10s   pod-syncer          did not sync pod "my-pod" to host because it does not match the selector under 'sync.fromHost.priorityClasses.selector'
-```
 
 ## Config reference
 

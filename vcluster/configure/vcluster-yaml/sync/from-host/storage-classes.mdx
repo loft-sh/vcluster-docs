@@ -6,8 +6,8 @@ description: Configuration for Storage Classes in vCluster
 ---
 
 import EnableSwitch from '../../../../_partials/config/sync/fromHost/storageClasses.mdx'
-
-<!-- vale off -->
+import ClassSyncing from '../../../../_fragments/sync/class-syncing.mdx'
+import Patches from '../../../../_fragments/patches.mdx'
 
 By default, this is disabled.
 
@@ -23,153 +23,11 @@ You can enable this feature to sync StorageClass resources from the host cluster
 - **Simplified management**: Update storage class configurations in the host cluster rather than in each virtual cluster.
 - **Security**: Control access to storage backends and encryption options.
 
-### Enable StorageClass syncing
+<ClassSyncing lowercaseResource="pvc" resource="PersistentVolume" pluralResource="persistentVolumes" lowercaseResourceClass="storageclass" resourceClass="StorageClass" pluralResourceClass="storageClasses" resourceClassName="storageClassName" expressionKey="kubernetes.io/storage.class" expressionValue1="network-nas" expressionValue2="fast-sad" showExtraResource="true" extraResource="PersistentVolumeClaim" pluralExtraResource="persistentVolumeClaims" />
 
-```YAML
-sync:
-  fromHost:
-    storageClasses:
-      enabled: true
-```
+## Patches
 
-:::note
-When `sync.fromHost.storageClasses.enabled` is enabled, any StorageClass created in the virtual cluster is immediately deleted. This prevents conflicts between locally-created StorageClasses and those synced from the host cluster.
-:::
-
-## How StorageClass syncing works
-
-When StorageClass sync is enabled, vCluster uses selector criteria to control which StorageClasses are synced between clusters. This affects two different resource flows:
-
-**StorageClass resources (host → virtual)**: Only StorageClasses matching the selector criteria are synced from the host cluster to the virtual cluster. You cannot create StorageClass resources directly in the virtual cluster. If no selector is specified, all StorageClass resources from the host cluster are synced.
-
-**PersistentVolume and PersistentVolumeClaim resources (virtual → host)**: PersistentVolume and PersistentVolumeClaim resources created in the virtual cluster are synced to the host only if they reference StorageClasses that match the selector criteria. These resources also sync if they have an empty storageClassName field or if no selector is specified.
-
-**Unified selector control**: The same selector determines which StorageClass resources are imported into the virtual cluster and which PersistentVolume and PersistentVolumeClaim resources can sync to the host cluster. If a PersistentVolumeClaim references a StorageClass that was not synced to the virtual cluster, that PersistentVolumeClaim cannot sync to the host cluster.
-
-## Use selectors to filter StorageClasses
-
-Selectors provide precise control over which StorageClass resources get synced from the host cluster. vCluster supports two types of selector criteria that follow standard Kubernetes label selector syntax.
-
-The `matchLabels` selector defines exact label key-value pairs that must be present on a StorageClass for it to be synced. This provides straightforward filtering based on specific label values and is ideal for simple categorization schemes.
-
-The `matchExpressions` selector allows more flexible, set-based filtering with support for multiple operators:
-
-- `In`: Matches StorageClass resources where the label value exists within a specified list
-- `NotIn`: Excludes resources with certain label values
-- `Exists`: Requires the presence of a label key regardless of its value
-- `DoesNotExist`: Excludes resources that have a particular label key
-
-All specified label conditions must match for a StorageClass to be included in the sync. This means that if you define both `matchLabels` and `matchExpressions`, a StorageClass must satisfy all criteria to be synced to the virtual cluster.
-
-For more details on label selectors, refer to the [Kubernetes documentation on label selectors](https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/#resources-that-support-set-based-requirements).
-
-## Sync behavior considerations
-
-### Resource lifecycle
-
-Synced StorageClass resources function like any other Kubernetes resource in the virtual cluster. You can view them with `kubectl get storageclass` and reference them in PersistentVolumeClaim specifications using the storageClassName field.
-
-When a StorageClass in the host cluster is modified, vCluster re-evaluates whether it still matches the selector criteria. If the StorageClass continues to match, vCluster updates the corresponding resource in the virtual cluster. If the StorageClass no longer matches the selector criteria, vCluster removes it from the virtual cluster.
-
-The selector system acts as both a resource filter and a validation mechanism. As a resource filter, it ensures that vCluster makes only StorageClass resources matching the selector criteria available in the virtual cluster. The selector also functions as a creation validation mechanism - PersistentVolume and PersistentVolumeClaim resources in the virtual cluster can only reference StorageClass resources that exist in the filtered set.
-
-### Error handling and troubleshooting
-
-When a StorageClass fails to meet the selector criteria during evaluation, vCluster logs a warning in the syncer pod's output. When you create a PersistentVolume or PersistentVolumeClaim resource that references a StorageClass not matching the selector criteria, several things occur:
-
-- The PersistentVolume and PersistentVolumeClaim sync to the host cluster fails
-- vCluster records an event on the PersistentVolume and PersistentVolumeClaim resource in the virtual cluster
-- The event indicates that the specified StorageClass is not available according to the current selector configuration
-
-The error output appears as a Kubernetes event that you can view using `kubectl describe`.
-
-### Remove orphaned resources
-
-When vCluster removes a synced StorageClass from the virtual cluster due to selector changes or deletion from the host cluster, any PersistentVolume and PersistentVolumeClaim resources that reference it remain in the virtual cluster. These orphaned resources stop receiving updates but vCluster does not automatically delete them to prevent unintended data loss. To remove these orphaned resources, you must delete them manually in the host cluster.
-
-## Examples
-
-### Filter with matchLabels
-
-To sync only StorageClass resources labeled `environment: development`:
-
-```yaml title="Filter example for StorageClass"
-sync:
-  toHost:
-    persistentVolumes:
-      enabled: true
-    persistentVolumeClaims:
-      enabled: true
-  fromHost:
-    storageClasses:
-      enabled: true
-      selector:
-        matchLabels:
-          environment: development
-```
-
-### Flexible filter with matchExpressions
-
-To sync StorageClass resources where the label `kubernetes.io/storage.class` is either `network-nas` or `fast-ssd`:
-
-```yaml title="Flexible filter example for StorageClass"
-sync:
-  toHost:
-    persistentVolumes:
-      enabled: true
-    persistentVolumeClaims:
-      enabled: true
-  fromHost:
-    storageClasses:
-      enabled: true
-      selector:
-        matchExpressions:
-          - key: kubernetes.io/storage.class
-            operator: In
-            values:
-              - network-nas
-              - fast-ssd
-```
-
-### Combined filter criteria
-
-The following configuration syncs StorageClass resources that match both label and expression criteria:
-
-```yaml title="Combined filter example for StorageClass"
-sync:
-  toHost:
-    persistentVolumes:
-      enabled: true
-    persistentVolumeClaims:
-      enabled: true
-  fromHost:
-    storageClasses:
-      enabled: true
-      selector:
-        matchLabels:
-          environment: "development"
-        matchExpressions:
-          - key: "kubernetes.io/storage.class"
-            operator: In
-            values:
-              - network-nas
-              - fast-ssd
-```
-
-### Error handling
-
-When a PersistentVolumeClaim resource references a StorageClass that doesn't match the selector criteria, the error output looks like this:
-
-```bash title="Error handling example for StorageClass"
-vcluster-virtual-cluster-1:~$ kubectl describe pvc my-pvc
-Name:             my-pvc
-Namespace:        default
-Storage Class:    fast-ssd
-Events:
-  Type     Reason            Age   From                Message
-  ----     ------            ----  ----                -------
-  Warning  SyncWarning       10s   pvc-syncer          did not sync pvc "my-pvc" to host because it does not match the selector under 'sync.fromHost.storageClasses.selector'
-```
+<Patches resource="storageClasses" path="metadata.annotations[*]" direction="fromHost"  />
 
 ## Config reference
 
