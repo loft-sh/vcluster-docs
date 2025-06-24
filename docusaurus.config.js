@@ -148,7 +148,7 @@ const config = {
             badge: true,
           },
           "0.22.0": {
-            label: "v0.22 (EOS)",
+            label: "v0.22 (EOL)",
             banner: "unmaintained",
             badge: true,
           },
