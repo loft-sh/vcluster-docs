@@ -127,13 +127,13 @@ const config = {
         editUrl: ({ versionDocsDirPath, docPath }) =>
           `https://github.com/loft-sh/vcluster-docs/edit/main/${versionDocsDirPath}/${docPath}`,
         editCurrentVersion: true,
-        lastVersion: "0.25.0",
+        lastVersion: "0.26.0",
         versions: {
           current: {
             label: "main 🚧",
           },
           "0.26.0": {
-            label: "v0.26 (Stable)",
+            label: "v0.26 Stable",
             banner: "none",
             badge: true,
           },
@@ -318,7 +318,7 @@ const config = {
       announcementBar: {
         id: "platform-upgrade",
         content:
-          '🚀 <strong>New releases: <a href="https://www.vcluster.com/releases/en/changelog?hideLogo=true&hideMenu=true&theme=dark&embed=true&c=vCluster" target="_blank">vCluster Platform 4.3 and vCluster 0.25</a></strong>',
+          '🚀 <strong>New releases: <a href="https://www.vcluster.com/releases/en/changelog?hideLogo=true&hideMenu=true&theme=dark&embed=true&c=vCluster" target="_blank">vCluster Platform 4.3 and vCluster 0.26</a></strong>',
         backgroundColor: "#4a90e2",
         textColor: "#ffffff",
         isCloseable: true,
