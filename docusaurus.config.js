@@ -132,8 +132,13 @@ const config = {
           current: {
             label: "main 🚧",
           },
+          "0.26.0": {
+            label: "v0.26 (Stable)",
+            banner: "none",
+            badge: true,
+          },
           "0.25.0": {
-            label: "v0.25 Stable",
+            label: "v0.25",
             banner: "none",
             badge: true,
           },

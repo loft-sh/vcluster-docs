@@ -1,0 +1,161 @@
+---
+title: Configure NVIDIA KAI scheduler with vCluster
+sidebar_label: Configure KAI scheduler
+description: Learn how to configure vCluster to work with NVIDIA KAI scheduler for GPU and CPU workloads
+---
+import BasePrerequisites from '@site/docs/_partials/base-prerequisites.mdx';
+
+
+# Configure NVIDIA KAI scheduler with vCluster {#configure-kai-scheduler-with-vcluster}
+
+This guide explains how to configure vCluster to work with the [NVIDIA KAI scheduler](https://github.com/NVIDIA/KAI-Scheduler). KAI is a Kubernetes scheduler that optimizes resource allocation for both GPU and CPU workloads, with advanced queuing, fractional GPU allocation, and topology awareness.
+
+## Prerequisites {#prerequisites}
+<BasePrerequisites />
+- KAI scheduler installed in the host cluster
+
+## Understand the challenge {#understand-the-challenge}
+
+By default, when syncing workload pods from a vCluster to the host cluster, vCluster sets ownership references on the synced pods. When using custom schedulers like KAI, this causes issues because:
+
+- KAI's pod-grouper controller watches for pods with `schedulerName: kai-scheduler`
+- The pod-grouper controller traverses the owner references to group related pods
+- For vCluster workloads, the owner reference is set to the vCluster service in the host namespace
+- The pod-grouper may not have sufficient permissions to access these Service resources
+
+## Solution: Disable owner references in vCluster {#solution-disable-owner-references}
+
+To solve this issue, configure vCluster to not set owner references on synced pods using the [`experimental.syncSettings.setOwner`](/vcluster/configure/vcluster-yaml/experimental/sync-settings#syncSettings-setOwner) option. This simple approach allows the KAI scheduler to work with vCluster pods without requiring any modifications to the scheduler itself.
+
+Add the following to your vCluster configuration (`values.yaml` for Helm or vCluster config):
+
+```yaml title="Disable owner references in vCluster config"
+# highlight-start
+experimental:
+  syncSettings:
+    setOwner: false
+# highlight-end
+```
+
+Apply this configuration when creating or updating your vCluster:
+
+```bash title="Create vCluster with disabled owner references"
+vcluster create my-vcluster --set experimental.syncSettings.setOwner=false
+```
+
+Or for an existing vCluster, update the configuration:
+
+```bash title="Update existing vCluster configuration"
+vcluster create --upgrade my-vcluster --set experimental.syncSettings.setOwner=false
+```
+
+## Use KAI scheduler for vCluster workloads {#use-kai-scheduler-for-workloads}
+
+After applying this configuration, you can use the KAI scheduler for your vCluster workloads by specifying `schedulerName: kai-scheduler` in the pod specification.
+
+<!-- vale off -->
+### Example: CPU-only workload {#example-cpu-only-workload}
+<!-- vale on -->
+
+Here's an example of a CPU-only pod using the KAI scheduler:
+
+```yaml title="CPU-only pod with KAI scheduler"
+apiVersion: v1
+kind: Pod
+metadata:
+  name: cpu-only-pod
+spec:
+  # highlight-start
+  schedulerName: kai-scheduler
+  # highlight-end
+  containers:
+  - name: main
+    image: ubuntu
+    args:
+    - sleep
+    - infinity
+    resources:
+      requests:
+        cpu: 100m
+        memory: 250M
+```
+
+
+<!-- vale off -->
+### Example: GPU workload {#example-gpu-workload}
+<!-- vale on -->
+
+Here's an example of a GPU pod using the KAI scheduler:
+
+```yaml title="GPU pod with KAI scheduler"
+apiVersion: v1
+kind: Pod
+metadata:
+  name: gpu-pod
+spec:
+  # highlight-start
+  schedulerName: kai-scheduler
+  # highlight-end
+  containers:
+  - name: main
+    image: ubuntu
+    command:
+    - /bin/bash
+    - -c
+    - nvidia-smi && sleep infinity
+    resources:
+      requests:
+        nvidia.com/gpu: '1'
+      limits:
+        nvidia.com/gpu: '1'
+```
+
+## Verify configuration {#verify-configuration}
+
+To verify that the KAI scheduler is properly configured with vCluster:
+
+- Confirm vCluster is using `experimental.syncSettings.setOwner=false` in its configuration
+
+- Check that pods are being annotated with the podgroup name:
+  ```bash title="Verify pod has podgroup annotation"
+  kubectl describe pod <pod-name> -n <namespace> | grep pod-group-name
+  ```
+
+- Ensure the KAI scheduler components are running:
+  ```bash title="Check KAI scheduler components"
+  kubectl get pods -n kai-scheduler
+  ```
+
+:::info Scheduler behavior
+When using the KAI scheduler with vCluster and `setOwner: false`, you may observe:
+
+1. The pod-grouper adds a podgroup annotation to your pod:
+```
+Annotations: pod-group-name: pg-pod-name-[uuid]
+```
+
+2. You might see a non-blocking message in the logs:
+```
+Detected pod with no owner but with podgroup annotation
+```
+This is expected and doesn't affect scheduling.
+
+The `setOwner: false` configuration successfully resolves owner reference issues and allows the KAI scheduler to work properly with vCluster workloads in production environments.
+:::
+
+## How it works {#how-it-works}
+
+The KAI scheduler's pod-grouper component is a controller that:
+- Watches pods with `schedulerName: kai-scheduler`
+- Traverses the owner references to find the topmost owner
+- Groups related pods for optimal scheduling decisions
+- Applies custom scheduling logic based on workload type
+
+When vCluster syncs pods to the host cluster, it sets an owner reference to the vCluster service by default. By disabling this with `setOwner: false`, the pod-grouper can process the pods normally without needing to follow service references.
+
+## Limitations and considerations {#limitations-and-considerations}
+
+- The `experimental.syncSettings.setOwner: false` configuration is marked as experimental and may change in future vCluster releases
+- If you have other features that rely on pod ownership in vCluster, disabling owner references may affect those features
+- The KAI scheduler might require additional configuration for advanced features like GPU sharing and queue management
+- For GPU workloads, ensure that the host cluster has the necessary GPU drivers and device plugins installed
