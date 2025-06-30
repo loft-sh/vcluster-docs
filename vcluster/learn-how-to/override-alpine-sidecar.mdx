@@ -1,66 +1,316 @@
 ---
-title: Override the Alpine Sidecar Image in vCluster
-sidebar_label: Override the Alpine sidecar image
+title: Override the Alpine sidecar image in vCluster
+sidebar_label: Override the Alpine Sidecar Image
 description: Set a different sidecar in vCluster.
 ---
 
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 
-# Override the Alpine sidecar image
+# Override the Alpine sidecar image in vCluster
 
-vCluster uses an Alpine sidecar container to manage host entries in the virtual cluster's `/etc/hosts` file. By default, it pulls the Alpine image from DockerHub.
+vCluster automatically creates a small Alpine Linux container (called a "sidecar") alongside your workloads to manage network routing. This sidecar modifies the `/etc/hosts` file inside your virtual cluster's pods so they can communicate properly with the host cluster. By default, vCluster downloads this Alpine image from Docker Hub, but you can configure it to use a different Alpine image from your own container registry instead.
 
-If you are rate-limited by Docker Hub, you can pull the image manually, push it to your local registry, and update your `vcluster.yaml` to reference the local image.
+You might need this for:
+- **Docker Hub rate limiting**: Avoid hitting Docker Hub's download limits in busy environments.
+- **Security requirements**: Use only approved, internal registries. 
+- **Air-gapped environments**: No internet access requires local image hosting.
+- **Custom Alpine images**: Use modified images with additional tools or security patches.
 
-## Configure your own image
+## Prerequisites
+
+Before you begin, ensure you have:
+
+**Required tools and access:**
+- A running Kubernetes cluster with vCluster installed (or ready to install)
+- `kubectl` installed and configured to access your cluster
+- `docker` command-line tool installed for image management
+- Permission to create secrets in your vCluster's namespace
+
+**Registry requirements:**
+- Access to a container registry (local, cloud, or public)
+- Credentials for private registries (username/password or access tokens)
+- Network connectivity from your Kubernetes cluster to the registry
+
+
+## Set up your container registry
+
+Before configuring vCluster, you need a container registry with an Alpine image. You can choose the option that fits your environment from the following:
+
+### Local testing or air-gapped environments
+
+Create a simple local registry for development or environments without internet access:
+
+```bash
+# Start a basic registry server
+docker run -d -p 5000:5000 --name local-registry registry:2
+
+# Verify it's running
+curl http://localhost:5000/v2/_catalog
+```
+
+### Cloud environments
+
+Use existing managed registries for production deployments:
+- AWS ECR (Elastic Container Registry)
+- Google Container Registry (GCR) 
+- Azure Container Registry (ACR)
+- Other cloud providers with managed registry services
+
+### Complex air-gapped setups
+
+For enterprise air-gapped environments, vCluster provides official automation scripts that automatically pull and push all required images with proper version compatibility. These scripts handle dependencies and version management for you. For more information and detailed setup instructions, refer to the [vCluster air-gapped installation guide](https://www.vcluster.com/docs/platform/next/install/advanced/air-gapped#scripts-to-pull-and-push-images).
+
+## Upload the Alpine image
+
+After you have a registry, upload an Alpine image to it. Start by pulling the official Alpine image and pushing it to your registry:
+
+```bash
+# Pull the Alpine image
+docker pull alpine:latest
+
+# Tag for your registry
+docker tag alpine:latest your-registry.com/alpine:latest
+
+# Push to your registry
+docker push your-registry.com/alpine:latest
+```
+
+The commands vary by registry type:
 
 <Tabs>
-  <TabItem value="0.20" label="vCluster 0.20 and later" default>
-    In your `vcluster.yaml` configuration, add the following:
-    
+  <TabItem value="local" label="Local registry" default>
+    ```bash
+    docker tag alpine:latest localhost:5000/alpine:latest
+    docker push localhost:5000/alpine:latest
+    ```
+  </TabItem>
+  <TabItem value="ecr" label="AWS ECR">
+    ```bash
+    # First authenticate: aws ecr get-login-password --region us-west-2 | docker login --username AWS --password-stdin 123456789.dkr.ecr.us-west-2.amazonaws.com
+    docker tag alpine:latest 123456789.dkr.ecr.us-west-2.amazonaws.com/alpine:latest
+    docker push 123456789.dkr.ecr.us-west-2.amazonaws.com/alpine:latest
+    ```
+  </TabItem>
+  <TabItem value="ghcr" label="GitHub Container Registry">
+    ```bash
+    # First authenticate: echo $GITHUB_TOKEN | docker login ghcr.io -u your-username --password-stdin
+    docker tag alpine:latest ghcr.io/your-username/alpine:latest
+    docker push ghcr.io/your-username/alpine:latest
+    ```
+  </TabItem>
+</Tabs>
+
+## Configure vCluster to use your image
+
+Add the image configuration to your `vcluster.yaml` file. This enables vCluster's pod sync to use your custom Alpine image instead of the default one when it creates the sidecar container that manages host file entries. The `sync.toHost.pods.rewriteHosts.initContainer.image` setting specifically controls which image vCluster uses for the network routing sidecar.
+
+<Tabs>
+  <TabItem value="v0.20" label="vCluster 0.20 and later" default>
     ```yaml
     sync:
       toHost:
         pods:
           rewriteHosts:
             initContainer:
-              image: "your-alpine-or-similar-img"
+              image: "your-registry.com/alpine:latest"
     ```
   </TabItem>
-  <TabItem value="0.19" label="vCluster 0.19 and earlier">
-    Add the following to your `vcluster.yaml`:
-    
+  <TabItem value="v0.19" label="vCluster 0.19 and earlier">
     ```yaml
     syncer:
       extraArgs:
-        - '--override-hosts-container-image="your-alpine-or-similar-img"'        
+        - '--override-hosts-container-image=your-registry.com/alpine:latest'
     ```
   </TabItem>
 </Tabs>
 
-## Add image pull secrets
-
-For private registry images that require authentication add the following. 
-
-Ensure you replace `secret-name-in-vcluster-ns` with your actual secret name in the vCluster namespace.
+The following are examples for different registry types:
 
 <Tabs>
-  <TabItem value="0.20" label="vCluster 0.20 and later" default>
+  <TabItem value="local-example" label="Local registry" default>
+    ```yaml
+    sync:
+      toHost:
+        pods:
+          rewriteHosts:
+            initContainer:
+              image: "localhost:5000/alpine:latest"
+    ```
+  </TabItem>
+  <TabItem value="ecr-example" label="AWS ECR">
+    ```yaml
+    sync:
+      toHost:
+        pods:
+          rewriteHosts:
+            initContainer:
+              image: "123456789.dkr.ecr.us-west-2.amazonaws.com/alpine:latest"
+    ```
+  </TabItem>
+  <TabItem value="ghcr-example" label="GitHub Container Registry">
+    ```yaml
+    sync:
+      toHost:
+        pods:
+          rewriteHosts:
+            initContainer:
+              image: "ghcr.io/your-username/alpine:latest"
+    ```
+  </TabItem>
+  <TabItem value="private-example" label="Private registry">
+    ```yaml
+    sync:
+      toHost:
+        pods:
+          rewriteHosts:
+            initContainer:
+              image: "registry.mycompany.com/alpine:3.18"
+    ```
+  </TabItem>
+</Tabs>
+
+## Set up authentication for private registries
+
+:::note
+Skip this section if you're using a public registry, such as a local registry without authentication.
+:::
+
+Private registries require authentication. Most cloud registries (AWS ECR, Google Container Registry, GitHub Container Registry) and enterprise registries need credentials to pull images.
+
+Create a Kubernetes secret with your registry credentials. Replace the placeholder values with your actual registry URL, username, and password:
+
+<Tabs>
+  <TabItem value="generic" label="Generic private registry" default>
+    ```bash
+    kubectl create secret docker-registry my-registry-secret \
+      --docker-server=your-registry.com \
+      --docker-username=your-username \
+      --docker-password=your-password \
+      --docker-email=your-email@example.com \
+      --namespace=vcluster-namespace
+    ```
+  </TabItem>
+  <TabItem value="ecr-auth" label="AWS ECR">
+    ```bash
+    kubectl create secret docker-registry ecr-secret \
+      --docker-server=123456789.dkr.ecr.us-west-2.amazonaws.com \
+      --docker-username=AWS \
+      --docker-password=$(aws ecr get-login-password --region us-west-2) \
+      --namespace=vcluster-namespace
+    ```
+  </TabItem>
+  <TabItem value="ghcr-auth" label="GitHub Container Registry">
+    ```bash
+    kubectl create secret docker-registry ghcr-secret \
+      --docker-server=ghcr.io \
+      --docker-username=your-github-username \
+      --docker-password=your-github-token \
+      --namespace=vcluster-namespace
+    ```
+  </TabItem>
+</Tabs>
+
+Then you can configure vCluster to use the secret by adding it to your `vcluster.yaml` file. This configures the service account that vCluster uses to run workloads. This gives it permission to pull images from your private registry using the credentials you created:
+
+<Tabs>
+  <TabItem value="auth-v0.20" label="vCluster 0.20 and later" default>
     ```yaml
     controlPlane:
       advanced:
         workloadServiceAccount:
           imagePullSecrets:
-            name: secret-name-in-vcluster-ns
+            - name: my-registry-secret
     ```
   </TabItem>
-  <TabItem value="0.19" label="vCluster 0.19 and earlier">
+  <TabItem value="auth-v0.19" label="vCluster 0.19 and earlier">
     ```yaml
     serviceAccount:
       imagePullSecrets:
-        - name: secret-name-in-vcluster-ns
+        - name: my-registry-secret
     ```
   </TabItem>
 </Tabs>
 
+## Configuration examples
+
+Here are complete `vcluster.yaml` configurations for different scenarios:
+
+<Tabs>
+  <TabItem value="public-complete" label="Public registry (no authentication)" default>
+    ```yaml
+    sync:
+      toHost:
+        pods:
+          rewriteHosts:
+            initContainer:
+              image: "localhost:5000/alpine:latest"
+    ```
+  </TabItem>
+  <TabItem value="private-complete" label="Private registry">
+    ```yaml
+    sync:
+      toHost:
+        pods:
+          rewriteHosts:
+            initContainer:
+              image: "registry.mycompany.com/alpine:3.18"
+
+    controlPlane:
+      advanced:
+        workloadServiceAccount:
+          imagePullSecrets:
+            - name: mycompany-registry-secret
+    ```
+  </TabItem>
+  <TabItem value="ecr-complete" label="AWS ECR">
+    ```yaml
+    sync:
+      toHost:
+        pods:
+          rewriteHosts:
+            initContainer:
+              image: "123456789.dkr.ecr.us-west-2.amazonaws.com/alpine:latest"
+
+    controlPlane:
+      advanced:
+        workloadServiceAccount:
+          imagePullSecrets:
+            - name: ecr-secret
+    ```
+  </TabItem>
+</Tabs>
+
+## Deploy your changes
+
+After updating your `vcluster.yaml` file, apply the configuration:
+
+<Tabs>
+  <TabItem value="new" label="New vCluster installation" default>
+    ```bash
+    vcluster create my-vcluster --values vcluster.yaml
+    ```
+    
+    This creates a new vCluster using your custom Alpine image configuration.
+  </TabItem>
+  <TabItem value="existing" label="Existing vCluster">
+    ```bash
+    vcluster upgrade my-vcluster --values vcluster.yaml
+    ```
+    
+    This applies your new Alpine image configuration to an existing vCluster. New pods use the custom image immediately, while existing pods use it when they restart.
+  </TabItem>
+</Tabs>
+
+
+## Troubleshoot 
+
+If you encounter problems, check these common issues:
+
+- **Image pull errors**: Verify the image exists at the specified URL and the URL format is correct. Test manually with `docker pull your-registry.com/alpine:latest` to confirm the image is accessible.
+
+- **Authentication failures**: Ensure your secret is in the correct namespace and contains valid credentials. For cloud registries like ECR, check that tokens haven't expired and recreate the secret if needed.
+
+- **Registry connectivity**: Confirm your Kubernetes cluster can reach the registry URL. Test with `kubectl run test-pod --image=curlimages/curl --rm -it --restart=Never -- curl -I https://your-registry.com/v2/` to verify network access.
+
+- **Version compatibility**: Use Alpine images that include basic networking tools like `iptables` and `ip` that vCluster requires. Standard `alpine:latest` works well, but minimal custom images may be missing required utilities.
