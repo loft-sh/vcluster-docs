@@ -1,0 +1,230 @@
+---
+title: Central admission control
+sidebar_label: centralAdmission
+sidebar_class_name: pro
+sidebar_position: 5
+description: Configuration for ...
+---
+
+import AdmissionControl from '../../../_partials/config/policies/centralAdmission.mdx'
+import ProAdmonition from '../../../_partials/admonitions/pro-admonition.mdx'
+
+<ProAdmonition/>
+
+:::important
+You must enable `MutatingAdmissionWebhook` and `ValidatingAdmissionWebhook` admission controllers to use the Central Admission Control feature. For more information, see the Kubernetes [admission controllers reference](https://kubernetes.io/docs/reference/access-authn-authz/admission-controllers/#is-there-a-recommended-set-of-admission-controllers-to-use).
+:::
+
+Centralized admission control is an advanced feature for cluster admins that have custom rules that they need to apply to the virtual cluster. Cluster admins can enforce [Kubernetes admission webhooks](https://kubernetes.io/docs/reference/access-authn-authz/extensible-admission-controllers/) that reference the host cluster or external policy services from within the virtual cluster. Examples of validating and mutating webhook based policy engines include OPA, Kyverno, and jsPolicy.
+
+:::warning
+- Central admission control is read-only after virtual cluster creation. Admins cannot bypass or alter hooks after vCluster deployment.
+- If you need to modify or delete webhook configurations, do not use central admission control. Instead, manually map the host policy service into the virtual cluster.
+:::
+
+Central admission webhooks are different from the other policies:
+
+- `LimitRange` and `ResourceQuota` resources are created and enforced on the host cluster. They do not appear as resources in the virtual cluster.
+- A user could define `LimitRange` and `ResourceQuota` resources inside the virtual cluster, but they have full control over them and can delete them when needed.
+- Webhooks are different because they need to be configured inside the virtual cluster in order for them to be called by the vCluster's API server.
+- vCluster rewrites these definitions to point to a proxy for a host cluster service that handles webhook requests. The host might also have webhook configurations that use this service.
+- A user can still install a webhook service or webhook configuration into the virtual cluster outside of this config, but it would run inside the virtual cluster like any other workload.
+
+:::info Namespace rewriting
+vCluster rewrites the namespace of the object (if the object is namespace scoped) to the host namespace where vCluster is running in. This is not visible to the end-user, but the admission controller is able to use things like namespace selector like usual. Some admission controllers like gatekeeper wouldn't work otherwise as they rely on the namespace to always be there in the underlying cluster. To access the virtual namespace in a webhook, you can access the `request.options.vCluster.namespace.metadata.name` field in the [admission request object](https://kubernetes.io/docs/reference/access-authn-authz/extensible-admission-controllers/#request) that holds the full virtual namespace object.
+:::
+
+:::info Translated name of pods
+In some circumstances it might be necessary to have the translated name of a pod, which is used when this pod is created on the host cluster, available in a webhook running inside a virtual cluster.
+Therefore, vCluster puts the translated pod name under the `request.options.vCluster.name` field in the [admission request object](https://kubernetes.io/docs/reference/access-authn-authz/extensible-admission-controllers/#request).
+As the final name is only available during validation phase this only works when using `validatingWebhooks` that have rules configured for pods.
+:::
+
+## Kyverno example
+
+This example ensures that all new ConfigMap resources are sent to a mutating webhook on the host cluster.
+
+```yaml
+centralAdmission:
+  mutatingWebhooks:
+    - apiVersion: admissionregistration.k8s.io/v1
+      kind: MutatingWebhookConfiguration
+      metadata:
+        name: kyverno-webhook
+      webhooks:
+      - admissionReviewVersions:
+        - v1
+        clientConfig:
+          service:
+            name: kyverno-svc
+            namespace: kyverno
+            path: /mutate/fail
+            port: 443
+        failurePolicy: Fail
+        matchPolicy: Equivalent
+        name: mutate.kyverno.svc-fail
+        objectSelector: {}
+        reinvocationPolicy: IfNeeded
+        rules:
+        - apiGroups:
+          - ""
+          apiVersions:
+          - v1
+          operations:
+          - CREATE
+          resources:
+          - configmaps
+          scope: '*'
+        sideEffects: NoneOnDryRun
+        timeoutSeconds: 10
+```
+
+Any time a ConfigMap is created, the vCluster API server forwards the admission request to a proxy, which in turn calls the actual admission hook running in the host cluster in the `kyverno` namespace.
+
+The service providing the webhooks should not rely on the real names of the objects if they are synced on the host cluster (for example, pods). The requests that reach the host admission service holds the objects from the virtual cluster, so your policies need to be able to handle those objects (except for the namespace which is rewritten as outlined below).
+
+The hook services do not require authentication as the proxy does not have access to the `AdmissionConfiguration` object or the files it references. Most policy engines (such as jsPolicy, Kyverno, or Gatekeeper) do not set authentication by default, so it should work with most installations.
+
+If a user inside the virtual cluster (admin or not) tries to delete one of your admission hooks, that uses is prompted with the following error message:
+
+```bash
+kubectl delete kyverno-webhook
+error: the resource kyverno-webhook is protected
+```
+
+<!-- vale off -->
+## Gatekeeper (OPA) example
+
+Ensure you [install Gatekeeper](https://open-policy-agent.github.io/gatekeeper/website/docs/install/) to your Kubernetes cluster.
+<!-- vale on -->
+
+Create the following constraint template that denies pods without specified labels:
+
+```yaml
+apiVersion: config.gatekeeper.sh/v1alpha1
+kind: Config
+metadata:
+  name: config
+  namespace: "gatekeeper-system"
+spec:
+  match:
+    - excludedNamespaces: ["kube-*"]
+      processes: ["*"]
+  sync:
+    syncOnly:
+      - group: ""
+        version: "v1"
+        kind: "Namespace"
+      - group: ""
+        version: "v1"
+        kind: "Pod"
+---
+apiVersion: templates.gatekeeper.sh/v1
+kind: ConstraintTemplate
+metadata:
+  name: k8srequiredlabels
+spec:
+  crd:
+    spec:
+      names:
+        kind: K8sRequiredLabels
+      validation:
+        # Schema for the `parameters` field
+        openAPIV3Schema:
+          type: object
+          properties:
+            labels:
+              type: array
+              items:
+                type: string
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package k8srequiredlabels
+
+        violation[{"msg": msg, "details": {"missing_labels": missing}}] {
+          provided := {label | input.review.object.metadata.labels[label]}
+          required := {label | label := input.parameters.labels[_]}
+          missing := required - provided
+          count(missing) > 0
+          msg := sprintf("you must provide labels: %v", [missing])
+        }
+```
+
+Create the constraint:
+
+```yaml
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: K8sRequiredLabels
+metadata:
+  name: pod-required-labels
+spec:
+  match:
+    kinds:
+      - apiGroups: [""]
+        kinds: ["Pod"]
+    labelSelector:
+      matchLabels:
+        test: gatekeeper
+  parameters:
+    labels: ["gatekeeper"]
+```
+
+Then start the vCluster with the following configuration:
+
+```yaml
+policies:
+  centralAdmission:
+    validatingWebhooks:
+    - apiVersion: admissionregistration.k8s.io/v1
+      kind: ValidatingWebhookConfiguration
+      metadata:
+        name: gatekeeper-webhook
+      webhooks:
+      - admissionReviewVersions:
+        - v1
+        clientConfig:
+          service:
+            name: gatekeeper-webhook-service
+            namespace: gatekeeper-system
+            path: /v1/admit
+            port: 443
+        failurePolicy: Fail
+        matchPolicy: Exact
+        name: validation.gatekeeper.sh
+        objectSelector: {}
+        rules:
+        - apiGroups:
+          - '*'
+          apiVersions:
+          - '*'
+          operations:
+          - CREATE
+          - UPDATE
+          resources:
+          - pods
+          scope: Namespaced
+        sideEffects: None
+        timeoutSeconds: 10
+```
+
+Within the vCluster try to create the following pod which should get denied:
+
+```bash
+$ echo "apiVersion: v1
+kind: Pod
+metadata:
+  name: nginx
+  labels:
+    test: gatekeeper
+spec:
+  containers:
+    - image: nginx
+      name: nginx" | kubectl create -f -
+admission webhook "validation.gatekeeper.sh" denied the request: you must provide labels: [gatekeeper]
+```
+
+
+## Config reference
+
+<AdmissionControl/>

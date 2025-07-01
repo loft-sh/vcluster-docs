@@ -1,0 +1,286 @@
+---
+title: Deploy vCluster Platform on Azure using AKS
+sidebar_label: AKS
+sidebar_position: 4
+description: Learn how to deploy and configure vCluster Platform on Azure with AKS.
+---
+
+import Image from "@site/src/components/Image";
+import InstallNextSteps from "../../_partials/install/install-next-steps.mdx";
+import ListHelmVersions from '../../_partials/install/list-helm-versions.mdx';
+import BasePrerequisites from '../../_partials/install/base-prerequisites.mdx';
+import InstallCli from '../../../vcluster/_partials/deploy/install-cli.mdx';
+import KubeconfigUpdate from '../../../docs/_partials/kubeconfig_update.mdx';
+import ProAdmonition from '../../../vcluster/_partials/admonitions/pro-admonition.mdx';
+import InterpolatedCodeBlock from "@site/src/components/InterpolatedCodeBlock";
+
+
+import Flow, { Step } from '@site/src/components/Flow';
+
+import Label from '@site/src/components/Label';
+
+
+This guide provides instructions for deploying the platform on Azure using [Azure Kubernetes Service (AKS)](https://learn.microsoft.com/en-us/azure/aks/).
+
+<!-- vale off -->
+## Prerequisites
+
+Ensure you have the following:
+<BasePrerequisites />
+
+- vCluster CLI installed: <InstallCli />
+- [Azure CLI (`az`)](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli?view=azure-cli-latest) installed.
+
+:::note
+Ensure you have the necessary permissions to create clusters and manage Azure services.
+:::
+
+## Create an AKS cluster
+
+<Flow id="create-aks-cluster">
+
+<Step>
+Prepare the environment.
+
+Create an AKS cluster using the `az` CLI. Set up your environment variables:
+
+<InterpolatedCodeBlock
+  code={`export RESOURCE_GROUP_NAME=[[VAR:RESOURCE_GROUP_NAME:vcluster-demo-ResourceGroup]]
+export REGION=[[VAR:REGION:westeurope]]
+export CLUSTER_NAME=[[VAR:CLUSTER_NAME:vcluster-demo]]
+export DNS_LABEL=[[VAR:DNS_LABEL:vcluster-demo-dns]]
+`}
+  language="bash"
+  title="Set environment variables"
+/>
+</Step>
+
+<Step>
+(Optional) Create a resource group if the specified resource group name does not exist:
+
+<InterpolatedCodeBlock
+  code={`az group create --name $RESOURCE_GROUP_NAME --location $REGION`}
+  language="bash"
+  title="Create a resource group"
+/>
+</Step>
+
+<Step>
+Create the cluster:
+
+<InterpolatedCodeBlock
+  code={`az aks create --resource-group $RESOURCE_GROUP_NAME --name $CLUSTER_NAME --node-count 2`}
+  language="bash"
+  title="Create an AKS cluster"
+/>
+
+  :::info
+  This process typically takes about 10-15 minutes.
+  :::
+
+Using the default values, this command creates a AKS cluster named `vcluster-demo` in the `westeurope`
+region with two nodes.
+
+</Step>
+
+<Step>
+Download the kubeconfig file for the new cluster:
+
+<InterpolatedCodeBlock
+  code={`az aks get-credentials --resource-group $RESOURCE_GROUP_NAME --name $CLUSTER_NAME`}
+  language="bash"
+  title="Get Kubeconfig"
+/>
+</Step>
+
+<Step>
+Verify the cluster creation.
+
+Verify that AKS was created successfully by listing the nodes:
+
+```bash title="List cluster nodes"
+kubectl get nodes
+```
+
+You should see an output similar to the following:
+
+```bash title="Example output"
+NAME                                STATUS   ROLES    AGE     VERSION
+aks-nodepool1-41068841-vmss000000   Ready    <none>   6m4s    v1.31.8
+aks-nodepool1-41068841-vmss000001   Ready    <none>   6m11s   v1.31.8
+```
+
+</Step>
+
+</Flow>
+
+## Set up the platform
+
+After the AKS cluster is running, deploy the platform.
+
+### Install the platform
+
+<Flow>
+<Step>
+[Deploy the platform](/platform/install/quick-start-guide) using the vCluster CLI.
+
+:::note idempotency
+The following command is _idempotent_, meaning that running it again does
+not result in creating another cluster with the same name.
+:::
+
+```bash title="Deploy the platform using vCluster CLI
+vcluster platform start
+```
+
+The command prompts you to enter the email address for the admin user:
+
+```bash title="Expected deployment output"
+By providing your email, you accept our Terms of Service and Privacy Statement:
+Terms of Service: https://www.loft.sh/legal/terms
+Privacy Statement: https://www.loft.sh/legal/privacy
+? Please specify an email address for the admin user
+```
+
+:::tip
+If the command takes too long to execute—such as when other cluster operations are in progress—rerun the command.
+:::
+
+</Step>
+
+<Step>
+Connect to the platform.
+
+After the platform is deployed, your default browser opens with the platform UI, and you should see output similar to the following:
+
+```bash title="platform deployment output"
+##########################   LOGIN   ############################
+
+Username: admin
+Password: 9758c908-b931-4edd-b3cb-3f034e50651a  # Change via UI or via: vcluster platform reset password
+
+Login via UI:  https://hyx4907.loft.host
+Login via CLI: vcluster platform login https://hyx4907.loft.host
+
+#################################################################
+
+vCluster Platform was successfully installed and can now be reached at: https://hyx4907.loft.host
+
+Thanks for using vCluster Platform!
+19:34:46 done You are successfully logged into vCluster Platform!
+- Use `vcluster platform create vcluster` to create a new virtual cluster
+- Use `vcluster platform add vcluster` to add an existing virtual cluster to a vCluster platform instance
+```
+
+When logging in using the UI, provide the following details:
+
+- **First Name**
+- **Last Name**
+- **Email** (pre-filled with the address you supplied earlier)
+- **Organization**
+
+To log in using the CLI, run the `Login via CLI` command provided above.
+
+This completes the basic platform deployment. For additional configuration and available features, see the [Next steps section](#post-install-steps).
+
+You can _optionally_ perform additional configuration steps:
+
+- [Expose the platform UI using the load balancer](#load-balancer)
+- [Set up a custom domain and configure DNS](#setup-domain-dns)
+
+</Step>
+</Flow>
+
+### Expose the platform UI using LoadBalancer {#load-balancer}
+
+<Flow>
+<Step>
+Optionally, you can expose the platform UI using a LoadBalancer service to make it accessible outside the cluster.
+
+:::note
+This assumes the platform is deployed in the `vcluster-platform` namespace which is a
+default deployment namespace.
+:::
+
+```bash
+cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: Service
+metadata:
+  name: vcluster-platform-loadbalancer
+  namespace: vcluster-platform
+spec:
+  type: LoadBalancer
+  externalTrafficPolicy: Cluster
+  selector:
+    app: loft
+  ports:
+  - name: https
+    protocol: TCP
+    port: 443
+    targetPort: 10443
+EOF
+
+```
+
+</Step>
+
+<Step>
+After the service is active, obtain the external IP address:
+
+```bash
+kubectl get svc vcluster-platform-loadbalancer -n vcluster-platform
+```
+
+Navigate to the IP address in your browser `https://<EXTERNAL_IP>`.
+
+:::tip
+The platform uses a self-signed certificate, so you should
+accept the warning in your browser. For production use, replace the default self-signed certificate with a valid [TLS certificate](/platform/configure/domain#configure-tls).
+:::
+
+</Step>
+
+</Flow>
+
+### Set up custom domain and configure DNS {#setup-domain-dns}
+
+Optionally, you can set up a custom domain, SSL certificate, and configure DNS to provide a secure URL for accessing the platform.
+[Official Azure guide](https://learn.microsoft.com/en-us/azure/aks/app-routing-dns-ssl)
+
+<Flow>
+<Step>
+All necessary steps for configuring DNS and SSL for Azure Kubernetes Service (AKS) App Routing are thoroughly described in the official Azure documentation.
+Please refer to the guide here: [Configure DNS and SSL for AKS App Routing](https://learn.microsoft.com/en-us/azure/aks/app-routing-dns-ssl).
+</Step>
+
+<Step>
+Connect the platform to the custom domain.
+
+After DNS is set up, you can start the platform using the following command:
+
+```bash
+vcluster platform start --host=vcluster-platform.yourdomain.tld
+```
+
+:::info
+For more information on how to configure a custom domain, see the [Configure external access and TLS documentation](/platform/configure/domain).
+:::
+
+</Step>
+</Flow>
+
+## Next steps {#post-install-steps}
+
+<InstallNextSteps />
+
+You can also use Google as an identity provider and [configure SSO](/platform/configure/single-sign-on/providers/google) to enable user authentication to the platform.
+
+## Clean up resources
+
+If you deployed the AKS cluster using this guide, and want to clean up the resources, run the
+following command:
+
+```bash title="Clean up resources"
+az aks delete --resource-group $RESOURCE_GROUP_NAME --name $CLUSTER_NAME
+```
