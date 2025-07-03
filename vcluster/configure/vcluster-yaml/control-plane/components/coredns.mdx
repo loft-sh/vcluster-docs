@@ -12,48 +12,39 @@ import ProAdmonition from '../../../../_partials/admonitions/pro-admonition.mdx'
 <ProAdmonition/>
 
 
-Each vCluster instance operates with its own DNS service, typically CoreDNS. Pods and services within each virtual cluster can discover each other using familiar Kubernetes DNS names such as `my-service.default.svc.cluster.local`. Each virtual cluster maintains its own separate DNS view, which means applications running in different virtual clusters cannot accidentally discover or access each other's services, even though they share the same underlying host cluster infrastructure
+# CoreDNS in virtual clusters: Complete guide
 
-The DNS system in vCluster serves multiple critical functions that go beyond simple name resolution. It maintains the familiar Kubernetes DNS patterns that applications expect, ensuring that service discovery works exactly as it would in a standalone Kubernetes cluster. When a pod queries for a service like `my-app.default.svc.cluster.local`, the CoreDNS instance returns an IP address that appears to be a normal cluster service IP, even though the underlying infrastructure involves complex resource synchronization between the virtual and host clusters.
+## Understand CoreDNS in virtual clusters
 
-The vCluster syncer ensures that intuitive Kubernetes DNS naming logic applies, allowing users to connect to DNS names that map to synchronized services in the host cluster. This synchronization happens transparently, so applications running in virtual clusters experience normal Kubernetes networking behavior without any awareness of the underlying virtual cluster architecture.
+Each virtual cluster instance operates with its own DNS service, CoreDNS, deployed in two configurations: as a separate pod (default) or integrated within the syncer (vCluster Pro feature). Both configurations ensure DNS functions according to standard Kubernetes expectations. Pods and services within each virtual cluster discover each other using standard Kubernetes DNS names such as `my-service.default.svc.cluster.local`. Each virtual cluster maintains its own DNS view, preventing applications in different virtual clusters from discovering or accessing services outside their designated boundaries, despite sharing the same host cluster infrastructure.
 
-## How DNS resolution works in vCluster
+CoreDNS in virtual clusters performs name resolution and resource mapping functions. When a pod queries a service such as `my-app.default.svc.cluster.local`, CoreDNS returns a service IP address that appears as a standard cluster service. The virtual cluster maps this request to a corresponding service in the host cluster with a different name.
 
-DNS resolution in vCluster involves a multi-stage process that maintains Kubernetes compatibility while managing the virtual-to-physical resource mapping. This ensures apps receive expected DNS responses while the infrastructure handles routing to actual host cluster resources.
+The syncer component performs this mapping function regardless of CoreDNS deployment configuration. It translates standard Kubernetes DNS names to actual services running in the host cluster. Applications receive normal Kubernetes DNS responses without awareness of the underlying translation process.
 
-```mermaid
-graph TD
-    A[Application Pod] -->|1. DNS Query: frontend.webapp.svc.cluster.local| B[vCluster CoreDNS :1053]
-    B -->|2. Resolve to virtual IP| C[Virtual Service IP: 10.96.0.150]
-    C -->|3. Application connects| D[vCluster Syncer]
-    D -->|4. Map to synced service| E[frontend-x-webapp-x-vcluster.host-ns]
-    E -->|5. Host cluster DNS| F[Host CoreDNS :53]
-    F -->|6. Resolve to pod IPs| G[Actual Pod Endpoints]
-    G -->|7. Traffic flows back| A
-    
-    style B fill:#e1f5fe
-    style D fill:#f3e5f5
-    style F fill:#e8f5e8
-```
+CoreDNS behavior knowledge is required for troubleshooting connectivity issues, implementing custom networking policies, and optimizing performance for specific workloads. The DNS system maintains security boundaries between virtual clusters by providing each instance with an isolated view of available services and resources.
 
-When an application pod initiates a DNS query, the request travels to the virtual clusters's CoreDNS instance listening on port 1053. This CoreDNS maintains a complete view of all services that exist within the virtual cluster's namespace scope and resolves queries to virtual IP addresses that exist only within the context of that specific virtual cluster.
+## Learn how DNS resolution works in virtual clusters
 
-The application then attempts to establish a connection to the resolved virtual IP address. At this point, the vCluster syncer component intercepts the network traffic and performs the translation between virtual cluster resources and their corresponding sync resources in the host cluster. The syncer understands the mapping between virtual services and host services, which typically have names that include prefixes and suffixes to ensure uniqueness across multiple virtual clusters sharing the same host infrastructure.
+DNS resolution in virtual clusters involves a multi-stage process that maintains Kubernetes compatibility while managing the virtual-to-physical resource mapping. This ensures apps receive expected DNS responses while the infrastructure handles routing to actual host cluster resources.
+
+When an application pod initiates a DNS query, the request travels to the virtual cluster's CoreDNS instance on port 1053. This CoreDNS maintains a complete view of all services that exist within the virtual cluster's namespace scope and resolves queries to virtual IP addresses that exist only within the context of that specific virtual cluster.
+
+The application then attempts to establish a connection to the resolved virtual IP address. At this point, the virtual cluster syncer component intercepts the network traffic and performs the translation between virtual cluster resources and their corresponding sync resources in the host cluster. The syncer understands the mapping between virtual services and host services, which typically have names that include prefixes and suffixes to ensure uniqueness across multiple virtual clusters on the same host infrastructure.
 
 After the syncer translates the virtual service reference to the actual host cluster service name, the host cluster's DNS system takes over and performs standard Kubernetes service resolution. This resolves to the actual pod IP addresses that serve the application traffic.
 
-## Deployment architectures
+## Choose deployment architectures
 
-vCluster supports two distinct CoreDNS deployment models.
+Virtual clusters support two distinct CoreDNS deployment models.
 
-### Separate CoreDNS deployment
+### Deploy separate CoreDNS
 
-A normal vCluster deployment consists of two pods per vCluster instance: the vCluster pod containing the API server and syncer components, and a separate CoreDNS pod.
+A normal virtual cluster deployment consists of two pods per virtual cluster instance: the virtual cluster pod containing the API server and syncer components, and a separate CoreDNS pod.
 
 ```mermaid
 graph LR
-    subgraph "vCluster Deployment"
+    subgraph "Virtual Cluster Deployment"
         subgraph "Control Plane Pod"
             A[Kubernetes API Server]
             B[Resource Syncer]
@@ -69,25 +60,25 @@ graph LR
     C -->|DNS Responses| E
     B -->|Sync Resources| F[Host Cluster]
     
-    style A fill:#e3f2fd
-    style B fill:#e8f5e8
-    style C fill:#fff3e0
-    style D fill:#fff3e0
+    style A fill:#e6f3ff
+    style B fill:#fff2e6
+    style C fill:#f9f9f9
+    style D fill:#f9f9f9
 ```
 
 The separate deployment model isolates DNS operations from the critical API server and sync functions. This prevents resource contention between these different types of workloads. DNS operations typically involve different performance characteristics than API server operations, with DNS requiring consistent low-latency responses while API operations may involve more complex processing and variable response times.
 
-This isolation provides some operational benefits for production environments. DNS issues can be debugged, updated, or restarted independently without affecting the virtual cluster's control plane availability. Resource allocation can be tuned specifically for DNS workloads, which may require different CPU and memory profiles than the API server and syncer components.
+This isolation provides operational benefits for production environments. DNS issues can be debugged, updated, or restarted independently without affecting the virtual cluster's control plane availability. Resource allocation can be tuned specifically for DNS workloads, which may require different CPU and memory profiles than the API server and syncer components.
 
-The separate model also simplifies monitoring and observability since DNS metrics, logs, and performance characteristics can be tracked independently. This separation becomes particularly valuable when scaling operations, as DNS and control plane components may need different horizontal scaling strategies based on their respective workload patterns.
+The separate model also simplifies monitoring and observability since DNS metrics, logs, and performance characteristics can be tracked independently. This separation becomes valuable when scaling operations, as DNS and control plane components may need different horizontal scaling strategies based on their respective workload patterns.
 
-### Integrated CoreDNS deployment with vCluster Pro
+### Deploy integrated CoreDNS with vCluster Pro
 
-The integrated CoreDNS feature allows you to run CoreDNS as part of the syncer, which saves the overhead of an external CoreDNS pod. This Pro feature consolidates all three vCluster components into a single pod, creating a more resource-efficient deployment model.
+The integrated CoreDNS feature allows you to run CoreDNS as part of the syncer, which saves the overhead of an external CoreDNS pod. This Pro feature consolidates all three virtual cluster components into a single pod, creating a more resource-efficient deployment model.
 
 ```mermaid
 graph LR
-    subgraph "vCluster Pro Deployment"
+    subgraph "Virtual Cluster Pro Deployment"
         subgraph "Unified Control Plane Pod"
             A[Kubernetes API Server]
             B[Resource Syncer + CoreDNS]
@@ -98,49 +89,49 @@ graph LR
     B -->|DNS Responses| E
     B -->|Sync Resources| F[Host Cluster]
     
-    style A fill:#e3f2fd
-    style B fill:#e8f5e8
+    style A fill:#e6f3ff
+    style B fill:#fff2e6
 ```
 
-This integration provides benefits including avoiding cluster max pods limits and optimized resource allocation where more components share allocated resources instead of having independently allocated resources, reducing wastage due to bin-packing constraints. The unified approach particularly benefits environments where pod limits present operational constraints or where resource optimization is a primary concern.
+This integration provides benefits including avoiding cluster max pods limits and optimized resource allocation where more components share allocated resources instead of having independently allocated resources, reducing wastage due to bin-packing constraints. The unified approach benefits environments where pod limits present operational constraints or where resource optimization is a primary concern.
 
 The integrated model reduces memory overhead by sharing certain base system libraries and runtime environments between the syncer and DNS components. Network communication between DNS and syncer functions becomes more efficient since they operate within the same process space, eliminating inter-pod networking overhead.
 
 However, the integrated approach requires careful consideration of operational trade-offs. Troubleshooting may become more complex since DNS and synchronization functions share the same container and process space. Resource allocation must account for the combined workload of both DNS and syncer operations, which may require different tuning approaches compared to separate deployments.
 
-## Why CoreDNS uses port 1053
+## Understand why CoreDNS uses port 1053
 
-CoreDNS in vCluster listens on port 1053 instead of the default DNS port 53 to avoid conflicts with the host cluster's DNS. This port selection addresses several technical and operational challenges inherent in running DNS services within virtual cluster environments.
+CoreDNS in virtual clusters listens on port 1053 instead of the default DNS port 53 to avoid conflicts with the host cluster's DNS. This port selection addresses several technical and operational challenges inherent in running DNS services within virtual cluster environments.
 
 ```mermaid
 graph TD
     subgraph "Host Cluster Network"
         A[Host CoreDNS/kube-dns<br/>Port 53] 
-        B[vCluster A CoreDNS<br/>Port 1053]
-        C[vCluster B CoreDNS<br/>Port 1053]
-        D[vCluster C CoreDNS<br/>Port 1053]
+        B[Virtual Cluster A CoreDNS<br/>Port 1053]
+        C[Virtual Cluster B CoreDNS<br/>Port 1053]
+        D[Virtual Cluster C CoreDNS<br/>Port 1053]
     end
     
     E[Host Cluster Pods] -->|DNS Queries| A
-    F[vCluster A Pods] -->|DNS Queries| B
-    G[vCluster B Pods] -->|DNS Queries| C
-    H[vCluster C Pods] -->|DNS Queries| D
+    F[Virtual Cluster A Pods] -->|DNS Queries| B
+    G[Virtual Cluster B Pods] -->|DNS Queries| C
+    H[Virtual Cluster C Pods] -->|DNS Queries| D
     
-    style A fill:#ffcdd2
-    style B fill:#c8e6c9
-    style C fill:#c8e6c9
-    style D fill:#c8e6c9
+    style A fill:#ffe6e6
+    style B fill:#e6f7e6
+    style C fill:#e6f7e6
+    style D fill:#e6f7e6
 ```
 
 The host cluster already operates its own DNS service on the standard port 53, making it impossible for virtual cluster DNS services to bind to the same port. Since multiple virtual clusters may run on the same host cluster, each requires its own DNS service that operates independently without interfering with either the host DNS or other virtual cluster DNS instances.
 
 Port 53 is classified as a privileged port on most operating systems, requiring elevated permissions to bind to it. By using port 1053, CoreDNS containers can operate with standard user privileges, aligning with security best practices for containerized applications. This approach reduces the attack surface and eliminates the need for special security contexts or capabilities that would be required to bind to privileged ports.
 
-The non-standard port also simplifies network policy management and firewall configuration. Network administrators can easily distinguish between host cluster DNS traffic on port 53 and virtual cluster DNS traffic on port 1053, enabling more granular security policies and clearer traffic analysis for troubleshooting purposes.
+The non-standard port also simplifies network policy management and firewall configuration. Network administrators can distinguish between host cluster DNS traffic on port 53 and virtual cluster DNS traffic on port 1053, enabling more granular security policies and clearer traffic analysis for troubleshooting purposes.
 
-### Cloud provider networking considerations
+### Consider cloud provider networking
 
-Different cloud providers have varying network policies that can affect DNS traffic on port 1053, particularly EKS clusters where DNS queries might fail when pods are scheduled on different nodes. Understanding these provider-specific requirements is essential for ensuring reliable DNS operation.
+Different cloud providers have varying network policies that can affect DNS traffic on port 1053, including EKS clusters where DNS queries might fail when pods are scheduled on different nodes. Understanding these provider-specific requirements is essential for ensuring reliable DNS operation.
 
 EKS clusters created with Terraform often set up separate security groups for control plane and worker nodes, and the default node security group does not allow inbound traffic on port 1053. This configuration can cause DNS resolution failures when CoreDNS pods and application pods are scheduled on different nodes, since the DNS queries cannot reach the CoreDNS service across node boundaries.
 
@@ -148,18 +139,18 @@ Google GKE typically allows internal cluster traffic by default, but organizatio
 
 Azure AKS generally permits internal cluster communication through its default network security groups, but enterprises with advanced networking configurations may need to verify that port 1053 traffic is allowed. AKS clusters using custom virtual networks or restrictive network policies may require additional configuration to ensure DNS traffic operates correctly.
 
-## DNS isolation and limitations
+## Recognize DNS isolation and limitations
 
 Virtual cluster DNS isolation serves as both a security feature and an operational constraint that developers and operators must understand when designing applications and implementing service communication patterns. This isolation maintains clear boundaries between virtual clusters while creating specific challenges for cross-cluster communication.
 
-### Understanding DNS boundaries
+### Understand DNS boundaries
 
 Virtual clusters cannot directly access host services via DNS, and host cluster pods can only access virtual cluster services by their synced name. This limitation is intentional and maintains the security and isolation guarantees that make virtual clusters suitable for multi-tenant environments.
 
 ```mermaid
 graph TD
     subgraph "Virtual Cluster DNS Scope"
-        A[App Pod] -->|Query: my-service.default.svc.cluster.local| B[vCluster CoreDNS]
+        A[App Pod] -->|Query: my-service.default.svc.cluster.local| B[Virtual Cluster CoreDNS]
         B -->|✅ Resolves| C[Virtual Cluster Services]
         B -->|❌ NXDOMAIN| D[Host Cluster Services]
     end
@@ -170,19 +161,19 @@ graph TD
         F -->|❌ NXDOMAIN| H[Virtual Cluster Services]
     end
     
-    style B fill:#e1f5fe
-    style F fill:#e8f5e8
-    style D fill:#ffcdd2
-    style H fill:#ffcdd2
+    style B fill:#fff2e6
+    style F fill:#e6f3ff
+    style D fill:#ffe6e6
+    style H fill:#ffe6e6
 ```
 
-When a pod inside a virtual cluster attempts to resolve a DNS name for a service that exists only in the host cluster, the vCluster CoreDNS instance returns an NXDOMAIN response because it maintains no knowledge of host cluster resources. This behavior ensures that virtual clusters cannot accidentally discover or access resources they should not have permission to use.
+When a pod inside a virtual cluster attempts to resolve a DNS name for a service that exists only in the host cluster, the virtual cluster CoreDNS instance returns an NXDOMAIN response because it maintains no knowledge of host cluster resources. This behavior ensures that virtual clusters cannot accidentally discover or access resources they should not have permission to use.
 
 The isolation extends beyond services to include all network-discoverable resources in the host cluster. Virtual cluster applications cannot resolve DNS names for host cluster ingresses, external services, or any other resources that exist outside their virtual cluster boundary. This creates a clean separation that prevents information leakage and unauthorized access between tenants.
 
 Similarly, applications running directly in the host cluster cannot resolve virtual cluster services using their virtual names. Host cluster applications can only access virtual cluster services by using the synchronized service names, which include prefixes and suffixes that identify the virtual cluster instance. This naming scheme ensures that host cluster applications must explicitly reference virtual cluster resources rather than accidentally discovering them through DNS queries.
 
-### Service mapping strategies
+### Apply service mapping strategies
 
 Several patterns enable controlled communication between virtual clusters and host cluster services while maintaining appropriate security boundaries. These strategies range from simple DNS aliasing to sophisticated resource synchronization approaches.
 
@@ -205,7 +196,7 @@ spec:
 
 This configuration creates a service named `database-proxy` that applications can access using normal Kubernetes DNS patterns. When applications connect to `database-proxy.my-application.svc.cluster.local`, the DNS resolution returns the host cluster service `postgres.data-tier.svc.cluster.local`, and traffic flows to the host cluster database service.
 
-Resource synchronization offers a more sophisticated approach by importing actual host cluster services into the virtual cluster namespace. This pattern uses vCluster's synchronization capabilities to create mirror services that represent host cluster resources with full Kubernetes service features.
+Resource synchronization offers a more sophisticated approach by importing actual host cluster services into the virtual cluster namespace. This pattern uses virtual cluster's synchronization capabilities to create mirror services that represent host cluster resources with full Kubernetes service features.
 
 ```yaml title="Resource synchronization configuration"
 sync:
@@ -218,113 +209,108 @@ sync:
     endpoints: true
 ```
 
-When configured with this synchronization pattern, vCluster imports services from the host cluster that match the specified label selector. The imported services appear as native virtual cluster services with complete endpoints and all standard Kubernetes service capabilities, enabling full integration with service mesh technologies, network policies, and other Kubernetes-native tools.
+When configured with this synchronization pattern, virtual cluster imports services from the host cluster that match the specified label selector. The imported services appear as native virtual cluster services with complete endpoints and all standard Kubernetes service capabilities, enabling full integration with service mesh technologies, network policies, and other Kubernetes-native tools.
 
-## CoreDNS configuration patterns
+## Configure CoreDNS patterns
 
-CoreDNS configuration in vCluster supports extensive customization that enables operators to adapt DNS behavior for specific environments, integrate with existing infrastructure, and optimize performance for particular workloads. Understanding these configuration patterns helps in implementing sophisticated DNS policies and troubleshooting complex networking scenarios.
+CoreDNS configuration in virtual clusters supports extensive customization that enables operators to adapt DNS behavior for specific environments, integrate with existing infrastructure, and optimize performance for particular workloads. Understanding these configuration patterns helps in implementing sophisticated DNS policies and troubleshooting complex networking scenarios.
 
-### Basic CoreDNS setup
+### Set up basic CoreDNS
 
 The fundamental CoreDNS configuration provides essential DNS functionality with sensible defaults that work for most virtual cluster deployments. This configuration includes core plugins for resolution, health monitoring, and basic observability.
 
 ```yaml title="Basic CoreDNS configuration"
-coredns:
-  enabled: true
-  replicas: 1
-  resources:
-    requests:
-      cpu: 20m
-      memory: 32Mi
-    limits:
-      cpu: 100m
-      memory: 128Mi
-  plugins:
-    errors: true
-    health: true
-    prometheus:
-      enabled: true
-      port: 9153
+controlPlane:
+  coredns:
+    enabled: true
+    replicas: 1
+    resources:
+      requests:
+        cpu: 20m
+        memory: 32Mi
+      limits:
+        cpu: 100m
+        memory: 128Mi
 ```
 
 This configuration allocates minimal but sufficient resources for DNS operations in small to medium virtual clusters. The resource requests ensure that CoreDNS receives guaranteed CPU and memory allocation, providing consistent performance even when the host cluster experiences resource pressure. The limits prevent DNS operations from consuming excessive resources that could impact other cluster components.
 
-The plugin configuration enables error logging and health checking, which are essential for operational monitoring and troubleshooting. Prometheus metrics provide observability into DNS query patterns, response times, and error rates, enabling proactive monitoring and performance optimization based on actual usage patterns.
-
-### Private registry configuration
+### Configure private registry
 
 Organizations with security policies or compliance requirements often need to deploy CoreDNS images from private container registries. This configuration pattern demonstrates the necessary image pull settings and authentication mechanisms.
 
 ```yaml title="Private registry CoreDNS configuration"
-coredns:
-  image:
-    repository: registry.company.com/security/coredns
-    tag: "1.10.1-hardened"
-    pullPolicy: Always
-  imagePullSecrets:
-    - name: company-registry-credentials
-  nodeSelector:
-    node-role.kubernetes.io/system: "true"
-  tolerations:
-    - key: "node-role.kubernetes.io/system"
-      operator: "Equal"
-      value: "true"
-      effect: "NoSchedule"
+controlPlane:
+  coredns:
+    image:
+      repository: registry.company.com/security/coredns
+      tag: "1.10.1-hardened"
+      pullPolicy: Always
+    imagePullSecrets:
+      - name: company-registry-credentials
+    nodeSelector:
+      node-role.kubernetes.io/system: "true"
+    tolerations:
+      - key: "node-role.kubernetes.io/system"
+        operator: "Equal"
+        value: "true"
+        effect: "NoSchedule"
 ```
 
-This configuration specifies a custom registry location with organization-specific image tags that may include security patches, compliance modifications, or other customizations. The `pullPolicy` setting ensures that image updates are retrieved promptly, which is particularly important for security patches and updates.
+This configuration specifies a custom registry location with organization-specific image tags that may include security patches, compliance modifications, or other customizations. The `pullPolicy` setting ensures that image updates are retrieved promptly, which is important for security patches and updates.
 
-The `imagePullSecrets` reference provides authentication credentials for accessing the private registry. These secrets must be created in the vCluster namespace with appropriate authentication tokens or certificates. The node selector and tolerations ensure that CoreDNS pods are scheduled on nodes that have access to the private registry and any required network policies or firewall configurations.
+The `imagePullSecrets` reference provides authentication credentials for accessing the private registry. These secrets must be created in the virtual cluster namespace with appropriate authentication tokens or certificates. The node selector and tolerations ensure that CoreDNS pods are scheduled on nodes that have access to the private registry and any required network policies or firewall configurations.
 
-### Advanced DNS configuration with custom zones
+### Configure advanced DNS with custom zones
 
 Advanced CoreDNS configurations enable sophisticated DNS routing, custom domain handling, and integration with external DNS systems. These configurations support complex networking environments with multiple DNS domains, upstream servers, and specialized routing requirements.
 
 ```yaml title="Advanced CoreDNS with custom zones"
-coredns:
-  overwriteConfig: |
-    .:1053 {
-        errors
-        health {
-            lameduck 5s
-        }
-        ready
-        kubernetes cluster.local in-addr.arpa ip6.arpa {
-            pods insecure
-            fallthrough in-addr.arpa ip6.arpa
-            ttl 30
-        }
-        hosts /etc/coredns/NodeHosts {
-            ttl 60
-            reload 15s
-            fallthrough
-        }
-        prometheus :9153
-        forward . /etc/resolv.conf {
-            max_concurrent 1000
-            except cluster.local
-        }
-        cache 300 {
-            success 9984 30
-            denial 9984 5
-            prefetch 10 60s 30%
-        }
-        loop
-        reload
-        loadbalance
-    }
-    
-    company.internal:1053 {
-        forward . 10.100.0.53 10.100.0.54
-        cache 600
-        errors
-    }
-    
-    external-services.com:1053 {
-        forward . 8.8.8.8 1.1.1.1
-        cache 120
-        errors
-    }
+controlPlane:
+  coredns:
+    overwriteConfig: |
+      .:1053 {
+          errors
+          health {
+              lameduck 5s
+          }
+          ready
+          kubernetes cluster.local in-addr.arpa ip6.arpa {
+              pods insecure
+              fallthrough in-addr.arpa ip6.arpa
+              ttl 30
+          }
+          hosts /etc/coredns/NodeHosts {
+              ttl 60
+              reload 15s
+              fallthrough
+          }
+          prometheus :9153
+          forward . /etc/resolv.conf {
+              max_concurrent 1000
+              except cluster.local
+          }
+          cache 300 {
+              success 9984 30
+              denial 9984 5
+              prefetch 10 60s 30%
+          }
+          loop
+          reload
+          loadbalance
+      }
+      
+      company.internal:1053 {
+          forward . 10.100.0.53 10.100.0.54
+          cache 600
+          errors
+      }
+      
+      external-services.com:1053 {
+          forward . 8.8.8.8 1.1.1.1
+          cache 120
+          errors
+      }
 ```
 
 This advanced configuration demonstrates multiple DNS zones with different handling characteristics. The main zone handles standard Kubernetes DNS resolution with optimized settings for concurrent queries, appropriate caching, and performance tuning. The health check configuration includes lame duck periods to ensure graceful shutdowns during updates or maintenance operations.
@@ -333,14 +319,14 @@ The custom zones show how to handle corporate internal domains and specific exte
 
 Cache configuration in this example includes sophisticated settings for different query types, prefetch capabilities to proactively refresh frequently-queried names, and size limits to prevent memory exhaustion. These settings can be adjusted based on observed DNS query patterns and performance requirements specific to the applications running in the virtual cluster.
 
-### Integrated CoreDNS configuration
+### Configure integrated CoreDNS
 
-vCluster Pro's integrated CoreDNS feature combines CoreDNS functionality within the syncer container, reducing the pod footprint while maintaining full DNS capabilities. This configuration requires vCluster Pro and provides optimization for resource-constrained environments.
+vCluster Pro's integrated CoreDNS feature combines CoreDNS capability within the syncer container. This configuration requires vCluster Pro and provides optimization for resource-constrained environments.
 
 ```yaml title="Integrated CoreDNS Pro configuration"
-pro: true
 controlPlane:
   coredns:
+    enabled: true
     embedded: true
     resources:
       requests:
@@ -349,33 +335,17 @@ controlPlane:
       limits:
         cpu: 50m
         memory: 64Mi
-    plugin:
-      enabled: true
-      config: |
-        .:1053 {
-            errors
-            health
-            ready
-            kubernetes cluster.local {
-                pods insecure
-                fallthrough
-            }
-            forward . /etc/resolv.conf
-            cache 30
-            loop
-            reload
-        }
 ```
 
-The integrated configuration reduces total resource allocation since DNS and syncer functions share the same container runtime environment. This approach is particularly beneficial in environments where pod limits constrain the number of virtual clusters that can be deployed, or where resource optimization is a primary concern.
+The integrated configuration reduces total resource allocation since DNS and syncer functions share the same container runtime environment. This approach is beneficial in environments where pod limits constrain the number of virtual clusters that can be deployed, or where resource optimization is a primary concern.
 
 The embedded configuration maintains full CoreDNS functionality while operating within the syncer process. Custom DNS policies, upstream forwarding, and caching configurations remain fully supported in the integrated model, providing the same flexibility as separate deployments with reduced operational overhead.
 
-## Troubleshooting DNS issues
+## Troubleshoot DNS issues
 
-DNS problems in vCluster environments can manifest in various ways, from complete service discovery failures to intermittent connectivity issues. Systematic troubleshooting approaches help identify root causes quickly and implement appropriate solutions that restore normal operation.
+DNS problems in virtual cluster environments can manifest in various ways, from complete service discovery failures to intermittent connectivity issues. Systematic troubleshooting approaches help identify root causes quickly and implement appropriate solutions that restore normal operation.
 
-### Diagnosing resolution failures
+### Diagnose resolution failures
 
 DNS resolution failures typically present as applications being unable to connect to services, with error messages indicating that hostnames cannot be resolved. The troubleshooting process begins with verifying basic DNS infrastructure health and progresses through increasingly specific diagnostic tests.
 
@@ -410,11 +380,11 @@ kubectl exec dns-test -- nslookup google.com
 
 If DNS queries succeed for system services but fail for application services, the issue likely involves service configuration or synchronization problems rather than fundamental DNS infrastructure failures. Conversely, if all DNS queries fail, the problem probably involves CoreDNS configuration, networking, or resource constraints.
 
-### Network connectivity troubleshooting
+### Troubleshoot network connectivity
 
 Network connectivity issues can prevent DNS queries from reaching CoreDNS or block CoreDNS from communicating with upstream DNS servers. These problems often manifest as DNS timeouts rather than immediate resolution failures, making them more difficult to diagnose.
 
-Testing network connectivity to the CoreDNS service helps identify whether DNS queries can reach the DNS service on port 1053. Network policy restrictions, firewall rules, or security group configurations may block this traffic, particularly in cloud environments with restrictive default settings.
+Testing network connectivity to the CoreDNS service helps identify whether DNS queries can reach the DNS service on port 1053. Network policy restrictions, firewall rules, or security group configurations may block this traffic, especially in cloud environments with restrictive default settings.
 
 ```bash title="Network connectivity diagnostics"
 # Test UDP connectivity to CoreDNS service
@@ -432,7 +402,7 @@ EKS environments commonly experience DNS issues when CoreDNS pods and applicatio
 
 Monitoring CoreDNS logs while generating test queries reveals whether queries reach the CoreDNS service. If queries appear in the logs but resolution fails, the issue likely involves CoreDNS configuration or upstream connectivity. If queries do not appear in the logs, network connectivity or routing problems are the likely cause.
 
-### Performance and resource issues
+### Resolve performance and resource issues
 
 DNS performance problems can manifest as slow application startup times, intermittent connection failures, or degraded application responsiveness. These issues often correlate with high DNS query volumes, insufficient CoreDNS resources, or suboptimal caching configurations.
 
@@ -454,37 +424,38 @@ DNS metrics from the Prometheus endpoint provide detailed information about quer
 
 Analyzing DNS query patterns in the logs helps identify whether applications are making inefficient DNS queries, such as repeated queries for the same hostname or queries for non-existent services. These patterns may indicate opportunities for application optimization, DNS cache tuning, or configuration adjustments that reduce unnecessary DNS load.
 
-## Performance optimization strategies
+## Optimize performance strategies
 
-CoreDNS performance optimization in vCluster environments requires understanding DNS query patterns, resource allocation strategies, and configuration tuning approaches that balance performance with resource consumption and operational complexity.
+CoreDNS performance optimization in virtual cluster environments requires understanding DNS query patterns, resource allocation strategies, and configuration tuning approaches that balance performance with resource consumption and operational complexity.
 
-### Resource allocation optimization
+### Optimize resource allocation
 
 Resource allocation for CoreDNS must account for the specific query patterns and performance requirements of applications running in the virtual cluster. Different workloads generate varying DNS query volumes and have different latency tolerance levels that influence optimal resource sizing.
 
 ```yaml title="Optimized resource allocation"
-coredns:
-  resources:
-    requests:
-      cpu: 100m      # Guaranteed CPU for consistent performance
-      memory: 128Mi  # Base memory for cache and processing
-    limits:
-      cpu: 500m      # Burst capacity for high query volumes
-      memory: 512Mi  # Prevent memory exhaustion under load
-  
-  # Horizontal scaling for high-traffic environments
-  replicas: 2
-  
-  # Pod anti-affinity for distribution
-  affinity:
-    podAntiAffinity:
-      preferredDuringSchedulingIgnoredDuringExecution:
-      - weight: 100
-        podAffinityTerm:
-          labelSelector:
-            matchLabels:
-              app: vcluster-coredns
-          topologyKey: kubernetes.io/hostname
+controlPlane:
+  coredns:
+    resources:
+      requests:
+        cpu: 100m      # Guaranteed CPU for consistent performance
+        memory: 128Mi  # Base memory for cache and processing
+      limits:
+        cpu: 500m      # Burst capacity for high query volumes
+        memory: 512Mi  # Prevent memory exhaustion under load
+    
+    # Horizontal scaling for high-traffic environments
+    replicas: 2
+    
+    # Pod anti-affinity for distribution
+    affinity:
+      podAntiAffinity:
+        preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchLabels:
+                app: vcluster-coredns
+            topologyKey: kubernetes.io/hostname
 ```
 
 The resource requests ensure that CoreDNS receives guaranteed CPU and memory allocation, providing consistent performance even when the host cluster experiences resource pressure. CPU requests should be sized based on observed query rates and desired response times, with higher values needed for environments with high query volumes or strict latency requirements.
@@ -493,35 +464,36 @@ Memory allocation must accommodate DNS cache storage, query processing buffers, 
 
 Running multiple CoreDNS replicas provides horizontal scaling that improves both performance and availability. Pod anti-affinity rules ensure that replicas are distributed across different nodes, reducing the impact of node failures and potentially improving query response times by placing DNS services closer to application pods.
 
-### Cache configuration tuning
+### Cache configuration
 
 DNS cache configuration significantly impacts both performance and resource usage. Appropriate cache settings reduce upstream DNS queries, improve response times, and reduce load on both CoreDNS instances and upstream DNS servers.
 
 ```yaml title="Advanced cache configuration"
-coredns:
-  overwriteConfig: |
-    .:1053 {
-        errors
-        health
-        ready
-        kubernetes cluster.local in-addr.arpa ip6.arpa {
-            pods insecure
-            fallthrough in-addr.arpa ip6.arpa
-            ttl 30
-        }
-        prometheus :9153
-        forward . /etc/resolv.conf {
-            max_concurrent 1000
-        }
-        cache 300 {
-            success 9984 30
-            denial 9984 5
-            prefetch 10 60s 30%
-        }
-        loop
-        reload
-        loadbalance
-    }
+controlPlane:
+  coredns:
+    overwriteConfig: |
+      .:1053 {
+          errors
+          health
+          ready
+          kubernetes cluster.local in-addr.arpa ip6.arpa {
+              pods insecure
+              fallthrough in-addr.arpa ip6.arpa
+              ttl 30
+          }
+          prometheus :9153
+          forward . /etc/resolv.conf {
+              max_concurrent 1000
+          }
+          cache 300 {
+              success 9984 30
+              denial 9984 5
+              prefetch 10 60s 30%
+          }
+          loop
+          reload
+          loadbalance
+      }
 ```
 
 This cache configuration specifies different cache behaviors for successful and failed DNS queries. Successful queries are cached for longer periods because successful resolutions are likely to be queried again by the same or different applications. Failed queries use shorter cache periods to allow quick recovery when services become available or configuration issues are resolved.
@@ -532,47 +504,48 @@ Cache size limits prevent memory exhaustion while providing sufficient capacity 
 
 ## Production deployment best practices
 
-Production CoreDNS deployments in vCluster environments require careful attention to reliability, security, monitoring, and operational procedures. These practices help ensure stable DNS resolution while minimizing operational complexity and security risks.
+Production CoreDNS deployments in virtual cluster environments require careful attention to reliability, security, monitoring, and operational procedures. These practices help ensure stable DNS resolution while minimizing operational complexity and security risks.
 
-### High availability configuration
+### Configure high availability
 
 DNS service availability is critical because DNS failures can render entire applications unusable. Implementing redundancy and resilience patterns ensures consistent DNS availability even during maintenance events, infrastructure failures, or unexpected load spikes.
 
 ```yaml title="High availability CoreDNS configuration"
-coredns:
-  replicas: 3
-  
-  # Pod disruption budget for maintenance operations
-  podDisruptionBudget:
-    enabled: true
-    minAvailable: 2
-  
-  # Anti-affinity for node distribution
-  affinity:
-    podAntiAffinity:
-      requiredDuringSchedulingIgnoredDuringExecution:
-      - labelSelector:
+controlPlane:
+  coredns:
+    replicas: 3
+    
+    # Pod disruption budget for maintenance operations
+    podDisruptionBudget:
+      enabled: true
+      minAvailable: 2
+    
+    # Anti-affinity for node distribution
+    affinity:
+      podAntiAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchLabels:
+              app: vcluster-coredns
+          topologyKey: kubernetes.io/hostname
+    
+    # Resource allocation for stable performance
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 200m
+        memory: 256Mi
+    
+    # Topology spread for even distribution
+    topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: DoNotSchedule
+        labelSelector:
           matchLabels:
             app: vcluster-coredns
-        topologyKey: kubernetes.io/hostname
-  
-  # Resource allocation for stable performance
-  resources:
-    requests:
-      cpu: 100m
-      memory: 128Mi
-    limits:
-      cpu: 200m
-      memory: 256Mi
-  
-  # Topology spread for even distribution
-  topologySpreadConstraints:
-    - maxSkew: 1
-      topologyKey: kubernetes.io/hostname
-      whenUnsatisfiable: DoNotSchedule
-      labelSelector:
-        matchLabels:
-          app: vcluster-coredns
 ```
 
 Running multiple CoreDNS replicas provides redundancy that ensures DNS availability even when individual pods fail, are updated, or experience resource constraints. The pod disruption budget limits the number of CoreDNS pods that can be unavailable simultaneously during voluntary disruptions such as node maintenance or cluster upgrades.
@@ -581,40 +554,41 @@ Anti-affinity rules ensure that CoreDNS pods are distributed across different no
 
 Topology spread constraints provide additional control over pod distribution, ensuring that CoreDNS pods are evenly distributed across available nodes. This distribution improves resilience and can optimize performance by balancing DNS query load across the cluster infrastructure.
 
-### Security hardening
+### Harden security
 
 DNS services present potential security risks that must be addressed through appropriate security configurations, access controls, and monitoring. Security hardening focuses on reducing attack surfaces, implementing least-privilege principles, and ensuring DNS integrity.
 
 ```yaml title="Security-hardened CoreDNS configuration"
-coredns:
-  securityContext:
-    runAsNonRoot: true
-    runAsUser: 1000
-    fsGroup: 1000
-    capabilities:
-      drop:
-        - ALL
-    readOnlyRootFilesystem: true
-    allowPrivilegeEscalation: false
-  
-  # Network policies for traffic restriction
-  networkPolicy:
-    enabled: true
-    ingress:
-      - from:
-        - podSelector: {}
-        ports:
-        - protocol: UDP
-          port: 1053
-        - protocol: TCP
-          port: 9153
-    egress:
-      - to: []
-        ports:
-        - protocol: UDP
-          port: 53
-        - protocol: TCP
-          port: 53
+controlPlane:
+  coredns:
+    securityContext:
+      runAsNonRoot: true
+      runAsUser: 1000
+      fsGroup: 1000
+      capabilities:
+        drop:
+          - ALL
+      readOnlyRootFilesystem: true
+      allowPrivilegeEscalation: false
+    
+    # Network policies for traffic restriction
+    networkPolicy:
+      enabled: true
+      ingress:
+        - from:
+          - podSelector: {}
+          ports:
+          - protocol: UDP
+            port: 1053
+          - protocol: TCP
+            port: 9153
+      egress:
+        - to: []
+          ports:
+          - protocol: UDP
+            port: 53
+          - protocol: TCP
+            port: 53
 ```
 
 The security context configuration ensures that CoreDNS runs with minimal privileges, reducing the potential impact of security vulnerabilities. Running as a non-root user and dropping all capabilities prevents privilege escalation attacks, while the read-only root filesystem prevents malicious code from modifying the container filesystem.
@@ -623,64 +597,65 @@ Network policies implement defense-in-depth security principles by restricting n
 
 Regular security updates and vulnerability scanning help ensure that CoreDNS deployments do not contain known vulnerabilities. Using specific image tags rather than latest tags provides better control over deployed versions and enables systematic update processes that can be tested and validated before production deployment.
 
-### Monitoring and observability
+### Implement monitoring and observability
 
 Comprehensive monitoring enables proactive identification of DNS issues and provides the data needed for performance optimization, capacity planning, and incident response. Monitoring should cover DNS-specific metrics, general infrastructure health, and application-level indicators.
 
 ```yaml title="Comprehensive monitoring configuration"
-coredns:
-  # Enable Prometheus metrics
-  prometheus:
-    enabled: true
-    port: 9153
+controlPlane:
+  coredns:
+    # Enable Prometheus metrics
+    prometheus:
+      enabled: true
+      port: 9153
+      
+    # Service monitor for automatic discovery
+    serviceMonitor:
+      enabled: true
+      interval: 30s
+      scrapeTimeout: 10s
+      labels:
+        monitoring: enabled
     
-  # Service monitor for automatic discovery
-  serviceMonitor:
-    enabled: true
-    interval: 30s
-    scrapeTimeout: 10s
-    labels:
-      monitoring: enabled
-  
-  # Alerting rules for proactive monitoring
-  prometheusRule:
-    enabled: true
-    groups:
-    - name: coredns
-      rules:
-      - alert: CoreDNSDown
-        expr: up{job="coredns"} == 0
-        for: 5m
-        labels:
-          severity: critical
-        annotations:
-          summary: "CoreDNS instance is down"
-          description: "CoreDNS instance {{ $labels.instance }} has been down for more than 5 minutes"
-      
-      - alert: CoreDNSHighErrorRate
-        expr: rate(coredns_dns_responses_total{rcode!="NOERROR"}[5m]) / rate(coredns_dns_responses_total[5m]) > 0.1
-        for: 2m
-        labels:
-          severity: warning
-        annotations:
-          summary: "High DNS error rate detected"
-          description: "DNS error rate is {{ $value | humanizePercentage }} for the last 2 minutes"
-      
-      - alert: CoreDNSHighLatency
-        expr: histogram_quantile(0.99, rate(coredns_dns_request_duration_seconds_bucket[5m])) > 0.1
-        for: 5m
-        labels:
-          severity: warning
-        annotations:
-          summary: "High DNS query latency detected"
-          description: "99th percentile DNS latency is {{ $value }} seconds"
+    # Alerting rules for proactive monitoring
+    prometheusRule:
+      enabled: true
+      groups:
+      - name: coredns
+        rules:
+        - alert: CoreDNSDown
+          expr: up{job="coredns"} == 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "CoreDNS instance is down"
+            description: "CoreDNS instance {{ $labels.instance }} has been down for more than 5 minutes"
+        
+        - alert: CoreDNSHighErrorRate
+          expr: rate(coredns_dns_responses_total{rcode!="NOERROR"}[5m]) / rate(coredns_dns_responses_total[5m]) > 0.1
+          for: 2m
+          labels:
+            severity: warning
+          annotations:
+            summary: "High DNS error rate detected"
+            description: "DNS error rate is {{ $value | humanizePercentage }} for the last 2 minutes"
+        
+        - alert: CoreDNSHighLatency
+          expr: histogram_quantile(0.99, rate(coredns_dns_request_duration_seconds_bucket[5m])) > 0.1
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "High DNS query latency detected"
+            description: "99th percentile DNS latency is {{ $value }} seconds"
 ```
 
 Service monitor configuration enables Prometheus to automatically discover and scrape DNS metrics, providing visibility into query rates, response times, error rates, and cache performance. The scrape interval balances monitoring granularity with the overhead of metrics collection, providing sufficient detail for operational needs without excessive resource consumption.
 
 Alerting rules provide automated notification of DNS issues before they impact applications. Critical alerts for service availability enable rapid response to complete DNS failures, while warning alerts for error rates and performance degradation enable proactive intervention before issues become severe. The alert thresholds should be tuned based on observed baseline performance and acceptable service level objectives.
 
-Comprehensive dashboards using tools like Grafana provide visual monitoring of DNS trends and enable correlation of DNS performance with application behavior and infrastructure changes. Dashboards should include both real-time metrics for operational response and historical trends for capacity planning and performance optimization activities.
+Comprehensive dashboards using tools such as Grafana provide visual monitoring of DNS trends and enable correlation of DNS performance with application behavior and infrastructure changes. Dashboards should include both real-time metrics for operational response and historical trends for capacity planning and performance optimization activities.
 
 ## Config reference
 
