@@ -25,9 +25,28 @@ const config = {
   tagline: "Virtual Clusters for Kubernetes",
   url: "https://vcluster.com",
   baseUrl: __webpack_public_path__,
-  favicon: "/media/rebranding/vCluster_favicon_docs_outline.svg",
   organizationName: "loft-sh", // Usually your GitHub org/user name.
   projectName: "vcluster-docs", // Usually your repo name.
+  headTags: [
+    {
+      tagName: 'link',
+      attributes: {
+        rel: 'icon',
+        href: '/docs/media/rebranding/vCluster_favicon_docs.svg',
+        type: 'image/svg+xml',
+        media: '(prefers-color-scheme: light)',
+      },
+    },
+    {
+      tagName: 'link',
+      attributes: {
+        rel: 'icon',
+        href: '/docs/media/rebranding/vCluster_favicon_docs_dark.svg',
+        type: 'image/svg+xml',
+        media: '(prefers-color-scheme: dark)',
+      },
+    },
+  ],
 
   onBrokenLinks: "throw",
   onBrokenMarkdownLinks: "warn",
