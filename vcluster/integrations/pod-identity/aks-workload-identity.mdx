@@ -1,0 +1,205 @@
+---
+title: AKS Workload Identity
+sidebar_label: AKS Workload Identity
+sidebar_position: 3
+---
+
+import CodeBlock from '@theme/CodeBlock';
+
+import Deploy from '../../_partials/deploy/deploy.mdx'
+import ProAdmonition from '../../_partials/admonitions/pro-admonition.mdx'
+import GetResourceName from '../pod-identity/_partials/get-resource-name.mdx'
+
+<ProAdmonition/>
+
+# Integrate AKS workload identity with vCluster
+
+This tutorial guides you through the process of integrating Microsoft Entra Workload ID with your vCluster using Workload Identity.
+
+Setting up Workload Identity requires you to link a Microsoft Entra Workload ID with the Kubernetes Service Account (KSA) used by your workloads.
+This KSA needs to be available in the host cluster in which your vCluster instance runs.
+
+To achieve this setup, we'll need to use the [sync.toHost feature][sync-toHost-docs] to expose the KSA in the host cluster together with the vCluster Platform API to retrieve the updated name of the KSA in the host cluster.
+
+### Prerequisites
+
+This guide assumes you have the following prerequisites:
+- `kubectl` installed
+- `az` CLI installed and configured
+- A running AKS cluster with Workload Identity Federation enabled ([Azure docs][azure-aks-workload-identity])
+
+### Step-by-step guide
+
+<Flow>
+
+<Step title="Start vCluster Platform and create an access key">
+
+In order to integrate your workloads with AKS Workload Identity, you'll need a vCluster Platform instance running.
+If you don't have one already, follow the [vCluster Platform installation guide][vcluster-platform-install-link].
+
+Once you're done, you need to create a new access key. This allows you to use the vCluster Platform API.
+Follow this [guide to create a new access key][access-key-link].
+</Step>
+
+<Step title="Set Up Variables">
+Next, you need to set up the necessary environment variables. These variables include information about your Azure resource group, vCluster details, and authentication keys.
+
+<!-- vale off -->
+<InterpolatedCodeBlock
+  code={`export RESOURCE_GROUP_NAME=[[VAR:RESOURCE_GROUP:vcluster-demo-rg]]
+export VCLUSTER_KSA_NAME=[[VAR:VCLUSTER_KSA_NAME:vcluster-demo]]
+export VCLUSTER_KSA_NAMESPACE=[[VAR:VCLUSTER_KSA_NAMESPACE:default]]
+export VCLUSTER_NAME=[[VAR:VCLUSTER_NAME:vcluster-demo]]
+export HOST=[[VAR:PLATFORM_HOST:YOUR_PLATFORM_HOST]]
+export ACCESS_KEY=[[VAR:ACCESS_KEY:YOUR_ACCESS_KEY]]
+export REGION=[[VAR:REGION:westeurope]]
+export FEDERATED_IDENTITY_CREDENTIAL_NAME=[[VAR:FEDERATED_IDENTITY_CREDENTIAL_NAME:vcluster-demo]]
+export USER_ASSIGNED_IDENTITY_NAME=[[VAR:USER_ASSIGNED_IDENTITY_NAME:vcluster-demo-workload-identity]]
+/>
+
+Before proceeding adjust all values to your specific case, make sure to specify correct Azure Resource Group name, vCluster Platform host and auth key.
+</Step>
+<!-- vale on -->
+
+<GetResourceName />
+
+<Step title="Create vCluster Configuration">
+
+Create `vcluster.yaml` file with following content:
+
+```yaml
+sync:
+  toHost:
+    serviceAccounts:
+      enabled: true
+```
+
+</Step>
+
+<Step title="Deploy vCluster">
+
+<Deploy />
+
+</Step>
+<Step title="Connect to vCluster">
+
+Establish a connection to your vCluster instance:
+
+```bash
+vcluster connect ${VCLUSTER_NAME}
+```
+
+</Step>
+
+<Step title="Create a managed identity and the federated identity credential">
+
+
+<Step title="Create a Service account">
+
+<InterpolatedCodeBlock
+  code={`cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  annotations:
+    azure.workload.identity/client-id: "${USER_ASSIGNED_CLIENT_ID}"
+    azure.workload.identity/tenant-id: "${TENANT_ID}"
+  name: "${VCLUSTER_KSA_NAME}"
+  namespace: "${VCLUSTER_KSA_NAMESPACE}"
+EOF
+/>
+
+</Step>
+
+<Step title="Read ServiceAccount name From vCluster Platform API">
+
+<GetResourceName />
+
+</Step>
+<Step title="Create the managed identity and the federated identity credential">
+
+Create the federated identity credential between the managed identity, the service account issuer, and the subject.
+
+```bash
+export SUBSCRIPTION="$(az account show --query id --output tsv)"
+az identity create \
+    --name "${USER_ASSIGNED_IDENTITY_NAME}" \
+    --resource-group "${RESOURCE_GROUP}" \
+    --location "${REGION}" \
+    --subscription "${SUBSCRIPTION}"
+
+
+export AKS_OIDC_ISSUER="$(az aks show --name "${VCLUSTER_NAME}" \
+    --resource-group "${RESOURCE_GROUP_NAME}" \
+    --query "oidcIssuerProfile.issuerUrl" \
+    --output tsv)"
+
+export USER_ASSIGNED_CLIENT_ID="$(az identity show \
+    --resource-group "${RESOURCE_GROUP_NAME}" \
+    --name "${USER_ASSIGNED_IDENTITY_NAME}" \
+    --query 'clientId' \
+    --output tsv)"
+
+export TENANT_ID="$(az identity show \
+    --resource-group "${RESOURCE_GROUP_NAME}" \
+    --name "${USER_ASSIGNED_IDENTITY_NAME}" \
+    --query 'tenantId' \
+    --output tsv)"
+
+az identity federated-credential create \
+    --name ${FEDERATED_IDENTITY_CREDENTIAL_NAME} \
+    --identity-name "${USER_ASSIGNED_IDENTITY_NAME}" \
+    --resource-group "${RESOURCE_GROUP}" \
+    --issuer "${AKS_OIDC_ISSUER}" \
+    --subject system:serviceaccount:"${VCLUSTER_NAME}":"${KSA_NAME}" \
+    --audience api://AzureADTokenExchange
+```
+
+</Step>
+
+<Step title="Deploy an application">
+
+<!-- vale off -->
+<InterpolatedCodeBlock
+  code={`cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: Pod
+metadata:
+  name: azure-cli-test
+  labels:
+    app: azure-cli-test
+    azure.workload.identity/use: "true"
+spec:
+  serviceAccountName: vcluster-demo-vi
+  containers:
+    - name: azure-cli
+      image: mcr.microsoft.com/azure-cli:latest
+      command: ["/bin/bash", "-c", "--"]
+      args:
+        - |
+          echo "Testing Azure CLI login";
+          az login --service-principal -u $AZURE_CLIENT_ID -t $AZURE_TENANT_ID --federated-token $(cat $AZURE_FEDERATED_TOKEN_FILE);
+          az account show;
+          sleep 3600
+EOF
+/>
+<!-- vale on -->
+
+</Step>
+
+<Step title="Verify the Setup">
+
+Verify that the setup is complete and the pod is able to list the GCS buckets using the IAM role.
+
+```bash
+kubectl logs -l app=azure-cli-test -n default
+```
+Following these steps integrates your Azure Workload Identity with your vCluster, enabling secure and efficient resource management.
+
+</Step>
+</Flow>
+
+[vcluster-platform-install-link]: /platform/install/quick-start-guide
+[access-key-link]: /platform/administer/users-permissions/access-keys
+[azure-aks-workload-identity]: https://learn.microsoft.com/en-us/azure/aks/workload-identity-overview
+[sync-toHost-docs]: ../../configure/vcluster-yaml/sync/to-host/README.mdx
