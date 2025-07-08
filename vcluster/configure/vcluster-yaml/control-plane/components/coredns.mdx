@@ -9,103 +9,49 @@ description: Configure CoreDNS.
 import CoreDNS from '../../../../_partials/config/controlPlane/coredns.mdx'
 import ProAdmonition from '../../../../_partials/admonitions/pro-admonition.mdx'
 
-Each virtual cluster runs its own DNS service using CoreDNS, which works the same as standard Kubernetes. You can deploy CoreDNS in two ways: as a separate pod (default) or embedded within the syncer (enterprise feature).
 
-Pods and services within each virtual cluster discover each other using DNS names such as `my-service.default.svc.cluster.local`. Each virtual cluster maintains its own DNS namespace, so applications in different virtual clusters cannot discover services outside their virtual cluster.
+Each virtual cluster runs its own DNS service using CoreDNS. This allows pods and services inside the virtual cluster to discover each other using standard Kubernetes DNS names such as my-service.default.svc.cluster.local. The syncer maintains correct name resolution by ensuring that DNS queries resolve to the IP addresses of services inside the virtual cluster.
 
-When a pod queries a service such as `my-app.default.svc.cluster.local`, CoreDNS returns the service IP address for normal service discovery.
+This DNS isolation means that applications inside the virtual cluster cannot resolve names for services that only exist in the host cluster. Similarly, pods in the host cluster cannot discover services that only exist inside a virtual cluster. DNS resolution works entirely within the boundaries of the virtual cluster unless you configure external mappings explicitly.
 
-## How DNS resolution works in virtual clusters
+:::note
+CoreDNS in the virtual cluster listens on port 1053, not the DNS port 53. This avoids privilege issues and port conflicts, especially when multiple virtual clusters run on the same host cluster. Port 53 is a privileged port and typically requires elevated permissions to bind.
+:::
 
-DNS resolution in virtual clusters works the same as standard Kubernetes clusters. Applications make DNS queries to resolve service names, and CoreDNS responds with the correct IP addresses for services within the virtual cluster.
+## Deployment types
 
-When an application pod initiates a DNS query, the request travels to the virtual cluster's CoreDNS instance on port 1053. CoreDNS maintains a complete view of all services that exist within the virtual cluster and resolves queries to the appropriate service IP addresses.
+You can deploy CoreDNS in two modes: as a separate pod (the default) or embedded within the syncer (enterprise feature). Each mode affects how the DNS service operates, how many pods the virtual cluster requires, and whether users can access and customize the CoreDNS configuration from inside the virtual cluster.
 
-## Deployment architectures
+| Deployment mode         | Pod count | Editable from virtual cluster | DNS customization | Notes                            |
+|-------------------------|-----------|-------------------------------|--------------------|----------------------------------|
+| Separate (_Default_)    | 2         | Yes                           | Yes                | CoreDNS runs as a Deployment     |
+| Embedded (_Enterprise_) | 1         | No                            | No                 | CoreDNS runs inside the syncer pod |
 
-Virtual clusters support two CoreDNS deployment options.
 
 ### Deploy separate CoreDNS
 
-A standard virtual cluster deployment consists of two pods per virtual cluster instance: the virtual cluster pod containing the API server and syncer components, and a separate CoreDNS pod. Each virtual cluster operates its own DNS service so that pods and services can locate each other by hostnames, with the syncer ensuring that standard Kubernetes DNS naming logic applies.
+In the default configuration, vCluster creates a dedicated CoreDNS pod. The virtual cluster deployment includes two pods: one pod for the API server and syncer, and another for CoreDNS.
 
-The separate deployment model isolates DNS operations from the API server and sync functions. CoreDNS listens on port 1053 instead of port 53 to avoid conflicts with the host cluster's DNS service. DNS issues can be debugged, updated, or restarted independently without affecting the virtual cluster's control plane availability. However, virtual cluster pods cannot directly access host cluster services via DNS due to isolation boundaries.
+In this mode, CoreDNS runs as a standard Kubernetes Deployment inside the virtual cluster. Users can view and modify the CoreDNS Deployment using standard Kubernetes tools. DNS configuration is accessible, and you can apply changes or troubleshoot without restarting the virtual cluster's control plane.
+
 
 ### Deploy embedded CoreDNS
 
 <ProAdmonition/>
 
-The embedded CoreDNS feature allows you to run CoreDNS as part of the syncer, which saves the overhead of an external CoreDNS pod. This enterprise feature consolidates all virtual cluster components into a single pod, reducing pod count and optimizing resource allocation.
+The embedded CoreDNS feature allows you to run CoreDNS as part of the syncer, which saves the resources of an external CoreDNS pod. This consolidates all virtual cluster components into a single pod and optimizes resource allocation.
 
 The embedded approach requires consideration of operational trade-offs. Troubleshooting might become more complex since DNS and sync functions share the same container and process space. Updates and restarts affect both DNS and sync capabilities simultaneously, though all CoreDNS features remain supported.
 
-## CoreDNS uses port 1053
 
-CoreDNS in virtual clusters listens on port 1053 instead of the default DNS port 53 to avoid conflicts with the host cluster's DNS.
+## Example
 
-The host cluster already operates its own DNS service on the standard port 53, so the virtual cluster DNS services cannot bind to the same port. Since multiple virtual clusters might run on the same host cluster, each requires its own DNS service that operates independently.
+The configuration you choose depends on your deployment model. The following examples show how to configure CoreDNS for each supported mode.
 
-Port 53 is classified as a privileged port on most operating systems and requires elevated permissions to bind to it. By using port 1053, CoreDNS containers can operate with standard user privileges.
+<Tabs>
+<TabItem value="separate" label="Separate (Default)" default>
 
-### Consider cloud provider networking
-
-Different cloud providers have varying network policies that can affect DNS traffic on port 1053.
-
-EKS clusters might require security group configuration to allow inbound traffic on port 1053 between worker nodes.
-
-GKE and AKS typically allow internal cluster traffic by default, but custom network policies may need to explicitly permit UDP traffic on port 1053 between cluster nodes.
-
-## Recognize DNS isolation and limitations
-
-Virtual cluster DNS isolation maintains clear boundaries between virtual clusters while creating specific challenges for cross-cluster communication.
-
-### DNS boundaries
-
-Virtual clusters cannot directly access host services via DNS, and host cluster pods cannot access virtual cluster services through the virtual cluster's DNS.
-
-When a pod inside a virtual cluster attempts to resolve a DNS name for a service that exists only in the host cluster, the virtual cluster CoreDNS instance returns an NXDOMAIN response because it maintains no knowledge of host cluster resources.
-
-### Apply service mapping strategies
-
-External name services provide an approach for mapping host cluster services into a virtual cluster's DNS namespace. This pattern creates a virtual cluster service that acts as a DNS alias.
-
-```yaml title="External name service configuration"
-apiVersion: v1
-kind: Service
-metadata:
-  name: database-proxy
-  namespace: my-application
-spec:
-  type: ExternalName
-  externalName: postgres.data-tier.svc.cluster.local
-  ports:
-  - port: 5432
-    targetPort: 5432
-    protocol: TCP
-```
-
-This configuration creates a service named `database-proxy` that applications can access using normal Kubernetes DNS patterns. When applications connect to `database-proxy.my-application.svc.cluster.local`, the DNS resolution returns the host cluster service `postgres.data-tier.svc.cluster.local`.
-
-Resource synchronization imports actual host cluster services into the virtual cluster namespace.
-
-```yaml title="Resource synchronization configuration"
-sync:
-  fromHost:
-    services:
-      enabled: true
-      selector:
-        matchLabels:
-          vcluster.loft.sh/import: "true"
-    endpoints: true
-```
-
-## Configure CoreDNS
-
-CoreDNS configuration depends on your deployment requirements. The following configurations cover common deployment scenarios.
-
-### Set up basic CoreDNS
-
-Basic configuration sets resource limits and replica count:
+### Basic CoreDNS configuration
 
 ```yaml title="Basic CoreDNS configuration"
 controlPlane:
@@ -121,9 +67,7 @@ controlPlane:
         memory: 128Mi
 ```
 
-### Configure private registry
-
-For deployments requiring private registry images:
+### Private registry CoreDNS configuration
 
 ```yaml title="Private registry CoreDNS configuration"
 controlPlane:
@@ -136,9 +80,7 @@ controlPlane:
       - name: company-registry-credentials
 ```
 
-### Configure custom CoreDNS
-
-Override default CoreDNS configuration to modify DNS behavior:
+### Custom CoreDNS configuration
 
 ```yaml title="Custom CoreDNS configuration"
 controlPlane:
@@ -161,23 +103,20 @@ controlPlane:
       }
 ```
 
-### Configure embedded CoreDNS
+</TabItem>
+<TabItem value="embedded" label="Embedded (Enterprise)">
 
-The embedded CoreDNS feature runs CoreDNS within the syncer container:
+### Embedded CoreDNS configuration
 
 ```yaml title="Embedded CoreDNS enterprise configuration"
 controlPlane:
   coredns:
     enabled: true
     embedded: true
-    resources:
-      requests:
-        cpu: 10m
-        memory: 16Mi
-      limits:
-        cpu: 50m
-        memory: 64Mi
 ```
+
+</TabItem>
+</Tabs>
 
 
 ## Config reference
