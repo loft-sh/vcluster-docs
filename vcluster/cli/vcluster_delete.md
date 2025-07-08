@@ -27,7 +27,7 @@ vcluster delete test --namespace test
 ## Flags
 
 ```
-      --auto-delete-namespace   If enabled, vCluster deletes the virtual cluster namespace if it was originally created by vclusterctl. If sync.toHost.namespaces is enabled, it also deletes any additional namespaces that vCluster created. 
+      --auto-delete-namespace   If enabled, vCluster deletes the virtual cluster namespace if it was originally created by vclusterctl. If namespace syncing is enabled, it also deletes any additional namespaces that vCluster created. 
       --delete-configmap        If enabled, vCluster deletes the ConfigMap of the vCluster
       --delete-context          If the corresponding kube context should be deleted if there is any (default true)
       --delete-namespace        If enabled, vcluster deletes the namespace of the vcluster. In the case of namespace mode, will also delete all other namespaces created by vcluster
