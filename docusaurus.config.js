@@ -175,19 +175,16 @@ const config = {
             label: "v0.22 (EOL)",
             banner: "unmaintained",
             badge: true,
-            noIndex: true,
           },
           "0.21.0": {
             label: "v0.21 (EOL)",
             banner: "unmaintained",
             badge: true,
-            noIndex: true,
           },
           "0.20.0": {
             label: "v0.20 (EOL)",
             banner: "unmaintained",
             badge: true,
-            noIndex: true,
           },
         },
       },
@@ -216,7 +213,6 @@ const config = {
             label: "v4.2",
             banner: "none",
             badge: true,
-            noIndex: true,
           },
         },
       },
@@ -346,13 +342,6 @@ const config = {
         textColor: "#ffffff",
         isCloseable: true,
       },
-      metadata: [
-        // Add canonical URL for all pages
-        {
-          name: 'canonical',
-          content: 'https://www.vcluster.com/docs',
-        },
-      ],
     }
   ),
 
