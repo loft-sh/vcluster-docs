@@ -1,0 +1,391 @@
+---
+title: Self assessment guide - Kubernetes Policies
+sidebar_label: Kubernetes Policies
+description: Self assessment guide to validate Kubernetes policies
+---
+
+This section covers specific security policies for Kubernetes elements:
+- RBAC configuration and least privilege access
+- Pod Security Standards and security contexts
+- Network policies and CNI security
+
+_Assessment focus for vCluster_: This section is directly applicable to vCluster environments. Verification involves ensuring proper RBAC configurations are in place, Pod Security Standards are enforced, and network policies are appropriately configured within the virtual cluster.
+
+## Validation using kube-bench
+
+While most CIS Kubernetes Benchmark checks are not directly verifiable via kube-bench due to vCluster’s virtualized control plane architecture, the Policies section (Section 5) includes controls that are relevant and testable within the virtual cluster environment. These include namespace-level restrictions, pod security standards, and security contexts that can be enforced from within vCluster.
+
+To validate your vCluster’s compliance with this section, you can run kube-bench with a customized kubeconfig pointing to the vCluster API server. The following steps outline the procedure to perform the compliance check:
+
+**Step 1:** Create the vCluster but don't connect to it yet.
+```bash
+vcluster create my-vcluster --connect=false
+```
+
+**Step 2:** Wait for the vCluster to be ready and get its kubeconfig; then connect to it.
+```bash
+vcluster connect my-vcluster --print > kubeconfig.yaml && vcluster connect my-vcluster
+```
+
+**Step 3:** Create a dedicated namespace for the kube-bench job.
+```bash
+kubectl create namespace kube-bench
+```
+
+**Step 4:** Load the vCluster kubeconfig into a secret.
+```bash
+kubectl create secret generic my-kubeconfig-secret \
+  --from-file=kubeconfig=./kubeconfig.yaml \
+  -n kube-bench
+```
+
+**Step 5:** Harden service accounts (recommended)
+
+To maintain compliance with service account token mounting policies, disable automatic token mounting for all service accounts in the cluster:
+```bash
+for ns in $(kubectl get ns -o jsonpath='{.items[*].metadata.name}'); do
+  for sa in $(kubectl get sa -n $ns -o jsonpath='{.items[*].metadata.name}'); do
+    kubectl patch serviceaccount "$sa" \
+      -p '{"automountServiceAccountToken": false}' \
+      -n "$ns"
+  done
+done
+```
+
+This is aligned with CIS 5.1.5 & 5.1.6 and ensures that tokens are not unnecessarily exposed.
+
+**Step 6:** Run the kube-bench job.
+
+Deploy a short-lived job to run kube-bench using the kubeconfig you mounted.
+```bash
+kubectl apply -f - <<EOF
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: kube-bench
+  namespace: kube-bench
+spec:
+  template:
+    metadata:
+      labels:
+        app: kube-bench
+    spec:
+      containers:
+        - command: ["/bin/sh", "-c"]
+          args: ["kube-bench run --targets policies --benchmark cis-1.10 --include-test-output"]
+          image: docker.io/aquasec/kube-bench:v0.10.6
+          name: kube-bench
+          volumeMounts:
+            - name: kubeconfig-volume
+              mountPath: /kube
+          env:
+            - name: KUBECONFIG
+              value: /kube/kubeconfig
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      volumes:
+      - name: kubeconfig-volume
+        secret:
+          secretName: my-kubeconfig-secret
+EOF
+```
+
+**Step 7:** Once the job completes, inspect the logs for a detailed compliance report:
+```
+kubectl logs job/kube-bench -n kube-bench
+```
+
+The status of the run would be displayed as below:
+```bash
+...
+== Summary total ==                                                                                                                                                                                                                            
+10 checks PASS                                                                                                                                                                                                                                 
+1 checks FAIL                                                                                                                                                                                                                                  
+24 checks WARN                                                                                                                                                                                                                                 
+0 checks INFO  
+...
+```
+
+:::info
+The single failure for `Control 5.1.3 – Minimize wildcard use in Roles and ClusterRoles` is expected.
+This check often fails because many default or commonly used roles such as `cluster-admin` include wildcards (*) in their verbs, resources, or apiGroups. These wildcards grant broad permissions and violate the principle of least privilege.
+
+To pass this control, audit, and refactor roles to avoid using wildcards where possible. Be aware that some third-party components and tools may require elevated privileges, so a balance between capability and security is often needed.
+:::
+
+## 5.1 RBAC and Service Accounts
+### 5.1.1 Ensure that the cluster-admin role is only used where required (Manual)
+
+**Result:** PASS
+
+**Remediation:** Identify all clusterrolebindings to the cluster-admin role. Check if they are used and if they need this role or if they could use a role with fewer privileges. Where possible, first bind users to a lower privileged role and then remove the ClusterRoleBinding to the cluster-admin role : 
+```bash
+kubectl delete clusterrolebinding [name]
+```
+
+<!-- vale Google.Headings = NO -->
+### 5.1.2 Minimize access to secrets (Manual)
+<!-- vale Google.Headings = YES -->
+
+**Result:** PASS
+
+**Remediation:** Where possible, remove `get`, `list` and `watch` access to Secret objects in the cluster.
+
+<!-- vale Google.Headings = NO -->
+### 5.1.3 Minimize wildcard use in Roles and ClusterRoles (Manual)
+<!-- vale Google.Headings = YES -->
+
+**Result:** PASS
+
+**Remediation:** Where possible replace any use of wildcards in clusterroles and roles with specific objects or actions.
+
+<!-- vale Google.Headings = NO -->
+### 5.1.4 Minimize access to create pods (Manual)
+<!-- vale Google.Headings = YES -->
+
+**Result:** PASS
+
+**Remediation:** Where possible, remove `create` access to `pod` objects in the cluster.
+
+### 5.1.5 Ensure that default service accounts are not actively used. (Manual)
+
+**Result:** PASS
+
+**Remediation:** Create explicit service accounts wherever a Kubernetes workload requires specific access to the Kubernetes API server. Modify the configuration of each default service account to include this value 
+```
+automountServiceAccountToken: false
+```
+
+<!-- vale Google.Headings = NO -->
+### 5.1.6 Ensure that Service Account Tokens are only mounted where necessary (Manual)
+<!-- vale Google.Headings = YES -->
+
+**Result:** PASS
+
+**Remediation:** Modify the definition of pods and service accounts which do not need to mount service account tokens to disable it.
+
+<!-- vale Google.Headings = NO -->
+### 5.1.7 Avoid use of system:masters group (Manual)
+<!-- vale Google.Headings = YES -->
+
+**Result:** WARN
+
+**Remediation:** Remove the `system:masters` group from all users in the cluster.
+
+<!-- vale Google.Headings = NO -->
+### 5.1.8 Limit use of the Bind, Impersonate and Escalate permissions in the Kubernetes cluster (Manual)
+<!-- vale Google.Headings = YES -->
+
+**Result:** WARN
+
+**Remediation:** Where possible, remove the impersonate, bind and escalate rights from subjects.
+
+<!-- vale Google.Headings = NO -->
+### 5.1.9 Minimize access to create persistent volumes (Manual)
+<!-- vale Google.Headings = YES -->
+
+**Result:** WARN
+
+**Remediation:** Where possible, remove `create` access to PersistentVolume objects in the cluster.
+
+### 5.1.10 Minimize access to the proxy sub-resource of nodes (Manual)
+
+**Result:** WARN
+
+**Remediation:** Where possible, remove access to the `proxy` sub-resource of `node` objects.
+
+### 5.1.11 Minimize access to the approval sub-resource of certificatesigningrequests objects (Manual)
+
+**Result:** WARN
+
+**Remediation:** Where possible, remove access to the `approval` sub-resource of `certificatesigningrequest` objects.
+
+<!-- vale Google.Headings = NO -->
+### 5.1.12 Minimize access to webhook configuration objects (Manual)
+<!-- vale Google.Headings = YES -->
+
+**Result:** WARN
+
+**Remediation:** Where possible, remove access to the `validatingwebhookconfigurations` or `mutatingwebhookconfigurations` objects
+
+### 5.1.13 Minimize access to the service account token creation (Manual)
+
+**Result:** WARN
+
+**Remediation:** Where possible, remove access to the `token` sub-resource of `serviceaccount` objects.
+
+<!-- vale Google.Headings = NO -->
+## 5.2 Pod Security Standards
+<!-- vale Google.Headings = YES -->
+### 5.2.1 Ensure that the cluster has at least one active policy control mechanism in place (Manual)
+
+**Result:** WARN
+
+**Remediation:** Ensure that either Pod Security Admission or an external policy control system is in place for every namespace which contains user workloads.
+
+<!-- vale Google.Headings = NO -->
+### 5.2.2 Minimize the admission of privileged containers (Manual)
+<!-- vale Google.Headings = YES -->
+
+**Result:** PASS
+
+**Remediation:** Add policies to each namespace in the cluster which has user workloads to restrict the admission of privileged containers.
+
+### 5.2.3 Minimize the admission of containers wishing to share the host process ID namespace (Automated)
+
+**Result:** PASS
+
+**Remediation:** Add policies to each namespace in the cluster which has user workloads to restrict the admission of `hostPID` containers.
+
+### 5.2.4 Minimize the admission of containers wishing to share the host IPC namespace (Automated)
+
+**Result:** PASS
+
+**Remediation:** Add policies to each namespace in the cluster which has user workloads to restrict the admission of `hostIPC` containers.
+
+### 5.2.5 Minimize the admission of containers wishing to share the host network namespace (Automated)
+
+**Result:** PASS
+
+**Remediation:** Add policies to each namespace in the cluster which has user workloads to restrict the admission of `hostNetwork` containers.
+
+<!-- vale Google.Headings = NO -->
+### 5.2.6 Minimize the admission of containers with allowPrivilegeEscalation (Automated)
+<!-- vale Google.Headings = YES -->
+
+**Result:** PASS
+
+**Remediation:** Add policies to each namespace in the cluster which has user workloads to restrict the admission of containers with `.spec.allowPrivilegeEscalation` set to true.
+
+<!-- vale Google.Headings = NO -->
+### 5.2.7 Minimize the admission of root containers (Automated)
+<!-- vale Google.Headings = YES -->
+
+**Result:** WARN
+
+**Remediation:** Create a policy for each namespace in the cluster, ensuring that either `MustRunAsNonRoot` or `MustRunAs` with the range of UIDs not including 0, is set.
+
+<!-- vale Google.Headings = NO -->
+### 5.2.8 Minimize the admission of containers with the NET_RAW capability (Automated)
+<!-- vale Google.Headings = YES -->
+
+**Result:** WARN
+
+**Remediation:** Add policies to each namespace in the cluster which has user workloads to restrict the admission of containers with the `NET_RAW` capability.
+
+### 5.2.9 Minimize the admission of containers with added capabilities (Automated)
+
+**Result:** WARN
+
+**Remediation:** Ensure that `allowedCapabilities` is not present in policies for the cluster unless it is set to an empty array.
+
+### 5.2.10 Minimize the admission of containers with capabilities assigned (Manual)
+
+**Result:** WARN
+
+**Remediation:** Review the use of capabilities in applications running on your cluster. Where a namespace contains applications which do not require any Linux capabities to operate consider adding a PSP which forbids the admission of containers which do not drop all capabilities.
+
+<!-- vale Google.Headings = NO -->
+### 5.2.11 Minimize the admission of Windows HostProcess containers (Manual)
+<!-- vale Google.Headings = YES -->
+
+**Result:** WARN
+
+**Remediation:** Add policies to each namespace in the cluster which has user workloads to restrict the admission of containers that have .securityContext.windowsOptions.hostProcess set to true.
+
+<!-- vale Google.Headings = NO -->
+### 5.2.12 Minimize the admission of HostPath volumes (Manual)
+<!-- vale Google.Headings = YES -->
+
+**Result:** WARN
+
+**Remediation:** Add policies to each namespace in the cluster which has user workloads to restrict the admission of containers with `hostPath` volumes.
+
+<!-- vale Google.Headings = NO -->
+### 5.2.13 Minimize the admission of containers which use HostPorts (Manual)
+<!-- vale Google.Headings = YES -->
+
+**Result:** WARN
+
+**Remediation:** Add policies to each namespace in the cluster which has user workloads to restrict the admission of containers which use `hostPort` sections.
+
+## 5.3 Network Policies and CNI
+<!-- vale Google.Headings = NO -->
+### 5.3.1 Ensure that the CNI in use supports NetworkPolicies (Manual)
+<!-- vale Google.Headings = YES -->
+
+**Result:** WARN
+
+**Remediation:** If the CNI plugin in use does not support network policies, consideration should be given to making use of a different plugin, or finding an alternate mechanism for restricting traffic in the Kubernetes cluster.
+
+<!-- vale Google.Headings = NO -->
+### 5.3.2 Ensure that all Namespaces have NetworkPolicies defined (Manual)
+<!-- vale Google.Headings = YES -->
+
+**Result:** WARN
+
+**Remediation:** Follow the documentation and create `NetworkPolicy` objects as you need them.
+
+<!-- vale Google.Headings = NO -->
+## 5.4 Secrets Management
+<!-- vale Google.Headings = YES -->
+### 5.4.1 Prefer using Secrets as files over Secrets as environment variables (Manual)
+
+**Result:** WARN
+
+**Remediation:** If possible, rewrite application code to read Secrets from mounted secret files, rather than from environment variables.
+
+<!-- vale Google.Headings = NO -->
+### 5.4.2 Consider external secret storage (Manual)
+<!-- vale Google.Headings = YES -->
+
+**Result:** WARN
+
+**Remediation:** Refer to the Secrets management options offered by your cloud provider or a third-party secrets management solution.
+
+<!-- vale Google.Headings = NO -->
+## 5.5 Extensible Admission Control
+### 5.5.1 Configure Image Provenance using ImagePolicyWebhook admission controller (Manual)
+<!-- vale Google.Headings = YES -->
+
+**Result:** WARN
+
+**Remediation:** Follow the Kubernetes documentation and setup image provenance.
+
+<!-- vale Google.Headings = NO -->
+## 5.7 General Policies
+### 5.7.1 Create administrative boundaries between resources using namespaces (Manual)
+<!-- vale Google.Headings = YES -->
+
+**Result:** WARN
+
+**Remediation:** Follow the documentation and create namespaces for objects in your deployment as you need them.
+
+<!-- vale Google.Headings = NO -->
+### 5.7.2 Ensure that the seccomp profile is set to docker/default in your Pod definitions (Manual)
+<!-- vale Google.Headings = YES -->
+
+**Result:** WARN
+
+**Remediation:** Use securityContext to enable the docker/default seccomp profile in your pod definitions. An example is as below: 
+```yaml
+securityContext:
+  seccompProfile: 
+    type: RuntimeDefault
+```
+
+<!-- vale Google.Headings = NO -->
+### 5.7.3 Apply SecurityContext to your Pods and Containers (Manual)
+<!-- vale Google.Headings = YES -->
+
+**Result:** WARN
+
+**Remediation:** Follow the Kubernetes documentation and apply SecurityContexts to your Pods. For a suggested list of SecurityContexts, you may refer to the CIS Security Benchmark for Docker Containers.
+
+<!-- vale Google.Headings = NO -->
+### 5.7.4 The default namespace should not be used (Manual)
+<!-- vale Google.Headings = YES -->
+
+**Result:** WARN
+
+**Remediation:** Ensure that namespaces are created to allow for appropriate segregation of Kubernetes resources and that all new resources are created in a specific namespace.
