@@ -183,7 +183,14 @@ experimental:
 
 ## Create vCluster and manually add private nodes
 
-### Prerequisites
+### OS Prerequisites
+
+- Linux distribution with SystemD support (required for service management)
+- `iptables` binaries installed (automatically available on Ubuntu, may need manual installation on other distributions)
+- `curl` installed
+- Root user access
+
+### Node Prerequisites
 
 - vCluster CLI installed on your local machine
 - Access to a host cluster
@@ -229,7 +236,7 @@ Follow [this guide](https://www.vcluster.com/docs/vcluster/next/configure/vclust
 In order to join worker nodes, a token from the vCluster must be created to provide access and permissions to join the vCluster. A single token can be used for any worker nodes to join, or if you wanted to, you could create a token for each node.
 
 :::info Prerequisite
-Worker nodes must have `curl` installed before they can join the vCluster.
+vCluster has to be running and ready.
 :::
 
 To join worker nodes, a token from the vCluster must be created to provide access and permissions to join the vCluster. A single token can be used for any worker nodes to join, or if you wanted to, you could create a token for each node.
@@ -244,10 +251,33 @@ vcluster connect $VCLUSTER_NAME
 vcluster token create
 ```
 
+Optional flags:
+- `--expires=24h` - Set token expiration time. By default, it is set to 1 hour.
+
 The output provides a command to run on your worker node:
 
 ```bash title="Example output from creating a token"
 curl -sfLk https://<vcluster-endpoint>/node/join?token=<token> | sh -
+```
+
+this can be used with following flags:
+
+| Flag | Description | Default |
+| ---- | ----------- | ------- |
+| `--kubernetes-version` | Version of kubernetes node components | optional, defaults to the version of vCluster k8s |
+| `--repository-url` | Specific vCluster version to install | optional, defaults to `/usr/local/bin` |
+| `--binaries-dir` | allows to customize target directory where k8s node components binaries are installed | optional, defaults to `/usr/local/bin |
+| `--cni-binaries-dir` | allows to customize target directory where CNI binaries are installed | optional, defaults to `/opt/cni/bin` |
+| `--skip-reset` | Skips uninstalling existing node components | optional, default to false (reset happens before install by default) |
+| `--bundle-path` | If set, skips downloading Kubernetes binaries and uses a local path. Expects a path to bundle in `.tar.gz` format | optional, empty by default |
+| `--reset-only` | only uninstall previously installed node components. Use this to cleanup the node | optional, defaults to `false` |
+| `--skip-join` | Installs all required components but skips joining node to the cluster | optional, defaults to `false` |
+| `--node-name` | Node name in the kubernetes cluster | optional, defaults to hostname |
+| `--force-join` | Force joining even when there is existing kubelet service running on the node | optional, defaults to `false` |
+
+you can pass these flags to the script like:
+```bash title="Run join script with flags"
+curl -sfLk https://<vcluster-endpoint>/node/join?token=<token> | sh -s -- --force-join
 ```
 
 For each worker node that you want to join vCluster, run the command on the worker node.
@@ -285,6 +315,11 @@ To load a local Docker image on to a worker node you can use the following comma
 vcluster node load-image my-node --image nginx:latest
 ```
 
+Node has to be in `Ready` state and able to run a pod.
+
+This command pulls the docker image locally, saves it as a `.tar` archive, then uses `kubectl cp` to copy the image to the created pod.
+Once image is copied to the pod, then it is imported to the node.
+
 ## Upgrade vCluster
 
 ### Upgrade vCluster control plane
@@ -320,6 +355,11 @@ There are two modes of how worker upgrades can be done:
 #### Use automatic upgrades
 
 Automatic worker node upgrades are enabled by default. vCluster upgrades each node when it detects a version mismatch between the control plane and the worker node. By default, one node is upgraded at a time.
+Upgrade starts 2 minutes after the control plane is upgraded. There is also a grace period for newly added worker nodes (upgrade is not going to start if node was created less than 2 minutes ago).
+
+:::tip
+You can exclude a node from automatic upgrade by labeling it with "vcluster.loft.sh/skip-auto-upgrade": "true"
+:::
 
 The upgrade Pod runs directly on the node and completes the following steps:
 1. Download the Kubernetes binary bundle from the vCluster control plane
@@ -389,17 +429,12 @@ vcluster node load-image my-node --image nginx:latest
 
 ## Remove worker node
 
-To remove a node from the cluster, follow standard procedures as with any other Kubernetes distro:
-1. Cordon the node (this prevents new workloads being scheduled on the node):
+To remove a node from the cluster, follow standard procedures as with any other Kubernetes distro: first cordon a node, then drain it.
+There is `vcluster` CLI helper command that does it:
+1. Cordon and drain node:
 
 ```shell title="Node cordoning"
-kubectl cordon <node-name>
-```
-
-2. Drain the node (this evicts all existing workloads from the pod):
-
-```shell title="Node draining"
-kubectl drain <node-name> --ignore-daemonsets
+vcluster node delete <node-name>
 ```
 
 3. Once no more workloads are running on the node, log into the node terminal and run the installation script that you used originally (more on this in [Install](#join-worker-nodes-to-the-virtual-cluster) section):
@@ -417,7 +452,6 @@ systemctl stop vcluster.service
 ```shell title="remove vCluster files"
 rm -rf /var/lib/vcluster && rm /etc/systemd/system/vcluster.service
 ```
-
 
 ## Review configuration reference
 
