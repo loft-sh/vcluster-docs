@@ -84,7 +84,44 @@ const config = {
             },
           },
         },
+        sitemap: {
+          changefreq: 'weekly',
+          priority: 0.5,
+          ignorePatterns: ['/tags/**', '/search/**', '*/page/*'],
+          filename: 'sitemap.xml',
+          createSitemapItems: async (params) => {
+            const { defaultCreateSitemapItems, ...rest } = params;
+            const items = await defaultCreateSitemapItems(rest);
 
+            // Filter out pagination and unwanted pages
+            const filteredItems = items.filter((item) => !item.url.includes('/page/'));
+
+            // Enhance items with custom priorities and change frequencies
+            return filteredItems.map((item) => {
+              // Main landing pages get highest priority
+              if (item.url === 'https://vcluster.com/docs/' ||
+                  item.url === 'https://vcluster.com/docs/vcluster/' ||
+                  item.url === 'https://vcluster.com/docs/platform/') {
+                return { ...item, priority: 1.0, changefreq: 'daily' };
+              }
+
+              // Current versions (non-versioned URLs) get high priority
+              if ((item.url.includes('/vcluster/') && !item.url.match(/\/vcluster\/\d+\.\d+\.\d+\//)) ||
+                  (item.url.includes('/platform/') && !item.url.match(/\/platform\/\d+\.\d+\.\d+\//))) {
+                return { ...item, priority: 0.8, changefreq: 'weekly' };
+              }
+
+              // All versioned docs get lower priority
+              if (item.url.match(/\/vcluster\/\d+\.\d+\.\d+\//) ||
+                  item.url.match(/\/platform\/\d+\.\d+\.\d+\//)) {
+                return { ...item, priority: 0.3, changefreq: 'monthly' };
+              }
+
+              // Default priority for other pages
+              return item;
+            });
+          },
+        },
         theme: {
           customCss: resolveGlob.sync(["./src/css/**/*.scss"]),
         },
