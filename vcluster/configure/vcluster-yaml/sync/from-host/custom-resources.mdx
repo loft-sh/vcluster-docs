@@ -3,7 +3,6 @@ title: Custom resources
 sidebar_label: customResources
 sidebar_position: 1
 sidebar_class_name: pro
-description: Configuration for ...
 ---
 
 import CustomResourceDefinitions from '../../../../_partials/config/sync/fromHost/customResources.mdx'
@@ -12,16 +11,34 @@ import NamespacedCustomResourcesExample from '../../../../_fragments/sync-from-h
 
 <ProAdmonition/>
 
-vCluster allows you to sync CustomResources from the host cluster to the virtual cluster. Resources are only be read by vCluster and then synced in read-only mode into the vCluster. vCluster copies the CRD itself in the beginning from the host to the virtual cluster and then start syncing the resources into the vCluster. This is especially helpful if you want to show certain resources inside the vCluster, such as ClusterIssuers (for [cert-manager](https://cert-manager.io/)) or ClusterStores (for [external-secrets](https://external-secrets.io/latest/)).
-If you are looking to sync resources from the vCluster to the host cluster, see [syncing custom resources to the host cluster](../to-host/advanced/custom-resources)
+You can configure vCluster to sync CustomResources from the host cluster to the virtual cluster. vCluster reads these resources from the host cluster and creates read-only copies in the virtual cluster.
 
-:::info No need to configure RBAC
-vCluster automatically adds the required cluster RBAC permissions for retrieving the CustomResourceDefinition and syncing the resources from the host to the virtual cluster.
+The sync process works in two steps:
+
+1. vCluster copies the Custom Resource Definition (CRD) from the host cluster to the virtual cluster.
+2. vCluster syncs the actual resources and maintains them as read-only in the virtual cluster.
+
+This feature enables apps in vCluster to use CustomResources from the host cluster. Common use cases include accessing cluster-scoped resources like ClusterIssuers (for [cert-manager](https://cert-manager.io/)) or ClusterStores (for [external-secrets](https://external-secrets.io/latest/)), as well as syncing specific namespace-scoped resources.
+
+vCluster provides three approaches for syncing CustomResources from the host to virtual cluster:
+
+- [Cluster-scoped sync](#cluster-sync) - Sync cluster-wide resources like ClusterIssuers or ClusterStores.
+- [Versioned sync](#versioned-sync) - Specify a particular API version when multiple versions exist.
+- [Namespace-scoped sync](#namespace-sync) - Sync resources from specific host namespaces to designated virtual namespaces with granular mapping control.
+
+:::note
+The CustomResources feature syncs resources from the host to the virtual cluster. If you want to sync resources from the virtual cluster to the host, see [syncing custom resources to the host cluster](../to-host/advanced/custom-resources).
 :::
 
-## Cluster scoped example
+:::info No need to configure RBAC
+vCluster automatically adds the required RBAC permissions to retrieve CRDs and sync resources from the host to the virtual cluster.
+:::
 
-To configure vCluster to sync ClusterIssuers from the host cluster (from [cert-manager](https://cert-manager.io/)):
+## Cluster-scoped sync {#cluster-sync}
+
+When configuring vCluster to sync ClusterIssuers from the host cluster (from [cert-manager](https://cert-manager.io/)), you do not need to specify an API version by default. 
+vCluster automatically uses the storage version when multiple API versions exist and you do not define a specific version. If your CRD has multiple versions and you need a specific API version, specify it in your `vcluster.yaml` configuration:
+
 ```yaml title="configure Cluster scoped CRD sync from host"
 sync:
   fromHost:
@@ -30,56 +47,56 @@ sync:
         enabled: true
         scope: Cluster
 ```
-<!-- vale Google.Headings = NO -->
-## Namespace scoped CustomResourceDefinitions
-<!-- vale Google.Headings = YES -->
-By default, this is turned off.
 
-Enabling this allow you to sync namespaced CustomResources from the specified namespaces in the host to the specified namespaces in the vCluster.
-```yaml title="configure Namespace scoped CRD sync from host"
+## Versioned sync {#versioned-sync}
+
+To use a specific API version instead of the default storage version, add the version after the "/" separator in your configuration. This is useful when you need a particular version of a CRD that differs from the storage version, or when you are uncertain which version is the storage version.
+
+For example, to specify version `v1` of the `clusterissuers.cert-manager.io` CRD:
+
+```yaml title="configure Cluster scoped CRD sync from host with version"
 sync:
   fromHost:
     customResources:
-      certificaterequests.cert-manager.io:
+      clusterissuers.cert-manager.io/v1:
         enabled: true
-        scope: Namespaced
-        mappings:
-          byName:
-            # syncs all CertificateRequests from "foo" namespace
-            # to the "bar" namespace in a virtual cluster. CertificateRequests names are unchanged.
-            "foo/*": "bar/*"
+        scope: Cluster
 ```
 
-- It is also possible to modify the name of the synced resource in the virtual cluster.
-- There is no option to sync from all namespaces in the host.
-- Sync is one-directional, from host to virtual. If you modify an object in the host, vCluster syncs the change to virtual object.
-- When you delete virtual object, vCluster re-creates it if the host object still exist.
-- When you delete host object, vCluster deletes virtual object.
+:::info Unique CRD versions
+vCluster can only sync one version of a CustomResource at a time. If multiple versions are specified, vCluster fails to start.
+:::
 
-Namespaces in the virtual cluster are created automatically during the sync (if they do not exist already).
+<!-- vale off -->
+## Namespace-scoped sync {#namespace-sync}
+
+You can configure vCluster to sync namespace-scoped CustomResources from specific namespaces in the host cluster to designated namespaces in the virtual cluster. This feature requires explicit configuration using namespace mappings to specify exactly which resources to sync and where to place them.
 
 ### Prerequisites
 
-* All the specified namespaces have to exist in the host at the vCluster startup.
-* CustomResourceDefinition needs to exist in the host at the vCluster startup.
+Before configuring namespace-scoped CustomResource sync, ensure the following requirements are met:
 
-### Example
+- All specified host namespaces must exist when vCluster starts.
+- The CustomResourceDefinition must exist in the host cluster when vCluster starts.
+- vCluster automatically creates the required RBAC permissions for retrieving CustomResourceDefinitions and syncing resources.
 
-:::info No need to configure RBAC
-vCluster automatically adds the required cluster RBAC permissions for retrieving the CustomResourceDefinition and syncing the resources from the host to the virtual cluster.
-:::
+### How namespace mapping works
 
-For Namespace scoped CustomResources, you need to specify `mappings.byName` in the config. This tells vCluster which host resources should be synced and where (in the virtual cluster).
+Namespace-scoped CustomResource sync requires you to specify `mappings.byName` in your configuration. This mapping tells vCluster exactly which host resources to sync and their destination in the virtual cluster. You use the format `"host-namespace/resource-name": "virtual-namespace/resource-name"` to define these mappings.
 
-Namespaces in the virtual cluster are created automatically during the sync (if they do not exist already).
+vCluster automatically creates target namespaces in the virtual cluster if they do not already exist. The sync operates in one direction only, from host to virtual cluster. When you modify a resource in the host cluster, vCluster syncs the change to the virtual cluster. When you delete a virtual resource, vCluster recreates it if the host resource still exists. When you delete a host resource, vCluster removes the corresponding virtual resource.
 
-It is not possible to sync CustomResources that were already synced from virtual to host, they are skipped by vCluster.
+### Sync limitations
 
-Here is an example with cert-manager’s CertificateRequest CustomResource.
+- You cannot sync from all namespaces in the host cluster; you must specify individual namespace mappings.
+- You cannot sync CustomResources that were previously synced from virtual to host cluster; vCluster skips these resources.
+- vCluster can only sync one version of a CustomResource at a time.
 
-To sync all CustomResources from a given namespace in the host to the given namespace in the virtual cluster, “namespace/*” wildcard can be used, e.g.:
+### Sync all resources from a namespace
 
-```yaml title="configure CustomResource sync from host namespace"
+To sync all CustomResources of a specific type from one host namespace to a virtual namespace, use the wildcard pattern `namespace/*`:
+
+```yaml title="Sync all CertificateRequests from host namespace"
 sync:
   fromHost:
     customResources:
@@ -88,14 +105,18 @@ sync:
         scope: Namespaced
         mappings:
           byName:
-            # syncs all CertificateRequests from "foo" namespace
-            # to the "bar" namespace in a virtual cluster. CertificateRequests names are unchanged.
-            "foo/*": "bar/*"
+            # Syncs all CertificateRequests from "production" namespace in host
+            # to "cert-manager" namespace in virtual cluster
+            "production/*": "cert-manager/*"
 ```
 
-To sync only specific CustomResources from namespaces, you need to provide `namespace/name` as the key and value:
+This configuration syncs all CertificateRequest resources from the `production` namespace in the host cluster to the `cert-manager` namespace in the virtual cluster. Resource names remain unchanged during the sync process.
 
-```yaml title="configure CustomResource sync from host for one object"
+### Sync specific resources
+
+To sync only specific CustomResources rather than all resources from a namespace, specify the exact resource name using the format `namespace/name`:
+
+```yaml title="Sync specific CertificateRequest"
 sync:
   fromHost:
     customResources:
@@ -104,14 +125,19 @@ sync:
         scope: Namespaced
         mappings:
           byName:
-            # syncs CertificateRequest named "cm-name" from "foo" host namespace
-            # to the "bar" namespace in virtual.
-            "foo/cm-name": "bar/cm-name"
+            # Syncs only the "web-cert" CertificateRequest from "production" host namespace
+            # to "certificates" namespace in virtual cluster
+            "production/web-cert": "certificates/web-cert"
+            # Syncs only the "api-cert" CertificateRequest from "staging" host namespace
+            # to "certificates" namespace in virtual cluster
+            "staging/api-cert": "certificates/api-cert"
 ```
 
-There is also a handy syntax to sync all CustomResources from virtual cluster’s own host namespace to the virtual namespace. As vCluster’s namespace is not always known upfront (e.g. when vCluster is created by the platform), `""` (empty string) is treated as “vCluster’s own host namespace”.
+### Sync from vCluster's own host namespace
 
-```yaml title="configure CustomResource sync from host for virtual cluster's namespace"
+Since the namespace might not always be known in advance (especially when created by vCluster Platform), you can use an empty string `""` to represent vCluster's own host namespace:
+
+```yaml title="Sync from vCluster's host namespace"
 sync:
   fromHost:
     customResources:
@@ -120,14 +146,14 @@ sync:
         scope: Namespaced
         mappings:
           byName:
-            # syncs all CertificateRequests from virtual cluster's host namespace
-            # to "my-virtual" namespace in a virtual cluster.
-            "": "my-virtual"
+            # Syncs all CertificateRequests from vCluster's host namespace
+            # to "certificates" namespace in virtual cluster
+            "": "certificates/*"
 ```
 
-you can also specify only a few CustomResources from virtual cluster’s own host namespace this way:
+You can also sync specific resources from vCluster's host namespace by using a slash:
 
-```yaml title="configure CustomResource sync from host for objects in virtual cluster's namespace"
+```yaml title="Sync specific resource from vCluster's host namespace"
 sync:
   fromHost:
     customResources:
@@ -136,14 +162,16 @@ sync:
         scope: Namespaced
         mappings:
           byName:
-            # syncs CertificateRequest named "my-cm" from virtual cluster's host namespace
-            # to "my-virtual-namespace" in a virtual cluster.
-            "/my-cm": "my-virtual/my-cm"
+            # Syncs only "my-cert" CertificateRequest from vCluster's host namespace
+            # to "certificates" namespace in virtual cluster
+            "/my-cert": "certificates/my-cert"
 ```
 
-It’s also possible to modify CustomResource name during the sync:
+### Modify names during sync
 
-```yaml title="configure CustomResource sync from host and modify name and namespace"
+You can change both the namespace and name of resources during the sync process. This is useful for avoiding naming conflicts or organizing resources differently in the virtual cluster:
+
+```yaml title="Modify resource names and namespaces during sync"
 sync:
   fromHost:
     customResources:
@@ -152,22 +180,25 @@ sync:
         scope: Namespaced
         mappings:
           byName:
-            # syncs "foo" CertificateRequest from "cert-manager" namespace in the host
-            # as "my-foo" in "my-virtual" namespace in a virtual cluster.
-            "cert-manager/foo": "my-virtual/my-foo"
+            # Syncs "web-cert" from "production" host namespace
+            # as "prod-web-cert" in "certificates" virtual namespace
+            "production/web-cert": "certificates/prod-web-cert"
+            # Syncs "api-cert" from "staging" host namespace
+            # as "stage-api-cert" in "certificates" virtual namespace
+            "staging/api-cert": "certificates/stage-api-cert"
 ```
+
+This configuration allows you to consolidate resources from multiple host namespaces into a single virtual namespace while maintaining clear naming to indicate their origin.
 
 ### Patches
 
-You can specify `reverseExpression` in the `sync.fromHost.customResources[*].patches` .
+You can apply patches to modify CustomResource content during the sync process using `reverseExpression` in the `sync.fromHost.customResources[*].patches` configuration. These patches operate on the host object and the modified values appear in the virtual object.
 
-They are applied on the host object and appear in the virtual object.
+:::note Expression types for host-to-virtual sync
+Only `reverseExpression` works for host-to-virtual sync. The `expression` field has no effect in this context. When syncing from host to virtual cluster, vCluster applies the `reverseExpression` to transform values from the host object before creating the virtual object.
+:::
 
-`expressions` have no effect.
-
-So, for the following `vcluster.yaml` :
-
-```yaml title="configure CustomResource sync from host with patches"
+```yaml title="Apply patches during CustomResource sync"
 sync:
   fromHost:
     customResources:
@@ -176,16 +207,12 @@ sync:
         scope: Namespaced
         mappings:
           byName:
-            "default/my-cm": "barfoo2/cm-my"
+            "production/web-cert": "certificates/prod-web-cert"
         patches:
           - path: metadata.annotations[*]
-            # optional reverseExpression to reverse the change from the host cluster
+            # Remove 'www.' prefix from annotation values during sync
             reverseExpression: "value.startsWith('www.') ? value.slice(4) : value"
 ```
-
-1. Your CustomResource in the host namespace `default` named `my-cm` is synced to the namespace `barfoo2` in virtual and named `cm-my`.
-2. If `default/my-cm` host object has annotation which value starts with `www.` , e.g.: `my-address: www.loft.sh` then synced object in the virtual cluster `barfoo2/cm-my` has annotation `my-address: loft.sh` .
-
 
 <NamespacedCustomResourcesExample/>
 
