@@ -3,16 +3,20 @@ title: Configure NVIDIA KAI scheduler with vCluster
 sidebar_label: Configure KAI scheduler
 description: Learn how to configure vCluster to work with NVIDIA KAI scheduler for GPU and CPU workloads
 ---
+
 import BasePrerequisites from '@site/docs/_partials/base-prerequisites.mdx';
 
-
-# Configure NVIDIA KAI scheduler with vCluster {#configure-kai-scheduler-with-vcluster}
+# Configure NVIDIA KAI scheduler with vCluster {#configure-kai-scheduler-with-vCluster}
 
 This guide explains how to configure vCluster to work with the [NVIDIA KAI scheduler](https://github.com/NVIDIA/KAI-Scheduler). KAI is a Kubernetes scheduler that optimizes resource allocation for both GPU and CPU workloads, with advanced queuing, fractional GPU allocation, and topology awareness.
 
+:::info NVIDIA KAI scheduler background
+NVIDIA KAI scheduler is the open source version of Run:AI's scheduler technology, which is why it uses `podgroups.scheduling.run.ai` CRDs. KAI was open sourced by NVIDIA in 2025 under the Apache 2.0 license.
+:::
+
 ## Prerequisites {#prerequisites}
 <BasePrerequisites />
-- KAI scheduler installed in the host cluster
+- KAI scheduler installed in the <GlossaryTerm term="host-cluster">host cluster</GlossaryTerm>
 
 ## Understand the challenge {#understand-the-challenge}
 
@@ -23,31 +27,47 @@ By default, when syncing workload pods from a vCluster to the host cluster, vClu
 - For vCluster workloads, the owner reference is set to the vCluster service in the host namespace
 - The pod-grouper may not have sufficient permissions to access these Service resources
 
-## Solution: Disable owner references in vCluster {#solution-disable-owner-references}
+## Solution: Configure vCluster for KAI scheduler {#solution-configure-vCluster-for-kai}
 
-To solve this issue, configure vCluster to not set owner references on synced pods using the [`experimental.syncSettings.setOwner`](/vcluster/configure/vcluster-yaml/experimental/sync-settings#syncSettings-setOwner) option. This simple approach allows the KAI scheduler to work with vCluster pods without requiring any modifications to the scheduler itself.
+To properly integrate vCluster with KAI scheduler, you need to configure two things:
+
+1. **Turn off owner references** to allow KAI's pod-grouper to process pods
+2. **Sync PodGroup resources** to prevent controller conflicts
 
 Add the following to your vCluster configuration (`values.yaml` for Helm or vCluster config):
 
-```yaml title="Disable owner references in vCluster config"
+```yaml title="Complete vCluster configuration for KAI scheduler"
 # highlight-start
 experimental:
   syncSettings:
     setOwner: false
+
+sync:
+  fromHost:
+    customResources:
+      podgroups.scheduling.run.ai:
+        enabled: true
+        scope: Namespaced
 # highlight-end
 ```
 
+This configuration:
+- Prevents owner reference traversal issues by not setting them on synced pods
+- Syncs PodGroup resources from the host cluster to avoid conflicts when KAI's controllers manage them
+
 Apply this configuration when creating or updating your vCluster:
 
-```bash title="Create vCluster with disabled owner references"
-vcluster create my-vcluster --set experimental.syncSettings.setOwner=false
+```bash title="Create vCluster with KAI scheduler configuration"
+vcluster create my-vcluster --values kai-scheduler-values.yaml
 ```
 
 Or for an existing vCluster, update the configuration:
 
 ```bash title="Update existing vCluster configuration"
-vcluster create --upgrade my-vcluster --set experimental.syncSettings.setOwner=false
+vcluster create --upgrade my-vcluster --values kai-scheduler-values.yaml
 ```
+
+Where `kai-scheduler-values.yaml` contains the configuration shown previously.
 
 ## Use KAI scheduler for vCluster workloads {#use-kai-scheduler-for-workloads}
 
@@ -110,6 +130,37 @@ spec:
         nvidia.com/gpu: '1'
 ```
 
+<!-- vale off -->
+### Example: Fractional GPU workload {#example-fractional-gpu-workload}
+<!-- vale on -->
+
+KAI scheduler supports GPU sharing through fractional allocation. Here's an example using half a GPU:
+
+```yaml title="Fractional GPU pod with KAI scheduler"
+apiVersion: v1
+kind: Pod
+metadata:
+  name: gpu-sharing-pod
+  labels:
+    kai.scheduler/queue: test  # Optional: specify queue
+  annotations:
+    # highlight-start
+    gpu-fraction: "0.5"  # Request half of a GPU
+    # highlight-end
+spec:
+  schedulerName: kai-scheduler
+  containers:
+  - name: main
+    image: ubuntu
+    args: ["sleep", "infinity"]
+```
+
+:::info GPU sharing notes
+- GPU sharing must be enabled during KAI installation with `--set "global.gpuSharing=true"`
+- KAI doesn't enforce memory isolation - applications should respect their allocation
+- You can also use `gpu-memory: "2000"` annotation to request specific MiB
+:::
+
 ## Verify configuration {#verify-configuration}
 
 To verify that the KAI scheduler is properly configured with vCluster:
@@ -159,3 +210,45 @@ When vCluster syncs pods to the host cluster, it sets an owner reference to the 
 - If you have other features that rely on pod ownership in vCluster, disabling owner references may affect those features
 - The KAI scheduler might require additional configuration for advanced features like GPU sharing and queue management
 - For GPU workloads, ensure that the host cluster has the necessary GPU drivers and device plugins installed
+
+## Troubleshoot common issues {#troubleshooting}
+
+### PodGroup conflict errors {#podgroup-conflict-errors}
+
+If you see errors like:
+
+```
+Operation cannot be fulfilled on podgroups.scheduling.run.ai "pg-gpu-sharing1-c1ee7e85-52ec-4e4d-b8da-5a579f89817c":
+the object has been modified; please apply your changes to the latest version and try again
+```
+
+This indicates multiple controllers are trying to update the same PodGroup resource. Ensure you have:
+
+1. **Configured PodGroup synchronization**: The `sync.fromHost.customResources` configuration is essential to prevent conflicts
+2. **Only one KAI scheduler instance**: Multiple scheduler instances can cause conflicts
+3. **Proper RBAC permissions**: vCluster needs permissions to sync PodGroup resources
+
+### Verify PodGroup synchronization {#verify-podgroup-sync}
+
+Check if PodGroups are being properly synced:
+
+```bash title="Check PodGroups in host cluster"
+kubectl get podgroups.scheduling.run.ai -A
+
+# Check PodGroups in vCluster
+kubectl get podgroups.scheduling.run.ai -A
+```
+
+### Other problems {#other-problems}
+
+1. **Missing PodGroup CRD in vCluster**:
+   - Ensure KAI scheduler is installed in the host cluster before creating the vCluster
+   - The CRD should be automatically copied when PodGroup sync is enabled
+
+2. **GPU sharing pods stuck in pending**:
+   - Verify GPU sharing is enabled: `--set "global.gpuSharing=true"` during KAI installation
+   - Check if reservation pods are created in `kai-resource-reservation` namespace
+
+3. **Pod-grouper permission errors**:
+   - With `setOwner: false`, these should not occur
+   - If they persist, check KAI scheduler logs: `kubectl logs -n kai-scheduler -l component=scheduler`
