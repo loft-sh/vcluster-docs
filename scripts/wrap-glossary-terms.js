@@ -88,6 +88,20 @@ function isInProtectedArea(content, position, term) {
     }
   }
   
+  // Check if inside an import statement
+  const lineStart = content.lastIndexOf('\n', position) + 1;
+  const lineEnd = content.indexOf('\n', position);
+  const currentLine = content.substring(lineStart, lineEnd === -1 ? content.length : lineEnd);
+  if (currentLine.trim().startsWith('import ')) {
+    return true;
+  }
+  
+  // Check if inside a markdown header (# ## ### etc.)
+  const headerPattern = /^#{1,6}\s/;
+  if (headerPattern.test(currentLine.trim())) {
+    return true;
+  }
+  
   // Check if inside code blocks (backticks)
   let insideCode = false;
   let backticksCount = 0;
