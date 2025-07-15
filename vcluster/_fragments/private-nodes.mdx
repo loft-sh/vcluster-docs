@@ -2,9 +2,6 @@ import PrivateNodes from '../_partials/config/privateNodes.mdx'
 import AutoUpgrade from '../_partials/config/privateNodes/autoUpgrade.mdx'
 import Networking from '../_partials/config/networking.mdx'
 import ControlPlane from '../_partials/config/controlPlane.mdx'
-import ProAdmonition from '../_partials/admonitions/pro-admonition.mdx'
-
-<ProAdmonition/>
 
 ## Use private nodes
 
@@ -35,7 +32,7 @@ alt="Overview"
 
 ## Private nodes vs. shared nodes
 
-The following table outlines the differences between using private nodes and shared nodes: 
+The following table outlines the differences between using private nodes and shared nodes:
 
 | Feature                                    | Private Nodes                | Shared Nodes                 |
 |--------------------------------------------|------------------------------|------------------------------|
@@ -126,12 +123,12 @@ When private nodes are enabled, certain vCluster features are automatically disa
 The following features are not available when using private nodes:
 
 - `sync.*` - No resource syncing between virtual and host clusters
-- `integrations.*` - Integrations depend on syncing functionality  
+- `integrations.*` - Integrations depend on syncing functionality
 - `networking.replicateServices` - Services are not replicated to host
 - `controlPlane.distro.k3s` - Only standard Kubernetes (k8s) is supported
 - `controlPlane.coredns.embedded: true` - Embedded CoreDNS conflicts with custom CNI
-- `controlPlane.advanced.virtualScheduler.enabled: false` - Virtual scheduler cannot 
-- `sleepMode.*` - No ability to sleep workloads or control plane. 
+- `controlPlane.advanced.virtualScheduler.enabled: false` - Virtual scheduler cannot
+- `sleepMode.*` - No ability to sleep workloads or control plane.
 
 ```yaml title="Unsupported vcluster.yaml options with private nodes"
 # These configurations are NOT supported with private nodes
@@ -170,19 +167,50 @@ controlPlane:
     # Virtual scheduler is required for workload placement
     virtualScheduler:
       enabled: true   # Always enabled (cannot be disabled)
+  # Host Path Mapper is not supported
+  hostPathMapper:
+    enabled: false
 
 # Sleep mode is not available
-sleepMode: 
+sleepMode:
   enabled: false
+
+# Isolated Control Plane mode is not supported
+experimental:
+  isolatedControlPlane:
+    enabled: false
 ```
 
 ## Create vCluster and manually add private nodes
 
-### Prerequisites
+### OS Prerequisites
+
+- Linux distribution with SystemD support (required for service management)
+- `iptables` binaries installed (automatically available on Ubuntu, may need manual installation on other distributions)
+- `curl` installed
+- Root user access
+
+:::warning
+Security-Enhanced Linux (SELinux) is currently not supported.
+:::
+
+Supported OS:
+- Ubuntu 24.04 LTS
+- RHEL (RedHat Enterprise Linux 9)
+- CentOS Stream 9
+
+For CentOS, iptables have to be manually installed:
+```shell title="Install iptables"
+yum install iptables-services
+systemctl enable iptables
+systemctl start iptables
+```
+
+### Node Prerequisites
 
 - vCluster CLI installed on your local machine
 - Access to a host cluster
-- Worker nodes 
+- Worker nodes
 
 ### Create the vCluster control plane
 
@@ -217,11 +245,17 @@ Follow [this guide](https://www.vcluster.com/docs/vcluster/next/configure/vclust
 
 ### Join worker nodes to the virtual cluster
 
+*Pre-requisities on worker nodes*
+
+- `curl` installed
+
+In order to join worker nodes, a token from the vCluster must be created to provide access and permissions to join the vCluster. A single token can be used for any worker nodes to join, or if you wanted to, you could create a token for each node.
+
 :::info Prerequisite
-Worker nodes must have `curl` installed before they can join the vCluster.
+vCluster has to be running and ready.
 :::
 
-To join worker nodes, a token from the vCluster must be created to provide access and permissions to join the vCluster. A single token can be used for any worker nodes to join, or if you wanted to, you could create a token for each node. 
+To join worker nodes, a token from the vCluster must be created to provide access and permissions to join the vCluster. A single token can be used for any worker nodes to join, or if you wanted to, you could create a token for each node.
 
 ```bash title="Create a token for worker nodes"
 export VCLUSTER_NAME=my-vcluster
@@ -233,11 +267,38 @@ vcluster connect $VCLUSTER_NAME
 vcluster token create
 ```
 
+Optional flags:
+- `--expires=24h` - Set token expiration time. By default, it is set to 1 hour.
+
 The output provides a command to run on your worker node:
 
 ```bash title="Example output from creating a token"
 curl -sfLk https://<vcluster-endpoint>/node/join?token=<token> | sh -
 ```
+
+this can be used with following flags:
+
+| Flag | Description | Default |
+| ---- | ----------- | ------- |
+| `--kubernetes-version` | Version of kubernetes node components | optional, defaults to the version of vCluster k8s |
+| `--repository-url` | Specific vCluster version to install | optional, defaults to `/usr/local/bin` |
+| `--binaries-dir` | allows to customize target directory where k8s node components binaries are installed | optional, defaults to `/usr/local/bin |
+| `--cni-binaries-dir` | allows to customize target directory where CNI binaries are installed | optional, defaults to `/opt/cni/bin` |
+| `--skip-reset` | Skips uninstalling existing node components | optional, default to false (reset happens before install by default) |
+| `--bundle-path` | If set, skips downloading Kubernetes binaries and uses a local path. Expects a path to bundle in `.tar.gz` format | optional, empty by default |
+| `--reset-only` | only uninstall previously installed node components. Use this to cleanup the node | optional, defaults to `false` |
+| `--skip-join` | Installs all required components but skips joining node to the cluster | optional, defaults to `false` |
+| `--node-name` | Node name in the kubernetes cluster | optional, defaults to hostname |
+| `--force-join` | Force joining even when there is existing kubelet service running on the node | optional, defaults to `false` |
+
+you can pass these flags to the script like:
+```bash title="Run join script with flags"
+curl -sfLk https://<vcluster-endpoint>/node/join?token=<token> | sh -s -- --force-join
+```
+
+:::tip
+It is recommended to save this script on the node locally for future operations (such as node cleanup when virtual cluster no longer exists)
+:::
 
 For each worker node that you want to join vCluster, run the command on the worker node.
 
@@ -266,28 +327,7 @@ This node has joined the cluster:
 Run 'kubectl get nodes' on the control-plane to see this node join the cluster.
 ```
 
-## Create vCluster and worker nodes using CAPI 
-
-For automatically creating virtual cluster and private nodes using the [Cluster API](https://github.com/kubernetes-sigs/cluster-api), set up the cluster using the following command to install the [vCluster Cluster API provider](https://github.com/loft-sh/cluster-api-provider-vcluster):
-
-```bash title="Initialize Cluster API with vCluster provider"
-clusterctl init --infrastructure vcluster
-```
-
-As soon as the Cluster API provider is running, you can install a provider to handle node creation—for example, KubeVirt.
-
-```bash title="Generate cluster configuration with KubeVirt"
-VCLUSTER_VERSION=v0.26.0-alpha.9
-
-clusterctl generate cluster test \
-  --kubernetes-version v1.31.2 \
-  -n test \
-  --from https://raw.githubusercontent.com/loft-sh/cluster-api-provider-vcluster/refs/heads/main/hack/kubevirt/template.yaml
-```
-
-Then apply the manifests to the cluster and Cluster API should create the vCluster and join the worker nodes using the KubeVirt provider.
-
-## Load Docker images 
+## Load Docker images
 
 To load a local Docker image on to a worker node you can use the following command:
 
@@ -295,7 +335,12 @@ To load a local Docker image on to a worker node you can use the following comma
 vcluster node load-image my-node --image nginx:latest
 ```
 
-## Upgrade vCluster 
+Node has to be in `Ready` state and able to run a pod.
+
+This command pulls the docker image locally, saves it as a `.tar` archive, then uses `kubectl cp` to copy the image to the created pod.
+Once image is copied to the pod, then it is imported to the node.
+
+## Upgrade vCluster
 
 ### Upgrade vCluster control plane
 
@@ -330,6 +375,11 @@ There are two modes of how worker upgrades can be done:
 #### Use automatic upgrades
 
 Automatic worker node upgrades are enabled by default. vCluster upgrades each node when it detects a version mismatch between the control plane and the worker node. By default, one node is upgraded at a time.
+Upgrade starts 2 minutes after the control plane is upgraded. There is also a grace period for newly added worker nodes (upgrade is not going to start if node was created less than 2 minutes ago).
+
+:::tip
+You can exclude a node from automatic upgrade by labeling it with "vcluster.loft.sh/skip-auto-upgrade": "true"
+:::
 
 The upgrade Pod runs directly on the node and completes the following steps:
 1. Download the Kubernetes binary bundle from the vCluster control plane
@@ -358,7 +408,82 @@ vcluster node upgrade my-node
 
 Alternatively, you can manually upgrade by following the [official Kubeadm Kubernetes guide](https://kubernetes.io/docs/tasks/administer-cluster/kubeadm/upgrading-linux-nodes/).
 
-## Config reference
+## Configure addons
+
+vCluster supports addons that extend the functionality of your virtual cluster. You can configure these addons during deployment to adjust networking, observability, and other features for your environment and requirements.
+
+### CNI
+
+vCluster installs [Flannel](https://github.com/flannel-io/flannel) by default, if you want to install your own custom CNI, you can disable Flannel using the following:
+
+```yaml title="Disable default Flannel CNI"
+privateNodes:
+  cni:
+    flannel:
+      enabled: false
+```
+
+### CoreDNS
+
+vCluster installs [CoreDNS](https://coredns.io/) by default to allow cluster DNS resolving of services and pods.
+
+### Konnectivity
+
+vCluster uses [Konnectivity](https://kubernetes.io/docs/tasks/extend-kubernetes/setup-konnectivity/) to establish a connection between the control plane and worker nodes for commands such as `kubectl logs`, `kubectl exec`, `kubectl port-forward`. The Konnectivity server runs as part of the vCluster control plane, while an agent is deployed inside the vCluster. If it is not needed or wanted, you can disable Konnectivity in the vCluster config.
+
+### Kube proxy
+
+vCluster installs [Kube Proxy](https://kubernetes.io/docs/reference/command-line-tools-reference/kube-proxy/) by default to ensure that services are configured on the nodes. Some CNI implement their own kube-proxy functionality. Optionally, you can disable kube-proxy deployment in the vCluster config.
+
+### Local Path Provisioner
+
+vCluster installs the [Local Path Provisioner](https://github.com/rancher/local-path-provisioner) by default to allow stateful workloads within the vCluster.
+
+## Load Docker images into nodes
+
+To load a local Docker image into a worker node you can use the following command:
+
+```bash title="Load Docker image into specific node"
+vcluster node load-image my-node --image nginx:latest
+```
+
+## Remove worker node
+
+To remove a node from the cluster, follow standard procedures as with any other Kubernetes distro: first cordon a node, then drain it.
+There is `vcluster` CLI helper command that does it:
+1. Cordon and drain node:
+
+```shell title="Node cordoning"
+vcluster node delete <node-name>
+```
+
+3. Once no more workloads are running on the node, log into the node terminal and run the installation script that you used originally (more on this in [Install](#join-worker-nodes-to-the-virtual-cluster) section):
+```shell title="reset node"
+curl -sfLk https://<vcluster-endpoint>/node/join?token=<token> | sh -s -- --reset-only
+```
+
+4. Then, stop vCluster systemD service:
+
+```shell title="stop vcluster.service"
+systemctl stop vcluster.service
+```
+
+5. Now, you can safely remove service definition & other vCluster related files:
+```shell title="remove vCluster files"
+rm -rf /var/lib/vcluster && rm /etc/systemd/system/vcluster.service
+```
+
+## Reuse a worker node in another virtual cluster
+Node can be reset and re-used in another virtual cluster.
+
+To do this, follow steps from [Remove section](#remove-worker-node) first, and then [Join worker nodes to the virtual cluster](#join-worker-nodes-to-the-virtual-cluster). **Make sure to pass `--force-join` flag to the installation script**.
+
+## Clean up an orphaned node
+In case when virtual cluster was deleted first, there is a way to clean up a node.
+When virtual cluster is gone, kubelet, kube-proxy and other components running on the node are still trying to connect to control plane.
+You can clean them up using a join script with `--reset-only` flag, as described in [Remove worker node section](#remove-worker-node).
+
+## Review configuration reference
 
 <PrivateNodes />
 <Networking />
