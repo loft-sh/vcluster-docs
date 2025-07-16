@@ -14,37 +14,37 @@ import GetResourceName from '../pod-identity/_partials/get-resource-name.mdx'
 
 <ProAdmonition/>
 
-# Integrate AKS workload identity with vCluster
+[Workload Identity](https://learn.microsoft.com/en-us/azure/aks/workload-identity-overview) allows Kubernetes workloads to securely access Azure resources without storing credentials in the cluster. It federates a Kubernetes Service Account with a Microsoft Entra identity, improving security and simplifying identity management—especially in virtual cluster environments.
 
-This tutorial guides you through the process of integrating Microsoft Entra Workload ID with your vCluster using Workload Identity.
+To configure this in a vCluster, you must link the Kubernetes Service Account (KSA) used by your workload with a Microsoft Entra Workload ID. This KSA must exist in the host cluster where the vCluster runs. 
 
-Setting up Workload Identity requires you to link a Microsoft Entra Workload ID with the Kubernetes Service Account (KSA) used by your workloads.
-This KSA needs to be available in the host cluster in which your vCluster instance runs.
+Use the [`sync.toHost`](/vcluster/configure/vcluster-yaml/sync/to-host/) feature to expose the KSA to the host cluster.
 
-To achieve this setup, we'll need to use the [sync.toHost feature][sync-toHost-docs] to expose the KSA in the host cluster together with the vCluster Platform API to retrieve the updated name of the KSA in the host cluster.
+## Prerequisites
 
-### Prerequisites
+Ensure you have the following:
 
-This guide assumes you have the following prerequisites:
 - `kubectl` installed
 - `az` CLI installed and configured
-- A running AKS cluster with Workload Identity Federation enabled ([Azure docs][azure-aks-workload-identity])
+- A running AKS cluster with Workload Identity Federation enabled. For more information, see the [Deploy and configure Workload Identity on an Azure Kubernetes Service (AKS) cluster documentation](https://learn.microsoft.com/en-us/azure/aks/workload-identity-deploy-cluster)
 
-### Step-by-step guide
+## Integrate AKS Workload Identity with vCluster
 
 <Flow>
 
 <Step title="Start vCluster Platform and create an access key">
 
-In order to integrate your workloads with AKS Workload Identity, you'll need a vCluster Platform instance running.
-If you don't have one already, follow the [vCluster Platform installation guide][vcluster-platform-install-link].
+To integrate your workloads with [Azure Kubernetes Service (AKS) Workload Identity](https://learn.microsoft.com/en-us/azure/aks/workload-identity-overview), you must have a running instance of the vCluster Platform.
 
-Once you're done, you need to create a new access key. This allows you to use the vCluster Platform API.
-Follow this [guide to create a new access key][access-key-link].
+If you have not set one up yet, follow the [vCluster Platform installation guide](/vcluster/platform/install/).
+
+After deploying the platform, [create a new access key](/vcluster/platform/manage/access-keys/) to authenticate with the vCluster Platform API. This key is required to retrieve the synced Kubernetes Service Account (KSA) name and complete the Workload Identity setup.
+
 </Step>
 
 <Step title="Set Up Variables">
-Next, you need to set up the necessary environment variables. These variables include information about your Azure resource group, vCluster details, and authentication keys.
+
+Set up the necessary environment variables. These variables include information about your Azure resource group, vCluster details, and authentication keys.
 
 <InterpolatedCodeBlock
   code={`export RESOURCE_GROUP_NAME=[[VAR:RESOURCE_GROUP:vcluster-demo-rg]]
@@ -60,12 +60,12 @@ export FEDERATED_IDENTITY_CREDENTIAL_NAME=[[VAR:FEDERATED_IDENTITY_CREDENTIAL_NA
 export USER_ASSIGNED_IDENTITY_NAME=[[VAR:USER_ASSIGNED_IDENTITY_NAME:vcluster-demo-workload-identity]]`}
 />
 
-Before proceeding, adjust all values to your specific case, make sure to specify correct Azure Resource Group name, vCluster Platform host and auth key.
+Ensure you specify the correct Azure Resource Group name, vCluster Platform host, and auth key.
 </Step>
 
 <Step title="Create vCluster Configuration">
 
-Create `vcluster.yaml` file with following content:
+Create a `vcluster.yaml` file that includes the following configuration:
 
 ```yaml
 sync:
@@ -76,26 +76,28 @@ sync:
 
 </Step>
 
-<Step title="Deploy vCluster">
+<Step title="Deploy the virtual cluster">
 
-```bash
-vcluster create $VCLUSTER_NAME --namespace $VCLUSTER_NAMESPACE --values vcluster.yaml
-```
+Run the following command to deploy the virtual cluster using your custom configuration file:
+
+<InterpolatedCodeBlock
+  code={`vcluster create [[VAR:VCLUSTER_NAME:vcluster-demo]] --namespace [[VAR:VCLUSTER_NAMESPACE:team-x]] --values vcluster.yaml`}
+/>
 
 </Step>
 
-<Step title="Create a Service account">
+<Step title="Create a service account">
 
-```bash
-cat <<EOF | kubectl apply -f -
-apiVersion: v1
+Create a Kubernetes \`ServiceAccount\` that can be used to interact with the virtual cluster:
+
+<InterpolatedCodeBlock
+  language="yaml"
+  code={`apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: "${SERVICE_ACCOUNT_NAME}"
-  namespace: "${SERVICE_ACCOUNT_NAMESPACE}"
-EOF
-```
-
+  name: [[VAR:SERVICE_ACCOUNT_NAME:vcluster-demo]]
+  namespace: [[VAR:SERVICE_ACCOUNT_NAMESPACE:default]]`}
+/>
 </Step>
 
 <Step title="Read ServiceAccount name From vCluster Platform API">
@@ -106,7 +108,7 @@ EOF
 
 <Step title="Create the managed identity and the federated identity credential">
 
-Create the federated identity credential between the managed identity, the service account issuer, and the subject.
+Create the federated identity credential between the managed identity, the service account issuer, and the subject:
 
 ```bash
 export SUBSCRIPTION="$(az account show --query id --output tsv)"
@@ -147,7 +149,7 @@ az identity federated-credential create \
 
 <Step title="Assign RBAC permissions to the managed identity">
 
-Assign the necessary RBAC roles to the managed identity so it can access Azure resources. For this example, we'll assign the Reader role at the subscription level:
+Assign the necessary RBAC roles to the managed identity so it can access Azure resources. For this example, you'll assign the `Reader` role at the subscription level:
 
 ```bash
 # Get the principal ID of the managed identity
@@ -172,12 +174,13 @@ az role assignment list --assignee "${PRINCIPAL_ID}" --output table
 ```
 
 :::note
-You can assign more specific roles and scopes based on your requirements. For example, if you need the identity to manage specific resource groups or resources, assign appropriate roles like "Contributor" or custom roles with specific permissions.
+You can assign more specific roles and scopes based on your requirements. For example, if you need the identity to manage specific resource groups or resources, assign appropriate roles such as "Contributor" or custom roles with specific permissions.
 :::
 
 </Step>
 
 <Step title="Annotating the Service Account">
+
 Annotate the service account with the user-assigned identity client ID and tenant ID:
 
 ```bash
@@ -192,6 +195,8 @@ kubectl annotate serviceaccount \
 </Step>
 
 <Step title="Deploy an application">
+
+Deploy an application. Replace placeholders with your actual values:
 
 ```bash
 cat <<EOF | kubectl apply -f -
@@ -221,18 +226,11 @@ EOF
 
 <Step title="Verify the Setup">
 
-Verify that the setup is complete and the pod is able to access Azure resources using the workload identity.
+Verify that the setup is complete and the pod is able to access Azure resources using the Workload Identity.
 
 ```bash
 kubectl logs -l app=azure-cli-test -n default
 ```
 
-Following these steps integrates your Azure Workload Identity with your vCluster, enabling secure and efficient resource management.
-
 </Step>
 </Flow>
-
-[vcluster-platform-install-link]: /platform/install/quick-start-guide
-[access-key-link]: /platform/administer/users-permissions/access-keys
-[azure-aks-workload-identity]: https://learn.microsoft.com/en-us/azure/aks/workload-identity-overview
-[sync-toHost-docs]: ../../configure/vcluster-yaml/sync/to-host/README.mdx
