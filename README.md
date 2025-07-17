@@ -27,6 +27,16 @@ The quickest way to start contributing:
 
 This sets up a complete development environment with all dependencies.
 
+### Develop locally
+
+1. Run `npm install`
+
+    This will initially install all necessary dependencies.
+
+2. Run `npm run start`
+
+    This will continuously watch changes, build a development version and serve it locally.
+
 ### Other ways to contribute
 
 - [Create a docs issue](https://github.com/loft-sh/vcluster-docs/issues).
