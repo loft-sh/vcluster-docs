@@ -1,0 +1,240 @@
+---
+title: AKS Workload Identity
+sidebar_label: AKS Workload Identity
+sidebar_position: 3
+---
+
+import CodeBlock from '@theme/CodeBlock';
+import Flow, { Step } from "@site/src/components/Flow";
+import InterpolatedCodeBlock from "@site/src/components/InterpolatedCodeBlock";
+
+import Deploy from '../../_partials/deploy/deploy.mdx'
+import ProAdmonition from '../../_partials/admonitions/pro-admonition.mdx'
+import GetResourceName from '../pod-identity/_partials/get-resource-name.mdx'
+
+<ProAdmonition/>
+
+[Workload Identity](https://learn.microsoft.com/en-us/azure/aks/workload-identity-overview) allows Kubernetes workloads to securely access Azure resources without storing credentials in the cluster. It federates a Kubernetes Service Account with a Microsoft Entra identity, which improves security and simplifies identity management.
+
+To configure Workload Identity in a virtual cluster, you must link the Kubernetes Service Account (KSA) used by your workload with a Microsoft Entra Workload ID. This KSA must exist in the host cluster where the virtual cluster runs. 
+
+Use the [`sync.toHost`](/vcluster/configure/vcluster-yaml/sync/to-host/) feature to expose the KSA to the host cluster.
+
+## Prerequisites
+
+Ensure you have the following:
+
+- `kubectl` installed
+- `az` CLI installed and configured
+- A running AKS cluster with Workload Identity Federation enabled. For more information, see the [Deploy and configure Workload Identity on an Azure Kubernetes Service (AKS) cluster documentation](https://learn.microsoft.com/en-us/azure/aks/workload-identity-deploy-cluster).
+
+
+<!-- vale off -->
+
+## Integrate AKS Workload Identity with vCluster
+
+<Flow>
+
+<Step title="Start vCluster Platform and create an access key">
+
+To integrate your workloads with [Azure Kubernetes Service (AKS) Workload Identity](https://learn.microsoft.com/en-us/azure/aks/workload-identity-overview), you must have a running instance of the vCluster Platform.
+
+If you have not set one up yet, follow the [vCluster Platform installation guide](/platform/next/install/quick-start-guide).
+
+After deploying the platform, [create a new access key](/platform/next/api/authentication) to authenticate with the vCluster Platform API. This key is required to retrieve the synced Kubernetes Service Account (KSA) name and complete the Workload Identity setup.
+
+</Step>
+
+<Step title="Set Up Variables">
+
+Set up the necessary environment variables. These variables include information about your Azure resource group, vCluster details, and authentication keys.
+
+<InterpolatedCodeBlock
+  code={`export RESOURCE_GROUP_NAME=[[VAR:RESOURCE_GROUP:vcluster-demo-rg]]
+export SERVICE_ACCOUNT_NAME=[[VAR:SERVICE_ACCOUNT_NAME:vcluster-demo]]
+export SERVICE_ACCOUNT_NAMESPACE=[[VAR:SERVICE_ACCOUNT_NAMESPACE:default]]
+export VCLUSTER_NAME=[[VAR:VCLUSTER_NAME:vcluster-demo]]
+export VCLUSTER_NAMESPACE=[[VAR:VCLUSTER_NAMESPACE:team-x]]
+export AKS_CLUSTER_NAME=[[VAR:AKS_CLUSTER_NAME:my-aks-cluster]]
+export HOST=[[VAR:PLATFORM_HOST:YOUR_PLATFORM_HOST]]
+export ACCESS_KEY=[[VAR:ACCESS_KEY:YOUR_ACCESS_KEY]]
+export REGION=[[VAR:REGION:westeurope]]
+export FEDERATED_IDENTITY_CREDENTIAL_NAME=[[VAR:FEDERATED_IDENTITY_CREDENTIAL_NAME:vcluster-demo]]
+export USER_ASSIGNED_IDENTITY_NAME=[[VAR:USER_ASSIGNED_IDENTITY_NAME:vcluster-demo-workload-identity]]`}
+/>
+
+Ensure you specify the correct Azure Resource Group name, vCluster Platform host, and auth key.
+</Step>
+
+<Step title="Create vCluster Configuration">
+
+Create a `vcluster.yaml` file that includes the following configuration:
+
+```yaml
+sync:
+  toHost:
+    serviceAccounts:
+      enabled: true
+```
+
+</Step>
+
+<Step title="Deploy the virtual cluster">
+
+Run the following command to deploy the virtual cluster:
+
+```bash
+ vcluster create $VCLUSTER_NAME --namespace $VCLUSTER_NAMESPACE --values vcluster.yaml
+ ```
+
+</Step>
+
+<Step title="Create a service account">
+
+Create a Kubernetes `ServiceAccount` that can be used to interact with the virtual cluster:
+
+```bash
+ cat <<EOF | kubectl apply -f -
+ apiVersion: v1
+ kind: ServiceAccount
+ metadata:
+   name: "${SERVICE_ACCOUNT_NAME}"
+   namespace: "${SERVICE_ACCOUNT_NAMESPACE}"
+ EOF
+ ```
+</Step>
+
+<Step title="Read ServiceAccount name From vCluster Platform API">
+
+<GetResourceName />
+
+</Step>
+
+<Step title="Create the managed identity and the federated identity credential">
+
+Create the federated identity credential between the managed identity, the service account issuer, and the subject:
+
+```bash
+export SUBSCRIPTION="$(az account show --query id --output tsv)"
+az identity create \
+    --name "${USER_ASSIGNED_IDENTITY_NAME}" \
+    --resource-group "${RESOURCE_GROUP_NAME}" \
+    --location "${REGION}" \
+    --subscription "${SUBSCRIPTION}"
+
+
+export AKS_OIDC_ISSUER="$(az aks show --name "${AKS_CLUSTER_NAME}" \
+    --resource-group "${RESOURCE_GROUP_NAME}" \
+    --query "oidcIssuerProfile.issuerUrl" \
+    --output tsv)"
+
+export USER_ASSIGNED_CLIENT_ID="$(az identity show \
+    --resource-group "${RESOURCE_GROUP_NAME}" \
+    --name "${USER_ASSIGNED_IDENTITY_NAME}" \
+    --query 'clientId' \
+    --output tsv)"
+
+export TENANT_ID="$(az identity show \
+    --resource-group "${RESOURCE_GROUP_NAME}" \
+    --name "${USER_ASSIGNED_IDENTITY_NAME}" \
+    --query 'tenantId' \
+    --output tsv)"
+
+az identity federated-credential create \
+    --name ${FEDERATED_IDENTITY_CREDENTIAL_NAME} \
+    --identity-name "${USER_ASSIGNED_IDENTITY_NAME}" \
+    --resource-group "${RESOURCE_GROUP_NAME}" \
+    --issuer "${AKS_OIDC_ISSUER}" \
+    --subject system:serviceaccount:"${VCLUSTER_NAMESPACE}":"${KSA_NAME}" \
+    --audience api://AzureADTokenExchange
+```
+
+</Step>
+
+<Step title="Assign RBAC permissions to the managed identity">
+
+Assign the necessary RBAC roles to the managed identity so it can access Azure resources. For this example, you'll assign the `Reader` role at the subscription level:
+
+```bash
+# Get the principal ID of the managed identity
+export PRINCIPAL_ID="$(az identity show \
+    --resource-group "${RESOURCE_GROUP_NAME}" \
+    --name "${USER_ASSIGNED_IDENTITY_NAME}" \
+    --query 'principalId' \
+    --output tsv)"
+
+# Assign Reader role to the managed identity at subscription level
+az role assignment create \
+    --assignee "${PRINCIPAL_ID}" \
+    --role "Reader" \
+    --scope "/subscriptions/${SUBSCRIPTION}"
+
+# Wait for role assignment to propagate
+echo "Waiting for role assignment to propagate..."
+sleep 30
+
+# Verify the role assignment
+az role assignment list --assignee "${PRINCIPAL_ID}" --output table
+```
+
+:::note
+You can assign more specific roles and scopes based on your requirements. For example, if you need the identity to manage specific resource groups or resources, assign appropriate roles such as "Contributor" or custom roles with specific permissions.
+:::
+
+</Step>
+
+<Step title="Annotating the Service Account">
+
+Annotate the service account with the user-assigned identity client ID and tenant ID:
+
+```bash
+kubectl annotate serviceaccount \
+  "${SERVICE_ACCOUNT_NAME}" \
+  -n "${SERVICE_ACCOUNT_NAMESPACE}" \
+  azure.workload.identity/use="true" \
+  azure.workload.identity/client-id="${USER_ASSIGNED_CLIENT_ID}" \
+  azure.workload.identity/tenant-id="${TENANT_ID}"
+```
+
+</Step>
+
+<Step title="Deploy an application">
+
+Deploy an application. Replace placeholders with your actual values:
+
+```bash
+cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: Pod
+metadata:
+  name: azure-cli-test
+  labels:
+    app: azure-cli-test
+    azure.workload.identity/use: "true"
+spec:
+  serviceAccountName: "${SERVICE_ACCOUNT_NAME}"
+  containers:
+    - name: azure-cli
+      image: mcr.microsoft.com/azure-cli:latest
+      command: ["/bin/bash", "-c", "--"]
+      args:
+        - |
+          echo "Testing Azure CLI login";
+          az login --service-principal -u \$AZURE_CLIENT_ID -t \$AZURE_TENANT_ID --federated-token \$(cat \$AZURE_FEDERATED_TOKEN_FILE);
+          az account show;
+          sleep 3600
+EOF
+```
+
+</Step>
+
+<Step title="Verify the Setup">
+
+Verify that the setup is complete and the pod is able to access Azure resources using the Workload Identity.
+
+```bash
+kubectl logs -l app=azure-cli-test -n default
+```
+
+</Step>
+</Flow>
