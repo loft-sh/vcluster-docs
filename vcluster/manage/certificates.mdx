@@ -1,0 +1,294 @@
+---
+title: Certificates
+sidebar_label: Certificates
+sidebar_position: 5
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+import InterpolatedCodeBlock from "@site/src/components/InterpolatedCodeBlock";
+
+<!--vale off-->
+
+vCluster client and server leaf certificates are valid for 1 year after initial
+creation of a virtual cluster. Per default, vCluster uses a self-signed CA to
+sign those certificates. This CA is valid fo 10 years.
+
+vCluster offers commands that can be used to check and rotate those client,
+server and CA certificates.
+
+:::info
+Certificate rotation requires vCluster version v0.27.0 or higher and the
+virtual cluster running the `k8s` distro.
+:::
+
+:::warning
+Certain deployment topologies and modes require additional manual steps in
+order to propagate the CA certificate rotation successfully.
+:::
+
+## Checking certificate information
+
+The `vcluster certs check` command provides following information for each
+certificate of the given virtual cluster:
+
+|   Field     |   Description                                                               |
+|-------------|-----------------------------------------------------------------------------|
+| Filename    | The name of the certificate file.                                           |
+| Subject     | The common name of the subject of the certificate.                          |
+| Issuer      | The common name of the issuer of the certificate.                           |
+| Expires On  | The date the certificate will expire.                                       |
+| Status      | The exipry status of the certificate (either OK, EXPIRED or NOT YET VALID). |
+
+The following command shows this information as a table (can be changed with
+`--output`):
+
+<InterpolatedCodeBlock
+  code={`vcluster -n [[VAR:VCLUSTER NAMESPACE:my-vcluster]] certs check [[VAR:VCLUSTER NAME:my-vcluster]]`}
+  language="bash"
+/>
+
+Example output:
+
+```bash
+            FILENAME           |            SUBJECT            |     ISSUER     |       EXPIRES ON       | STATUS
+-------------------------------+-------------------------------+----------------+------------------------+---------
+  apiserver-etcd-client.crt    | kube-apiserver-etcd-client    | etcd-ca        | Jul 14, 2026 19:24 UTC | OK
+  apiserver-kubelet-client.crt | kube-apiserver-kubelet-client | kubernetes     | Jul 14, 2026 19:24 UTC | OK
+  apiserver.crt                | kube-apiserver                | kubernetes     | Jul 14, 2026 19:24 UTC | OK
+  ca.crt                       | kubernetes                    | kubernetes     | Jul 12, 2035 19:24 UTC | OK
+  client-ca.crt                | kubernetes                    | kubernetes     | Jul 12, 2035 19:24 UTC | OK
+  ca.crt                       | etcd-ca                       | etcd-ca        | Jul 12, 2035 19:24 UTC | OK
+  healthcheck-client.crt       | kube-etcd-healthcheck-client  | etcd-ca        | Jul 14, 2026 19:24 UTC | OK
+  peer.crt                     | vcluster                      | etcd-ca        | Jul 14, 2026 19:24 UTC | OK
+  server.crt                   | vcluster                      | etcd-ca        | Jul 14, 2026 19:24 UTC | OK
+  front-proxy-ca.crt           | front-proxy-ca                | front-proxy-ca | Jul 12, 2035 19:24 UTC | OK
+  front-proxy-client.crt       | front-proxy-client            | front-proxy-ca | Jul 14, 2026 19:24 UTC | OK
+  server-ca.crt                | kubernetes                    | kubernetes     | Jul 12, 2035 19:24 UTC | OK
+
+```
+
+## Rotating client and server leaf certificates
+
+The command below does the following
+- Creates a backup of the old PKI directory.
+- Rotates the client and server leaf certificates.
+- Restarts the given virtual cluster.
+
+The restart is necessary in order for the control-plane components to use the
+newly created certificates. Currently running workloads should not be affected
+by this.
+
+<InterpolatedCodeBlock
+  code={`vcluster -n [[VAR:VCLUSTER NAMESPACE:my-vcluster]] certs rotate [[VAR:VCLUSTER NAME:my-vcluster]]`}
+  language="bash"
+/>
+
+The client and server leaf certificate rotation is less intrusive compared to
+the [CA rotation](#rotating-ca-certificates) explained below. This means that
+connecting to the virtual cluster with e.g. previously issued kubeconfigs
+should continue to work.
+
+## Rotating CA certificates
+
+:::warning
+A CA rotation completely replaces the trust anchor of all certificates. So this
+command must be used with caution. Though, if anything goes wrong the previous
+PKI can be restored from the backup. The steps for this are explained in the
+[section below](#restoring-the-previous-ca-from-a-backup).
+:::
+
+The command below does the following:
+- Creates a backup of the old PKI directory.
+- Rotates all PKI related certificates including the CA certificate itself.
+- Restarts the virtual cluster.
+
+<InterpolatedCodeBlock
+  code={`vcluster -n [[VAR:VCLUSTER NAMESPACE:my-vcluster]] certs rotate-ca [[VAR:VCLUSTER NAME:my-vcluster]]`}
+  language="bash"
+/>
+
+As this replaces the trust anchor completely everything that is configured to
+trust the old CA will effectively be invalidated. E.g. previously issued
+kubeconfigs.
+
+## Special cases
+
+:::warning
+All steps shown below should be done with caution. Please double-check the
+commands before executing them.
+:::
+
+This section describes certain special cases that needs additional manual
+intervention.
+
+### Restoring the previous CA from a backup
+
+Before the rotation there will be a backup created in the data directory of the
+virtual cluster using following pattern:
+
+```bash
+/data/pki.bak/<unixtimestamp>
+```
+
+#### Steps
+
+1. **In order to restore from the backup you have to exec into the virtual
+cluster syncer container**
+
+<InterpolatedCodeBlock
+  code={`kubectl -n [[VAR:VCLUSTER NAMESPACE:my-vcluster]] exec -ti svc/[[VAR:VCLUSTER NAME:my-vcluster]] -c syncer -- sh`}
+  language="bash"
+/>
+
+2. **List the backups and choose the latest**
+
+```bash
+ls -la /data/pki.bak/
+```
+
+3. **Delete the PKI directory and copy the backup to that location**
+
+<InterpolatedCodeBlock
+  code={`rm -rf /data/pki
+cp -R /data/pki.bak/[[VAR:BACKUP UNIX TIMESTAMP:1752736900`}
+  language="bash"
+/>
+
+4. **Logout and perform a regular leaf [certificate rotation](#rotating-client-and-server-leaf-certificates)**
+
+<InterpolatedCodeBlock
+  code={`vcluster -n [[VAR:VCLUSTER NAMESPACE:my-vcluster]] certs rotate [[VAR:VCLUSTER NAME:my-vcluster]]`}
+  language="bash"
+/>
+
+### Rotating the CA when running deployed etcd in HA mode
+
+In order to not break the etcd quorum and bring the whole cluster in an
+unrecoverable state there are additional pre- and post steps necessary to
+rotate the CA and reform the etcd quorum.
+
+#### Steps
+
+1. **List current ectd members**
+
+<InterpolatedCodeBlock
+  code={`kubectl -n [[VAR:VCLUSTER NAMESPACE:my-vcluster]] exec [[VAR:ETCD STATEFULSET NAME:my-vcluster-etcd]]-0 -- etcdctl --endpoints=https://127.0.0.1:2379 --cacert=/run/config/pki/etcd-ca.crt --cert=/run/config/pki/etcd-peer.crt --key=/run/config/pki/etcd-peer.key member list --write-out=table`}
+  language="bash"
+/>
+
+2. **Copy the member IDs and remove them via etcdctl in StatefulSet scaling order (highest to lowest)**
+
+<InterpolatedCodeBlock
+  code={`kubectl -n [[VAR:VCLUSTER NAMESPACE:my-vcluster]] exec [[VAR:ETCD STATEFULSET NAME:my-vcluster-etcd]]-0 -- etcdctl --endpoints=https://127.0.0.1:2379 --cacert=/run/config/pki/etcd-ca.crt --cert=/run/config/pki/etcd-peer.crt --key=/run/config/pki/etcd-peer.key member remove [[VAR:ETCD MEMBER ID:<memberID>]]`}
+  language="bash"
+/>
+
+3. **Scale down the etcd StatefulSet to 1 replica**
+
+<InterpolatedCodeBlock
+  code={`kubectl -n [[VAR:VCLUSTER NAMESPACE:my-vcluster]] scale statefulset [[VAR:ETCD STATEFULSET NAME:my-vcluster-etcd]] --replicas=1`}
+  language="bash"
+/>
+
+4. **Remove the etcd PVCs of the removed members**
+
+<InterpolatedCodeBlock
+  code={`kubectl -n [[VAR:VCLUSTER NAMESPACE:my-vcluster]] delete pvc data-[[VAR:ETCD STATEFULSET NAME:my-vcluster-etcd]]-1 data-[[VAR:ETCD STATEFULSET NAME:my-vcluster-etcd]]-2`}
+  language="bash"
+/>
+
+5. **Scale down virtual cluster Deployment to 1 replica**
+
+<InterpolatedCodeBlock
+  code={`kubectl -n [[VAR:VCLUSTER NAMESPACE:my-vcluster]] scale deployment [[VAR:VCLUSTER DEPLOY:my-vcluster]] --replicas=1`}
+  language="bash"
+/>
+
+6. **Rotate the CA of the virtual cluster**
+
+<InterpolatedCodeBlock
+  code={`vcluster -n [[VAR:VCLUSTER NAMESPACE:my-vcluster]] certs rotate-ca [[VAR:VCLUSTER NAME:my-vcluster]]`}
+  language="bash"
+/>
+
+6. **After the Pods have been restarted edit the etcd StatefulSet args to contain the block below, which prepares it for the next peer and switches the cluster state to "existing"**
+
+<InterpolatedCodeBlock
+  code={`kubectl -n [[VAR:VCLUSTER NAMESPACE:my-vcluster]] edit statefulset [[VAR:ETCD STATEFULSET NAME:my-vcluster-etcd]]`}
+  language="bash"
+/>
+
+<InterpolatedCodeBlock
+  code={`- --initial-cluster=[[VAR:ETCD STATEFULSET NAME:my-vcluster-etcd]]-0=https://[[VAR:ETCD STATEFULSET NAME:my-vcluster-etcd]]-0.vcluster-etcd-headless.vcluster-vcluster:2380,[[VAR:ETCD STATEFULSET NAME:my-vcluster-etcd]]-1=https://[[VAR:ETCD STATEFULSET NAME:my-vcluster-etcd]]-1.vcluster-etcd-headless.vcluster-vcluster:2380
+- --initial-cluster-state=existing`}
+  language="bash"
+/>
+
+7. **Add the new etcd peer as learner**
+
+<InterpolatedCodeBlock
+  code={`kubectl -n [[VAR:VCLUSTER NAMESPACE:my-vcluster]] exec [[VAR:ETCD STATEFULSET NAME:my-vcluster-etcd]]-0 -- etcdctl --endpoints=https://127.0.0.1:2379 --cacert=/run/config/pki/etcd-ca.crt --cert=/run/config/pki/etcd-peer.crt --key=/run/config/pki/etcd-peer.key member add vcluster-etcd-1 --peer-urls=https://vcluster-etcd-1.vcluster-etcd-headless.vcluster-vcluster:2380 --learner=true`}
+  language="bash"
+/>
+
+8 . **Scale up the etcd StatefulSet to 2 replicas**
+
+<InterpolatedCodeBlock
+  code={`kubectl -n [[VAR:VCLUSTER NAMESPACE:my-vcluster]] scale deployment [[VAR:VCLUSTER DEPLOY:my-vcluster]] --replicas=2`}
+  language="bash"
+/>
+
+9. **Get the ID of the new learner member**
+
+<InterpolatedCodeBlock
+  code={`kubectl -n [[VAR:VCLUSTER NAMESPACE:my-vcluster]] exec [[VAR:ETCD STATEFULSET NAME:my-vcluster-etcd]]-0 -- etcdctl --endpoints=https://127.0.0.1:2379 --cacert=/run/config/pki/etcd-ca.crt --cert=/run/config/pki/etcd-peer.crt --key=/run/config/pki/etcd-peer.key member list --write-out=table`}
+  language="bash"
+/>
+
+10. **Promote the learner member as peer**
+
+<InterpolatedCodeBlock
+  code={`kubectl -n [[VAR:VCLUSTER NAMESPACE:my-vcluster]] exec [[VAR:ETCD STATEFULSET NAME:my-vcluster-etcd]]-0 -- etcdctl --endpoints=https://127.0.0.1:2379 --cacert=/run/config/pki/etcd-ca.crt --cert=/run/config/pki/etcd-peer.crt --key=/run/config/pki/etcd-peer.key member promote [[VAR:ETCD MEMBER ID:<memberID>]]`}
+  language="bash"
+/>
+
+11. **Again edit the etcd StatefulSet args to contain the block below, which prepares it for the last peer**
+
+<InterpolatedCodeBlock
+  code={`kubectl -n [[VAR:VCLUSTER NAMESPACE:my-vcluster]] edit statefulset [[VAR:ETCD STATEFULSET NAME:my-vcluster-etcd]]`}
+  language="bash"
+/>
+
+<InterpolatedCodeBlock
+  code={`- --initial-cluster=[[VAR:ETCD STATEFULSET NAME:my-vcluster-etcd]]-0=https://[[VAR:ETCD STATEFULSET NAME:my-vcluster-etcd]]-0.vcluster-etcd-headless.vcluster-vcluster:2380,[[VAR:ETCD STATEFULSET NAME:my-vcluster-etcd]]-1=https://[[VAR:ETCD STATEFULSET NAME:my-vcluster-etcd]]-1.vcluster-etcd-headless.vcluster-vcluster:2380,[[VAR:ETCD STATEFULSET NAME:my-vcluster-etcd]]-2=https://[[VAR:ETCD STATEFULSET NAME:my-vcluster-etcd]]-2.vcluster-etcd-headless.vcluster-vcluster:2380`}
+  language="bash"
+/>
+
+12. **Add the new etcd peer as learner**
+
+<InterpolatedCodeBlock
+  code={`kubectl -n [[VAR:VCLUSTER NAMESPACE:my-vcluster]] exec [[VAR:ETCD STATEFULSET NAME:my-vcluster-etcd]]-0 -- etcdctl --endpoints=https://127.0.0.1:2379 --cacert=/run/config/pki/etcd-ca.crt --cert=/run/config/pki/etcd-peer.crt --key=/run/config/pki/etcd-peer.key member add vcluster-etcd-1 --peer-urls=https://vcluster-etcd-1.vcluster-etcd-headless.vcluster-vcluster:2380 --learner=true`}
+  language="bash"
+/>
+
+13. **Scale up the etcd StatefulSet to 3 replicas**
+
+<InterpolatedCodeBlock
+  code={`kubectl -n [[VAR:VCLUSTER NAMESPACE:my-vcluster]] scale deployment [[VAR:VCLUSTER DEPLOY:my-vcluster]] --replicas=3`}
+  language="bash"
+/>
+
+14. **Get the ID of the new learner member**
+
+<InterpolatedCodeBlock
+  code={`kubectl -n [[VAR:VCLUSTER NAMESPACE:my-vcluster]] exec [[VAR:ETCD STATEFULSET NAME:my-vcluster-etcd]]-0 -- etcdctl --endpoints=https://127.0.0.1:2379 --cacert=/run/config/pki/etcd-ca.crt --cert=/run/config/pki/etcd-peer.crt --key=/run/config/pki/etcd-peer.key member list --write-out=table`}
+  language="bash"
+/>
+
+15. **Promote the learner member as peer**
+
+<InterpolatedCodeBlock
+  code={`kubectl -n [[VAR:VCLUSTER NAMESPACE:my-vcluster]] exec [[VAR:ETCD STATEFULSET NAME:my-vcluster-etcd]]-0 -- etcdctl --endpoints=https://127.0.0.1:2379 --cacert=/run/config/pki/etcd-ca.crt --cert=/run/config/pki/etcd-peer.crt --key=/run/config/pki/etcd-peer.key member promote [[VAR:ETCD MEMBER ID:<memberID>]]`}
+  language="bash"
+/>
