@@ -5,43 +5,40 @@ sidebar_position: 5
 ---
 
 import InterpolatedCodeBlock from "@site/src/components/InterpolatedCodeBlock";
+import Flow, { Step } from "@site/src/components/Flow";
 
 <!--vale off-->
 
-vCluster client and server leaf certificates are valid for 1 year after initial
-creation of a virtual cluster. Per default, vCluster uses a self-signed CA to
-sign those certificates. This CA is valid fo 10 years.
+vCluster client and server leaf certificates remain valid for 1 year from the initial virtual cluster creation.
+By default, vCluster uses a self-signed Certificate Authority (CA) to sign these certificates. The CA remains valid for 10 years.
 
-vCluster offers commands that can be used to check and rotate those client,
-server and CA certificates.
+vCluster provides commands that allow you to check and rotate client, server, and CA certificates.
 
 :::info
-Certificate rotation requires vCluster version v0.27.0 or higher and the
-virtual cluster running the `k8s` distro.
+Certificate rotation requires vCluster version v0.27.0 or higher. 
+The virtual cluster must run the k8s distribution.
 :::
 
-## Checking certificate information
+## Check certificate information
 
-The `vcluster certs check` command provides following information for each
-certificate of the given virtual cluster:
+The `vcluster certs check` command provides the following information for each certificate of the given virtual cluster:
 
-|   Field     |   Description                                                               |
-|-------------|-----------------------------------------------------------------------------|
-| Filename    | The name of the certificate file.                                           |
-| Subject     | The common name of the subject of the certificate.                          |
-| Issuer      | The common name of the issuer of the certificate.                           |
-| Expires On  | The date the certificate will expire.                                       |
-| Status      | The exipry status of the certificate (either OK, EXPIRED or NOT YET VALID). |
+| Field       | Description                                                                       |
+|-------------|-----------------------------------------------------------------------------------|
+| Filename    | The name of the certificate file.                                                 |
+| Subject     | The common name of the subject of the certificate.                                |
+| Issuer      | The common name of the issuer of the certificate.                                 |
+| Expires On  | The date the certificate expires.                                                 |
+| Status      | The expiry status of the certificate (either `OK`, `EXPIRED` or `NOT YET VALID`). |
 
-The following command shows this information as a table (can be changed with
-`--output`):
+The following command shows this information as a table (you can change the format with `--output`):
 
 <InterpolatedCodeBlock
   code={`vcluster -n [[VAR:VCLUSTER NAMESPACE:my-vcluster]] certs check [[VAR:VCLUSTER NAME:my-vcluster]]`}
   language="bash"
 />
 
-Example output:
+**Example output**:
 
 ```bash
             FILENAME           |            SUBJECT            |     ISSUER     |       EXPIRES ON       | STATUS
@@ -61,81 +58,84 @@ Example output:
 
 ```
 
-## Rotating client and server leaf certificates
 
-The command below does the following
-- Creates a backup of the old PKI directory.
-- Rotates the client and server leaf certificates.
-- Restarts the given virtual cluster.
+## Rotate client and server leaf certificates
 
-The restart is necessary in order for the control-plane components to use the
-newly created certificates. Currently running workloads should not be affected
-by this.
+The certificate rotation command performs the following operations:
+
+- **Creates PKI backup**: Backs up the existing Public Key Infrastructure (PKI) directory to preserve the current certificate state.
+- **Generates new certificates**: Creates new client and server leaf certificates signed by the existing Certificate Authority.
+- **Restarts virtual cluster**: Restarts the virtual cluster to load the new certificates.
+
+Control-plane components (API server, etcd, kubelet) require the restart because they cache certificates in memory during startup. Without a restart, these components continue using the expired or soon-to-expire certificates, which causes authentication failures.
+
+The restart does not affect running application workloads because the underlying cluster nodes and container runtime remain operational during the virtual cluster restart process.
 
 <InterpolatedCodeBlock
   code={`vcluster -n [[VAR:VCLUSTER NAMESPACE:my-vcluster]] certs rotate [[VAR:VCLUSTER NAME:my-vcluster]]`}
   language="bash"
 />
 
-The client and server leaf certificate rotation is less intrusive compared to
-the [CA rotation](#rotating-ca-certificates) explained below. This means that
-connecting to the virtual cluster with e.g. previously issued kubeconfigs
-should continue to work.
+Client and server leaf certificate rotation is less intrusive compared to [CA rotation](#rotating-ca-certificates). 
+This means that connecting to the virtual cluster with previously issued kubeconfigs continues to work.
 
-## Rotating CA certificates
+## Rotate CA certificates
 
 :::warning
-A CA rotation completely replaces the trust anchor of all certificates. So this
-command must be used with caution. Though, if anything goes wrong the previous
-PKI can be restored from the backup. The steps for this are explained in the
-[section below](#restoring-the-previous-ca-from-a-backup).
+CA rotation replaces the Certificate Authority that validates all certificates in the cluster. This breaks existing client connections and requires regenerating all kubeconfigs. Use this command carefully, as it affects all cluster access.
+
+If the rotation fails, you can restore the previous PKI from the automatically created backup. For more information, see [restoring the previous CA from a backup](#restoring-the-previous-ca-from-a-backup) for recovery steps.
 :::
 
-The command below does the following:
-- Creates a backup of the old PKI directory.
-- Rotates all PKI related certificates including the CA certificate itself.
-- Restarts the virtual cluster.
+The CA rotation command performs these operations:
+
+- **Creates PKI backup**: Backs up the existing certificate directory to enable recovery if needed.
+- **Generates new Certificate Authority**: Creates a new CA certificate and uses it to sign fresh certificates for all cluster components.  
+- **Restarts virtual cluster**: Restarts the cluster to load the new certificates.
 
 <InterpolatedCodeBlock
   code={`vcluster -n [[VAR:VCLUSTER NAMESPACE:my-vcluster]] certs rotate-ca [[VAR:VCLUSTER NAME:my-vcluster]]`}
   language="bash"
 />
 
-As this replaces the trust anchor completely everything that is configured to
-trust the old CA will effectively be invalidated. E.g. previously issued
-kubeconfigs.
+As this replaces the trust anchor completely, everything configured to trust the old CA becomes invalidated (for instance previously issued kubeconfigs).
 
-## Restoring the previous CA from a backup
+## Restore the previous CA from a backup
 
 :::warning
-All steps shown below should be done with caution. Please double-check the
-commands before executing them.
+Use caution when performing the following operations. Verify each command before execution.
 :::
 
-Before the rotation there will be a backup created in the data directory of the
-virtual cluster using following pattern:
+:::note Backup creation
+The rotation creates a backup in the virtual cluster's data directory using the following pattern:
 
 ```bash
 /data/pki.bak/<unixtimestamp>
 ```
+:::
 
-### Steps
+<Flow>
+<Step>
 
-1. **In order to restore from the backup you have to exec into the virtual
-cluster syncer container**
+To restore from the backup, access the virtual cluster syncer container:
 
 <InterpolatedCodeBlock
   code={`kubectl -n [[VAR:VCLUSTER NAMESPACE:my-vcluster]] exec -ti svc/[[VAR:VCLUSTER NAME:my-vcluster]] -c syncer -- sh`}
   language="bash"
 />
 
-2. **List the backups and choose the latest**
+<Step>
+<Step>
+
+List the backups and choose the latest:
 
 ```bash
 ls -lat /data/pki.bak/
 ```
+</Step>
 
-3. **Delete the PKI directory and copy the backup to that location**
+<Step>
+Delete the PKI directory and copy the backup to that location:
 
 <InterpolatedCodeBlock
   code={`rm -rf /data/pki
@@ -143,10 +143,15 @@ cp -R /data/pki.bak/[[VAR:BACKUP UNIX TIMESTAMP:1752736900]] /data/pki`}
   language="bash"
 />
 
-4. **Logout and perform a regular leaf [certificate rotation](#rotating-client-and-server-leaf-certificates)**
+</Step>
+<Step>
+
+Log out and perform a regular leaf [certificate rotation](#rotating-client-and-server-leaf-certificates):
 
 <InterpolatedCodeBlock
   code={`vcluster -n [[VAR:VCLUSTER NAMESPACE:my-vcluster]] certs rotate [[VAR:VCLUSTER NAME:my-vcluster]]`}
   language="bash"
 />
 
+</Step>
+</Flow>
