@@ -573,7 +573,8 @@ func renderField(
 		_, ok = definitions[refSplit[len(refSplit)-1]]
 		if ok {
 			anchorName := anchorPrefix + fieldName
-			fieldContent = fmt.Sprintf(TemplateConfigField, true, "", headlinePrefix, fieldName, required, fieldType, "", "", false, anchorName, description, fieldContent)
+			proLabel := ""
+			fieldContent = fmt.Sprintf(TemplateConfigField, true, "", headlinePrefix, fieldName, required, fieldType, "", "", proLabel, anchorName, description, fieldContent)
 		}
 	} else {
 		if defaults != nil {
@@ -589,7 +590,8 @@ func renderField(
 
 		enumValues := GetEumValues(fieldSchema, required, &fieldDefault)
 		anchorName := anchorPrefix + fieldName
-		fieldContent = fmt.Sprintf(TemplateConfigField, expandable, " open", headlinePrefix, fieldName, required, fieldType, fieldDefault, enumValues, false, anchorName, description, fieldContent)
+		proLabel := ""
+		fieldContent = fmt.Sprintf(TemplateConfigField, expandable, " open", headlinePrefix, fieldName, required, fieldType, fieldDefault, enumValues, proLabel, anchorName, description, fieldContent)
 	}
 
 	return fieldContent
