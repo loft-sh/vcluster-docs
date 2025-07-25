@@ -7,11 +7,9 @@ import (
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 
 // +subresource-request
-type DevPodWorkspaceInstanceState struct {
+type TeamObjectPermissions struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	// State holds the workspaces state as given by 'devpod export'
-	// +optional
-	State string `json:"state,omitempty"`
+	ObjectPermissions []ObjectPermission `json:"objectPermissions,omitempty"`
 }

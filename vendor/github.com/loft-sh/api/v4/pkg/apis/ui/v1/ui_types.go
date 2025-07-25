@@ -54,6 +54,10 @@ type UISettingsConfig struct {
 	// the Loft UI!
 	// +optional
 	LogoURL string `json:"logoURL,omitempty"`
+	// SmallLogoURL is url pointing to the small logo to use in the Loft UI. This path must be accessible for clients accessing
+	// the Loft UI!
+	// +optional
+	SmallLogoURL string `json:"smallLogoURL,omitempty"`
 	// LogoBackgroundColor is the color value (ex: "#12345") to use as the background color for the logo
 	// +optional
 	LogoBackgroundColor string `json:"logoBackgroundColor,omitempty"`
