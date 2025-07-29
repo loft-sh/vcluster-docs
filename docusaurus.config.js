@@ -301,6 +301,22 @@ const config = {
           target: "_self",
         },
         items: [
+          // Product tabs
+          {
+            type: "docSidebar",
+            sidebarId: "siteSidebar",
+            position: "left",
+            label: "vCluster",
+            docsPluginId: "vcluster",
+          },
+          {
+            type: "docSidebar",
+            sidebarId: "siteSidebar",
+            position: "left",
+            label: "vCluster Platform",
+            docsPluginId: "platform",
+          },
+          // Right-side items
           {
             href: "https://vcluster.com/",
             label: "Website",
