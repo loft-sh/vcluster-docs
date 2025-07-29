@@ -74,6 +74,12 @@ func addKnownTypes(scheme *runtime.Scheme) error {
 		&LicenseTokenList{},
 		&LoftUpgrade{},
 		&LoftUpgradeList{},
+		&NodeClaim{},
+		&NodeClaimList{},
+		&NodeProvider{},
+		&NodeProviderList{},
+		&NodeType{},
+		&NodeTypeList{},
 		&OIDCClient{},
 		&OIDCClientList{},
 		&OwnedAccessKey{},
@@ -132,6 +138,7 @@ func addKnownTypes(scheme *runtime.Scheme) error {
 		&VirtualClusterExternalDatabase{},
 		&VirtualClusterInstanceKubeConfig{},
 		&VirtualClusterInstanceLog{},
+		&VirtualClusterNodeAccessKey{},
 		&VirtualClusterSchema{},
 		&VirtualClusterSchemaList{},
 		&VirtualClusterTemplate{},
@@ -276,6 +283,24 @@ var (
 		),
 		management.ManagementLicenseTokenStorage,
 		management.ManagementLoftUpgradeStorage,
+		management.ManagementNodeClaimStorage,
+		builders.NewApiResourceWithStorage(
+			management.InternalNodeClaimStatus,
+			func() runtime.Object { return &NodeClaim{} },     // Register versioned resource
+			func() runtime.Object { return &NodeClaimList{} }, // Register versioned resource list
+			management.NewNodeClaimStatusREST),
+		management.ManagementNodeProviderStorage,
+		builders.NewApiResourceWithStorage(
+			management.InternalNodeProviderStatus,
+			func() runtime.Object { return &NodeProvider{} },     // Register versioned resource
+			func() runtime.Object { return &NodeProviderList{} }, // Register versioned resource list
+			management.NewNodeProviderStatusREST),
+		management.ManagementNodeTypeStorage,
+		builders.NewApiResourceWithStorage(
+			management.InternalNodeTypeStatus,
+			func() runtime.Object { return &NodeType{} },     // Register versioned resource
+			func() runtime.Object { return &NodeTypeList{} }, // Register versioned resource list
+			management.NewNodeTypeStatusREST),
 		management.ManagementOIDCClientStorage,
 		management.ManagementOwnedAccessKeyStorage,
 		management.ManagementProjectStorage,
@@ -430,6 +455,12 @@ var (
 			func() runtime.Object { return &VirtualClusterInstanceLog{} }, // Register versioned resource
 			nil,
 			management.NewVirtualClusterInstanceLogREST,
+		),
+		builders.NewApiResourceWithStorage(
+			management.InternalVirtualClusterNodeAccessKeyREST,
+			func() runtime.Object { return &VirtualClusterNodeAccessKey{} }, // Register versioned resource
+			nil,
+			management.NewVirtualClusterNodeAccessKeyREST,
 		),
 		management.ManagementVirtualClusterSchemaStorage,
 		management.ManagementVirtualClusterTemplateStorage,
@@ -778,6 +809,30 @@ type LoftUpgradeList struct {
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 
+type NodeClaimList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata,omitempty"`
+	Items           []NodeClaim `json:"items"`
+}
+
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+
+type NodeProviderList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata,omitempty"`
+	Items           []NodeProvider `json:"items"`
+}
+
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+
+type NodeTypeList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata,omitempty"`
+	Items           []NodeType `json:"items"`
+}
+
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+
 type OIDCClientList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
@@ -1094,6 +1149,14 @@ type VirtualClusterInstanceLogList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []VirtualClusterInstanceLog `json:"items"`
+}
+
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+
+type VirtualClusterNodeAccessKeyList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata,omitempty"`
+	Items           []VirtualClusterNodeAccessKey `json:"items"`
 }
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
