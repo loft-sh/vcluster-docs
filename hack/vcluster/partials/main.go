@@ -88,6 +88,7 @@ var paths = []string{
 	"controlPlane/hostPathMapper",
 	"controlPlane/distro/k8s",
 	"controlPlane/distro/k3s",
+	"controlPlane/distro/k0s",
 	"controlPlane/distro",
 	"controlPlane/coredns",
 	"controlPlane/backingStore/etcd/embedded",
@@ -114,7 +115,6 @@ func main() {
 		panic(fmt.Errorf("failed to read default values from %q: %w", defaultValues, err))
 	}
 	outputDir := os.Args[2]
-	_ = os.RemoveAll(outputDir)
 	defaults := map[string]interface{}{}
 	err = yaml.Unmarshal(values, &defaults)
 	if err != nil {
@@ -130,6 +130,10 @@ func main() {
 		panic(fmt.Errorf("failed to parse schema JSON: %w", err))
 	}
 	for _, path := range paths {
-		util.GenerateFromPath(schema, outputDir, path, defaults)
+		err := util.GenerateFromPathWithError(schema, outputDir, path, defaults)
+		if err != nil {
+			fmt.Printf("Warning: Skipping path %q: %v\n", path, err)
+			continue
+		}
 	}
 }

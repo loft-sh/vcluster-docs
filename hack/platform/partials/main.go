@@ -977,7 +977,11 @@ spec:
 	// fmt.Println(paths)
 	for _, p := range paths {
 		p := strings.TrimPrefix(p, "/")
-		util.GenerateFromPath(schema, util.BasePath+"/config", p, nil)
+		err := util.GenerateFromPathWithError(schema, util.BasePath+"/config", p, nil)
+		if err != nil {
+			fmt.Printf("Warning: Skipping path %q: %v\n", p, err)
+			continue
+		}
 	}
 }
 

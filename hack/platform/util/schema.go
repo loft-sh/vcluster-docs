@@ -316,6 +316,13 @@ func GenerateObjectOverview(information *ObjectInformation) {
 }
 
 func GenerateFromPath(schema *jsonschema.Schema, basePath string, schemaPath string, defaults map[string]interface{}) {
+	err := GenerateFromPathWithError(schema, basePath, schemaPath, defaults)
+	if err != nil {
+		panic(err)
+	}
+}
+
+func GenerateFromPathWithError(schema *jsonschema.Schema, basePath string, schemaPath string, defaults map[string]interface{}) error {
 	splittedSchemaPath := strings.Split(schemaPath, "/")
 
 	fieldSchema := schema
@@ -325,7 +332,7 @@ func GenerateFromPath(schema *jsonschema.Schema, basePath string, schemaPath str
 		lastProperty = property
 		fieldSchema, ok = fieldSchema.Properties.Get(property)
 		if !ok {
-			panic("Couldn't find schema path '" + schemaPath + "' at '" + property + "'")
+			return fmt.Errorf("couldn't find schema path '%s' at '%s'", schemaPath, property)
 		}
 
 		if i+1 == len(splittedSchemaPath) {
@@ -354,7 +361,7 @@ func GenerateFromPath(schema *jsonschema.Schema, basePath string, schemaPath str
 			refSplit := strings.Split(ref, "/")
 			fieldSchema, ok = schema.Definitions[refSplit[len(refSplit)-1]]
 			if !ok {
-				panic("Couldn't find schema definition " + refSplit[len(refSplit)-1])
+				return fmt.Errorf("couldn't find schema definition %s", refSplit[len(refSplit)-1])
 			}
 		}
 	}
@@ -374,8 +381,9 @@ func GenerateFromPath(schema *jsonschema.Schema, basePath string, schemaPath str
 	_ = os.MkdirAll(path.Dir(filePath), 0o777)
 	err := os.WriteFile(filePath, []byte(content), os.ModePerm)
 	if err != nil {
-		panic(err)
+		return fmt.Errorf("failed to write file: %w", err)
 	}
+	return nil
 }
 
 func GenerateResource(schema *jsonschema.Schema, basePath string, subResource bool) error {
