@@ -296,7 +296,7 @@ const config = {
       navbar: {
         logo: {
           alt: "vCluster",
-          src: "/media/rebranding/vCluster_horizontal-orange.svg",
+          src: "/media/rebranding/vCluster_favicon_docs_orange.svg",
           href: "https://vcluster.com/docs",
           target: "_self",
         },
