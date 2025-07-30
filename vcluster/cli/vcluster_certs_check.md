@@ -1,34 +1,33 @@
 ---
-title: "vcluster platform list projects --help"
-sidebar_label: vcluster platform list projects
+title: "vcluster certs check --help"
+sidebar_label: vcluster certs check
 ---
 
 
-Lists the loft projects you have access to
+Checks the current certificates
 
 ## Synopsis
 
 ```
-vcluster platform list projects [flags]
+vcluster certs check VCLUSTER_NAME [flags]
 ```
 
 ```
-########################################################
-################## loft list projects ##################
-########################################################
+##############################################################
+################### vcluster certs check #####################
+##############################################################
+Checks the current certificates.
 
-List the vcluster platform projects you have access to
-
-Example:
-vcluster platform list projects
-########################################################
+Examples:
+vcluster -n test certs check test
+##############################################################
 ```
 
 
 ## Flags
 
 ```
-  -h, --help            help for projects
+  -h, --help            help for check
       --output string   Choose the format of the output. [table|json] (default "table")
 ```
 

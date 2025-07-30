@@ -1,27 +1,31 @@
 ---
-title: "vcluster convert config --help"
-sidebar_label: vcluster convert config
+title: "vcluster certs rotate-ca --help"
+sidebar_label: vcluster certs rotate-ca
 ---
 
 
-Converts virtual cluster config values to the v0.20 format
+Rotates the CA certificate
 
 ## Synopsis
 
 ```
-vcluster convert config [flags]
+vcluster certs rotate-ca VCLUSTER_NAME [flags]
 ```
 
 ```
 ##############################################################
-################## vcluster convert config ###################
+################## vcluster certs rotate-ca ##################
 ##############################################################
-Converts the given virtual cluster config to the v0.20 format.
-Reads from stdin if no file is given via "-f".
+Rotates the CA certificates of the given virtual cluster using
+the current CA certificates.
+The CA files (ca.{crt,key}) can be placed in the PKI directory
+(either /data/pki or /var/lib/vcluster/pki) to issue new leaf
+certificates to be signed by that CA.
+If the ca.crt file is a bundle containing multiple certificates
+the new CA cert must be the first one in the bundle.
 
 Examples:
-vcluster convert config --distro k8s -f /my/k8s/values.yaml
-vcluster convert config --distro k3s < /my/k3s/values.yaml
+vcluster certs rotate-ca test
 ##############################################################
 ```
 
@@ -29,10 +33,7 @@ vcluster convert config --distro k3s < /my/k3s/values.yaml
 ## Flags
 
 ```
-      --distro string   Kubernetes distro of the config. Allowed distros: k8s, k3s
-  -f, --file string     Path to the input file
-  -h, --help            help for config
-  -o, --output string   Prints the output in the specified format. Allowed values: yaml, json (default "yaml")
+  -h, --help   help for rotate-ca
 ```
 
 

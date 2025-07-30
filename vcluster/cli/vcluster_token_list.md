@@ -1,34 +1,30 @@
 ---
-title: "vcluster platform list projects --help"
-sidebar_label: vcluster platform list projects
+title: "vcluster token list --help"
+sidebar_label: vcluster token list
 ---
 
 
-Lists the loft projects you have access to
+List all node bootstrap tokens for a vCluster with private nodes enabled.
 
 ## Synopsis
 
 ```
-vcluster platform list projects [flags]
+vcluster token list [flags]
 ```
 
 ```
 ########################################################
-################## loft list projects ##################
+################# vcluster token list #################
 ########################################################
-
-List the vcluster platform projects you have access to
-
-Example:
-vcluster platform list projects
-########################################################
+List all node bootstrap tokens for a vCluster with private nodes enabled.
+#######################################################
 ```
 
 
 ## Flags
 
 ```
-  -h, --help            help for projects
+  -h, --help            help for list
       --output string   Choose the format of the output. [table|json] (default "table")
 ```
 

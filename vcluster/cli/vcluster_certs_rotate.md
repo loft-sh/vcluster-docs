@@ -1,35 +1,34 @@
 ---
-title: "vcluster platform list projects --help"
-sidebar_label: vcluster platform list projects
+title: "vcluster certs rotate --help"
+sidebar_label: vcluster certs rotate
 ---
 
 
-Lists the loft projects you have access to
+Rotates control-plane client and server certs
 
 ## Synopsis
 
 ```
-vcluster platform list projects [flags]
+vcluster certs rotate VCLUSTER_NAME [flags]
 ```
 
 ```
-########################################################
-################## loft list projects ##################
-########################################################
+##############################################################
+################### vcluster certs rotate ####################
+##############################################################
+Rotates the control-plane client and server leaf certificates
+of the given virtual cluster.
 
-List the vcluster platform projects you have access to
-
-Example:
-vcluster platform list projects
-########################################################
+Examples:
+vcluster -n test certs rotate test
+##############################################################
 ```
 
 
 ## Flags
 
 ```
-  -h, --help            help for projects
-      --output string   Choose the format of the output. [table|json] (default "table")
+  -h, --help   help for rotate
 ```
 
 
