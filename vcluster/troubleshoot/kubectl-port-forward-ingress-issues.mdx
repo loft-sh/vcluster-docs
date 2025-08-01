@@ -1,0 +1,128 @@
+---
+title: Resolve kubectl port-forward issues with Ingress
+sidebar_label: kubectl port-forward and Ingress
+description: How to troubleshoot kubectl port-forward connection upgrade errors when accessing vCluster through Ingress or LoadBalancer.
+---
+
+import Flow, { Step } from '@site/src/components/Flow';
+
+# Resolve kubectl port-forward issues with Ingress
+
+When the vCluster API server is exposed through an Ingress or LoadBalancer, `kubectl port-forward` commands may fail with connection upgrade errors, even though the network connectivity and firewall configuration are correct.
+
+This issue is characterized by the following symptoms:
+
+- `kubectl port-forward` fails with "error upgrading connection" messages when using the vCluster kubeconfig
+- Other kubectl commands work normally (like `kubectl get pods`)
+- Direct connection to the vCluster using cluster IP works
+- Network connectivity and firewall rules are verified to be correct
+- The error occurs specifically when accessing vCluster through the Ingress hostname or LoadBalancer endpoint
+
+## Error message
+
+Common error messages include:
+
+```bash title="kubectl port-forward connection upgrade error"
+error: error upgrading connection: unable to upgrade connection: Upgrade request required
+```
+
+```bash title="Alternative error message"
+error: error upgrading connection: websocket: bad handshake
+```
+
+## Cause
+
+This issue occurs because `kubectl port-forward` requires HTTP protocol upgrade capabilities (SPDY or WebSocket) to establish its tunneled connection. Some ingress controllers and load balancers don't properly support these upgrade mechanisms or strip the necessary headers.
+
+The root causes include:
+
+- **HTTP/2 and WebSocket protocol limitations**: Some load balancers don't properly handle the HTTP upgrade requests that `kubectl port-forward` requires
+- **Missing upgrade header support**: Ingress controllers may strip or fail to forward the `Upgrade: SPDY` header
+- **SSL/TLS termination issues**: When SSL is terminated at the ingress level, the backend connection may not support the required upgrade protocols
+- **Load balancer type restrictions**: Some load balancers such as AWS Classic Load Balancer have limited support for HTTP protocol upgrade connections
+
+## Solution
+
+The most reliable solution is to connect to vCluster using the vCluster CLI:
+
+```bash
+vcluster connect <vcluster-name> -n <namespace>
+
+# Now port-forward works normally within the vCluster context
+kubectl port-forward service/<service-name> <local-port>:<service-port>
+```
+
+The vCluster CLI uses different connection methods (direct exposure, background proxy, or port-forwarding) and updates the kubeconfig to point to a local endpoint, bypassing the ingress layer for all kubectl operations within the vCluster.
+
+## Alternative solutions
+
+If the vCluster CLI is not available or you need to maintain ingress-level access:
+
+### Fix ingress configuration
+
+<Flow id="resolve-port-forward-ingress">
+<Step>
+**Enable WebSocket support in your ingress controller**.
+
+Configure your ingress controller to support WebSocket and HTTP upgrade headers. Most modern ingress controllers support this, but it may need to be explicitly enabled.
+
+Consult your ingress controller's documentation for WebSocket/HTTP upgrade configuration options.
+</Step>
+
+<Step>
+**Configure load balancer for protocol upgrade support** (if applicable).
+
+If using cloud load balancers, ensure they support HTTP protocol upgrades (WebSocket/SPDY). Some older or basic load balancers may not properly handle these upgrade mechanisms.
+
+Check your cloud provider's documentation for WebSocket/HTTP upgrade support in their load balancing services.
+</Step>
+
+<Step>
+**Check ingress controller logs**.
+
+Review your ingress controller logs for upgrade-related errors:
+
+```bash
+# Check logs for errors related to "upgrade", "websocket", or "SPDY"
+kubectl logs -n <ingress-namespace> <ingress-controller-pod>
+```
+
+Look for error messages indicating WebSocket or HTTP upgrade failures.
+</Step>
+</Flow>
+
+## Verification
+
+After implementing the solution:
+
+1. **Verify vCluster connection**:
+   ```bash
+   # Connect to vCluster
+   vcluster connect <vcluster-name>
+
+   # Confirm you're connected to vCluster context
+   kubectl config current-context
+   ```
+
+2. **Test port-forward capability**:
+   ```bash
+   # Try port-forwarding to a pod or service in vCluster
+   kubectl port-forward service/<service-name> <local-port>:<service-port>
+
+   # Or test with a pod
+   kubectl port-forward pod/<pod-name> <local-port>:<container-port>
+   ```
+
+3. **Confirm no connection upgrade errors**:
+   - The port-forward command should establish successfully without "error upgrading connection" messages
+   - You should be able to access the forwarded service at `localhost:<local-port>`
+   - The connection should remain stable
+
+## Best practices
+
+- **Use vCluster CLI for routine access** instead of relying on port-forward through ingress
+- **Use load balancers that support HTTP protocol upgrades** when exposing vCluster externally
+- **Enable WebSocket support** in your ingress controller configuration when exposing vCluster
+- **Monitor ingress controller logs** for upgrade-related issues
+
+Ensure your ingress controller and load balancer properly support HTTP protocol upgrades, or use the vCluster CLI for the most reliable connection.
