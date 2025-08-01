@@ -1,0 +1,164 @@
+Using private nodes is a tenancy model for vCluster where, instead of sharing the host cluster’s worker nodes, you assign individual worker nodes to a vCluster instance.
+ These private nodes act as the vCluster’s worker nodes and are treated as worker nodes for the vCluster. 
+
+Because these nodes are real Kubernetes nodes, vCluster does not sync any resources to the host cluster as no host cluster worker nodes are used. All workloads run directly on the attached nodes as if they were native to the virtual cluster.
+
+This approach can be understood as follows: the control plane creates a virtual Kubernetes context, while the workloads can run on separate physical nodes that exist entirely within that virtual context.
+
+One key benefit of using private nodes is that vCluster can automatically manage the lifecycle of the worker nodes.
+
+To allow nodes to join the virtual cluster, the cluster must be exposed and accessible. One option is to expose a `LoadBalancer` service and use its endpoint for the worker nodes. vCluster does not need direct access to the nodes; instead, it uses [Konnectivity](https://kubernetes.io/docs/tasks/extend-kubernetes/setup-konnectivity/) to tunnel requests—such as `kubectl logs`—from the control plane to the nodes.
+
+
+<br />
+
+<center>
+<img
+src="/docs/media/private-nodes/architecture.png"
+width='500'
+alt="Overview"
+/>
+</center>
+
+<!-- vale off -->
+
+
+## vcluster.yaml configuration
+
+To create a vCluster with private nodes, you'll need to enable the feature as well as set some other configuration options in preparation for worker nodes to join.
+
+```yaml title="Enable private nodes"
+# Enable private nodes
+privateNodes:
+  enabled: true
+
+# vCluster control plane options
+controlPlane:
+  distro:
+    k8s:
+      image:
+        tag: v1.31.2 # Kubernetes version you want to use
+  service:
+    spec:
+      type: LoadBalancer # If you want to expose vCluster using LoadBalancer (Recommended option)
+
+# Networking configuration
+networking:
+  # Specify the pod CIDR
+  podCIDR: 10.64.0.0/16
+  # Specify the service CIDR
+  serviceCIDR: 10.128.0.0/16
+```
+
+### Scheduling enabled by default
+
+When private nodes are enabled, scheduling is handled by the virtual cluster and the virtual scheduler is automatically enabled. You do not need to manually configure this in your `vcluster.yaml`.
+
+```yaml title="Virtual scheduler automatically enabled with private nodes"
+# Enabling private nodes enables the virtual scheduler
+# Disabling the virtual scheduler is not possible
+controlPlane:
+  advanced:
+    virtualScheduler:
+      enabled: true
+```
+### Other vCluster feature limitations
+
+When private nodes are enabled, certain vCluster features are automatically disabled or unavailable. If you include these options in your `vcluster.yaml`, they are ignored or might cause configuration errors.
+
+The following features are not available when using private nodes:
+
+- `sync.*` - No resource syncing between virtual and host clusters
+- `integrations.*` - Integrations depend on syncing functionality
+- `networking.replicateServices` - Services are not replicated to host
+- `controlPlane.distro.k3s` - Only standard Kubernetes (k8s) is supported
+- `controlPlane.coredns.embedded: true` - Embedded CoreDNS conflicts with custom CNI
+- `controlPlane.advanced.virtualScheduler.enabled: false` - Virtual scheduler cannot
+- `sleepMode.*` - No ability to sleep workloads or control plane.
+
+
+```yaml title="Unsupported vcluster.yaml options with private nodes"
+# These configurations are NOT supported with private nodes
+
+# Resource syncing between virtual and host clusters is disabled
+sync:
+  services:
+    enabled: false  # Services cannot be synced to host cluster
+  secrets:
+    enabled: false  # Secrets cannot be synced to host cluster
+                    # All other sync options (pods, configmaps, etc.) are also disabled
+
+# Platform integrations require syncing functionality
+integrations:
+  metricsServer:
+    enabled: false  # Metrics server integration not supported
+                    # All other integrations are disabled due to sync dependency
+
+# Service replication to host cluster is not available
+networking:
+  replicateServices:
+    enabled: false  # Services run entirely within virtual cluster
+
+# Distribution restrictions
+controlPlane:
+  distro:
+    k3s:
+      enabled: false  # k3s distribution not supported
+    k8s:
+      enabled: true   # Only standard Kubernetes works
+
+  # DNS configuration limitations
+  coredns:
+    embedded: false   # Embedded CoreDNS conflicts with custom CNI options
+  advanced:
+    # Virtual scheduler is required for workload placement
+    virtualScheduler:
+      enabled: true   # Always enabled (cannot be disabled)
+  # Host Path Mapper is not supported
+  hostPathMapper:
+    enabled: false
+
+# Sleep mode is not available
+sleepMode:
+  enabled: false
+
+# Isolated Control Plane mode is not supported
+experimental:
+  isolatedControlPlane:
+    enabled: false
+```
+
+## Configure addons
+
+vCluster supports addons that extend the functionality of your virtual cluster. You can configure these addons during deployment to adjust networking, observability, and other features for your environment and requirements.
+
+### CNI
+
+vCluster installs [Flannel](https://github.com/flannel-io/flannel) by default.  You can install your own CNI with the following.
+
+```yaml title="Disable default Flannel CNI"
+privateNodes:
+  cni:
+    flannel:
+      enabled: false
+```
+
+### CoreDNS
+
+vCluster installs [CoreDNS](https://coredns.io/) by default to allow cluster DNS resolving of services and pods.
+
+### Konnectivity
+
+vCluster uses [Konnectivity](https://kubernetes.io/docs/tasks/extend-kubernetes/setup-konnectivity/) to establish a connection between the control plane and worker nodes for commands such as `kubectl logs`, `kubectl exec`, `kubectl port-forward`. The Konnectivity server runs as part of the vCluster control plane, while an agent is deployed inside the vCluster. If it is not needed or wanted, you can disable Konnectivity in the vCluster config.
+
+### Kube proxy
+
+vCluster installs [Kube Proxy](https://kubernetes.io/docs/reference/command-line-tools-reference/kube-proxy/) by default to ensure that services are configured on the nodes. Some CNI implement their own kube-proxy functionality. Optionally, you can disable kube-proxy deployment in the vCluster config.
+
+### Local Path Provisioner
+
+vCluster installs the [Local Path Provisioner](https://github.com/rancher/local-path-provisioner) by default to allow stateful workloads within the vCluster.
+
+
+
+

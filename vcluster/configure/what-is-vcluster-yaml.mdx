@@ -11,9 +11,13 @@ import Flow, { Step } from '@site/src/components/Flow';
 
 <!-- vale off -->
 
-Every virtual cluster requires configuration settings that define how it operates within your host Kubernetes cluster. The `vcluster.yaml` file is the central configuration source for these settings. It controls everything from the control plane architecture to resource sync behavior between the virtual and host clusters.
+Every virtual cluster requires configuration settings that define how the vCluster operates. 
+The `vcluster.yaml` file is the central configuration source for these settings. It controls everything from the control plane architecture and
+ worker node pool and based on those choices, other features may be limtied. 
 
-When you deploy a virtual cluster, the vCluster CLI uses this configuration file and applies your specified settings. The file is optional - if you don't provide one, vCluster applies defaults that work for most use cases. However, most production deployments benefit from custom configuration to match specific requirements.
+When you deploy a virtual cluster, the vCluster CLI uses this configuration file and applies your specified settings. 
+The file is optional - if you don't provide one, vCluster applies defaults that work for most use cases using the shared nodes tenancy model, which assumes
+using the all the host cluster's workers. However, most production deployments benefit from custom configuration to match specific requirements.
 
 ## Configuration structure for vcluster.yaml 
 
@@ -24,26 +28,29 @@ The `vcluster.yaml` file organizes configuration into logical sections. Each sec
 The control plane section defines how vCluster runs its Kubernetes API server, controller manager, and data storage. Key configuration areas include:
 
 - **Backing store selection**: Choose between different storage backends for the vCluster control plane's [backing store](./vcluster-yaml/control-plane/components/backing-store/). Options include embedded databases, managed etcd or external databases.
-
 - **Deployment settings**: Configure how the control plane pods deploy, including resource limits, node selectors, and affinity rules.
-
 - **Networking options**: Define how external traffic reaches the virtual cluster's API server, including ingress configuration and service exposure methods.
 
-### Resource sync rules
+### Worker node pool settings
 
-Virtual clusters need to share certain resources with their host cluster to function properly. The sync configuration controls this sharing in both directions:
+You can configure which type of worker nodes to use for the virtual cluster. 
 
-- **From host to virtual**: Configure which host cluster resources appear inside the virtual cluster through [host-to-virtual synchronization](/vcluster/configure/vcluster-yaml/sync/from-host/). Common examples include nodes, storage classes, and priority classes.
-
-- **From virtual to host**: Define which virtual cluster resources sync to the host cluster through [virtual-to-host synchronization](/vcluster/configure/vcluster-yaml/sync/to-host/). This typically includes pods, services, and persistent volume claims that need to run on the host.
+- **Host Cluster's Worker Nodes**: Choose either all or specific nodes of the host cluster's worker nodes. 
+- **Individual Nodes**: Choose to use individual nodes that are not connected to any other Kubernetes cluster. 
 
 ### Access configuration
 
 You can configure access settings to control how users and applications connect to the virtual cluster:
 
 - **The kubeconfig file**: Configure how vCluster generates and stores [the kubeconfig file](/vcluster/configure/vcluster-yaml/export-kube-config) that clients use to connect. This file contains API server endpoints, authentication credentials, and cluster context. You specify the Kubernetes secret name for storage, the context name for identification, and the server URL for connection.
-
 - **Authentication methods**: vCluster supports certificate-based and service account token authentication for secure access to the virtual cluster. When exposing vCluster through an ingress or load balancer, you can use service account tokens if client certificate validation is not supported. Authentication methods can be customized to fit your access requirements.
+
+### Resource sync rules
+
+When using the host cluster's worker nodes, virtual clusters need to share certain resources with their host cluster to function properly. The sync configuration controls this sharing in both directions:
+
+- **From host to virtual**: Configure which host cluster resources appear inside the virtual cluster through [host-to-virtual synchronization](/vcluster/configure/vcluster-yaml/sync/from-host/). Common examples include nodes, storage classes, and priority classes.
+- **From virtual to host**: Define which virtual cluster resources sync to the host cluster through [virtual-to-host synchronization](/vcluster/configure/vcluster-yaml/sync/to-host/). This typically includes pods, services, and persistent volume claims that need to run on the host.
 
 ## Example vcluster.yaml configuration
 
@@ -63,7 +70,7 @@ controlPlane:
     enabled: true
     host: vcluster-k8s-api.example.com  # Your API server hostname
 
-# Resource synchronization settings
+# Resource synchronization settings when using host cluster's worker nodes
 sync:
   # Resources that sync from virtual cluster to host
   toHost:
@@ -87,13 +94,9 @@ exportKubeConfig:
 Each configuration section has a specific purpose in the virtual cluster setup:
 
 - **Control plane with embedded storage**: The configuration uses [embedded etcd](/vcluster/configure/vcluster-yaml/control-plane/components/backing-store/etcd/embedded) as the data store for the virtual cluster's control plane. This approach reduces operational complexity because etcd runs inside the vCluster pod rather than requiring a separate database.
-
 - **API server exposure**: An [Ingress](/vcluster/configure/vcluster-yaml/control-plane/deployment/ingress) resource exposes the virtual cluster's API server through a hostname. This allows external tools and users to access the virtual cluster without port-forwarding or `NodePort` services.
-
 - **ServiceAccount synchronization**: The configuration enables [`ServiceAccount`](/vcluster/configure/vcluster-yaml/sync/to-host/advanced/service-accounts) syncing from the virtual cluster to the host. This synchronization supports workloads that need specific permissions on the host cluster, such as operators or controllers that manage host resources.
-
 - **Real node synchronization**: Instead of using vCluster's default "pseudo" nodes, this configuration syncs real [node](/vcluster/configure/vcluster-yaml/sync/from-host/nodes) information from the host cluster. The `clearImageStatus` option removes image information from synced nodes to reduce data transfer and storage requirements.
-
 - **Kubeconfig access**: The configuration defines how vCluster exports the [kubeconfig](/vcluster/configure/vcluster-yaml/export-kube-config) for accessing the virtual cluster. The exported kubeconfig gets stored in a Kubernetes secret, making it available for CI/CD pipelines, ArgoCD apps, or Terraform configurations.
 
 
@@ -123,7 +126,7 @@ vCluster validates the configuration and creates the virtual cluster with your s
 </Step>
 </Flow>
 
-For detailed deployment instructions, see the [deployment documentation](../deploy/basics/).
+For detailed deployment instructions, see the [deployment documentation](../deploy/control-plane-container/basics.mdx).
 
 ### Update an existing virtual cluster
 
@@ -151,29 +154,7 @@ For configuration change examples and update strategies, see the [deploy changes
 
 ## Frequently asked questions
 
-<details>
-<summary><strong>How to migrate from vCluster 0.19.x?</strong></summary>
 
-vCluster v0.20 introduced a new unified configuration format in `vcluster.yaml`. It replaces the older setup, which relied on:
-
-- CLI flags passed during creation  
-- Helm values across multiple `values.yaml` files  
-- Resource annotations  
-- Distribution-specific formats  
-
-:::warning
-Pre-v0.20 `values.yaml` files are not compatible with v0.20. Convert to `vcluster.yaml` before using the new CLI or upgrading clusters.
-:::
-
-You must migrate to the new `vcluster.yaml` format before upgrading to vCluster v0.20 or later. Older configuration methods—like Helm `values.yaml` files and CLI flags—no longer work with the new version.
-
-Use the [migration guide](/vcluster/reference/migrations/0-20-migration) to walk through:
-
-- Mapping your old CLI flags and Helm values to the new format.
-- Adjusting any distribution-specific settings.
-- Validating the new configuration to ensure it’s correct.
-
-</details>
 
 <details>
 <summary><strong>Is a <code>vcluster.yaml</code> file required?</strong></summary>
@@ -211,5 +192,28 @@ The command performs the following actions:
 Some configuration changes, such as updates to sync settings, take effect immediately. Others, such as control plane modifications, may require pod restarts. The vCluster CLI handles these updates automatically and ensures minimal disruption to workloads.
 
 For more details on updating virtual clusters, see the [deployment changes documentation](../manage/deploy-changes/).
+
+</details>
+<details>
+<summary><strong>How to migrate from vCluster 0.19.x?</strong></summary>
+
+vCluster v0.20 introduced a new unified configuration format in `vcluster.yaml`. It replaces the older setup, which relied on:
+
+- CLI flags passed during creation  
+- Helm values across multiple `values.yaml` files  
+- Resource annotations  
+- Distribution-specific formats  
+
+:::warning
+Pre-v0.20 `values.yaml` files are not compatible with v0.20. Convert to `vcluster.yaml` before using the new CLI or upgrading clusters.
+:::
+
+You must migrate to the new `vcluster.yaml` format before upgrading to vCluster v0.20 or later. Older configuration methods—like Helm `values.yaml` files and CLI flags—no longer work with the new version.
+
+Use the [migration guide](/vcluster/reference/migrations/0-20-migration) to walk through:
+
+- Mapping your old CLI flags and Helm values to the new format.
+- Adjusting any distribution-specific settings.
+- Validating the new configuration to ensure it’s correct.
 
 </details>
