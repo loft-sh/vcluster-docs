@@ -14,7 +14,7 @@
 
 ## Contribute to the docs
 
-We encourage contributions from all users!
+Contributions from all users are encouraged.
 
 ### Quick start for contributing using DevPod
 
@@ -85,6 +85,14 @@ go run hack/vcluster/partials/main.go
 ```bash
 go run hack/platform/partials/main.go
 ```
+
+### Generate CLI documentation
+
+```bash
+go run hack/vcluster-cli/main.go
+```
+
+See the [CLI generator README](hack/vcluster-cli/README.md) for options.
 
 ### Wrap glossary terms
 

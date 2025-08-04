@@ -34,7 +34,7 @@ vcluster platform sleep vcluster test --namespace test
 
 ```
   -h, --help                                      help for vcluster
-      --prevent-wakeup vcluster resume vcluster   The amount of seconds this vcluster should sleep until it can be woken up again (use 0 for infinite sleeping). During this time the namespace can only be woken up by vcluster resume vcluster, manually deleting the annotation on the namespace or through the loft UI (default -1)
+      --prevent-wakeup vcluster resume vcluster   The amount of seconds this vcluster should sleep until it can be woken up again (use 0 for infinite sleeping). During this time the space can only be woken up by vcluster resume vcluster, manually deleting the annotation on the namespace or through the loft UI (default -1)
       --project string                            The vCluster platform project to use
 ```
 
