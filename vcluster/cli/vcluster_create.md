@@ -30,6 +30,7 @@ vcluster create test --namespace test
       --add                               Adds the virtual cluster automatically to the current vCluster platform when using helm driver (default true)
       --annotations strings               [PLATFORM] Comma separated annotations to apply to the virtualclusterinstance
       --background-proxy                  Try to use a background-proxy to access the vCluster. Only works if docker is installed and reachable (default true)
+      --background-proxy-image string     The image to use for the background proxy. Only used if --background-proxy is enabled. (default "ghcr.io/loft-sh/vcluster-pro:")
       --chart-name string                 The virtual cluster chart name to use (default "vcluster")
       --chart-repo string                 The virtual cluster chart repo to use (default "https://charts.loft.sh")
       --chart-version string              The virtual cluster chart version to use (e.g. v0.9.1)
@@ -51,15 +52,15 @@ vcluster create test --namespace test
       --recreate                          [PLATFORM] If enabled and there already exists a virtual cluster with this name, it will be deleted first
       --restore string                    Restore the virtual cluster from a backup. E.g. --restore oci://ghcr.io/my-user/my-repo:my-tag
       --set stringArray                   Set values for helm. E.g. --set 'persistence.enabled=true'
-      --set-param stringArray             [PLATFORM] If a template is used, this can be used to set a specific parameter. E.g. --set-param 'my-param=my-value'
-      --set-parameter stringArray         [PLATFORM] If a template is used, this can be used to set a specific parameter. E.g. --set-parameter 'my-param=my-value'
+      --set-parameters stringArray        [PLATFORM] If a template is used, this can be used to set a specific parameter. E.g. --set-parameter 'my-param=my-value'
+      --set-params stringArray            [PLATFORM] If a template is used, this can be used to set a specific parameter. E.g. --set-param 'my-param=my-value'
       --skip-wait                         [PLATFORM] If true, will not wait until the virtual cluster is running
-      --team string                       [PLATFORM] The team to create the namespace for
+      --team string                       [PLATFORM] The team to create the space for
       --template string                   [PLATFORM] The vCluster platform template to use
       --template-version string           [PLATFORM] The vCluster platform template version to use
       --upgrade                           If true will try to upgrade the vcluster instead of failing if it already exists
       --use                               [PLATFORM] If the platform should use the virtual cluster if its already there
-      --user string                       [PLATFORM] The user to create the namespace for
+      --user string                       [PLATFORM] The user to create the space for
   -f, --values stringArray                Path where to load extra helm values from
 ```
 

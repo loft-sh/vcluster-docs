@@ -29,6 +29,7 @@ vcluster platform list vclusters
 ```
   -h, --help             help for vclusters
       --output string    Choose the format of the output. [table|json] (default "table")
+      --owner            List virtual clusters owned by the currently logged-in user
   -p, --project string   The project to use
 ```
 

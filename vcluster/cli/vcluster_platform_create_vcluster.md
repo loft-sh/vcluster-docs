@@ -46,15 +46,15 @@ vcluster platform create vcluster test --namespace test
       --project string                    The vCluster platform project to use
       --recreate                          If enabled and there already exists a virtual cluster with this name, it will be deleted first
       --set stringArray                   Set values for helm. E.g. --set 'persistence.enabled=true'
-      --set-param stringArray             If a template is used, this can be used to set a specific parameter. E.g. --set-param 'my-param=my-value'
-      --set-parameter stringArray         If a template is used, this can be used to set a specific parameter. E.g. --set-parameter 'my-param=my-value'
+      --set-parameters stringArray        If a template is used, this can be used to set a specific parameter. E.g. --set-parameter 'my-param=my-value'
+      --set-params stringArray            If a template is used, this can be used to set a specific parameter. E.g. --set-param 'my-param=my-value'
       --skip-wait                         If true, will not wait until the virtual cluster is running
-      --team string                       The team to create the namespace for
+      --team string                       The team to create the space for
       --template string                   The vCluster platform template to use
       --template-version string           The vCluster platform template version to use
       --upgrade                           If true will try to upgrade the vcluster instead of failing if it already exists
       --use                               If the platform should use the virtual cluster if its already there
-      --user string                       The user to create the namespace for
+      --user string                       The user to create the space for
   -f, --values stringArray                Path where to load extra helm values from
 ```
 

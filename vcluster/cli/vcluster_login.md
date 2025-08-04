@@ -1,22 +1,22 @@
 ---
-title: "vcluster platform login --help"
-sidebar_label: vcluster platform login
+title: "vcluster login --help"
+sidebar_label: vcluster login
 ---
 
 
-Log in to a vCluster platform instance.
+Log in to a vCluster platform instance
 
 ## Synopsis
 
 ```
-vcluster platform login [VCLUSTER_PLATFORM_HOST] [flags]
+vcluster login [VCLUSTER_PLATFORM_HOST] [flags]
 ```
 
 ```
 ########################################################
-#################### vcluster platform login ####################
+#################### vcluster login ####################
 ########################################################
-Login into vCluster platform
+This command is deprecated. Use "vcluster platform login" instead.
 
 Example:
 vcluster platform login https://my-vcluster-platform.com

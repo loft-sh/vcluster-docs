@@ -28,6 +28,8 @@ vcluster platform add cluster my-cluster
 
 ```
       --context string              The kube context to use for installation
+      --create-namespace            If true the namespace will be created if it does not exist (default true)
+      --description string          The description to show in the UI for this cluster
       --display-name string         The display name to show in the UI for this cluster
       --helm-chart-path string      The agent chart to deploy
       --helm-chart-version string   The agent chart version to deploy

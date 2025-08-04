@@ -1,35 +1,30 @@
 ---
-title: "vcluster platform list projects --help"
-sidebar_label: vcluster platform list projects
+title: "vcluster token delete --help"
+sidebar_label: vcluster token delete
 ---
 
 
-Lists the loft projects you have access to
+Delete a node bootstrap token for a vCluster with private nodes enabled.
 
 ## Synopsis
 
 ```
-vcluster platform list projects [flags]
+vcluster token delete <token-id> [flags]
 ```
 
 ```
 ########################################################
-################## loft list projects ##################
+################# vcluster token delete #################
 ########################################################
-
-List the vcluster platform projects you have access to
-
-Example:
-vcluster platform list projects
-########################################################
+Delete a node bootstrap token for a vCluster with private nodes enabled.
+#######################################################
 ```
 
 
 ## Flags
 
 ```
-  -h, --help            help for projects
-      --output string   Choose the format of the output. [table|json] (default "table")
+  -h, --help   help for delete
 ```
 
 
