@@ -297,8 +297,8 @@ const config = {
         logo: {
           alt: "vCluster",
           src: "/media/rebranding/vCluster_favicon_docs_orange.svg",
-          href: "https://vcluster.com/docs",
-          target: "_self",
+          href: "https://vcluster.com/",
+          target: "_blank",
         },
         items: [
           // Product tabs
@@ -323,12 +323,6 @@ const config = {
             target: "_blank",
           },
           // Right-side items
-          {
-            href: "https://vcluster.com/",
-            label: "Website",
-            position: "right",
-            target: "_blank",
-          },
           {
             href: "https://loft.sh/blog",
             label: "Blog",
