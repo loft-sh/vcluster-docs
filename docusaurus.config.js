@@ -296,17 +296,33 @@ const config = {
       navbar: {
         logo: {
           alt: "vCluster",
-          src: "/media/rebranding/vCluster_horizontal-orange.svg",
-          href: "https://vcluster.com/docs",
-          target: "_self",
+          src: "/media/rebranding/vCluster_favicon_docs_orange.svg",
+          href: "https://vcluster.com/",
+          target: "_blank",
         },
         items: [
+          // Product tabs
           {
-            href: "https://vcluster.com/",
-            label: "Website",
-            position: "right",
+            type: "docSidebar",
+            sidebarId: "siteSidebar",
+            position: "left",
+            label: "vCluster",
+            docsPluginId: "vcluster",
+          },
+          {
+            type: "docSidebar",
+            sidebarId: "siteSidebar",
+            position: "left",
+            label: "vCluster Platform",
+            docsPluginId: "platform",
+          },
+          {
+            href: "https://www.vnode.com/docs",
+            label: "vNode",
+            position: "left",
             target: "_blank",
           },
+          // Right-side items
           {
             href: "https://loft.sh/blog",
             label: "Blog",
