@@ -1,35 +1,29 @@
 ---
-title: "vcluster platform list projects --help"
-sidebar_label: vcluster platform list projects
+title: "vcluster node delete --help"
+sidebar_label: vcluster node delete
 ---
 
 
-Lists the loft projects you have access to
+Delete a node from the vcluster
 
 ## Synopsis
 
 ```
-vcluster platform list projects [flags]
+vcluster node delete [flags]
 ```
 
 ```
-########################################################
-################## loft list projects ##################
-########################################################
-
-List the vcluster platform projects you have access to
-
-Example:
-vcluster platform list projects
-########################################################
+#######################################################
+################### vcluster delete ####################
+#######################################################
 ```
 
 
 ## Flags
 
 ```
-  -h, --help            help for projects
-      --output string   Choose the format of the output. [table|json] (default "table")
+      --drain   Drain the node before deleting it (default true)
+  -h, --help    help for delete
 ```
 
 
