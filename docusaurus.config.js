@@ -316,6 +316,12 @@ const config = {
             label: "vCluster Platform",
             docsPluginId: "platform",
           },
+          {
+            href: "https://www.vnode.com/docs",
+            label: "vNode",
+            position: "left",
+            target: "_blank",
+          },
           // Right-side items
           {
             href: "https://vcluster.com/",
