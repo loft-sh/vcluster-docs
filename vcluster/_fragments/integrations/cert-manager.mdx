@@ -136,16 +136,15 @@ Private PKI configurations provide enterprise-grade certificate management with 
 <Flow id="private-pki-setup">
 <Step>
 
-<Highlight color="green">Virtual Cluster</Highlight> Create a root CA certificate
+<Highlight>Host Cluster</Highlight> Create a root CA certificate
 
-Create a self-signed root CA:
+Create a self-signed root CA in the host cluster (ClusterIssuers are imported from host to virtual cluster):
 
 ```yaml title="root-ca.yaml"
 apiVersion: cert-manager.io/v1
-kind: Issuer
+kind: ClusterIssuer
 metadata:
   name: selfsigned-issuer
-  namespace: cert-manager
 spec:
   selfSigned: {}
 ---
@@ -172,14 +171,20 @@ spec:
     size: 256
   issuerRef:
     name: selfsigned-issuer
-    kind: Issuer
+    kind: ClusterIssuer
+```
+
+Apply in the host cluster:
+
+```bash title="Apply root CA in host cluster"
+kubectl --context=$HOST_CTX apply -f root-ca.yaml
 ```
 
 </Step>
 
 <Step>
 
-<Highlight color="green">Virtual Cluster</Highlight> Create a CA issuer
+<Highlight>Host Cluster</Highlight> Create a CA issuer
 
 ```yaml title="ca-issuer.yaml"
 apiVersion: cert-manager.io/v1
@@ -189,6 +194,12 @@ metadata:
 spec:
   ca:
     secretName: root-ca-secret
+```
+
+Apply in the host cluster:
+
+```bash title="Apply CA issuer in host cluster"
+kubectl --context=$HOST_CTX apply -f ca-issuer.yaml
 ```
 
 </Step>
@@ -204,7 +215,7 @@ metadata:
   name: enterprise-app-cert
   namespace: default
 spec:
-  secretName: enterprise-app-secret
+  secretName: enterprise-app-tls
   duration: 8760h # 1 year
   renewBefore: 720h # 30 days
   commonName: myapp.enterprise.local
@@ -223,6 +234,12 @@ spec:
   issuerRef:
     name: enterprise-ca-issuer
     kind: ClusterIssuer
+```
+
+Apply in the virtual cluster:
+
+```bash title="Apply certificate in virtual cluster"
+kubectl --context=$VCLUSTER_CTX apply -f ca-signed-certificate.yaml
 ```
 
 </Step>
@@ -389,7 +406,7 @@ Verify resources appear in the host cluster namespace.
 
 ## Use certificates in applications
 
-Reference your certificates in Ingress resources:
+Reference your certificate secrets in Ingress resources:
 
 ```yaml title="secure-ingress.yaml"
 apiVersion: networking.k8s.io/v1
@@ -403,7 +420,7 @@ spec:
   tls:
     - hosts:
         - myapp.example.com
-      secretName: app-tls-secret
+      secretName: your-tls-secret  # Use the secretName from your Certificate
   rules:
     - host: myapp.example.com
       http:
@@ -416,6 +433,10 @@ spec:
                 port:
                   number: 80
 ```
+
+:::tip
+Replace `your-tls-secret` with the actual `secretName` specified in your Certificate resource (e.g., `app-tls-secret`, `enterprise-app-tls`, or `public-app-secret` from the examples above).
+:::
 
 ## Troubleshooting
 
@@ -470,21 +491,15 @@ kubectl --context=$VCLUSTER_CTX get events --field-selector reason=Sync
 <details>
 <summary>ACME challenge failures</summary>
 
-**HTTP-01 challenge issues**:
+For detailed troubleshooting of ACME challenges:
+
+**Check challenge status**:
 ```bash
 kubectl --context=$VCLUSTER_CTX describe order <order-name>
 kubectl --context=$VCLUSTER_CTX describe challenge <challenge-name>
 ```
 
-**Solutions**:
-- Verify ingress controller configuration
-- Check firewall rules allow HTTP traffic on port 80
-- Ensure domain points to correct load balancer IP
-
-**DNS-01 challenge issues**:
-- Verify DNS provider credentials
-- Check API rate limits
-- Confirm DNS propagation timing
+For comprehensive ACME troubleshooting, including HTTP-01 and DNS-01 challenge issues, see the [cert-manager ACME troubleshooting guide](https://cert-manager.io/docs/troubleshooting/acme/).
 
 </details>
 
@@ -511,7 +526,7 @@ integrations:
         clusterIssuers:
           enabled: true
           selector:
-            matchLabels:
+            labels:
               vcluster.loft.sh/managed: "true"
     resyncInterval: 30s
 ```
