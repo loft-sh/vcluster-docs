@@ -1,0 +1,167 @@
+---
+title: Restore license
+sidebar_label: Restore license
+sidebar_position: 2
+description: Learn how to preserve your platform license instance ID during cluster reinstalls or disaster recovery events.
+---
+
+When performing disaster recovery or migrating the platform between clusters, it's critical to preserve your license instance ID. The platform generates a unique instance ID tied to a TLS certificate stored in the `loft-cert` Kubernetes secret. If this secret is lost during cluster reinstallation, the platform generates a new instance ID, which can invalidate your existing license.
+
+## Understand the license instance ID {#understand-license-instance-id}
+
+The platform's license system uses a unique instance ID that:
+- Ties to the TLS certificate stored in the `loft-cert` secret
+- Validates your platform license features
+- Persists across platform upgrades and restarts
+- Must remain consistent to maintain license validity
+
+## Preservation strategies {#preservation-strategies}
+
+You have two main approaches to preserve the license instance ID:
+
+### Kubernetes backup solutions (recommended) {#kubernetes-backup-solutions}
+
+If you use a Kubernetes backup and restore solution like [Velero](https://velero.io/), [Kasten K10](https://www.kasten.io/), or similar tools, the `loft-cert` secret is automatically included in regular cluster backups. When you restore your cluster from these backups, the license instance ID is preserved automatically.
+
+This approach is recommended for:
+- Standard disaster recovery scenarios
+- Regular backup and restore workflows
+- Environments with existing backup infrastructure
+
+:::info Automatic backup with Kubernetes tools
+If you use a Kubernetes backup and restore mechanism, you don't need to manually back up the `loft-cert` secret separately. Your regular backup process handles this automatically. The manual approach documented below is primarily relevant for migrations from one host cluster to another, rather than standard backup/restore or disaster recovery scenarios.
+:::
+
+### Manual backup and restore {#manual-backup-restore}
+
+For cluster-to-cluster migrations or when not using a full Kubernetes backup solution, manually back up and restore the `loft-cert` secret.
+
+## Manual backup procedure {#manual-backup-procedure}
+
+Before uninstalling the platform or wiping your cluster, back up the certificate secret:
+
+```bash title="Back up the loft-cert secret"
+kubectl get secret loft-cert -n vcluster-platform -o yaml > loft-cert-backup.yaml
+```
+
+This command saves the `loft-cert` secret to a local file. Store this file securely as it contains sensitive certificate data.
+
+:::tip Store backups securely
+The backup file contains sensitive TLS certificate data. Store it in a secure location with appropriate access controls, such as:
+- Encrypted storage systems
+- Secret management tools
+- Version control systems with encryption at rest
+:::
+
+## Manual restore procedure {#manual-restore-procedure}
+
+After reinstalling the platform, restore the certificate before the platform starts.
+
+:::tip Understand platform backup first
+Before performing a restore, familiarize yourself with the overall [platform backup and restore process](./backup-restore-platform.mdx) to understand how license preservation fits into the complete disaster recovery workflow.
+:::
+
+### Step 1: Install the platform without starting it {#install-without-starting}
+
+Install the platform using Helm with replica count set to 0:
+
+```bash title="Install platform without starting"
+helm upgrade --install vcluster-platform vcluster-platform \
+  --repo https://charts.loft.sh \
+  --namespace vcluster-platform \
+  --create-namespace \
+  --set replicaCount=0 \
+  --version <YOUR_VERSION>
+```
+
+### Step 2: Restore the certificate {#restore-certificate}
+
+Apply the backed-up certificate secret:
+
+```bash title="Restore the loft-cert secret"
+kubectl apply -f loft-cert-backup.yaml
+```
+
+### Step 3: Start the platform {#start-platform}
+
+Scale the platform deployment to start it with the restored certificate:
+
+```bash title="Start the platform"
+helm upgrade vcluster-platform vcluster-platform \
+  --repo https://charts.loft.sh \
+  --namespace vcluster-platform \
+  --reuse-values \
+  --set replicaCount=1
+```
+
+The platform now starts with your original instance ID, preserving your license validity.
+
+## Verification {#verification}
+
+After restoration, verify that your license is valid:
+
+1. Access the platform UI
+2. Navigate to **admin > Platform Config**
+3. Check the license status to ensure it shows as valid
+4. Verify that your licensed features are available
+
+## Important notes {#important-notes}
+
+### Secrets not required for license preservation {#secrets-not-required}
+
+The following secrets are **not** required for license preservation:
+- `loft-apiservice-agent-cert`
+- `loft-webhook-*` certificates
+- Agent certificates
+- User access keys
+
+These secrets are regenerated automatically and don't affect your license.
+
+### Consider timing {#consider-timing}
+
+- Always restore the `loft-cert` secret **before** the platform starts
+- If the platform starts without the secret, it generates a new instance ID
+- Once a new instance ID is generated, you need to contact support to update your license
+
+### Multiple clusters {#multiple-clusters}
+
+:::warning One instance per license
+Each platform license is valid for a single instance ID. Running multiple platform instances with the same `loft-cert` secret violates license terms and can cause synchronization issues.
+:::
+
+## Troubleshoot issues {#troubleshoot-issues}
+
+### License shows as invalid after restoration {#license-invalid}
+
+If your license shows as invalid after restoration:
+
+1. Verify the `loft-cert` secret was restored correctly:
+   ```bash
+   kubectl get secret loft-cert -n vcluster-platform
+   ```
+
+2. Check the secret contains the expected data:
+   ```bash
+   kubectl get secret loft-cert -n vcluster-platform -o jsonpath='{.data}' | jq 'keys'
+   ```
+   
+   Expected output should include `tls.crt` and `tls.key`.
+
+3. Ensure the platform pods are using the restored certificate:
+   ```bash
+   kubectl delete pods -n vcluster-platform -l app=loft
+   ```
+
+### New instance ID generated {#new-instance-id}
+
+If the platform generated a new instance ID:
+
+1. Check if the `loft-cert` secret was present before the platform started
+2. Review the platform logs for certificate generation messages
+3. If needed, request a license update for the new instance ID
+
+## Next steps {#next-steps}
+
+- Learn about [backing up the entire platform](./backup-restore-platform.mdx)
+- Configure [high availability](../../configure/high-availability.mdx) for improved disaster recovery
+- Set up regular [Kubernetes backups](https://velero.io/) for comprehensive protection
