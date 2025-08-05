@@ -7,11 +7,9 @@ sidebar_class_name: pro
 description: Configuration for syncing custom resources to host.
 ---
 
-import CertManagerExample from '../../../../../_fragments/cert-manager-example.mdx'
 import CodeBlock from '@theme/CodeBlock';
 import CustomResourceDefinitions from '../../../../../_partials/config/sync/toHost/customResources.mdx'
 import ProAdmonition from '../../../../../_partials/admonitions/pro-admonition.mdx'
-import CertManagerConfig from '!!raw-loader!@site/vcluster/configure/vcluster-yaml/experimental/_code/cert-manager-config.yaml'
 import VersionedCrdSyncing from '../../../../../_fragments/sync/versioned-crd-syncing.mdx'
 
 <ProAdmonition/>
@@ -20,7 +18,7 @@ vCluster allows you to sync custom resources from the virtual cluster to the hos
 
 This feature only works for resources that have a corresponding CustomResourceDefinition (CRD) installed in the host cluster.
 
-If a synced custom resource creates additional resources in the host cluster, vCluster attempts to detect and sync those resources back to the virtual cluster. For example, a [cert-manager](https://cert-manager.io/) `Certificate` creates a `Secret`, which is automatically synced into the virtual cluster.
+If a synced custom resource creates additional resources in the host cluster, vCluster attempts to detect and sync those resources back to the virtual cluster. For example, a custom resource that creates a `Secret` has that `Secret` automatically synced into the virtual cluster.
 
 vCluster also adds the necessary cluster and namespace-level RBAC permissions to retrieve the CRD and sync the corresponding resources.
 
@@ -46,7 +44,7 @@ By default, you do not need to specify an API version when syncing a custom reso
 sync:
   toHost:
     customResources:
-      certificates.cert-manager.io:
+      customobjects.example.io:
         enabled: true
 ```
 
@@ -64,13 +62,13 @@ You can use `*` in paths to select all entries of an array or object, for exampl
 
 You can use a reference patch to make a specific field in one resource point to another resource that vCluster should rewrite. If the referenced resource exists in the host cluster, vCluster automatically imports it into the virtual cluster.
 
-This is useful when working with resources like `Certificate`, which reference a `Secret` created by cert-manager:
+This is useful when working with resources that reference other resources like `Secrets`:
 
 ```yaml
 sync:
   toHost:
     customResources:
-      certificates.cert-manager.io:
+      customobjects.example.io:
         enabled: true
         patches:
         - path: spec.secretName
@@ -85,20 +83,20 @@ vCluster translates the path `spec.secretName` as it points to a Secret. If the 
 ### JavaScript expression patches {#javascript-expression-patches}
 <!-- vale on -->
 
-These are JavaScript ES6 compatible expression patches that can be used to change a field while syncing. You define how it changes when syncing from the virtual cluster into the host cluster or when syncing from the host cluster into the virtual cluster. To add a suffix to certificate DNS names you can:
+These are JavaScript ES6 compatible expression patches that can be used to change a field while syncing. You define how it changes when syncing from the virtual cluster into the host cluster or when syncing from the host cluster into the virtual cluster. To add a prefix to field values you can:
 
 ```yaml
 sync:
   toHost:
     customResources:
-      certificates.cert-manager.io:
+      customobjects.example.io:
         enabled: true
         patches:
-        - path: spec.dnsNames[*]
+        - path: spec.names[*]
           # specifies the sync direction here again, because you can also react on change for fromHost with an expression
-          expression: '"www."+value'
+          expression: '"prefix-"+value'
           # optional reverseExpression, if omitted patches from host are discarded for that path
-          # reverseExpression: 'value.slice("my-prefix".length)'
+          # reverseExpression: 'value.slice("prefix-".length)'
 ```
 
 There is also a variable called `context` besides `value` that can be used to access vCluster specific data:
@@ -109,68 +107,68 @@ There is also a variable called `context` besides `value` that can be used to ac
 - `context.virtualObject`: Virtual object (can be null if not available)
 - `context.path`: The matched path on the object, useful when using wildcard path selectors (*)
 
-For example, to add `www.` to every DNS name specified in a cert-manager certificate in the path `spec.dnsNames`, you can use the following patch:
+For example, to add a prefix to values in a custom resource field, you can use the following patch:
 
 ```yaml
 sync:
   toHost:
     customResources:
-      certificates.cert-manager.io:
+      customobjects.example.io:
         enabled: true
         patches:
-        - path: spec.dnsNames[*]
+        - path: spec.hosts[*]
           # specifies the sync direction here again, because you can also react on change for fromHost
-          expression: "value.startsWith('www.') ? value : `www.${value}`"
+          expression: "value.startsWith('prod-') ? value : `prod-${value}`"
           # specifies how to sync back changes to the virtual cluster. If omitted does not sync back changes.
-          reverseExpression: "value.startsWith('www.') ? value.slice(4) : value"
+          reverseExpression: "value.startsWith('prod-') ? value.slice(5) : value"
 ```
 
-The patch creates a new certificate within the vCluster:
+The patch creates a new custom object within the vCluster:
 
 ```yaml
-apiVersion: cert-manager.io/v1
-kind: Certificate
+apiVersion: example.io/v1
+kind: CustomObject
 metadata:
   name: name-within-vcluster
 spec:
-  dnsNames:
-    - example.com
+  hosts:
+    - server.example.com
 ```
 
-vCluster syncs the host cluster and applies your patch, creating this modified certificate:
+vCluster syncs the host cluster and applies your patch, creating this modified resource:
 
 ```yaml
-apiVersion: cert-manager.io/v1
-kind: Certificate
+apiVersion: example.io/v1
+kind: CustomObject
 metadata:
   name: synced-name
 spec:
-  dnsNames:
-    - www.example.com # the patch added www. to this field
+  hosts:
+    - prod-server.example.com # the patch added prod- prefix to this field
 ```
 
-If you directly edit the certificate in the host cluster and change the domain:
+If you directly edit the resource in the host cluster and change the value:
 
 ```yaml
-apiVersion: cert-manager.io/v1
-kind: Certificate
+apiVersion: example.io/v1
+kind: CustomObject
 metadata:
   name: synced-name
 spec:
-  dnsNames:
-    - www.other-domain.com # changed from www.example.com
+  hosts:
+    - prod-other-server.example.com # changed from prod-server.example.com
 ```
 
-vCluster detects the change, applies the reverse patch, and updates the certificate in your virtual cluster:
+vCluster detects the change, applies the reverse patch, and updates the resource in your virtual cluster:
 
 ```yaml
-apiVersion: cert-manager.io/v1
-kind: Certificate
+apiVersion: example.io/v1
+kind: CustomObject
 metadata:
   name: name-within-vcluster
 spec:
-  dnsNames:
-    - other-domain.com # the patch removed the www. from www.other-domain.com
+  hosts:
+    - other-server.example.com # the patch removed the prod- prefix
 ```
 
 ## Configure Kubernetes Gateway API sync
