@@ -109,7 +109,7 @@ sync:
           "datasets-*": "${name}-data-*"
 ```
 
-## Enforce only syncing defined mappings 
+## Enforce only syncing defined mappings
 
 By default (`mappingsOnly: false`), when you create a resource in a virtual namespace that does not match any defined mappings, vCluster syncs those resources to its own namespace on the host cluster using the standard name-rewriting strategy.
 
@@ -117,7 +117,7 @@ You can restrict the non matching namespaces, by strictly enforcing that syncing
 
 ### vcluster.yaml configuration
 
-Configure enforcing syncing on defined mappings by enabling `mappingsOnly:true`. 
+Configure enforcing syncing on defined mappings by enabling `mappingsOnly:true`.
 
 ```yaml
 # vcluster-mappings-only-example.yaml
@@ -136,7 +136,7 @@ sync:
 
 ## Delete a vCluster
 
-When you delete a vCluster, the namespaces and resources in those namespaces that were created on the host cluster due to the syncing from the virtual cluster are removed. Any namespaces and resources that originated from the host cluster and were imported into the virtual cluster remain unchanged. vCluster only cleans up the resources including namespaces that it created while leaving anything that was created outside of the vCluster. 
+When you delete a vCluster, the namespaces and resources in those namespaces that were created on the host cluster due to the syncing from the virtual cluster are removed. Any namespaces and resources that originated from the host cluster and were imported into the virtual cluster remain unchanged. vCluster only cleans up the resources including namespaces that it created while leaving anything that was created outside of the vCluster.
 
 You can test this behavior by deploying vCluster with the following configuration:
 
@@ -151,11 +151,11 @@ sync:
           sync-*: host-*
 ```
 
-## Examples 
+## Examples
 
 The following end-to-end examples demonstrate namespace syncing behavior in both virtual and host clusters.
 
-### Enable namespace mappings 
+### Enable namespace mappings
 
 The following example shows how mapped and unmapped namespaces behave when creating resources in a vCluster.
 
@@ -279,7 +279,7 @@ The pod from the mapped namespace syncs directly without renaming, while the pod
 </Step>
 </Flow>
 
-### Import existing host namespaces 
+### Import existing host namespaces
 
 The following example shows what happens to existing namespaces on the host cluster and how they are imported into the virtual cluster.
 
@@ -376,7 +376,7 @@ vCluster blocks this namespace. Any operation on namespaces not defined in mappi
 
 ### Delete a vCluster
 
-The following example shows what happens to the namespaces on the host cluster when you delete a vCluster and have enabled namespace syncing. 
+The following example shows what happens to the namespaces on the host cluster when you delete a vCluster and have enabled namespace syncing.
 
 <Flow>
 
@@ -553,3 +553,224 @@ Resources synced from vCluster are gone while all resources created on host clus
 
 </Step>
 </Flow>
+
+## Known limitations
+
+### Incompatibility with Generic Sync
+The namespace syncing feature is incompatible with the older `experimental.genericSync` feature.
+If you enable `sync.toHost.namespaces`, you must NOT use `genericSync`. Instead, rely on the specific `sync.toHost` and `sync.fromHost` configurations
+for resource synchronization.
+
+### Automatic Syncing of All `Secrets` and `ConfigMaps`
+When `sync.toHost.namespaces` is enabled, vCluster automatically enables the syncing of all `Secrets` and `ConfigMaps` from the virtual cluster to the corresponding host namespaces.
+This behavior is equivalent to setting `sync.toHost.secrets.all: true` and `sync.toHost.configMaps.all: true`, and it cannot be disabled when namespace syncing is active.
+Be aware that this makes all of these resources visible on the host cluster.
+
+### `NetworkPolicy` Syncing is Disabled
+The `sync.toHost.networkPolicies` feature is not supported when namespace syncing is enabled.
+While vCluster still relies on the host CNI to enforce network policies, the mechanism to translate and sync `NetworkPolicy` objects
+from the virtual cluster to the host is disabled when using this feature. As a result, any `NetworkPolicy` you create inside the vcluster
+will have no effect on network traffic.
+
+
+### Inter-namespace Pod Affinity
+
+When using namespace syncing, there is a known limitation with `podAffinity` rules that reference pods in other namespaces.
+These rules are not translated by vCluster, which can prevent pods from being scheduled and leave them in a `Pending` state.
+
+However, `podAffinity` rules that operate within the same namespace (intra-namespace) are fully supported and work as expected.
+
+
+#### Failing Example: Inter-Namespace Affinity
+
+The following example demonstrates the limitation.
+It attempts to schedule follower-app in the sync-b namespace with an affinity for target-app in the sync-a namespace.
+This will fail because vCluster does not translate the cross-namespace reference.
+
+
+```yaml
+# Namespace for the target application
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: sync-a
+---
+# Namespace for the follower application
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: sync-b
+---
+# --- Target App Deployment ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: target-app
+  namespace: sync-a
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: target
+  template:
+    metadata:
+      labels:
+        app: target
+    spec:
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchExpressions:
+              - key: app
+                operator: In
+                values:
+                - target
+            topologyKey: "kubernetes.io/hostname"
+      containers:
+      - name: nginx
+        image: nginx
+---
+# --- Follower App with Failing Affinity ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: follower-app
+  namespace: sync-b
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: follower
+  template:
+    metadata:
+      labels:
+        app: follower
+    spec:
+      affinity:
+        podAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchExpressions:
+              - key: app
+                operator: In
+                values:
+                - target
+            # This cross-namespace reference will not work
+            namespaces: ["sync-a"]
+            topologyKey: "kubernetes.io/hostname"
+      containers:
+      - name: busybox
+        image: busybox
+        command: ["sleep", "3600"]
+```
+
+After applying this manifest, the `follower-app` pods will be stuck indefinitely in the `Pending` state.
+If you run:
+
+```bash
+kubectl get po -A -o wide
+```
+
+You should see output similar to
+
+```bash
+NAMESPACE     NAME                            READY   STATUS    RESTARTS   AGE   IP            NODE           NOMINATED NODE   READINESS GATES
+sync-a        target-app-7d8df4d5d4-tlpmc     1/1     Running   0          3s    10.244.2.24   loft-worker    <none>           <none>
+sync-a        target-app-7d8df4d5d4-vhct5     1/1     Running   0          3s    10.244.1.17   loft-worker2   <none>           <none>
+sync-b        follower-app-6b5ccc86dd-8ssw6   0/1     Pending   0          3s    <none>        <none>         <none>           <none>
+sync-b        follower-app-6b5ccc86dd-kjkkg   0/1     Pending   0          3s    <none>        <none>         <none>           <none>
+```
+
+#### Working Example: Intra-Namespace Affinity
+
+This example demonstrates a podAffinity rule that works correctly.
+Both deployments are placed in the same namespace (`sync-demo`), and the affinity rule does not specify a namespaces field,
+causing it to default to the pod's own namespace.
+
+```yaml
+# Namespace for the demo
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: sync-demo
+---
+# --- Target App Deployment ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: target-app
+  namespace: sync-demo
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: target
+  template:
+    metadata:
+      labels:
+        app: target
+    spec:
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchExpressions:
+              - key: app
+                operator: In
+                values:
+                - target
+            topologyKey: "kubernetes.io/hostname"
+      containers:
+      - name: nginx
+        image: nginx
+---
+# --- Follower App with Working Affinity ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: follower-app
+  namespace: sync-demo
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: follower
+  template:
+    metadata:
+      labels:
+        app: follower
+    spec:
+      affinity:
+        podAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchExpressions:
+              - key: app
+                operator: In
+                values:
+                - target
+            topologyKey: "kubernetes.io/hostname"
+      containers:
+      - name: busybox
+        image: busybox
+        command: ["sleep", "3600"]
+```
+
+After applying this manifest, all pods will be in the `Running` state, and the `follower-app` pods will be co-located on the same nodes as the `target-app` pods.
+If you run:
+
+```bash
+kubectl get po -A -o wide
+```
+
+You should see output similar to
+
+```bash
+NAMESPACE     NAME                            READY   STATUS    RESTARTS   AGE   IP            NODE           NOMINATED NODE   READINESS GATES
+kube-system   coredns-744d9bd8bf-ck47h        1/1     Running   0          21m   10.244.1.11   loft-worker2   <none>           <none>
+sync-demo     follower-app-6f6df5d4fb-kvvcz   1/1     Running   0          7s    10.244.1.19   loft-worker2   <none>           <none>
+sync-demo     follower-app-6f6df5d4fb-rsfjf   1/1     Running   0          7s    10.244.2.26   loft-worker    <none>           <none>
+sync-demo     target-app-7d8df4d5d4-czfrd     1/1     Running   0          8s    10.244.1.18   loft-worker2   <none>           <none>
+sync-demo     target-app-7d8df4d5d4-lblcc     1/1     Running   0          8s    10.244.2.25   loft-worker    <none>           <none>
+```
