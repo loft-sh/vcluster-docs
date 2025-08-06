@@ -8,77 +8,84 @@ description: Configuration for node synchronization in vCluster, including pseud
 import SyncNodes from '../../../../_partials/config/sync/fromHost/nodes.mdx'
 import Patches from '../../../../_fragments/patches.mdx'
 
-This is disabled by default.
+By default, this is disabled by default. vCluster only displays nodes in the virtual cluster if the virtual cluster
+has synced pods to that worker node from the host. If there 
+are no more pods on a node, vCluster deletes the node. Without syncing the nodes, these nodes are considered pseudo
+nodes as the name is the only real value, and the rest of the nod information is randomly generated. 
 
-vCluster syncs pseudo nodes from the host cluster where there are virtual cluster pods running. Pseudo nodes only have real values for the CPU, architecture, and operating system, while everything else is randomly generated. A single pseudo node can either represent a single real node on the host cluster, or it can represent multiple real nodes. If there are no more pods on a node, vCluster deletes the pseudo node.
-
-However, when you need to access specific node information, you can choose to sync real nodes from the host cluster to the virtual cluster. This requires a cluster role.
+If you need specific node informatin, enabling to sync nodes from the host will allow the real information
+from the node to be available from the virtual cluster context. In order to access node informatin, a cluster role is deployed
+onto the host cluster. 
 
 :::info Node IP obfuscation
 By default, vCluster obfuscates node IP addresses when syncing real nodes to protect sensitive information. Learn how to [control node IP visibility](../../../../learn-how-to/worker-nodes/control-node-ip-visibility.mdx) for your use case.
 :::
 
-### Sync pseudo nodes (default)
+## Selecting a set of nodes
 
-### Sync pseudo nodes
+By default, vCluster is able to schedule pods to *any* of the worker nodes in the host cluster, but you can isolate a virtual cluster to only use 
+a set of specific nodes from the host cluster. There are multiple reasons why you may want to dedicate nodes to a virtual cluster including:
+  - Restricting vCluster to nodes in a specific region.
+  - Targeting nodes with a particular architecture.
+  - Using only spot or preemptible instances.
+  - Preventing vCluster workloads from running on critical infrastructure nodes.
 
-Sync pseudo nodes to the virtual cluster. This is enabled by default. This default configuration does not require a cluster role.
+Selecting nodes is based on a node label selector, where the nodes on the host cluster must have the matching labels.
 
-```yaml
+### Select a set of nodes without syncing node information
+
+If you don't want to sync node information, you can still select to use only a set of nodes from the host cluster. 
+
+```yaml title="Select dedicated nodes without syncing real node information"
 sync:
   fromHost:
     nodes:
+      # Do not sync real node information
       enabled: false
-```
-
-vCluster ignores the `selector.all` and `selector.labels` fields. However, if a pod is created with `spec.nodeSelector`, the syncer generates a pseudo node in the virtual cluster. This pseudo node includes annotations and labels from the real node, allowing the pod's node selector to match a corresponding node within the virtual cluster.
-
-For more information, see the Kubernetes documentation on [`spec.nodeSelector`](https://kubernetes.io/docs/concepts/scheduling-eviction/assign-pod-node/#nodeselector).
-
-### Sync real nodes
-
-Sync real nodes to the virtual cluster where virtual cluster pods are running:
-
-```yaml
-sync:
-  fromHost:
-    nodes:
-      enabled: true
-```
-
-### Sync pseudo nodes with label selector
-
-Sync pseudo nodes that match a given label selector. This example sets the node selector to the same values when syncing a pod from virtual cluster to host cluster:
-
-```yaml
-sync:
-  fromHost:
-    nodes:
-      enabled: false
+      # Select a set of nodes based on the node labels
       selector:
         labels:
           environment: production
           team: backend
 ```
 
-### Sync real nodes with label selector
+### Select a set of nodes and sync node information
 
-Sync real nodes that match a given label selector. This example sets the node selector to the same values when syncing a pod from virtual cluster to host cluster:
-```YAML
+You can select a set of nodes from the host cluster while also requesting that the nodes sync with the real information from the host cluster. 
+
+```yaml title="Select dedicated nodes and syncing real node information"
 sync:
   fromHost:
     nodes:
+      # Sync real node information
       enabled: true
+      # Select a set of nodes based on the node labels
       selector:
         labels:
           environment: production
           team: backend
+```
+
+## Sync real nodes
+
+Sync nodes to the virtual cluster in order to view real node information. The virtual cluster will only display
+the host nodes that have a pod deployed onto it. By enabling this sync, a cluster role is deployed 
+by the vCluster onto the host cluster.
+
+```yaml title="Sync nodes for real node information"
+sync:
+  fromHost:
+    nodes:
+      enabled: true
 ```
 
 ### Sync all real nodes
 
-Sync all real nodes, regardless of whether a virtual cluster pod is running on it or not:
-```YAML
+When syncing nodes, only nodes that have pods deployed on them will show up in the virtual cluster, but you can
+sync all the nodes from the host cluster. When selecting all the nodes, `kubectl get nodes` will display 
+all the host nodes whether or not a pod has been scheduled onto the host cluster. 
+
+```yaml title="Make all nodes visible to the virtual cluster"
 sync:
   fromHost:
     nodes:
@@ -87,10 +94,15 @@ sync:
         all: true
 ```
 
-### Sync real nodes and sync back labels and taints
+### Sync back labels and taints
 
-Enable syncing real nodes from the host cluster to the virtual cluster as well as syncing back from the virtual cluster any changes to node labels and taints. Enabling this adds RBAC permissions to the syncer component to allow it to modify the host nodes and statuses.
-```YAML
+By default, when syncing nodes from the host cluster, labels and taints are only synced from the host cluster to the virtual cluster. No changes from the virtual 
+cluster context would be reflected on the host nodes. 
+
+Enabling `syncBackChanges` allows labels and taints set from the virtual cluster context to be synced to the host nodes. Additional 
+ permissions are added to the cluster role in order to edit the host nodes.
+
+```yaml title="Sync labels and taints from the virtual cluster context to the host node"
 sync:
   fromHost:
     nodes:
@@ -98,10 +110,12 @@ sync:
       syncBackChanges: true
 ```
 
-### Sync real nodes and hide image information
+### Hide image information
 
-Enable syncing real nodes. This clears all `status.images` from the node when it is synced to the virtual cluster. For certain multi-tenant use cases, such as multi-customer tenancy, images can leak sensitive information about a node.
-```YAML
+When multiple tenants are using the same set of host nodes, container image metadata could be used maliciously. For increased security,
+you can enable `clearImageStatus` to remove all `status.images` from the node object.
+
+```yaml title="Clear Image Status on the Node"
 sync:
   fromHost:
     nodes:
@@ -109,41 +123,9 @@ sync:
       clearImageStatus: true
 ```
 
-### Node sync configuration options
-
-`nodes.enabled`:
-- Covered in the general [syncer configuration documentation](/vcluster/configure/vcluster-yaml/sync/)
-- Required to schedule any pods in the virtual cluster.
-- Can be disabled in the control plane vCluster when using [isolated control planes](/vcluster/configure/vcluster-yaml/experimental/isolated-control-plane), where all workloads are instead scheduled in the workload vCluster (which should have node syncing enabled).
-
-`nodes.syncBackChanges`:
-- Replaces the deprecated `--sync-node-changes` flag.
-- Enables syncing of labels and taints from virtual cluster nodes back to host cluster nodes.
-- Requires additional RBAC permissions to modify `Node` and `Node/status` resources in the host cluster.
-
-`nodes.clearImageStatus`:
-- Controls the `--node-clear-image-status` flag.
-- Clears the `status.images` field from node objects to prevent leaking container image metadata.
-- Useful in multi-tenant environments to reduce exposure of underlying node-level information.
-
-`nodes.selector.all`:
-- Sets the `--sync-all-nodes` syncer flag.
-- When enabled, syncs all nodes from the host cluster into the virtual cluster.
-
-`nodes.selector.labels`:
-- Selects specific node labels to sync into the virtual cluster.
-- Allows control over which host nodes the vCluster sees or can schedule workloads to.
-- Example use cases include:
-  - Restrict vCluster to nodes in a specific region.
-  - Target nodes with a particular architecture.
-  - Use only spot or preemptible instances.
-  - Prevent vCluster workloads from running on critical infrastructure nodes.
-
 ### Patches
 
 <Patches resource="nodes" path="status.nodeInfo.operatingSystem" direction="fromHost"  />
-
-For more advanced use cases, such as controlling node IP visibility, see the [control node IP visibility](../../../../learn-how-to/worker-nodes/control-node-ip-visibility.mdx) guide.
 
 ## Config reference
 
