@@ -1,0 +1,142 @@
+---
+title: CoreDNS
+sidebar_label: coredns
+sidebar_position: 3
+sidebar_class_name: pro
+description: Configure CoreDNS.
+---
+
+import CoreDNS from '../../../../_partials/config/controlPlane/coredns.mdx'
+import ProAdmonition from '../../../../_partials/admonitions/pro-admonition.mdx'
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+import Flow, { Step } from "@site/src/components/Flow";
+import NavStep from "@site/src/components/NavStep";
+
+
+
+Each virtual cluster runs its own DNS service using CoreDNS. This allows pods and services inside the virtual cluster to discover each other using standard Kubernetes DNS names such as `my-service.default.svc.cluster.local`. The syncer syncs the services necessary for DNS to function as expected.
+
+This setup means that applications inside the virtual cluster cannot resolve names for services that only exist in the host cluster. Similarly, pods in the host cluster cannot discover services that only exist inside a virtual cluster. DNS resolution works entirely within the boundaries of the virtual cluster unless you configure external mappings explicitly.
+
+:::note
+CoreDNS in the virtual cluster listens on port 1053, not the DNS port 53. This avoids privilege issues, especially when multiple virtual clusters run on the same host cluster. Port 53 is a privileged port and typically requires elevated permissions to bind. Blocked access to port 1053 prevents DNS resolution within the virtual cluster.
+:::
+
+## Deployment types
+
+You can deploy CoreDNS in two modes: as a separate pod (the default) or embedded within the syncer (enterprise feature). Each mode affects how the DNS service operates, how many pods the virtual cluster requires, and whether users can access and customize the CoreDNS configuration from inside the virtual cluster.
+
+| Deployment mode         | Pod count per replica | Editable from virtual cluster | Corefile customization | Notes                              |
+|-------------------------|-----------------------|-------------------------------|------------------------|------------------------------------|
+| Separate (_Default_)    | 2                     | Yes                           | Yes                    | CoreDNS runs as a Deployment       |
+| Embedded (_Enterprise_) | 1                     | No                            | No                     | CoreDNS runs inside the syncer container in the vCluster control plane pod |
+
+
+### Deploy separate CoreDNS
+
+In the default configuration, vCluster creates a dedicated CoreDNS pod. The virtual cluster deployment includes two pods: one pod for the API server and syncer, and another for CoreDNS.
+
+In this mode, CoreDNS runs as a standard Kubernetes Deployment inside the virtual cluster. Users can view and modify the CoreDNS Deployment using standard Kubernetes tools. DNS configuration is accessible, and you can apply changes or troubleshoot without restarting the virtual cluster's control plane.
+
+:::note Configuration Persistence
+Configuration changes applied directly to CoreDNS are not persistent. They get overwritten when the vCluster control plane pod restarts and the original `vcluster.yaml` configuration is re-applied.
+:::
+
+### Deploy embedded CoreDNS
+
+<ProAdmonition/>
+
+The embedded CoreDNS feature allows you to run CoreDNS as part of the syncer, which saves the resources of an external CoreDNS pod. This consolidates all virtual cluster components into a single pod and optimizes resource allocation. It also enables advanced DNS features like custom hostname mapping, cross-vCluster service resolution, and communication with host cluster services
+
+The embedded approach requires consideration of operational trade-offs. Troubleshooting might become more complex since DNS and sync functions share the same container and process space. Updates and restarts affect both DNS and sync capabilities simultaneously, though all CoreDNS features remain supported.
+
+
+## Example
+
+The configuration you choose depends on your deployment model. The following examples show how to configure CoreDNS for each supported mode.
+
+<Tabs>
+<TabItem value="separate" label="Separate (Default)" default>
+
+Based on the config reference you provided, here are the correct configurations:
+
+### Basic CoreDNS configuration
+
+```yaml title="Basic CoreDNS configuration"
+controlPlane:
+  coredns:
+    enabled: true
+    deployment:
+      replicas: 1
+      resources:
+        requests:
+          cpu: 20m
+          memory: 32Mi
+        limits:
+          cpu: 100m
+          memory: 128Mi
+```
+
+### Private registry CoreDNS configuration
+
+```yaml title="Private registry CoreDNS configuration"
+controlPlane:
+  coredns:
+    deployment:
+      image: "registry.company.com/coredns"
+
+# imagePullSecrets must be configured at the root level
+# since it's not available in the coreDNS configuration
+imagePullSecrets:
+  - name: company-registry-credentials
+```
+
+### Custom CoreDNS configuration
+
+```yaml title="Custom CoreDNS configuration"
+controlPlane:
+  coredns:
+    overwriteConfig: |
+      .:1053 {
+          errors
+          health
+          ready
+          kubernetes cluster.local in-addr.arpa ip6.arpa {
+              pods insecure
+              fallthrough in-addr.arpa ip6.arpa
+              ttl 30
+          }
+          prometheus :9153
+          forward . /etc/resolv.conf
+          cache 30
+          loop
+          reload
+      }
+```
+</TabItem>
+<TabItem value="embedded" label="Embedded">
+
+### Embedded CoreDNS configuration
+
+```yaml title="Embedded CoreDNS enterprise configuration"
+controlPlane:
+  coredns:
+    enabled: true
+    embedded: true
+```
+
+</TabItem>
+</Tabs>
+
+
+## Config reference
+
+| Deprecated Field | New Field |
+| ----------------- | ---------------- |
+| `coredns.config` | `coredns.overwriteConfig` |
+| `coredns.manifests` | `coredns.overwriteManifests` |
+
+
+<CoreDNS/>
+
