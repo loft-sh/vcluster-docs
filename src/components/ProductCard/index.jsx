@@ -8,53 +8,74 @@ export default function ProductCard({
   description, 
   icon, 
   link, 
-  linkText = 'Read the docs',
+  linkText = 'Get started',
   className,
-  accentColor 
+  accentColor,
+  features = []
 }) {
-  // Check if link is external
   const isExternal = link && (link.startsWith('http://') || link.startsWith('https://'));
   
   return (
-    <div className={clsx('card', styles.productCard, className)}>
-      <div className={clsx('card__header', styles.cardHeader)}>
-        {icon && (
-          <div className={styles.iconWrapper}>
-            {typeof icon === 'string' ? (
-              <img src={icon} alt={`${title} icon`} className={styles.icon} />
-            ) : React.isValidElement(icon) ? (
-              icon
+    <div className={styles.productSection}>
+      <div className={clsx('card', styles.productCard, className)} 
+           style={accentColor ? { borderLeftColor: accentColor } : {}}>
+        <div className={styles.productHeader}>
+          {icon && (
+            <div className={styles.iconWrapper}>
+              {typeof icon === 'string' ? (
+                <img src={icon} alt={`${title} icon`} className={styles.icon} />
+              ) : React.isValidElement(icon) ? (
+                icon
+              ) : (
+                React.createElement(icon, { className: styles.icon })
+              )}
+            </div>
+          )}
+          <div className={styles.productContent}>
+            <h2 className={styles.title}>{title}</h2>
+            <p className={styles.description}>{description}</p>
+            {isExternal ? (
+              <a 
+                href={link}
+                target="_blank"
+                rel="noopener noreferrer"
+                className={clsx('button button--primary button--lg', styles.ctaButton)}
+              >
+                {linkText}
+              </a>
             ) : (
-              React.createElement(icon, { className: styles.icon })
+              <Link 
+                to={link} 
+                className={clsx('button button--primary button--lg', styles.ctaButton)}
+              >
+                {linkText}
+              </Link>
             )}
           </div>
-        )}
-        <h3 className={styles.title}>{title}</h3>
+        </div>
       </div>
-      <div className={clsx('card__body', styles.cardBody)}>
-        <p className={styles.description}>{description}</p>
-      </div>
-      <div className={clsx('card__footer', styles.cardFooter)}>
-        {isExternal ? (
-          <a 
-            href={link}
-            target="_blank"
-            rel="noopener noreferrer"
-            className={clsx('button button--primary', styles.cardLink)}
-            style={accentColor ? { backgroundColor: accentColor, borderColor: accentColor } : {}}
-          >
-            {linkText}
-          </a>
-        ) : (
-          <Link 
-            to={link} 
-            className={clsx('button button--primary', styles.cardLink)}
-            style={accentColor ? { backgroundColor: accentColor, borderColor: accentColor } : {}}
-          >
-            {linkText}
-          </Link>
-        )}
-      </div>
+      
+      {features && features.length > 0 && (
+        <div className={styles.featuresGrid}>
+          {features.map((feature, idx) => {
+            const FeatureLink = feature.external ? 'a' : Link;
+            const linkProps = feature.external 
+              ? { href: feature.link, target: '_blank', rel: 'noopener noreferrer' }
+              : { to: feature.link };
+            
+            return (
+              <FeatureLink 
+                key={idx} 
+                {...linkProps}
+                className={clsx('card', styles.featureBox)}
+              >
+                <h3 className={styles.featureTitle}>{feature.title}</h3>
+                <p className={styles.featureDescription}>{feature.description}</p>
+              </FeatureLink>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
