@@ -24,7 +24,7 @@ export default function ContentWrapper(props) {
       {shouldShowVClusterVersioning && <VersionSelector docsPluginId={"vcluster"} dropdownItemsAfter={[
         {
           to: "https://vcluster.com/docs/v0.19",
-          label: "v0.19"
+          label: "v0.19 (EOL)"
         }
       ]} />}
       {shouldShowPlatformVersioning && <VersionSelector docsPluginId={"platform"} dropdownItemsAfter={[
