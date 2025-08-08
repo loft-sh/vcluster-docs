@@ -4,4 +4,138 @@ sidebar_label: Join in Air Gap
 sidebar_position: 2.1
 ---
 
-NEED TO FILL IN
+import PrivateNodesJoin from '../../../_fragments/privateNodes/joinNode.mdx'
+import PrivateNodesFlags from '../../../_fragments/privateNodes/joinScriptFlags.mdx'
+
+Joining air-gapped nodes is supported, but there are a few additional steps needed.
+
+## Recommended configuration for air-gap with auto upgrades enabled
+For auto upgrades, there are two options on how to pull kubernetes node components bundle:
+1. Pull it from the control plane endpoint
+2. Pull it from repository controlled by user and accessible from the air-gap node.
+
+If you don't want to use auto upgrades, skip to [Join air gap node](#join-air-gap-node)
+
+### Pull kubernetes node components bundle from the control plane endpoint
+```yaml title="vcluster.yaml"
+privateNodes:
+  enabled: true
+  # setting importNodeBinaries to true will allow for automatic upgrades in the air-gap setups.
+  # instead of pulling kubernetes components bundle from loft repositories, it will pull it from control plane endpoint
+  importNodeBinaries: true
+```
+Set `privateNodes.importNodeBinaries` to `true`. Then, in the node upgrade, private node will reach out to the control plane endpoint to pull a new version of kubernetes node components bundle.
+
+### Pull kubernetes node components bundle from repository controlled by user and accessible from the air-gap node.
+Set `privateNodes.autoUpgrade.bundleRepository` to the URL address of the repository containing kubernetes node components bundle.
+You need to pull the bundles first from the [Loft's Kubernetes Bundles repository](https://github.com/loft-sh/kubernetes/releases) and upload them to your repository.
+During the auto-upgrade, vCluster will try to pull kubernetes node components bundle using the URL:
+
+`[privateNodes.autoUpgrade.bundleRepository]/[kubernetes version as vX.Y.Z]/kubernetes-[kubernetes version as vX.Y.Z]-[GOARCH as e.g. amd64].tar.gz`
+So, for following `vcluster.yaml`:
+```yaml title="vcluster.yaml with bundle repository configured"
+privateNodes:
+  enabled: true
+  autoUpgrade:
+    enabled: true
+    bundleRepository: https://my-custom-bundle-repository.com/kubernetes-bundles
+```
+during the auto upgrade to version `v1.33` on the `amd64` node, vCluster will try to download kubernetes node components bundle from:
+`https://my-custom-bundle-repository.com/kubernetes-bundles/v1.32.1/kubernetes-v1.32.1-amd64.tar.gz`
+
+## Join air gap node
+
+1. Make sure virtual cluster control plane is reachable from the node.
+
+2. Download a list of required docker images
+This is shipped as release asset named `vcluster-private-nodes-images-k8s-[KUBERNETES-VERSION].txt.txt` file in each vCluster release.
+Download it from the [vCluster release page](https://github.com/loft-sh/vcluster/releases) for your vCluster / k8s version.
+Copy this file to the node.
+Save the path to the file in env var as
+```bash title="Save path to the images.txt"
+export PRELOAD_IMAGES_TXT_PATH=<path>
+```
+
+3. Determine your virtual cluster version and node architecture
+Run `kubectl version` in the virtual cluster context and save the Server Version (e.g. `v1.32.2`)
+Then, determine your node architecture by running `uname -p` on the node.
+
+4. Download kubernetes private node components bundle
+Find a version matching your Server version in https://github.com/loft-sh/kubernetes/releases
+Download archive named `kubernetes-[your-k8s-version]-[your-node-arch].tar.gz` (it is a kubernetes private node components bundle).
+
+5. Copy downloaded kubernetes private node components bundle to the node
+And save the full path to the bundle in the env var:
+```bash title="Save path to the bundle"
+export KUBE_COMPONENTS_BUNDLE_PATH=<path>
+```
+
+<PrivateNodesJoin />
+
+The output provides a command to run on your worker node:
+
+```bash title="Example output from creating a token"
+curl -sfLk https://<vcluster-endpoint>/node/join?token=<token> | sh -
+```
+
+you need to save the script locally, as we will pass additional flags:
+
+```bash title="Save join script"
+curl -fSLk https://<vcluster-endpoint>/node/join?token=<token> > join_script.sh
+chmod +x join_script.sh
+```
+
+then, execute script and pass path to a bundle:
+
+```bash title="Join script"
+./join_script.sh --bundle-path ${KUBE_COMPONENTS_BUNDLE_PATH} --skip-join
+```
+this command returns following output:
+```bash title="skip join output"
+Detected OS: ubuntu
+Preparing node for Kubernetes installation...
+Kubernetes version: v1.32.2
+Installing Kubernetes binaries...
+Extracting Kubernetes binaries from /tmp/kubernetes-v1.31.9-amd64.tar.gz...
+Resetting node...
+Ensuring kubelet is stopped...
+kubelet service not found
+Starting containerd...
+Created symlink /etc/systemd/system/multi-user.target.wants/containerd.service → /etc/systemd/system/containerd.service.
+Starting kubelet...
+Created symlink /etc/systemd/system/multi-user.target.wants/kubelet.service → /etc/systemd/system/kubelet.service.
+Installation successful!
+Joining node skipped. To join node into the cluster, use following command:
+/usr/local/bin/kubeadm join --config /usr/local/bin/join.config.yaml
+```
+
+this will install all required components, without joining the node. This is to allow you pulling all required docker images, before cutting internet access to the node, and then joining the node to the cluster.
+
+6. Pull required docker images to the node
+```bash title="Pull required images to the node containerd"
+while IFS= read -r image; do
+    [[ -z "$image" ]] && continue
+    /usr/local/bin/crictl pull "$image"
+done < ${PRELOAD_IMAGES_TXT_PATH}
+```
+
+After a while, node should report as `Ready` in the `kubectl get nodes`.
+
+7. Join the node
+Finally, you can join a node to your cluster, by executing the command from the output of join script
+```bash title="kubeadm join node"
+/usr/local/bin/kubeadm join --config /usr/local/bin/join.config.yaml
+```
+
+this produces following output:
+```bash title="kubeadm join node output"
+This node has joined the cluster:
+* Certificate signing request was sent to apiserver and a response was received.
+* The Kubelet was informed of the new secure connection details.
+
+Run 'kubectl get nodes' on the control-plane to see this node join the cluster.
+```
+
+## Available flags to use in the script to join nodes
+
+<PrivateNodesFlags />
