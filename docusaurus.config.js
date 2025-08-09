@@ -294,11 +294,10 @@ const config = {
         respectPrefersColorScheme: false,
       },
       navbar: {
+        title: "",
         logo: {
           alt: "vCluster",
           src: "/media/rebranding/vCluster_favicon_docs_orange.svg",
-          href: "https://vcluster.com/",
-          target: "_blank",
         },
         items: [
           // Product tabs
