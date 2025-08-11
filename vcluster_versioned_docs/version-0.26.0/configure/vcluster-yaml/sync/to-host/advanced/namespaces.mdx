@@ -14,23 +14,27 @@ import Flow, { Step } from "@site/src/components/Flow";
 
 <ProAdmonition/>
 
+## Overview
+
+Namespace syncing is an advanced vCluster feature that creates dedicated namespaces on the host cluster corresponding to namespaces in the virtual cluster. This feature preserves original resource names and enables complex integrations with cloud providers and custom schedulers.
+
+### Why use namespace syncing?
+
 <!-- vale off -->
+Use namespace syncing when you need:
+- **Predictable resource names**: Cloud IAM integrations (like GCP Workload Identity) that require specific ServiceAccount names
+- **Custom scheduler support**: Tools like Run:ai that manage hierarchies with quotas and priorities
+- **Direct namespace mapping**: Scenarios where name rewriting would break external integrations
+- **Multi-tenant isolation**: Better separation of resources across different virtual namespaces
+<!-- vale on -->
 
-By default, this is disabled.
-
-By default, vCluster creates all namespaced resources that need to be synchronized to the host cluster in the same namespace where the vCluster is running. To avoid naming conflicts between resources with identical names across different virtual namespaces, vCluster rewrites their names before syncing them to the host cluster.
-
-For example, if you have a virtual cluster, `my-vcluster`, vCluster transforms a pod named `test` in namespace `my-namespace` to be named `test-x-my-namespace-x-my-vcluster` in the host cluster. This transformation prevents conflicts with other pods named `test` in different namespaces within the vCluster.
-
-Since vCluster rewrites resource names to avoid conflicts, any references to those resources must also be updated. vCluster handles this automatically for core Kubernetes resources. For example, when a Pod mounts a Secret, vCluster ensures the reference maps to the correct Secret name on the host cluster—without exposing this complexity inside the vCluster.
+:::info
+By default, namespace syncing is **disabled**. vCluster rewrites resource names (e.g., `test` → `test-x-my-namespace-x-my-vcluster`) to avoid conflicts and syncs everything to the vCluster's host namespace.
+:::
 
 ## How namespace syncing works
 
-Namespace syncing provides an alternative approach by creating dedicated namespaces on the host cluster that correspond to namespaces in the virtual cluster. Instead of rewriting resource names and placing everything in the vCluster's namespace, namespace syncing maintains the original resource names within their mapped host namespaces.
-
-When namespace syncing is enabled, vCluster creates corresponding namespaces on the host cluster based on defined mapping rules. Resources from each virtual namespace are synced to their designated host namespace without name transformation, preserving predictable resource names and references.
-
-This approach enables complex scenarios like IAM integrations with cloud providers and custom schedulers. For instance, when configuring Workload Identity in Google Cloud Platform (GCP), you can link a GCP Service Account to a Kubernetes `ServiceAccount` using predictable names. Similarly, custom schedulers like Run:ai can manage structured hierarchies of projects, departments, and node pools with defined quotas and priorities.
+When enabled, namespace syncing creates dedicated host namespaces that map to virtual namespaces, preserving original resource names without rewriting. This enables IAM integrations (like GCP Workload Identity) and custom schedulers (like Run:ai) that require predictable resource names.
 
 :::note
 If namespace syncing is not enabled or if a namespace doesn't match any mapping rule, vCluster syncs resources into the vCluster control plane's namespace on the host using rewritten names to avoid conflicts.
@@ -38,7 +42,13 @@ If namespace syncing is not enabled or if a namespace doesn't match any mapping 
 
 ## Enable namespace syncing
 
-Configure namespace syncing by enabling the feature and selecting how to map namespaces from the virtual cluster to the host cluster.
+Configure namespace syncing by enabling the feature and defining mapping rules.
+
+:::caution Configuration is Immutable
+Namespace syncing configuration cannot be modified after vCluster deployment. Plan your mapping strategy carefully before initial deployment.
+:::
+
+### Basic configuration
 
 ```yaml
 sync:
@@ -52,23 +62,23 @@ sync:
 
 When enabled, vCluster creates corresponding namespaces on the host cluster for each namespace created in the vCluster, based on the defined mapping rules.
 
-:::warning Configuration immutable after deployment
-Namespace syncing configuration cannot be modified after vCluster deployment. You cannot:
-- Enable or disable namespace syncing on an existing vCluster
-- Edit mapping rules or configuration on an existing vCluster
 
-Plan your namespace mapping strategy carefully before initial deployment.
+## Import existing namespaces
+
+:::info Automatic Import Behavior
+Any host namespace matching a defined mapping (exact or pattern) is automatically imported into the vCluster, including all existing workloads.
 :::
 
-## Existing namespaces
+When a host namespace matches your mapping rules:
+1. vCluster automatically imports the namespace
+2. Existing pods and resources appear in the virtual cluster
+3. Resources created in either direction sync bidirectionally
 
-Any host namespace that matches a defined mapping—either exact or pattern—is automatically imported into the vCluster.
-This means if a matching namespace already exists on the host or is created later, vCluster recognizes it and syncs it into the virtual environment.
-Importantly, any workloads (such as Pods) created in that host namespace are also imported into the vCluster and appear just like native vCluster resources.
+## Configure mapping rule types
 
-## Mapping rule types
+### Available mapping patterns
 
-Namespace syncing supports several mapping rule types with the `mappings.byName` field:
+The `mappings.byName` field supports these patterns:
 
 - **Exact mappings**: Map a specific virtual namespace name to a specific host namespace name.
 - **Pattern mappings**: Use a single wildcard `*` character to map a range of virtual namespaces to a corresponding range of host namespaces. The wildcard content mirrors between virtual and host.
@@ -80,9 +90,9 @@ Combine the `${name}` variable with pattern mappings for flexible namespace orga
 Define only exact-to-exact or pattern-to-pattern mappings. Mixing these types (exact virtual namespace to patterned host namespace, or patterned virtual namespace to exact host namespace) is not supported.
 :::
 
-### vcluster.yaml configuration
+### Configuration examples
 
-Configure different mapping types in your `vcluster.yaml`:
+Here are different mapping strategies you can use:
 
 ```yaml title="vcluster-mappings-example.yaml"
 sync:
@@ -109,15 +119,13 @@ sync:
           "datasets-*": "${name}-data-*"
 ```
 
-## Enforce only syncing defined mappings 
+## Enforce only syncing defined mappings
 
-By default (`mappingsOnly: false`), when you create a resource in a virtual namespace that does not match any defined mappings, vCluster syncs those resources to its own namespace on the host cluster using the standard name-rewriting strategy.
+By default (`mappingsOnly: false`), virtual namespaces that don't match any mapping rules still work - they sync to the vCluster's host namespace using name-rewriting.
 
-You can restrict the non matching namespaces, by strictly enforcing that syncing will only occur for defined mappings. If you create a namespace in the virtual cluster which doesn't match any of the configured mappings in `vcluster.yaml`, the creation of that namespace is blocked in the host cluster.
+### Restrict to mapped namespaces only
 
-### vcluster.yaml configuration
-
-Configure enforcing syncing on defined mappings by enabling `mappingsOnly:true`. 
+To strictly enforce mappings and block unmapped namespaces, enable `mappingsOnly:true`:
 
 ```yaml
 # vcluster-mappings-only-example.yaml
@@ -136,35 +144,36 @@ sync:
 
 ## Delete a vCluster
 
-When you delete a vCluster, the namespaces and resources in those namespaces that were created on the host cluster due to the syncing from the virtual cluster are removed. Any namespaces and resources that originated from the host cluster and were imported into the virtual cluster remain unchanged. vCluster only cleans up the resources including namespaces that it created while leaving anything that was created outside of the vCluster. 
+When you delete a vCluster, namespaces and resources created by the vCluster on the host are removed. Resources that originated from the host cluster and were imported remain unchanged - vCluster only cleans up what it created.
 
 You can test this behavior by deploying vCluster with the following configuration:
 
-```yaml
-# vcluster-test-cleanup.yaml
+```yaml title="vcluster-test-cleanup.yaml"
 sync:
   toHost:
     namespaces:
       enabled: true
       mappings:
         byName:
+          # Test mapping: 'sync-*' in vCluster maps to 'host-*' on host
+          # This helps demonstrate what gets deleted vs preserved
           sync-*: host-*
 ```
 
-## Examples 
+## Examples
 
 The following end-to-end examples demonstrate namespace syncing behavior in both virtual and host clusters.
 
-### Enable namespace mappings 
+### Example: Enable namespace mappings
 
-The following example shows how mapped and unmapped namespaces behave when creating resources in a vCluster.
+This example demonstrates how different namespace mapping rules affect resource creation and placement on the host cluster.
 
 <Flow>
 <Step>
-Deploy a vCluster named `mapping-demo` using the `vcluster-mappings-example.yaml` file above.
+Deploy a vCluster named `mapping-demo` using the `vCluster-mappings-example.yaml` file from the preceding example.
 
 ```bash
-vcluster create mapping-demo -f vcluster-mappings-example.yaml
+vcluster create mapping-demo -f vCluster-mappings-example.yaml
 ```
 </Step>
 
@@ -279,9 +288,9 @@ The pod from the mapped namespace syncs directly without renaming, while the pod
 </Step>
 </Flow>
 
-### Import existing host namespaces 
+### Example: Import existing host namespaces
 
-The following example shows what happens to existing namespaces on the host cluster and how they are imported into the virtual cluster.
+This example shows how vCluster automatically imports host namespaces that match your mapping rules, including any existing workloads.
 
 <Flow>
 <Step>
@@ -334,16 +343,16 @@ nginx-from-host   1/1     Running   0          36s
 </Step>
 </Flow>
 
-### Sync only mapped namespaces
+### Example: Sync only mapped namespaces
 
-The following example shows how `mappingsOnly: true` restricts operations within vCluster to only mapped namespaces.
+This example demonstrates strict namespace control using `mappingsOnly: true` to prevent creation of unmapped namespaces.
 
 <Flow>
 <Step>
-Deploy a vCluster named `strict-vc` with the `vcluster-mappings-only-example.yaml` configuration:
+Deploy a vCluster named `strict-vc` with the `vCluster-mappings.yaml` configuration:
 
 ```bash
-vcluster create strict-vc -f vcluster-mappings-only-example.yaml
+vcluster create strict-vc -f vCluster-mappings-only.yaml
 ```
 </Step>
 
@@ -374,14 +383,14 @@ vCluster blocks this namespace. Any operation on namespaces not defined in mappi
 </Step>
 </Flow>
 
-### Delete a vCluster
+### Example: Delete a vCluster with namespace syncing
 
-The following example shows what happens to the namespaces on the host cluster when you delete a vCluster and have enabled namespace syncing. 
+This example demonstrates the cleanup behavior when deleting a vCluster, showing which resources are removed and which are preserved.
 
 <Flow>
 
 <Step>
-Create a namespace on your host cluster that matches host-side mappings in our configuration and start a pod inside of it:
+Create a namespace on your host cluster that matches host-side mappings in the configuration and start a pod inside of it:
 
 ```bash
 kubectl --context kind-vcluster create namespace host-namespace-from-host
@@ -476,7 +485,7 @@ kubectl get po -A | grep nginx
 
 The output is similar to the following:
 
-```bash title=
+```bash
 sync-namespace-from-host       nginx-from-host          1/1     Running   0          3m58s
 sync-namespace-from-vcluster   nginx-from-vcluster      1/1     Running   0          114s
 ```
@@ -553,3 +562,211 @@ Resources synced from vCluster are gone while all resources created on host clus
 
 </Step>
 </Flow>
+
+## Known limitations
+
+### Incompatibility with generic sync
+The namespace syncing feature is incompatible with the older `experimental.genericSync` feature.
+If you enable `sync.toHost.namespaces`, you must NOT use `genericSync`. Instead, rely on the specific `sync.toHost` and `sync.fromHost` configurations
+for resource synchronization.
+
+### Automatic syncing of all secrets and ConfigMaps
+When namespace syncing is enabled, all `Secrets` and `ConfigMaps` automatically sync to host namespaces (equivalent to `sync.toHost.secrets.all: true` and `sync.toHost.configMaps.all: true`). This cannot be disabled and makes these resources visible on the host cluster.
+
+### NetworkPolicy syncing is disabled
+The `sync.toHost.networkPolicies` feature is not supported with namespace syncing. NetworkPolicy objects created in the vCluster won't sync to the host and have no effect on network traffic.
+
+### Inter-namespace pod affinity
+
+`podAffinity` rules that reference pods in other namespaces are not translated by vCluster, causing pods to remain `Pending`. Intra-namespace `podAffinity` rules work as expected.
+
+
+#### Example: Inter-namespace affinity (fails)
+
+This example attempts to schedule pods in one namespace with affinity to pods in another namespace. It fails because vCluster cannot translate cross-namespace references in pod affinity rules, causing pods to remain in Pending state indefinitely.
+
+
+```yaml
+# Namespace for the target application
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: sync-a
+---
+# Namespace for the follower application
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: sync-b
+---
+# --- Target App Deployment ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: target-app
+  namespace: sync-a
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: target
+  template:
+    metadata:
+      labels:
+        app: target
+    spec:
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchExpressions:
+              - key: app
+                operator: In
+                values:
+                - target
+            topologyKey: "kubernetes.io/hostname"
+      containers:
+      - name: nginx
+        image: nginx
+---
+# --- Follower App with Failing Affinity ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: follower-app
+  namespace: sync-b
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: follower
+  template:
+    metadata:
+      labels:
+        app: follower
+    spec:
+      affinity:
+        podAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchExpressions:
+              - key: app
+                operator: In
+                values:
+                - target
+            # This cross-namespace reference will not work
+            namespaces: ["sync-a"]
+            topologyKey: "kubernetes.io/hostname"
+      containers:
+      - name: busybox
+        image: busybox
+        command: ["sleep", "3600"]
+```
+
+After applying this manifest, the `follower-app` pods remain stuck indefinitely in the `Pending` state.
+If you run:
+
+```bash
+kubectl get po -A -o wide
+```
+
+You should see output similar to
+
+```bash
+NAMESPACE     NAME                            READY   STATUS    RESTARTS   AGE   IP            NODE           NOMINATED NODE   READINESS GATES
+sync-a        target-app-7d8df4d5d4-tlpmc     1/1     Running   0          3s    10.244.2.24   loft-worker    <none>           <none>
+sync-a        target-app-7d8df4d5d4-vhct5     1/1     Running   0          3s    10.244.1.17   loft-worker2   <none>           <none>
+sync-b        follower-app-6b5ccc86dd-8ssw6   0/1     Pending   0          3s    <none>        <none>         <none>           <none>
+sync-b        follower-app-6b5ccc86dd-kjkkg   0/1     Pending   0          3s    <none>        <none>         <none>           <none>
+```
+
+#### Example: Intra-namespace affinity (works)
+
+This example shows how to correctly configure pod affinity within the same namespace. By placing both deployments in the same namespace without cross-namespace references, the affinity rules work as expected.
+
+```yaml
+# Namespace for the demo
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: sync-demo
+---
+# --- Target App Deployment ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: target-app
+  namespace: sync-demo
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: target
+  template:
+    metadata:
+      labels:
+        app: target
+    spec:
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchExpressions:
+              - key: app
+                operator: In
+                values:
+                - target
+            topologyKey: "kubernetes.io/hostname"
+      containers:
+      - name: nginx
+        image: nginx
+---
+# --- Follower App with Working Affinity ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: follower-app
+  namespace: sync-demo
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: follower
+  template:
+    metadata:
+      labels:
+        app: follower
+    spec:
+      affinity:
+        podAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchExpressions:
+              - key: app
+                operator: In
+                values:
+                - target
+            topologyKey: "kubernetes.io/hostname"
+      containers:
+      - name: busybox
+        image: busybox
+        command: ["sleep", "3600"]
+```
+
+After applying this manifest, all pods are in the `Running` state, and the `follower-app` pods are co-located on the same nodes as the `target-app` pods.
+If you run:
+
+```bash
+kubectl get po -A -o wide
+```
+
+You should see output similar to
+
+```bash
+NAMESPACE     NAME                            READY   STATUS    RESTARTS   AGE   IP            NODE           NOMINATED NODE   READINESS GATES
+kube-system   coredns-744d9bd8bf-ck47h        1/1     Running   0          21m   10.244.1.11   loft-worker2   <none>           <none>
+sync-demo     follower-app-6f6df5d4fb-kvvcz   1/1     Running   0          7s    10.244.1.19   loft-worker2   <none>           <none>
+sync-demo     follower-app-6f6df5d4fb-rsfjf   1/1     Running   0          7s    10.244.2.26   loft-worker    <none>           <none>
+sync-demo     target-app-7d8df4d5d4-czfrd     1/1     Running   0          8s    10.244.1.18   loft-worker2   <none>           <none>
+sync-demo     target-app-7d8df4d5d4-lblcc     1/1     Running   0          8s    10.244.2.25   loft-worker    <none>           <none>
+```
