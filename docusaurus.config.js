@@ -273,6 +273,13 @@ const config = {
     /** @type {import('@docusaurus/preset-classic').ThemeConfig} */
 
     {
+      imageZoom: {
+        selector: '.markdown img, .intro-card img',
+        options: {
+          background: 'rgba(0, 0, 0, 0.8)',
+          scrollOffset: 0,
+        }
+      },
       mermaid: {
         theme: { light: "default", dark: "dark" },
         options: {
@@ -302,18 +309,14 @@ const config = {
         items: [
           // Product tabs
           {
-            type: "docSidebar",
-            sidebarId: "siteSidebar",
+            to: "/vcluster",
             position: "left",
             label: "vCluster",
-            docsPluginId: "vcluster",
           },
           {
-            type: "docSidebar",
-            sidebarId: "siteSidebar",
+            to: "/platform",
             position: "left",
             label: "vCluster Platform",
-            docsPluginId: "platform",
           },
           {
             href: "https://www.vnode.com/docs",
