@@ -1,0 +1,258 @@
+---
+title: Rotate certificates
+sidebar_label: Rotate Certificates
+sidebar_position: 5
+sidebar_class_name: host-nodes private-nodes
+---
+
+import InterpolatedCodeBlock from "@site/src/components/InterpolatedCodeBlock";
+import Flow, { Step } from "@site/src/components/Flow";
+
+<!--vale off-->
+
+vCluster client and server certificates (also called leaf certificates) remain valid for 1 year from the initial virtual cluster creation.
+By default, vCluster uses a self-signed Certificate Authority (CA) to sign these certificates. The CA certificate remains valid for 10 years.
+
+vCluster provides commands that allow you to check details about the certificates as well as rotate them. 
+
+:::info
+Checking and rotating certificates is only supported for virtual clusters using the k8s distribution.
+:::
+
+:::important
+The virtual cluster Pod must be in a
+[running](https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/#container-state-running)
+state otherwise the cert commands below abort the operation. In case of
+certificate expiration during runtime of a virtual cluster it will still be in
+a running state (though, non-functional) and the rotation can still be
+performed.
+:::
+
+## Check certificate information {#check-certificate-information}
+
+The `vcluster certs check` command provides the following information for each certificate of the given virtual cluster:
+
+<br />
+
+| Field       | Description                                                                       |
+|-------------|-----------------------------------------------------------------------------------|
+| Filename    | The name of the certificate file.                                                 |
+| Subject     | The common name of the subject of the certificate.                                |
+| Issuer      | The common name of the issuer of the certificate.                                 |
+| Expires On  | The date when the certificate expires.                                              |
+| Status      | The expiry status of the certificate (either `OK`, `EXPIRED` or `NOT YET VALID`). |
+
+The following command shows this information as a table. You can change the format by using `--output`:
+
+<br />
+<InterpolatedCodeBlock
+  code={`vcluster -n [[VAR:VCLUSTER NAMESPACE:my-vcluster]] certs check [[VAR:VCLUSTER NAME:my-vcluster]]`}
+  language="bash"
+/>
+
+**Example output**:
+
+```bash
+            FILENAME           |            SUBJECT            |     ISSUER     |       EXPIRES ON       | STATUS
+-------------------------------+-------------------------------+----------------+------------------------+---------
+  apiserver-etcd-client.crt    | kube-apiserver-etcd-client    | etcd-ca        | Jul 14, 2026 19:24 UTC | OK
+  apiserver-kubelet-client.crt | kube-apiserver-kubelet-client | kubernetes     | Jul 14, 2026 19:24 UTC | OK
+  apiserver.crt                | kube-apiserver                | kubernetes     | Jul 14, 2026 19:24 UTC | OK
+  ca.crt                       | kubernetes                    | kubernetes     | Jul 12, 2035 19:24 UTC | OK
+  client-ca.crt                | kubernetes                    | kubernetes     | Jul 12, 2035 19:24 UTC | OK
+  ca.crt                       | etcd-ca                       | etcd-ca        | Jul 12, 2035 19:24 UTC | OK
+  healthcheck-client.crt       | kube-etcd-healthcheck-client  | etcd-ca        | Jul 14, 2026 19:24 UTC | OK
+  peer.crt                     | vcluster                      | etcd-ca        | Jul 14, 2026 19:24 UTC | OK
+  server.crt                   | vcluster                      | etcd-ca        | Jul 14, 2026 19:24 UTC | OK
+  front-proxy-ca.crt           | front-proxy-ca                | front-proxy-ca | Jul 12, 2035 19:24 UTC | OK
+  front-proxy-client.crt       | front-proxy-client            | front-proxy-ca | Jul 14, 2026 19:24 UTC | OK
+  server-ca.crt                | kubernetes                    | kubernetes     | Jul 12, 2035 19:24 UTC | OK
+
+```
+
+## Rotate client and server leaf certificates {#rotate-client-and-server-leaf-certificates}
+
+The certificate rotation command performs the following operations:
+
+- **Creates PKI backup**: Backs up the existing Public Key Infrastructure (PKI) directory to preserve the current certificate state.
+- **Generates new certificates**: Creates new client and server leaf certificates signed by the existing Certificate Authority.
+- **Restarts virtual cluster**: Restarts the virtual cluster to load the new certificates.
+
+Control-plane components (API server, etcd, kubelet) require the restart because they cache certificates in memory during startup. Without a restart, these components continue using the expired or soon-to-expire certificates, which causes authentication failures.
+
+The restart does not affect running application workloads because the underlying cluster nodes and container runtime remain operational during the virtual cluster restart process.
+
+<br />
+<InterpolatedCodeBlock
+  code={`vcluster -n [[VAR:VCLUSTER NAMESPACE:my-vcluster]] certs rotate [[VAR:VCLUSTER NAME:my-vcluster]]`}
+  language="bash"
+/>
+
+Client and server leaf certificate rotation is less intrusive compared to [CA rotation](#rotate-ca-certificates).
+This means that connecting to the virtual cluster with previously issued kubeconfigs continues to work.
+
+## Changing the CA certificate
+
+:::warning
+CA rotation replaces the Certificate Authority that validates all certificates in the cluster. This breaks existing client connections and requires regenerating all kubeconfigs. Use this command carefully, as it affects all cluster access.
+:::
+
+When working with virtual clusters with private nodes, there are extra steps that need to happen before doing any changes to the CA certificate and
+after making the changes to the CA certificate. 
+
+
+### Rotate the CA Certificate
+
+The CA rotation command performs these operations:
+
+- **Creates PKI backup**: Backs up the existing certificate directory to enable recovery if needed.
+- **Generates new Certificate Authority**: Creates a new CA certificate and uses it to sign fresh certificates for all cluster components.
+- **Restarts virtual cluster**: Restarts the cluster to load the new certificates.
+
+If the rotation fails, you can restore the previous PKI from the automatically created backup. For more information, see the documentation on [restoring the previous CA from a backup](#restore-the-previous-ca-from-a-backup) for recovery.
+
+<br />
+<InterpolatedCodeBlock
+  code={`vcluster -n [[VAR:VCLUSTER NAMESPACE:my-vcluster]] certs rotate-ca [[VAR:VCLUSTER NAME:my-vcluster]]`}
+  language="bash"
+/>
+
+As this replaces the trust anchor completely, everything configured to trust the old CA becomes invalidated (for instance previously issued kubeconfigs).
+
+### Restore the previous CA from a backup {#restore-the-previous-ca-from-a-backup}
+
+The rotation creates a backup in the virtual cluster's data directory using the following pattern:
+
+```bash
+/data/pki.bak/<unixtimestamp>
+```
+
+:::warning
+Use caution when performing the following operations. Verify each command before execution.
+:::
+
+<Flow>
+<Step>
+To restore from the backup, access the virtual cluster syncer container:
+
+<InterpolatedCodeBlock
+  code={`kubectl -n [[VAR:VCLUSTER NAMESPACE:my-vcluster]] exec -ti svc/[[VAR:VCLUSTER NAME:my-vcluster]] -c syncer -- sh`}
+  language="bash"
+/>
+
+</Step>
+<Step>
+List the backups and choose the latest:
+
+```bash
+ls -lat /data/pki.bak/
+```
+
+</Step>
+
+<Step>
+Delete the PKI directory and copy the backup to that location:
+
+<InterpolatedCodeBlock
+  code={`rm -rf /data/pki
+cp -R /data/pki.bak/[[VAR:BACKUP UNIX TIMESTAMP:1752736900]] /data/pki`}
+  language="bash"
+/>
+
+</Step>
+<Step>
+Log out and perform a regular leaf [certificate rotation](#rotate-client-and-server-leaf-certificates):
+
+<InterpolatedCodeBlock
+  code={`vcluster -n [[VAR:VCLUSTER NAMESPACE:my-vcluster]] certs rotate [[VAR:VCLUSTER NAME:my-vcluster]]`}
+  language="bash"
+/>
+
+</Step>
+</Flow>
+
+## Steps required for private nodes during CA changes
+
+:::important
+Node deletion needs to happen before any CA cert changes whether it's rotating or restoring the cert. Otherwise, the kubelet
+running on the node is not able to communicate with the apiserver running with
+the updated certificate.
+:::
+
+Before changing the CA certificate, by either rotating or restoring it, you must delete all previously joined private nodes. After the rotation, 
+you must re-join the nodes again to the virtual cluster. Each step must be performed on each private node. 
+
+### Steps before changing the CA certificate
+
+Before changing the CA certificate, by either rotating or restoring it, you need to delete the private nodes in the virtual cluster. 
+
+<Flow>
+<Step>
+Connect to your virtual cluster:
+
+<InterpolatedCodeBlock
+  code={`vcluster -n [[VAR:VCLUSTER NAMESPACE:my-vcluster]] connect [[VAR:VCLUSTER NAME:my-vcluster]]`}
+  language="bash"
+/>
+
+</Step>
+<Step>
+Delete each private node:
+
+:::info
+`vcluster node delete` tries to evict any workload before deleting the
+node from the virtual cluster. If there's no other node for the workload to be re-scheduled to, the 
+workload stops. If you forgot to delete a node before change the CA cert, 
+you must append `--drain=false` to successfully delete the node.  
+:::
+
+<InterpolatedCodeBlock
+  code={`vcluster node delete [[VAR:NODE NAME:my-node]]`}
+  language="bash"
+/>
+
+</Step>
+</Flow>
+
+### Steps after changing the CA certificate
+
+After changing the CA certificate, by either rotating or restoring it, you need to re-create a token to join the virtual cluster 
+and join the private nodes back to the virtual cluster. 
+
+<Flow>
+<Step>
+Connect to your virtual cluster:
+
+<InterpolatedCodeBlock
+  code={`vcluster -n [[VAR:VCLUSTER NAMESPACE:my-vcluster]] connect [[VAR:VCLUSTER NAME:my-vcluster]]`}
+  language="bash"
+/>
+
+</Step>
+<Step>
+Create a new join token:
+
+```bash
+vcluster token create
+```
+
+</Step>
+<Step>
+
+Copy the command and append the `--force-join` flag. Run the updated command on every private node. 
+
+:::warning
+The `--force-join` flag leads to running containers being killed via the
+container runtime and being restarted by the kubelet. If you have a
+stateful application running that requires graceful termination, please ensure
+that you have performed the necessary steps beforehand (vcluster node delete,
+backups etc.).
+:::
+
+```bash
+curl -fsSLk "https://example.com:443/node/join?token=d34db33f" | sh -s -- --force-join
+```
+
+</Step>
+
+</Flow>

@@ -78,7 +78,7 @@ const config = {
           lastVersion: "current",
           versions: {
             current: {
-              label: "v0.25",
+              label: "v0.27",
               banner: "none",
               badge: false,
             },
@@ -183,13 +183,18 @@ const config = {
         editUrl: ({ versionDocsDirPath, docPath }) =>
           `https://github.com/loft-sh/vcluster-docs/edit/main/${versionDocsDirPath}/${docPath}`,
         editCurrentVersion: true,
-        lastVersion: "0.26.0",
+        lastVersion: "0.27.0",
         versions: {
           current: {
             label: "main 🚧",
           },
+          "0.27.0": {
+            label: "v0.27 Stable",
+            banner: "none",
+            badge: true,
+          },
           "0.26.0": {
-            label: "v0.26 Stable",
+            label: "v0.26",
             banner: "none",
             badge: true,
           },
@@ -390,9 +395,9 @@ const config = {
         additionalLanguages: ["bash", "hcl"],
       },
       announcementBar: {
-        id: "platform-upgrade",
+        id: "vcluster-0-27-release",
         content:
-          '🚀 <strong>New releases: <a href="https://www.vcluster.com/releases/en/changelog?hideLogo=true&hideMenu=true&theme=dark&embed=true&c=vCluster" target="_blank">vCluster Platform 4.3 and vCluster 0.26</a></strong>',
+          '🚀 <strong>New release: <a href="https://www.vcluster.com/releases/en/changelog?hideLogo=true&hideMenu=true&theme=dark&embed=true&c=vCluster" target="_blank">vCluster 0.27 is now available!</a></strong>',
         backgroundColor: "#4a90e2",
         textColor: "#ffffff",
         isCloseable: true,
