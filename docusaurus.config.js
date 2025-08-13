@@ -25,6 +25,7 @@ const config = {
   tagline: "Virtual Clusters for Kubernetes",
   url: "https://vcluster.com",
   baseUrl: __webpack_public_path__,
+  onBrokenLinks: "warn",
   organizationName: "loft-sh", // Usually your GitHub org/user name.
   projectName: "vcluster-docs", // Usually your repo name.
   headTags: [
@@ -48,7 +49,6 @@ const config = {
     },
   ],
 
-  onBrokenLinks: "throw",
   onBrokenMarkdownLinks: "warn",
 
   // Even if you don't use internationalization, you can use this field to set
