@@ -23,8 +23,12 @@ export default function ContentWrapper(props) {
     <>
       {shouldShowVClusterVersioning && <VersionSelector docsPluginId={"vcluster"} dropdownItemsAfter={[
         {
+          to: "https://vcluster.com/docs/v0.20",
+          label: "v0.20 (EOL) ↗"
+        },
+        {
           to: "https://vcluster.com/docs/v0.19",
-          label: "v0.19 (EOL)"
+          label: "v0.19 (EOL) ↗"
         }
       ]} />}
       {shouldShowPlatformVersioning && <VersionSelector docsPluginId={"platform"} dropdownItemsAfter={[
