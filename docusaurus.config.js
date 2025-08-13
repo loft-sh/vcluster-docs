@@ -25,7 +25,7 @@ const config = {
   tagline: "Virtual Clusters for Kubernetes",
   url: "https://vcluster.com",
   baseUrl: __webpack_public_path__,
-  onBrokenLinks: "warn",
+  onBrokenLinks: "throw",
   organizationName: "loft-sh", // Usually your GitHub org/user name.
   projectName: "vcluster-docs", // Usually your repo name.
   headTags: [
@@ -243,6 +243,7 @@ const config = {
           `https://github.com/loft-sh/vcluster-docs/edit/main/${versionDocsDirPath}/${docPath}`,
         editCurrentVersion: true,
         lastVersion: "4.3.0",
+        onlyIncludeVersions: ["4.3.0"],
         versions: {
           current: {
             label: "main 🚧",
