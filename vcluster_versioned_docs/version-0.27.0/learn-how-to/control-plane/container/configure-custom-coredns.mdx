@@ -1,0 +1,144 @@
+---
+title: Configure custom CoreDNS
+sidebar_label: Customize CoreDNS
+sidebar_position: 3
+description: How to configure and manage custom DNS zones in vCluster by customizing CoreDNS
+sidebar_class_name: host-nodes
+---
+
+import TenancySupport from '../../../_fragments/tenancy-support.mdx';
+
+<TenancySupport hostNodes="true" />
+
+<!-- vale off -->
+
+Customizing CoreDNS enables tailored DNS management for specific requirements, such as handling custom zones, forwarding DNS queries, and integrating with external DNS providers. This guide explains how to configure and use custom CoreDNS setups in a vCluster.
+
+## Common CoreDNS customizations
+
+The following are typical customizations for CoreDNS in vCluster:
+
+- **Custom DNS zones**: Define specific domains that resolve to selected IP addresses.
+- **DNS forwarding**: Route specific domain queries to external DNS servers.
+- **Integration with external DNS providers**: Connect to cloud provider DNS services.
+- **Local DNS overrides**: Define host entries for development or testing environments.
+
+For more advanced configurations, see to the [CoreDNS documentation](https://coredns.io/manual/toc/).
+
+
+## Define CoreDNS configuration 
+
+Create or modify the `vcluster.yaml` file to include a custom CoreDNS configuration using the `overwriteManifests` field:
+
+```yaml
+controlPlane:
+  backingStore:
+    etcd:
+      deploy:
+        enabled: true
+  coredns:
+    overwriteManifests: |-
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: coredns
+        namespace: kube-system
+      data:
+        Corefile: |-
+          .:1053 {
+            errors
+            health
+            ready
+            rewrite name regex .*\.nodes\.vcluster\.com kubernetes.default.svc.cluster.local
+            kubernetes cluster.local in-addr.arpa ip6.arpa {
+              pods insecure
+              fallthrough in-addr.arpa ip6.arpa
+            }
+            hosts /etc/NodeHosts {
+              ttl 60
+              reload 15s
+              fallthrough
+            }
+            prometheus :9153
+            forward . /etc/resolv.conf
+            file /etc/coredns/dg.db dg.in
+            cache 30
+            loop
+            loadbalance
+          }
+          import /etc/coredns/custom/*.server
+        NodeHosts: ""
+        dg.db: |
+          dg.in. IN SOA ns3.dg.in cto.dg.in 20132601 10800 900 1209600 86400
+          ; dg.in file
+          *.dg.in. IN A 10.211.9.11
+          *.dg.in. IN A 10.211.9.12
+          *.dg.in. IN A 10.211.9.13
+          *.dg.in. IN A 10.211.9.14
+          *.dg.in. IN A 10.211.9.15
+          *.dg.in. IN A 10.211.9.16
+```
+
+## Apply your CoreDNS configuration
+
+After defining your CoreDNS configuration, choose one of these approaches based on your situation:
+
+### Deploy a new vCluster
+
+If you're creating a new vCluster, deploy it with your custom CoreDNS configuration using Helm:
+
+```bash
+helm install corednsissue loft/vcluster --version 0.20.0 -f vcluster.yaml
+```
+
+### Update an existing vCluster
+
+If you already have a running vCluster:
+
+1. Update your `vcluster.yaml` with the new CoreDNS configuration or add additional entries:
+
+```yaml
+da.db: |
+  dada.in. IN SOA ns3.dada.in cto.da.in 20132601 10800 900 1209600 86400
+  ; da.in file
+  *.da.in. IN A 10.311.9.11
+  *.da.in. IN A 10.311.9.12
+  *.da.in. IN A 10.311.9.13
+  *.da.in. IN A 10.311.9.14
+  *.da.in. IN A 10.311.9.15
+  *.da.in. IN A 10.311.9.16
+```
+
+2. Apply the changes using Helm:
+
+```bash
+helm upgrade corednsissue loft/vcluster --version 0.20.0 -f vcluster.yaml
+```
+
+## Test the DNS resolution
+
+After configuring custom CoreDNS settings, verify that the setup works correctly:
+
+### Verify ConfigMap changes
+
+Ensure the CoreDNS ConfigMap reflects your custom configuration:
+
+```bash
+kubectl get cm coredns -n kube-system -o yaml
+```
+
+### Confirm CoreDNS pod status
+
+Check that CoreDNS pods are running and using the updated configuration:
+
+```bash
+kubectl get pods -n kube-system -l k8s-app=kube-dns
+```
+
+### Test DNS resolution
+
+Use a test pod to validate that DNS resolution works for your custom zones:
+
+```bash
+kubectl run dns-test --image=busybox --restart=Never --rm -it -- nslookup myapp.da.in
+```

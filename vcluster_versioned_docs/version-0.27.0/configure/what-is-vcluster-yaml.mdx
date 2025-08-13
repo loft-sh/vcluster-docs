@@ -1,0 +1,159 @@
+---
+title: What is vcluster.yaml?
+sidebar_label: What is vcluster.yaml?
+sidebar_position: 1
+description: Introduction to the vcluster.yaml configuration file
+sidebar_class_name: host-nodes private-nodes standalone
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+import Flow, { Step } from '@site/src/components/Flow';
+
+<!-- vale off -->
+
+Every virtual cluster requires configuration settings that define how the vCluster operates. 
+The `vcluster.yaml` file is the central configuration source for these settings. It controls everything from the control plane architecture and
+ worker node pool and based on those choices, other features may be limtied. 
+
+When you deploy a virtual cluster, the vCluster CLI uses this configuration file and applies your specified settings. 
+The file is optional - if you don't provide one, vCluster applies defaults that work for most use cases using the shared nodes tenancy model, which assumes
+using the all the host cluster's worker nodes and all resources syncing to the same namespace on the host cluster. However, most production deployments 
+benefit from custom configuration to match specific requirements.
+
+## Configuration structure for vcluster.yaml 
+
+The `vcluster.yaml` file organizes configuration into logical sections. Each section controls a specific aspect of virtual cluster behavior. 
+
+### Control plane settings
+
+The control plane section defines how vCluster runs its Kubernetes API server, controller manager, and data storage. Key configuration areas include:
+
+- **Deployment settings**: Configure how the control plane pods deploy, including resource limits, node selectors, and affinity rules.
+- **Backing store selection**: Choose between different storage backends for the vCluster control plane's [backing store](./vcluster-yaml/control-plane/components/backing-store/). Options include embedded databases, managed etcd or external databases.
+- **Networking options**: Define how external traffic reaches the virtual cluster's API server, including ingress configuration and service exposure methods.
+
+### Worker node pool settings
+
+You can configure which type of worker nodes to use for the virtual cluster. 
+
+- **Host Cluster's Worker Nodes**: Choose either all or specific set of nodes of the host cluster's worker nodes. 
+- **Individual Nodes**: Choose to use individual nodes that are not connected to any other Kubernetes cluster. 
+
+### Access configuration
+
+You can configure access settings to control how users and applications connect to the virtual cluster:
+
+- **The kubeconfig file**: Configure how vCluster generates and stores [the kubeconfig file](/vcluster/configure/vcluster-yaml/export-kube-config) that clients use to connect. This file contains API server endpoints, authentication credentials, and cluster context. You specify the Kubernetes secret name for storage, the context name for identification, and the server URL for connection.
+- **Authentication methods**: vCluster supports certificate-based and service account token authentication for secure access to the virtual cluster. When exposing vCluster through an ingress or load balancer, you can use service account tokens if client certificate validation is not supported. Authentication methods can be customized to fit your access requirements.
+
+### Resource sync rules
+
+When using the host cluster's worker nodes, virtual clusters need to share certain resources with their host cluster to function properly. The sync configuration controls this sharing in both directions:
+
+- **From host to virtual**: Configure which host cluster resources appear inside the virtual cluster through [host-to-virtual synchronization](/vcluster/configure/vcluster-yaml/sync/from-host/). Common examples include nodes, storage classes, and priority classes.
+- **From virtual to host**: Define which virtual cluster resources sync to the host cluster through [virtual-to-host synchronization](/vcluster/configure/vcluster-yaml/sync/to-host/). This typically includes pods, services, and persistent volume claims that need to run on the host.
+
+## Example vcluster.yaml configuration
+
+The following example demonstrates a common configuration and explains each section's purpose:
+
+```yaml title="vcluster.yaml"
+# Control plane configuration
+controlPlane:
+  # Configure the backing store for vCluster's data
+  backingStore: # Enterprise feature - requires license
+    etcd:
+      embedded: 
+        enabled: true  # Run etcd inside the vCluster pod
+  
+  # Expose the API server via ingress
+  ingress:
+    enabled: true
+    host: vcluster-k8s-api.example.com  # Your API server hostname
+
+# Resource synchronization settings when using host cluster's worker nodes
+sync:
+  # Resources that sync from virtual cluster to host
+  toHost:
+    serviceAccounts:
+      enabled: true  # Sync ServiceAccounts for operators/controllers
+  
+  # Resources that sync from host to virtual cluster  
+  fromHost:
+    nodes:
+      enabled: true  # Sync real nodes instead of fake nodes
+      clearImageStatus: true  # Remove image data to save resources
+
+# Kubeconfig export configuration
+exportKubeConfig:
+  context: my-vcluster-context  # Name in the kubeconfig file
+  server: https://vcluster-k8s-api.example.com  # API server URL
+  secret:
+    name: my-vcluster-kubeconfig  # Secret name for storing kubeconfig
+```
+
+Each configuration section has a specific purpose in the virtual cluster setup:
+
+- **Control plane with embedded storage**: The configuration uses [embedded etcd](/vcluster/configure/vcluster-yaml/control-plane/components/backing-store/etcd/embedded) as the data store for the virtual cluster's control plane. This approach reduces operational complexity because etcd runs inside the vCluster pod rather than requiring a separate database.
+- **API server exposure**: An [Ingress](/vcluster/configure/vcluster-yaml/control-plane/deployment/ingress) resource exposes the virtual cluster's API server through a hostname. This allows external tools and users to access the virtual cluster without port-forwarding or `NodePort` services.
+- **ServiceAccount synchronization**: The configuration enables [`ServiceAccount`](/vcluster/configure/vcluster-yaml/sync/to-host/advanced/service-accounts) syncing from the virtual cluster to the host. This synchronization supports workloads that need specific permissions on the host cluster, such as operators or controllers that manage host resources.
+- **Real node synchronization**: Instead of using vCluster's default "pseudo" nodes, this configuration syncs real [node](/vcluster/configure/vcluster-yaml/sync/from-host/nodes) information from the host cluster. The `clearImageStatus` option removes image information from synced nodes to reduce data transfer and storage requirements.
+- **Kubeconfig access**: The configuration defines how vCluster exports the [kubeconfig](/vcluster/configure/vcluster-yaml/export-kube-config) for accessing the virtual cluster. The exported kubeconfig gets stored in a Kubernetes secret, making it available for CI/CD pipelines, ArgoCD apps, or Terraform configurations.
+
+## Deploy a virtual cluster 
+
+Before you deploy, you should review the [different tenancy models](./tenancy-model) to determine how the infrastructure of the virtual 
+cluster will be configured. 
+
+Once you've determined your tenancy model, read the different ways to deploy:
+
+* [Basics](../deploy/control-plane/container/basics)
+* [High Availability](../deploy/control-plane/container/high-availability)
+* [Using Flux](../deploy/control-plane/container/flux)
+* In Different environments
+  * [EKS](../deploy/control-plane/container/environment/eks)
+  * [AKS](../deploy/control-plane/container/environment/aks)
+  * [GKE](../deploy/control-plane/container/environment/gke)
+  * [OpenShift](../deploy/control-plane/container/environment/openshift)
+
+## Frequently asked questions
+
+<details>
+<summary><strong>Is a <code>vcluster.yaml</code> file required?</strong></summary>
+
+The `vcluster.yaml` file is optional. If not provided, vCluster applies default settings that:
+
+- Use an embedded database (SQLite).
+- Sync essential resources such as pods and services.  
+- Configure networking with basic `ClusterIP` services.  
+- Enable default authentication and access controls.  
+
+:::note
+The `vcluster.yaml` configuration defaults are for development and simple test scenarios. For production use, defining a `vcluster.yaml` file is strongly recommended to meet specific security, performance, and integration needs.
+:::
+</details>
+
+<details>
+<summary><strong>Can an existing virtual cluster be updated using <code>vcluster.yaml</code>?</strong></summary>
+
+Yes. You can update an existing virtual cluster by applying a modified `vcluster.yaml` file. This allows you to change the configuration without deleting or recreating the cluster.
+
+To apply changes, use the `--upgrade` flag with the `vcluster create` command:
+
+```bash
+vcluster create VCLUSTER_NAME --upgrade -f vcluster.yaml
+````
+
+The command performs the following actions:
+
+1. Reads the updated `vcluster.yaml` file.
+2. Compares it to the current configuration of the virtual cluster.
+3. Applies only the differences between the new and existing configuration.
+4. Triggers a rolling update if required to apply the changes.
+
+Some configuration changes, such as updates to sync settings, take effect immediately. Others, such as control plane modifications, may require pod restarts. The vCluster CLI handles these updates automatically and ensures minimal disruption to workloads.
+
+For more details on updating virtual clusters, see the [deployment changes documentation](../manage/deploy-changes/).
+
+</details>

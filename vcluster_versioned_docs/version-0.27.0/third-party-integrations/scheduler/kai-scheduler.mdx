@@ -1,0 +1,218 @@
+---
+title: Configure NVIDIA KAI scheduler with vCluster
+sidebar_label: KAI scheduler
+description: Learn how to configure vCluster to work with NVIDIA KAI scheduler for GPU and CPU workloads
+sidebar_class_name: host-nodes
+---
+
+import BasePrerequisites from '@site/docs/_partials/base-prerequisites.mdx';
+import TenancySupport from '../../_fragments/tenancy-support.mdx';
+
+<TenancySupport hostNodes="true" />
+
+# Configure NVIDIA KAI scheduler with vCluster {#configure-kai-scheduler-with-vCluster}
+
+This guide explains how to configure vCluster to work with the [NVIDIA KAI scheduler](https://github.com/NVIDIA/KAI-Scheduler). KAI is a Kubernetes scheduler that optimizes resource allocation for both GPU and CPU workloads, with advanced queuing, fractional GPU allocation, and topology awareness.
+
+:::info NVIDIA KAI scheduler background
+NVIDIA KAI scheduler is the open source version of Run:AI's scheduler technology, which is why it uses `podgroups.scheduling.run.ai` CRDs. KAI was open sourced by NVIDIA in 2025 under the Apache 2.0 license.
+:::
+
+## Prerequisites {#prerequisites}
+<BasePrerequisites />
+- KAI scheduler installed in the <GlossaryTerm term="host-cluster">host cluster</GlossaryTerm>
+
+## Understand the challenge {#understand-the-challenge}
+
+By default, when syncing workload pods from a vCluster to the host cluster, vCluster sets ownership references on the synced pods. When using custom schedulers like KAI, this causes issues because:
+
+- KAI's pod-grouper controller watches for pods with `schedulerName: kai-scheduler`
+- The pod-grouper controller traverses the owner references to group related pods
+- For vCluster workloads, the owner reference is set to the vCluster service in the host namespace
+- The pod-grouper may not have sufficient permissions to access these Service resources
+
+## Solution: Configure vCluster for KAI scheduler {#solution-configure-vCluster-for-kai}
+
+To properly integrate vCluster with KAI scheduler, you need to configure one thing:
+
+**Turn off owner references** to allow KAI's pod-grouper to process pods properly.
+
+Add the following to your vCluster configuration (`values.yaml` for Helm or vCluster config):
+
+```yaml title="vCluster configuration for KAI scheduler"
+# highlight-start
+experimental:
+  syncSettings:
+    setOwner: false
+# highlight-end
+```
+
+This configuration prevents owner reference traversal issues by not setting them on synced pods. The KAI scheduler's pod-grouper controller automatically creates PodGroup resources in the host cluster.
+
+Apply this configuration when creating or updating your vCluster:
+
+```bash title="Create vCluster with KAI scheduler configuration"
+vcluster create my-vcluster --values kai-scheduler-values.yaml
+```
+
+Or for an existing vCluster, update the configuration:
+
+```bash title="Update existing vCluster configuration"
+vcluster create --upgrade my-vcluster --values kai-scheduler-values.yaml
+```
+
+Where `kai-scheduler-values.yaml` contains the configuration shown previously.
+
+## Use KAI scheduler for vCluster workloads {#use-kai-scheduler-for-workloads}
+
+After applying this configuration, you can use the KAI scheduler for your vCluster workloads by specifying `schedulerName: kai-scheduler` in the pod specification.
+
+<!-- vale off -->
+### Example: CPU-only workload {#example-cpu-only-workload}
+<!-- vale on -->
+
+Here's an example of a CPU-only pod using the KAI scheduler:
+
+```yaml title="CPU-only pod with KAI scheduler"
+apiVersion: v1
+kind: Pod
+metadata:
+  name: cpu-only-pod
+spec:
+  # highlight-start
+  schedulerName: kai-scheduler
+  # highlight-end
+  containers:
+  - name: main
+    image: ubuntu
+    args:
+    - sleep
+    - infinity
+    resources:
+      requests:
+        cpu: 100m
+        memory: 250M
+```
+
+
+<!-- vale off -->
+### Example: GPU workload {#example-gpu-workload}
+<!-- vale on -->
+
+Here's an example of a GPU pod using the KAI scheduler:
+
+```yaml title="GPU pod with KAI scheduler"
+apiVersion: v1
+kind: Pod
+metadata:
+  name: gpu-pod
+spec:
+  # highlight-start
+  schedulerName: kai-scheduler
+  # highlight-end
+  containers:
+  - name: main
+    image: ubuntu
+    command:
+    - /bin/bash
+    - -c
+    - nvidia-smi && sleep infinity
+    resources:
+      requests:
+        nvidia.com/gpu: '1'
+      limits:
+        nvidia.com/gpu: '1'
+```
+
+<!-- vale off -->
+### Example: Fractional GPU workload {#example-fractional-gpu-workload}
+<!-- vale on -->
+
+KAI scheduler supports GPU sharing through fractional allocation. Here's an example using half a GPU:
+
+```yaml title="Fractional GPU pod with KAI scheduler"
+apiVersion: v1
+kind: Pod
+metadata:
+  name: gpu-sharing-pod
+  labels:
+    kai.scheduler/queue: test  # Optional: specify queue
+  annotations:
+    # highlight-start
+    gpu-fraction: "0.5"  # Request half of a GPU
+    # highlight-end
+spec:
+  schedulerName: kai-scheduler
+  containers:
+  - name: main
+    image: ubuntu
+    args: ["sleep", "infinity"]
+```
+
+:::info GPU sharing notes
+- GPU sharing must be enabled during KAI installation with `--set "global.gpuSharing=true"`
+- KAI doesn't enforce memory isolation - applications should respect their allocation
+- You can also use `gpu-memory: "2000"` annotation to request specific MiB
+:::
+
+## Verify configuration {#verify-configuration}
+
+To verify that the KAI scheduler is properly configured with vCluster:
+
+- Confirm vCluster is using `experimental.syncSettings.setOwner=false` in its configuration
+
+- Check that pods are being scheduled by KAI scheduler:
+  ```bash title="Verify pod is using KAI scheduler"
+  kubectl get pod <pod-name> -n <namespace> -o jsonpath='{.spec.schedulerName}'
+  ```
+
+- Ensure the KAI scheduler components are running:
+  ```bash title="Check KAI scheduler components"
+  kubectl get pods -n kai-scheduler
+  ```
+
+:::info Scheduler behavior
+When using the KAI scheduler with vCluster and `setOwner: false`, you may observe:
+
+1. The pod-grouper adds a podgroup annotation to your pod:
+```
+Annotations: pod-group-name: pg-pod-name-[uuid]
+```
+
+2. You might see a non-blocking message in the logs:
+```
+Detected pod with no owner but with podgroup annotation
+```
+This is expected and doesn't affect scheduling.
+
+The `setOwner: false` configuration successfully resolves owner reference issues and allows the KAI scheduler to work properly with vCluster workloads in production environments.
+:::
+
+## How it works {#how-it-works}
+
+The KAI scheduler's pod-grouper component is a controller that:
+- Watches pods with `schedulerName: kai-scheduler`
+- Traverses the owner references to find the topmost owner
+- Groups related pods for optimal scheduling decisions
+- Applies custom scheduling logic based on workload type
+
+When vCluster syncs pods to the host cluster, it sets an owner reference to the vCluster service by default. By disabling this with `setOwner: false`, the pod-grouper can process the pods normally without needing to follow service references.
+
+## Limitations and considerations {#limitations-and-considerations}
+
+- The `experimental.syncSettings.setOwner: false` configuration is marked as experimental and may change in future vCluster releases
+- If you have other features that rely on pod ownership in vCluster, disabling owner references may affect those features
+- The KAI scheduler might require additional configuration for advanced features like GPU sharing and queue management
+- For GPU workloads, ensure that the host cluster has the necessary GPU drivers and device plugins installed
+
+## Troubleshoot common issues {#troubleshooting}
+
+### Common problems {#common-problems}
+
+1. **GPU sharing pods stuck in pending**:
+   - Verify GPU sharing is enabled: `--set "global.gpuSharing=true"` during KAI installation
+   - Check if reservation pods are created in `kai-resource-reservation` namespace
+
+2. **Pod-grouper permission errors**:
+   - With `setOwner: false`, these should not occur
+   - If they persist, check KAI scheduler logs: `kubectl logs -n kai-scheduler -l component=scheduler`

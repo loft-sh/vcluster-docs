@@ -1,0 +1,219 @@
+---
+title: Custom resources
+sidebar_label: customResources
+sidebar_position: 1
+toc_max_heading_level: 3
+sidebar_class_name: pro host-nodes
+description: Configuration for syncing custom resources to host.
+---
+
+import CodeBlock from '@theme/CodeBlock';
+import CustomResourceDefinitions from '../../../../../_partials/config/sync/toHost/customResources.mdx'
+import ProAdmonition from '../../../../../_partials/admonitions/pro-admonition.mdx'
+import VersionedCrdSyncing from '../../../../../_fragments/sync/versioned-crd-syncing.mdx'
+import TenancySupport from '../../../../../_fragments/tenancy-support.mdx';
+
+<TenancySupport hostNodes="true" />
+
+<ProAdmonition/>
+
+vCluster allows you to sync custom resources from the virtual cluster to the host cluster. This is useful for syncing resources that are not included in the default sync behavior.
+
+This feature only works for resources that have a corresponding CustomResourceDefinition (CRD) installed in the host cluster.
+
+If a synced custom resource creates additional resources in the host cluster, vCluster attempts to detect and sync those resources back to the virtual cluster. For example, a custom resource that creates a `Secret` has that `Secret` automatically synced into the virtual cluster.
+
+vCluster also adds the necessary cluster and namespace-level RBAC permissions to retrieve the CRD and sync the corresponding resources.
+
+<br />
+
+:::info Only Namespace-Scoped Resource
+This feature currently only works for namespace-scoped resources only.
+:::
+
+:::info Namespace syncing
+If you want to sync many custom resources, consider using [namespace syncing](../../../sync/to-host/advanced/namespaces).
+:::
+
+## Enable custom resource syncing {#enable-custom-resource-syncing}
+
+To enable custom resource syncing from the virtual cluster to the host cluster, first identify which CustomResourceDefinitions (CRDs) you want to sync by running `kubectl get crds`. Then, add the name of each CRD to the `customResources` section under `sync` in your `vcluster.yaml` configuration file.
+
+Although the custom resources themselves are synced from the virtual cluster to the host cluster, vCluster also copies the corresponding CRDs from the host cluster into the virtual cluster. This ensures the virtual cluster can understand and manage those custom resources correctly.
+
+By default, you do not need to specify an API version when syncing a custom resource. If the CRD defines multiple versions and no version is explicitly set, vCluster uses the storage version. To sync a specific version, such as when the storage version is not suitable, you can define that version directly in the `vcluster.yaml`.
+
+```yaml
+sync:
+  toHost:
+    customResources:
+      customobjects.example.io:
+        enabled: true
+```
+
+<VersionedCrdSyncing yamlTitle="Configure CR sync to host" scopeName=""/>
+
+## Patches
+
+You can modify the sync behavior with patches that target specific paths. Currently, there are two different kinds of patches supported.
+
+:::info Wildcard patches
+You can use `*` in paths to select all entries of an array or object, for example `spec.containers[*].name` or `spec.containers[*].volumeMounts[*]`. vCluster calls the patch multiple times.
+:::
+
+### Reference patches
+
+You can use a reference patch to make a specific field in one resource point to another resource that vCluster should rewrite. If the referenced resource exists in the host cluster, vCluster automatically imports it into the virtual cluster.
+
+This is useful when working with resources that reference other resources like `Secrets`:
+
+```yaml
+sync:
+  toHost:
+    customResources:
+      customobjects.example.io:
+        enabled: true
+        patches:
+        - path: spec.secretName
+          reference:
+            apiVersion: v1
+            kind: Secret
+```
+
+vCluster translates the path `spec.secretName` as it points to a Secret. If the Secret is created in the host cluster, vCluster automatically imports it into the virtual cluster.
+
+<!-- vale off -->
+### JavaScript expression patches {#javascript-expression-patches}
+<!-- vale on -->
+
+These are JavaScript ES6 compatible expression patches that can be used to change a field while syncing. You define how it changes when syncing from the virtual cluster into the host cluster or when syncing from the host cluster into the virtual cluster. To add a prefix to field values you can:
+
+```yaml
+sync:
+  toHost:
+    customResources:
+      customobjects.example.io:
+        enabled: true
+        patches:
+        - path: spec.names[*]
+          # specifies the sync direction here again, because you can also react on change for fromHost with an expression
+          expression: '"prefix-"+value'
+          # optional reverseExpression, if omitted patches from host are discarded for that path
+          # reverseExpression: 'value.slice("prefix-".length)'
+```
+
+There is also a variable called `context` besides `value` that can be used to access vCluster specific data:
+- `context.vcluster.name`: Name of the virtual cluster
+- `context.vcluster.namespace`: Namespace of the virtual cluster
+- `context.vcluster.config`: Config of the virtual cluster, basically `vcluster.yaml` merged with the defaults
+- `context.hostObject`: Host object (can be null if not available)
+- `context.virtualObject`: Virtual object (can be null if not available)
+- `context.path`: The matched path on the object, useful when using wildcard path selectors (*)
+
+For example, to add a prefix to values in a custom resource field, you can use the following patch:
+
+```yaml
+sync:
+  toHost:
+    customResources:
+      customobjects.example.io:
+        enabled: true
+        patches:
+        - path: spec.hosts[*]
+          # specifies the sync direction here again, because you can also react on change for fromHost
+          expression: "value.startsWith('prod-') ? value : `prod-${value}`"
+          # specifies how to sync back changes to the virtual cluster. If omitted does not sync back changes.
+          reverseExpression: "value.startsWith('prod-') ? value.slice(5) : value"
+```
+
+The patch creates a new custom object within the vCluster:
+
+```yaml
+apiVersion: example.io/v1
+kind: CustomObject
+metadata:
+  name: name-within-vcluster
+spec:
+  hosts:
+    - server.example.com
+```
+
+vCluster syncs the host cluster and applies your patch, creating this modified resource:
+
+```yaml
+apiVersion: example.io/v1
+kind: CustomObject
+metadata:
+  name: synced-name
+spec:
+  hosts:
+    - prod-server.example.com # the patch added prod- prefix to this field
+```
+
+If you directly edit the resource in the host cluster and change the value:
+
+```yaml
+apiVersion: example.io/v1
+kind: CustomObject
+metadata:
+  name: synced-name
+spec:
+  hosts:
+    - prod-other-server.example.com # changed from prod-server.example.com
+```
+
+vCluster detects the change, applies the reverse patch, and updates the resource in your virtual cluster:
+
+```yaml
+apiVersion: example.io/v1
+kind: CustomObject
+metadata:
+  name: name-within-vcluster
+spec:
+  hosts:
+    - other-server.example.com # the patch removed the prod- prefix
+```
+
+## Configure Kubernetes Gateway API sync
+
+To use the Kubernetes Gateway API with custom resources, install the Gateway API CRDs in the host cluster and then create the waypoint gateway.
+
+### Install Gateway CRD in the host
+
+To create gateway resources, install the Gateway API CustomResourceDefinition in the host cluster if it's not already present:
+
+```bash title="Install Gateway CRD"
+kubectl --context="${HOST_CTX}" get crd gateways.gateway.networking.k8s.io &> /dev/null || \
+kubectl --context="${HOST_CTX}" apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.1/standard-install.yaml
+```
+
+### Create waypoint gateway {#create-waypoint-gateway}
+
+Create a waypoint gateway configuration:
+
+```yaml title="waypoint-gateway.yaml"
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: waypoint
+  labels:
+    istio.io/waypoint-for: service
+spec:
+  gatewayClassName: istio-waypoint
+  listeners:
+  - name: mesh
+    port: 15008
+    protocol: HBONE
+```
+
+Apply it to your host cluster:
+
+```bash title="Create Waypoint Gateway"
+kubectl --context="${HOST_CTX}" create -f waypoint-gateway.yaml --namespace="${VCLUSTER_HOST_NAMESPACE}"
+```
+
+After it is configured, you can configure your custom resources to sync Gateway API resources between the virtual and host clusters.
+
+## Config reference
+
+<CustomResourceDefinitions/>
