@@ -1,16 +1,17 @@
 ---
-title: Deploy on NVIDIA DGX SuperPod with Netris
-sidebar_label: NVIDIA DGX
+title: Isolate clusters on vlans with Netris
+sidebar_label: Bare Metal (Netris)
 sidebar_position: 5
-id: netris
+id: bare-metal
 sidebar_class_name: private-nodes
 ---
 
 ## Goal
 
-We deploy vCluster on a SuperPod on bare metal while being isolated from any other clusters or infrastructure through an exclusive L2 domain using vlan.
+We deploy vCluster on bare metal while being isolated from any other clusters or infrastructure through an exclusive L2 domain using vlan.
+To configure the switch fabric, we use [Netris](https://netris.ai/).
 
-We add bare metal DGX servers & VMs on management nodes as private nodes.
+We add bare metal servers and run VMs on the host cluster nodes as vCluster private nodes.
 
 ![Architecture](/img/netris_architecture.svg)
 
@@ -21,20 +22,20 @@ This is transparent to the vCluster, and the host cluster remains inaccessible t
 This can be repeated for any number of clusters, the limitations being the exhaustion of compute resources and vlan ids.
 The VPCs of each vCluster may also be peered to access shared services across clusters.
 
-## Roles
+## Netris
 
-- Nvidia: Hardware vendor
-- Netris:
-    - Software vendor
-    - configures switch fabric for isolated virtual networks
+Netris provides software for managing and automating the switch fabric in a datacenter.
+
+The architecture can be replicated without Netris.
+Then, the switches must be configured manually.
 
 ## Prerequisites
 
 We assume the following:
 
-- Nvidia SuperPod deployed
+- Hardware deployed
 - Netris controller & agent installed & configured
-- Bare metal Kubernetes "host cluster" (See [below](#prepare-host-cluster))
+- Bare metal Kubernetes "host cluster" set up (See [below](#prepare-host-cluster))
 
 ## Tools used
 
@@ -51,10 +52,10 @@ It is advisable to install Kubernetes after the network has been configured acco
 
 ### Configure switch fabric
 
-The host cluster gets its own vlan, which spans all management servers.
+The host cluster gets its own vlan, which spans all shared servers.
 In contrast to the vCluster, the vlan traffic for the host cluster is untagged, so no special considerations are necessary in the nodes' OS.
 
-1. Create ServerClusterTemplate in netris
+1. Create ServerClusterTemplate in Netris
 
     This template is exclusively used for the host cluster.
 
@@ -75,17 +76,17 @@ In contrast to the vCluster, the vlan traffic for the host cluster is untagged, 
     ]
     ```
 
-2. Create ServerCluster in netris
+2. Create ServerCluster in Netris
 
-    Create a ServerCluster in netris using the template and add the management servers to it.
+    Create a ServerCluster in Netris using the template and add the shared servers to it.
 
-    This configures the ports on the management servers as access ports with the same vlan.
+    This configures the connected ports as access ports with the same vlan.
 
     ![ServerCluster](/img/netris_create_host_cluster_servercluster.png)
 
 ### Install Kubernetes
 
-Most Kubernetes distributions should work.
+Most Kubernetes distributions should work without any modifications.
 
 There must be a default StorageClass available.
 
@@ -94,6 +95,7 @@ There must be a default StorageClass available.
 Since the host cluster Nodes handle vlan traffic, some CNI plugin configurations are not compatible.
 
 We have tested the following plugins:
+
 - Flannel
 - Calico in VXLAN mode (eBPF mode seems to drop vlan tagged frames)
 - Cilium
@@ -124,8 +126,8 @@ Multiple Pods and VMs can be connected to the same bridge on the same host.
 
 See install instructions in [Whereabouts IPAM plugin](https://github.com/k8snetworkplumbingwg/whereabouts).
 
-The _Whereabouts_ IPAM plugin assigns well-known IPs to the vCluster control plane Pods and load balancer.
-It tracks the allocations of the pool cluster wide, to avoid IP conflicts between different nodes.
+The _Whereabouts_ IPAM plugin assigns well-known IPs to the vCluster Pods.
+It tracks the allocations of the pool cluster-wide, to avoid IP conflicts across different nodes.
 
 <!-- vale off --> // vale doesn't like the capitalization
 #### KubeVirt
@@ -139,7 +141,7 @@ The example below also uses the [containerized data importer](https://kubevirt.i
 
 ## Start vCluster platform
 
-To use private nodes, which is an enterprise features, we need to add the vCluster to the vCluster platform.
+To use private nodes, which is an enterprise feature, we need to add the vCluster to the vCluster platform.
 
 To start it in the host cluster, run:
 
@@ -183,15 +185,15 @@ The following steps can be repeated for additional vCluster deployments.
 
 2. Create ServerCluster
 
-    Create a ServerCluster in netris using the template and add the management servers to it as shared endpoints.
+    Create a ServerCluster in Netris using the template and add the shared servers to it as _shared_ endpoints.
 
-    This configures the ports on the management servers as trunk ports (additionally) carrying tagged vlan traffic.
+    This configures the ports on the shared servers as trunk ports (additionally) carrying tagged vlan traffic.
 
     ![ServerCluster](/img/netris_create_vcluster_servercluster.png)
 
 3. Look up the Vnet's vlan id
 
-    Netris creates a vnet and assign it a vlan id.
+    Netris creates a vnet and assigns it a vlan id.
     We need the vlan id (here it's `3`) in the next steps.
 
     ![VnetId](/img/netris_edit_vcluster_vnet.png)
@@ -222,7 +224,7 @@ The following steps can be repeated for additional vCluster deployments.
     ```
 
     The brigde operator creates a bridge with the name `br-vlan-3` on every Node and enslave the vlan interface connected to the default interface.
-    Egress from any (vlan unaware) device connected to the bridge is tagged and thus be part of the L2 domain of the vCluster.
+    Egress from any (vlan unaware) device connected to the bridge is tagged and thus part of the L2 domain of the vCluster.
     Likewise, the tag from vlan ingress is stripped.
 
 3. Create NetworkAttachmentDefinitions
@@ -322,7 +324,7 @@ The following steps can be repeated for additional vCluster deployments.
 2. Deploy load balancer in front of vCluster Pods
 
     The load balancer exposes the vCluster Pods on a single IP on the subnet.
-    A kube-vip sidecar assigns the IP only one of the load balancer Pods at a time and provides active failover.
+    A kube-vip sidecar assigns the IP on only one of the load balancer Pods at a time and provides active failover.
 
     Update the target cluster address in the following manifest to `<vcluster name>.<namespace>.svc.cluster.local`:
 
@@ -487,16 +489,16 @@ The following steps can be repeated for additional vCluster deployments.
 
     This shows that the load balancer (Pod) is a neighbor on the vCluster vlan subnet.
 
-    The Pods may reside on the same host as the load balancer, then the traffic would remain on the bridge and not be tagged.
-    In this case, pick a different Pod to run the command.
+    The Pods may reside on the same host as the load balancer, in which case the traffic would remain on the bridge and never be tagged.
+    To circumvent this, pick a different Pod to run the command from.
 
-## Join bare metal DGX server
+## Join bare metal server
 
-1. Add DGX server to ServerCluster
+1. Add server to ServerCluster
 
-    ![Add DGX server](/img/netris_add_vcluster_dgx_server.png)
+    ![Add bare metal server](/img/netris_add_vcluster_bare_metal_server.png)
 
-2. Provision DGX server with OS and configure the default interface (bond)
+2. Provision server with OS and configure the default interface (bond)
 
     Verify:
 
@@ -514,14 +516,14 @@ The following steps can be repeated for additional vCluster deployments.
     curl -sfLk "https://192.168.67.253:443/node/join?token=ooj3s3.6glbz3pq4e15s25g" | sh -
     ```
 
-4. Run join command on DGX server
+4. Run join command on server
 
-    This downloads the necessary Kubernetes binaries and container runtime, configure Kubelet and join the vCluster as a new node.
+    This downloads the necessary Kubernetes binaries and container runtime, configures Kubelet and joins the vCluster as a new node.
 
     You may have to configure NAT so the server can reach the internet or any package mirrors.
     This depends on the operating system of your choice.
 
-5. Verify that the DGX server joined the vCluster
+5. Verify that the server joined the vCluster
 
     ```bash
     $ kubectl get no
