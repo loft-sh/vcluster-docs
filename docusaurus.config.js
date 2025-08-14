@@ -25,6 +25,7 @@ const config = {
   tagline: "Virtual Clusters for Kubernetes",
   url: "https://vcluster.com",
   baseUrl: __webpack_public_path__,
+  onBrokenLinks: "throw",
   organizationName: "loft-sh", // Usually your GitHub org/user name.
   projectName: "vcluster-docs", // Usually your repo name.
   headTags: [
@@ -48,7 +49,6 @@ const config = {
     },
   ],
 
-  onBrokenLinks: "throw",
   onBrokenMarkdownLinks: "warn",
 
   // Even if you don't use internationalization, you can use this field to set
@@ -78,7 +78,7 @@ const config = {
           lastVersion: "current",
           versions: {
             current: {
-              label: "v0.27",
+              label: "v0.21",
               banner: "none",
               badge: false,
             },
@@ -183,8 +183,8 @@ const config = {
         editUrl: ({ versionDocsDirPath, docPath }) =>
           `https://github.com/loft-sh/vcluster-docs/edit/main/${versionDocsDirPath}/${docPath}`,
         editCurrentVersion: true,
-        lastVersion: "0.27.0",
-        onlyIncludeVersions: ["current", "0.27.0", "0.26.0", "0.25.0", "0.24.0", "0.23.0"],
+        lastVersion: "0.21.0",
+        onlyIncludeVersions: ["0.21.0"],
         versions: {
           current: {
             label: "main 🚧",
@@ -243,6 +243,7 @@ const config = {
           `https://github.com/loft-sh/vcluster-docs/edit/main/${versionDocsDirPath}/${docPath}`,
         editCurrentVersion: true,
         lastVersion: "4.3.0",
+        onlyIncludeVersions: ["4.3.0"],
         versions: {
           current: {
             label: "main 🚧",
