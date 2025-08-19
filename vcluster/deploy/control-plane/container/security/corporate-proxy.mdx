@@ -1,0 +1,288 @@
+---
+title: Deploy vCluster behind a corporate proxy
+sidebar_label: Corporate proxy
+sidebar_position: 6
+description: Learn how to deploy vCluster behind a corporate proxy and configure proxy settings correctly.
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+import Flow, { Step } from "@site/src/components/Flow";
+import BasePrerequisites from '@site/docs/_partials/base-prerequisites.mdx';
+
+# Deploy vCluster behind a corporate proxy
+
+Configure <GlossaryTerm term="vcluster">vCluster</GlossaryTerm> to work behind a corporate proxy using standard proxy environment variables.
+
+## Prerequisites
+
+<BasePrerequisites />
+
+- Corporate proxy URL and credentials (if required)
+
+## Overview
+
+When deploying vCluster behind a corporate proxy, you need to configure the standard proxy environment variables (`HTTP_PROXY`, `HTTPS_PROXY`, and `NO_PROXY`) on the vCluster control plane pods. These settings ensure that vCluster can:
+
+- Access external resources through the proxy when needed
+- Communicate with internal cluster services without going through the proxy
+
+:::info NO_PROXY configuration
+When configuring `NO_PROXY`, ensure you include all internal cluster services that should bypass the proxy. For vCluster deployments using external etcd as their backing store, you **must** explicitly include `vc-etcd` in the list (see [External etcd deployments](#external-etcd-deployments) section below).
+:::
+
+## Configure proxy settings
+
+Configure the proxy environment variables through the vCluster StatefulSet configuration:
+
+```yaml title="vcluster.yaml"
+controlPlane:
+  statefulSet:
+    env:
+      # HTTP proxy for non-encrypted traffic
+      - name: HTTP_PROXY
+        value: http://proxy.example.com:3128
+      
+      # HTTPS proxy for encrypted traffic  
+      - name: HTTPS_PROXY
+        value: http://proxy.example.com:3128
+      
+      # NO_PROXY - services that should bypass the proxy
+      # Include 'vc-etcd' if using external etcd backing store
+      - name: NO_PROXY
+        value: localhost,127.0.0.1,.svc,.svc.cluster.local,.local,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
+```
+
+## Configure required no-proxy entries
+
+### Required entries
+
+The `NO_PROXY` environment variable must include the following entries for vCluster to function correctly:
+
+| Entry | Purpose | Required |
+|-------|---------|----------|
+| `localhost` | Local loopback | Yes |
+| `127.0.0.1` | Local loopback IP | Yes |
+| `.svc` | Service DNS suffix | Yes |
+| `.svc.cluster.local` | Full cluster DNS suffix | Yes |
+| Cluster CIDR ranges | Internal pod/service networks | Yes |
+| `<vcluster-name>-etcd` | vCluster's external etcd service | Only for external etcd deployments |
+
+### Example configurations
+
+<Tabs>
+<TabItem value="basic" label="Basic configuration">
+
+Minimal proxy configuration with required entries:
+
+```yaml title="vcluster.yaml"
+controlPlane:
+  statefulSet:
+    env:
+      - name: HTTP_PROXY
+        value: http://10.1.2.3:3128
+      - name: HTTPS_PROXY
+        value: http://10.1.2.3:3128
+      - name: NO_PROXY
+        value: localhost,127.0.0.1,.svc,.svc.cluster.local,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
+```
+
+</TabItem>
+<TabItem value="extended" label="Extended configuration">
+
+Comprehensive configuration including additional internal services and networks:
+
+```yaml title="vcluster.yaml"
+controlPlane:
+  statefulSet:
+    env:
+      - name: HTTP_PROXY
+        value: http://corp-proxy.example.com:8080
+      - name: HTTPS_PROXY
+        value: http://corp-proxy.example.com:8080
+      - name: NO_PROXY
+        value: localhost,127.0.0.1,.svc,.svc.cluster.local,.local,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,169.254.0.0/16,.example.internal
+      # Optional: proxy credentials if required
+      - name: PROXY_USERNAME
+        valueFrom:
+          secretKeyRef:
+            name: proxy-credentials
+            key: username
+      - name: PROXY_PASSWORD
+        valueFrom:
+          secretKeyRef:
+            name: proxy-credentials
+            key: password
+```
+
+</TabItem>
+</Tabs>
+
+## Deploy vCluster with proxy settings
+
+<Flow>
+<Step>
+
+Create a namespace for your vCluster:
+
+```bash
+kubectl create namespace vcluster-proxy
+```
+
+</Step>
+<Step>
+
+Create your `vcluster.yaml` configuration file with the proxy settings:
+
+```yaml title="vcluster.yaml"
+controlPlane:
+  statefulSet:
+    env:
+      - name: HTTP_PROXY
+        value: http://your-proxy:3128  # Replace with your proxy
+      - name: HTTPS_PROXY  
+        value: http://your-proxy:3128  # Replace with your proxy
+      - name: NO_PROXY
+        # IMPORTANT: Include vc-etcd explicitly
+        value: vc-etcd,localhost,127.0.0.1,.svc,.svc.cluster.local,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
+```
+
+</Step>
+<Step>
+
+Deploy vCluster with the configuration:
+
+```bash
+vcluster create my-vcluster \
+  --namespace vcluster-proxy \
+  --values vcluster.yaml
+```
+
+</Step>
+<Step>
+
+Verify that the proxy settings are applied:
+
+```bash
+kubectl get statefulset -n vcluster-proxy my-vcluster -o yaml | grep -A 5 "env:"
+```
+
+You should see your proxy environment variables in the output.
+
+</Step>
+</Flow>
+
+## Troubleshoot proxy issues
+
+### vCluster fails to start with etcd connection errors
+
+For vCluster deployments using external etcd, if you see errors like "failed to connect to etcd" or proxy logs showing `TCP_DENIED/403` for etcd connections on port 2379, verify that:
+
+1. The etcd service name (`<vcluster-name>-etcd`) is explicitly listed in your `NO_PROXY` configuration
+2. The `NO_PROXY` value doesn't have spaces between entries (use commas only)
+3. The environment variables are correctly applied to the StatefulSet
+4. You're using the correct service name format (check with `kubectl get svc -n <namespace>`)
+
+### Verify proxy configuration
+
+Check that the proxy settings are correctly applied to the vCluster pods:
+
+```bash
+# Check the environment variables in the running pod
+kubectl exec -n vcluster-proxy my-vcluster-0 -- env | grep -E "PROXY|proxy"
+```
+
+### Test connectivity
+
+Verify that internal services bypass the proxy:
+
+```bash
+# Test etcd connectivity from within the vCluster pod
+kubectl exec -n vcluster-proxy my-vcluster-0 -- curl -I http://vc-etcd:2379/health
+```
+
+## External etcd deployments
+
+When using external etcd as the backing store for vCluster instead of the default embedded SQLite/k3s, you **must** include the etcd service name explicitly in the `NO_PROXY` environment variable. The service name follows the pattern `<vcluster-name>-etcd`. This requirement is critical because:
+
+- The Go HTTP client used by vCluster requires exact hostname matches for services without a leading dot
+- Domain patterns like `.local` or `.svc.cluster.local` do not cover the etcd service name
+- Without this explicit entry, vCluster will route etcd connections through the proxy, causing connection failures
+
+### Configure proxy for external etcd
+
+```yaml title="vcluster-external-etcd.yaml"
+# External etcd configuration with proxy settings
+controlPlane:
+  # Use external etcd as backing store
+  backingStore:
+    etcd:
+      deploy:
+        enabled: true
+        statefulSet:
+          highAvailability:
+            replicas: 3
+  
+  # Proxy configuration for control plane
+  statefulSet:
+    env:
+      - name: HTTP_PROXY
+        value: http://proxy.example.com:3128
+      - name: HTTPS_PROXY
+        value: http://proxy.example.com:3128
+      # CRITICAL: Must include the etcd service name
+      # Pattern: <vcluster-name>-etcd
+      - name: NO_PROXY
+        value: my-vcluster-etcd,localhost,127.0.0.1,.svc,.svc.cluster.local,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
+```
+
+:::warning Critical for external etcd
+When using external etcd, omitting the etcd service name (format: `<vcluster-name>-etcd`) from `NO_PROXY` will cause vCluster to fail with connection errors to the etcd service. The proxy will deny these connections with 403 errors. This is the most common cause of proxy-related failures in external etcd deployments.
+:::
+
+## Additional considerations
+
+### Use authenticated proxies
+
+If your corporate proxy requires authentication, you can include credentials in the proxy URL or use separate environment variables:
+
+```yaml
+controlPlane:
+  statefulSet:
+    env:
+      - name: HTTP_PROXY
+        value: http://username:password@proxy.example.com:3128
+      - name: HTTPS_PROXY
+        value: http://username:password@proxy.example.com:3128
+      - name: NO_PROXY
+        value: localhost,127.0.0.1,.svc,.svc.cluster.local,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
+```
+
+:::warning Security consideration
+Avoid hardcoding credentials in your configuration files. Use Kubernetes secrets instead:
+
+```yaml
+controlPlane:
+  statefulSet:
+    env:
+      - name: HTTP_PROXY
+        valueFrom:
+          secretKeyRef:
+            name: proxy-config
+            key: http-proxy-url
+```
+:::
+
+### Proxy settings for vCluster workloads
+
+The proxy configuration shown previously applies only to the vCluster control plane. If you need proxy settings for workloads running inside the virtual cluster, configure them separately through:
+
+- Pod environment variables in your workload manifests
+- ConfigMaps or Secrets mounted to your workloads
+- Admission webhooks that inject proxy settings automatically
+
+## Related topics
+
+- [Deploy vCluster in an air-gapped environment](./air-gapped)
+- [StatefulSet configuration](../../../../configure/vcluster-yaml/control-plane/deployment/statefulset)
+- [vCluster networking](../../../../configure/vcluster-yaml/networking)
