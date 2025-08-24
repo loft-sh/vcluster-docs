@@ -48,6 +48,7 @@ var paths = []string{
 	"rbac",
 	"privateNodes",
 	"privateNodes/autoUpgrade",
+	"privateNodes/autoNodes",
 	"policies/resourceQuota",
 	"policies/networkPolicy",
 	"policies/limitRange",
