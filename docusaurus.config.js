@@ -290,12 +290,12 @@ const config = {
         items: [
           // Product tabs
           {
-            to: "/vcluster",
+            to: "/vcluster/",
             position: "left",
             label: "vCluster",
           },
           {
-            to: "/platform",
+            to: "/platform/",
             position: "left",
             label: "vCluster Platform",
           },
