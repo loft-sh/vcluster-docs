@@ -105,16 +105,22 @@ const config = {
                 return { ...item, priority: 1.0, changefreq: 'daily' };
               }
 
-              // Current versions (non-versioned URLs) get high priority
+              // Latest stable versions get highest priority (0.27.0 for vCluster, 4.3.0 for platform)
+              if (item.url.match(/\/vcluster\/0\.27\.0\//) ||
+                  item.url.match(/\/platform\/4\.3\.0\//)) {
+                return { ...item, priority: 1.0, changefreq: 'daily' };
+              }
+
+              // Current/next versions (non-versioned URLs) get high priority
               if ((item.url.includes('/vcluster/') && !item.url.match(/\/vcluster\/\d+\.\d+\.\d+\//)) ||
                   (item.url.includes('/platform/') && !item.url.match(/\/platform\/\d+\.\d+\.\d+\//))) {
                 return { ...item, priority: 0.8, changefreq: 'weekly' };
               }
 
-              // All versioned docs get lower priority
+              // ALL other versioned docs get very low priority (0.19-0.26 for vCluster, older platform versions)
               if (item.url.match(/\/vcluster\/\d+\.\d+\.\d+\//) ||
                   item.url.match(/\/platform\/\d+\.\d+\.\d+\//)) {
-                return { ...item, priority: 0.3, changefreq: 'monthly' };
+                return { ...item, priority: 0.1, changefreq: 'yearly' };
               }
 
               // Default priority for other pages
