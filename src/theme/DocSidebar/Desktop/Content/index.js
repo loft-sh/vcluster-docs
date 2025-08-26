@@ -28,7 +28,7 @@ export default function ContentWrapper(props) {
         },
         {
           to: "https://vcluster.com/docs/v0.23",
-          label: "v0.23 (EOS) ↗"
+          label: "v0.23 (EOL) ↗"
         },
         {
           to: "https://vcluster.com/docs/v0.22",
