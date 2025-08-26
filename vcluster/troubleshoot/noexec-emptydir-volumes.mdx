@@ -1,0 +1,144 @@
+---
+title: Resolve permission denied errors with noexec volumes
+sidebar_label: noexec emptyDir volumes
+description: How to troubleshoot and resolve permission denied errors when vCluster is deployed in environments with noexec mounted emptyDir volumes.
+---
+
+import Flow, { Step } from '@site/src/components/Flow';
+
+# Resolve permission denied errors with noexec volumes
+
+When deploying <GlossaryTerm term="vcluster">vCluster</GlossaryTerm> in Kubernetes environments where emptyDir volumes are mounted with `noexec` flag, the vCluster pod fails to start with permission denied errors. This occurs because vCluster uses init containers to copy Kubernetes binaries into emptyDir volumes, and these binaries cannot be executed when the volume is mounted with `noexec`.
+
+## Error messages
+
+The following error messages indicate this issue:
+
+```bash title="Container runtime error"
+Error: failed to create containerd task: failed to create shim task: OCI runtime create failed: 
+runc create failed: unable to start container process: exec: "/binaries/vcluster": permission denied: unknown
+```
+
+```bash title="When debugging with strace"
+/ # /binaries/vcluster
+sh: /binaries/vcluster: Permission denied
+/ # strace /binaries/vcluster
+execve("/binaries/vcluster", ["/binaries/vcluster"], [/* 27 vars */]) = -1 EACCES (Permission denied)
+```
+
+## Cause
+
+vCluster uses init containers to copy the vCluster binary and Kubernetes components (kube-apiserver, kube-controller-manager) into emptyDir volumes. The main container then attempts to execute these binaries. When emptyDir volumes are mounted with `noexec`, the binaries cannot be executed.
+
+This happens in:
+- Security-hardened Kubernetes environments
+- Clusters where the host filesystem for emptyDir has `noexec` mount option
+- Environments with security policies enforcing `noexec` on temporary storage
+
+## Solution
+
+### Use pre-built images with embedded binaries
+
+The most reliable solution is to use vCluster images that have all required binaries embedded directly in the container image, eliminating the need for emptyDir volumes.
+
+:::info Temporary workaround available
+A temporary workaround using pre-built images is available:
+- GitHub workflow: https://github.com/loft-demos/k8s-image-mirror/blob/main/.github/workflows/build-vcluster.yaml
+- Pre-built images: https://github.com/loft-demos/k8s-image-mirror/pkgs/container/vcluster-pro
+- Helm charts: https://loft-demos.github.io/vcluster-charts/
+:::
+
+```bash title="Add alternative Helm repository and deploy"
+# Add the alternative Helm repository
+helm repo add vcluster-prebuilt https://loft-demos.github.io/vcluster-charts/
+helm repo update
+
+# Deploy vCluster with pre-built images
+helm install my-vcluster vcluster-prebuilt/vcluster \
+  --namespace vcluster-namespace \
+  --create-namespace
+```
+
+Or specify the image directly in your values file:
+
+```yaml title="vcluster.yaml"
+# Use pre-built image with embedded binaries
+controlPlane:
+  distro:
+    k8s:
+      image:
+        repository: ghcr.io/loft-demos/vcluster-pro
+        tag: <version>-noexec
+```
+
+## Alternative solutions
+
+If pre-built images aren't available or suitable:
+
+### Configure volume mounts without noexec
+
+If you have cluster admin access, modify the mount options for the emptyDir base directory:
+
+```bash title="Remount with exec permissions"
+# On the Kubernetes node
+mount -o remount,exec /var/lib/kubelet
+```
+
+### Use persistent volumes
+
+Configure vCluster to use persistent storage instead of emptyDir:
+
+```yaml title="vcluster.yaml"
+controlPlane:
+  statefulSet:
+    persistence:
+      volumeClaim:
+        enabled: true
+        size: 10Gi
+```
+
+### Deploy to specific nodes
+
+Deploy to nodes that allow exec on emptyDir:
+
+```yaml title="vcluster.yaml"
+controlPlane:
+  statefulSet:
+    scheduling:
+      nodeSelector:
+        vcluster-compatible: "true"
+```
+
+## Verification
+
+After implementing a solution:
+
+```bash title="Verify vCluster deployment"
+# Check pod status
+kubectl get pods -n <vcluster-namespace>
+
+# Check logs for permission errors
+kubectl logs -n <vcluster-namespace> <vcluster-pod> -c syncer
+
+# Connect to vCluster
+vcluster connect <vcluster-name> -n <namespace>
+kubectl get nodes
+```
+
+## Known limitations
+
+- **No direct upgrade path**: Cannot upgrade from standard deployment to pre-built images without recreating vCluster
+- **Image size**: Pre-built images are larger than standard images
+- **Maintenance overhead**: Custom images require additional maintenance
+
+## Best practices
+
+- Check cluster policies before deploying vCluster
+- Use pre-built images in security-hardened environments
+- Test in staging environments matching production security policies
+
+## Related resources
+
+- [Deploy in rootless mode](../deploy/control-plane/container/security/rootless-mode)
+- [Air-gapped deployments](../deploy/control-plane/container/security/air-gapped)
+- [Security hardening guide](../deploy/control-plane/container/security/hardening-guide/overview)
