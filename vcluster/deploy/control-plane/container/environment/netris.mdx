@@ -1,33 +1,41 @@
 ---
-title: Isolate clusters on vlans with Netris
+title: Isolate clusters on VLANs with Netris
 sidebar_label: Bare Metal (Netris)
 sidebar_position: 5
 id: bare-metal
 sidebar_class_name: private-nodes
 ---
 
-## Goal
+One deployment model for vCluster is through private nodes.
+It allows for stronger isolation between the virtual clusters, since the virtual cluster Pods don't share the same Nodes.
+However, the network of a virtual cluster is not isolated from other workloads by default.
 
-We deploy vCluster on bare metal while being isolated from any other clusters or infrastructure through an exclusive L2 domain using vlan.
-To configure the switch fabric, we use [Netris](https://netris.ai/).
-
-We add bare metal servers and run VMs on the host cluster nodes as vCluster private nodes.
+This guide shows how to isolate a vCluster spanning mixed bare metal and VM private nodes that share the same underlying hardware with an exclusive network using VLAN and [Netris](https://netris.ai/).
 
 ![Architecture](/img/netris_architecture.svg)
+
+After preparing the host cluster, we will:
+
+1. Configure the VLAN membership of the switch ports with Netris
+2. Deploy the vCluster control plane on the VLAN with a load balancer
+3. Create a VM as a private node in the vCluster
+4. Provision a bare metal server as a private node in the vCluster
 
 Like in traditional Kubernetes clusters, Nodes share the same L2 domain.
 Instead of control plane _nodes_, the vCluster control plane runs as (multihomed) Pods in the host cluster.
 This is transparent to the vCluster, and the host cluster remains inaccessible to the vCluster.
 
-This can be repeated for any number of clusters, the limitations being the exhaustion of compute resources and vlan ids.
+This can be repeated for any number of clusters, and it's limited mainly by compute resources and VLAN ids or what the switch can handle.
 The VPCs of each vCluster may also be peered to access shared services across clusters.
 
 ## Netris
 
 Netris provides software for managing and automating the switch fabric in a datacenter.
 
+We use the [Netris controller](https://netris.ai/docs/controller/) to manage the architecture logically (switch port VLAN membership) while the [Netris agent](https://netris.ai/docs/agent/) will implement it on the physical switches.
+
 The architecture can be replicated without Netris.
-Then, the switches must be configured manually.
+Then, the switches must be configured manually (VLANs, ports).
 
 ## Prerequisites
 
@@ -52,8 +60,8 @@ It is advisable to install Kubernetes after the network has been configured acco
 
 ### Configure switch fabric
 
-The host cluster gets its own vlan, which spans all shared servers.
-In contrast to the vCluster, the vlan traffic for the host cluster is untagged, so no special considerations are necessary in the nodes' OS.
+The host cluster gets its own VLAN, which spans all shared servers.
+In contrast to the vCluster, the VLAN traffic for the host cluster is untagged, so no special considerations are necessary in the nodes' OS.
 
 1. Create ServerClusterTemplate in Netris
 
@@ -80,7 +88,7 @@ In contrast to the vCluster, the vlan traffic for the host cluster is untagged, 
 
     Create a ServerCluster in Netris using the template and add the shared servers to it.
 
-    This configures the connected ports as access ports with the same vlan.
+    This configures the connected ports as access ports with the same VLAN.
 
     ![ServerCluster](/img/netris_create_host_cluster_servercluster.png)
 
@@ -92,12 +100,12 @@ There must be a default StorageClass available.
 
 ### Install compatible CNI plugin
 
-Since the host cluster Nodes handle vlan traffic, some CNI plugin configurations are not compatible.
+Since the host cluster Nodes handle VLAN traffic, some CNI plugin configurations are not compatible.
 
 We have tested the following plugins:
 
 - Flannel
-- Calico in VXLAN mode (eBPF mode seems to drop vlan tagged frames)
+- Calico in VXLAN mode (eBPF mode seems to drop VLAN tagged frames)
 - Cilium
     - Must set `cni.exclusive: false`
     - Must set `bpf.vlanBypass: '{0}'`
@@ -105,20 +113,20 @@ We have tested the following plugins:
 ### Install tooling
 
 There are a few tools we need to install in the host cluster.
-They manage interfaces on the host cluster nodes that allow adding Pods and VMs to the vCluster vlan.
+They manage interfaces on the host cluster nodes that allow adding Pods and VMs to the vCluster VLAN.
 
 #### Multus
 
 See install instructions in [Multus CNI](https://github.com/k8snetworkplumbingwg/multus-cni).
 
-Multus adds additional interfaces to the vCluster Pods and KubeVirt VMs to attach them to the vCluster vlan.
+Multus adds additional interfaces to the vCluster Pods and KubeVirt VMs to attach them to the vCluster VLAN.
 
 #### Bridge operator
 
 See install instructions in [Bridge operator](https://github.com/k8snetworkplumbingwg/bridge-operator).
 
-The Bridge operator creates an unfiltered bridge on the host for the vCluster vlan.
-It's connected to a vlan interface that tags any egress traffic to put it on the vCluster vlan.
+The Bridge operator creates an unfiltered bridge on the host for the vCluster VLAN.
+It's connected to a VLAN interface that tags any egress traffic to put it on the vCluster VLAN.
 
 Multiple Pods and VMs can be connected to the same bridge on the same host.
 
@@ -129,7 +137,7 @@ See install instructions in [Whereabouts IPAM plugin](https://github.com/k8snetw
 The _Whereabouts_ IPAM plugin assigns well-known IPs to the vCluster Pods.
 It tracks the allocations of the pool cluster-wide, to avoid IP conflicts across different nodes.
 
-<!-- vale off --> // vale doesn't like the capitalization
+<!-- vale off // vale doesn't like the capitalization -->
 #### KubeVirt
 <!-- vale on -->
 
@@ -187,18 +195,18 @@ The following steps can be repeated for additional vCluster deployments.
 
     Create a ServerCluster in Netris using the template and add the shared servers to it as _shared_ endpoints.
 
-    This configures the ports on the shared servers as trunk ports (additionally) carrying tagged vlan traffic.
+    This configures the ports on the shared servers as trunk ports (additionally) carrying tagged VLAN traffic.
 
     ![ServerCluster](/img/netris_create_vcluster_servercluster.png)
 
-3. Look up the Vnet's vlan id
+3. Look up the Vnet's VLAN id
 
-    Netris creates a vnet and assigns it a vlan id.
-    We need the vlan id (here it's `3`) in the next steps.
+    Netris creates a vnet and assigns it a VLAN id.
+    We need the VLAN id (here it's `3`) in the next steps.
 
     ![VnetId](/img/netris_edit_vcluster_vnet.png)
 
-### Configure vlan integration on host cluster nodes
+### Configure VLAN integration on host cluster nodes
 
 1. Create namespace for network config
 
@@ -206,7 +214,7 @@ The following steps can be repeated for additional vCluster deployments.
     kubectl create namespace vcluster-networks
     ```
 
-2. Create vlan interface and bridge
+2. Create VLAN interface and bridge
 
     ```yaml
     apiVersion: bridgeoperator.k8s.cni.npwg.io/v1alpha1
@@ -223,9 +231,9 @@ The following steps can be repeated for additional vCluster deployments.
           id: 3
     ```
 
-    The brigde operator creates a bridge with the name `br-vlan-3` on every Node and enslave the vlan interface connected to the default interface.
-    Egress from any (vlan unaware) device connected to the bridge is tagged and thus part of the L2 domain of the vCluster.
-    Likewise, the tag from vlan ingress is stripped.
+    The brigde operator creates a bridge with the name `br-vlan-3` on every Node and attach the VLAN interface on top of the default interface.
+    Egress from any (VLAN unaware) device attached to the bridge is tagged and thus part of the L2 domain of the vCluster.
+    Likewise, the tag from VLAN ingress is stripped.
 
 3. Create NetworkAttachmentDefinitions
 
@@ -318,7 +326,7 @@ The following steps can be repeated for additional vCluster deployments.
     vcluster platform create vcluster -n vcluster-netris netris --values vcluster.yaml
     ```
 
-    - The vCluster Pods get an additional interface on the vlan.
+    - The vCluster Pods get an additional interface on the VLAN.
     - The endpoint is the IP of the load balancer.
 
 2. Deploy load balancer in front of vCluster Pods
@@ -487,7 +495,7 @@ The following steps can be repeated for additional vCluster deployments.
     Connection to 192.168.67.253 443 port [tcp/https] succeeded!
     ```
 
-    This shows that the load balancer (Pod) is a neighbor on the vCluster vlan subnet.
+    This shows that the load balancer (Pod) is a neighbor on the vCluster VLAN subnet.
 
     The Pods may reside on the same host as the load balancer, in which case the traffic would remain on the bridge and never be tagged.
     To circumvent this, pick a different Pod to run the command from.
