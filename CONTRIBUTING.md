@@ -1,11 +1,9 @@
 <!-- vale off -->
 
-## Docs website
-
 This docs website is built using [Docusaurus](https://docusaurus.io/) v3, a
 modern static website generator.
 
-### Quick start for contributing with DevPod
+## Quick start with DevPod
 
 Use DevPod to quickly set up a complete development environment and start
 contributing.
@@ -24,23 +22,35 @@ working on the documentation, including:
 - VS Code extensions for Vale and ESLint
 - Pre-configured settings for the documentation workflow
 
-## Manual installation
+## Manual deployment
+
+Fork the [vCluster docs repository](https://github.com/loft-sh/vcluster-docs) and clone your fork locally
+
+```bash
+git clone https://github.com/<your username>/vcluster-docs
+```
+
+then run the following command to install dependencies:
 
 ```bash
 npm install
 ```
 
+This repository requires Node.js version 18.0 or higher.
+
 ### Local development
+
+Run the following command to start a local development server:
 
 ```bash
 npm run start
 ```
 
-This command starts a local development server and opens up a browser window.
-Most changes are reflected live without having to restart the server. Note that
-`npm run start` doesn't always catch build errors.
+This command opens `http://localhost:3000/docs` in your default browser. Most changes are reflected live without having to restart the server. Note that this command doesn't always catch build errors.
 
 ### Build
+
+After finishing your changes, run the following command to test production build locally:
 
 ```bash
 npm run build
@@ -49,11 +59,13 @@ npm run build
 This command generates static content into the `build` directory and can be
 served using any static contents hosting service.
 
-`npm run serve`
+You can run the following command to serve the built website locally:
 
-Serves the built website locally.
+```bash
+npm run serve
+```
 
-Note: Before making a pull request, it's recommended to run `npm run serve` to
+Before making a pull request, it's recommended to run this command to
 fix any broken links that may have been introduced.
 
 ## Style guide
@@ -221,7 +233,10 @@ LoftLabs is the company. Do not use "Loft" or "Loft Platform" to refer to
 vCluster products.
 
 "vCluster" is a trademark. There are strict legal frameworks around how to use a
-trademark, e.g. it cannot be used in plural. **Do not use "vClusters"**.
+trademark, for example, it cannot be used in plural. **Do not use "vClusters"**.
+
+Never use vCluster or vClusters when talking about a virtual cluster or clusters
+that vCluster creates. Use **virtual clusters**.
 
 ### Products
 
@@ -233,16 +248,9 @@ trademark, e.g. it cannot be used in plural. **Do not use "vClusters"**.
 
 ### CLI
 
-`vcluster`
+The command line interface name is `vcluster`.
 
-### Virtual clusters
-
-Never use vCluster or vClusters when talking about a virtual cluster or clusters
-that vCluster creates.
-
-### Kubernetes distros
-
-Abbreviations for Kubernetes distros:
+### Abbreviations for Kubernetes distros
 
 - [Lightweight Kubernetes](https://k3s.io/): K3s
 - [Kubernetes](https://kubernetes.io/): K8s
@@ -334,6 +342,7 @@ write them.
 Disabling all rules
 
 - Use these HTML-style comments to control Vale checking:
+
   ```
   <!-- vale off -->  // Stops all Vale checks
   <!-- vale on -->   // Resumes Vale checks
