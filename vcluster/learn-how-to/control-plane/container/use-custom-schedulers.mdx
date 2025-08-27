@@ -1,0 +1,325 @@
+---
+title: Use custom schedulers with Hybrid Scheduling
+sidebar_label: Use custom schedulers
+sidebar_position: 6
+description: How to deploy and use custom schedulers in both host and virtual cluster
+---
+
+import TenancySupport from '../../../_fragments/tenancy-support.mdx';
+
+<TenancySupport hostNodes="true" />
+
+This guide shows how to deploy custom schedulers in both host and virtual cluster, and then use both of them in your
+virtual cluster, by enabling Hybrid Scheduling.
+
+## Prerequisites
+
+Before you begin, ensure you have installed:
+- kind,
+- vcluster CLI.
+
+## Create host and virtual cluster
+
+Create kind host cluster:
+
+```shell
+kind create cluster --name scheduler-demo
+```
+
+Next, create vCluster config file which enables and configures Hybrid Scheduling:
+
+```shell
+cat > my-vcluster.yaml <<EOF
+sync:
+  toHost:
+    pods:
+      hybridScheduling:
+        enabled: true
+        hostSchedulers:
+          - my-host-scheduler
+  fromHost:
+    nodes:
+      enabled: true
+EOF
+```
+
+Finally, create virtual cluster with Hybrid Scheduling enabled:
+
+```shell
+vcluster create -n my-vcluster my-vcluster --values my-vcluster.yaml
+```
+
+## Deploy custom host scheduler
+
+Create file `custom-host-scheduler.yaml` with the following Kubernetes manifests:
+
+```yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: my-scheduler
+  namespace: kube-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: my-scheduler-as-kube-scheduler
+subjects:
+  - kind: ServiceAccount
+    name: my-scheduler
+    namespace: kube-system
+roleRef:
+  kind: ClusterRole
+  name: system:kube-scheduler
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: my-scheduler-as-volume-scheduler
+subjects:
+  - kind: ServiceAccount
+    name: my-scheduler
+    namespace: kube-system
+roleRef:
+  kind: ClusterRole
+  name: system:volume-scheduler
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: my-scheduler-extension-apiserver-authentication-reader
+  namespace: kube-system
+roleRef:
+  kind: Role
+  name: extension-apiserver-authentication-reader
+  apiGroup: rbac.authorization.k8s.io
+subjects:
+  - kind: ServiceAccount
+    name: my-scheduler
+    namespace: kube-system
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: my-scheduler-config
+  namespace: kube-system
+data:
+  my-scheduler-config.yaml: |
+    apiVersion: kubescheduler.config.k8s.io/v1
+    kind: KubeSchedulerConfiguration
+    profiles:
+      - schedulerName: my-host-scheduler
+    leaderElection:
+      leaderElect: false
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    component: my-kube-scheduler
+    tier: control-plane
+  name: my-kube-scheduler
+  namespace: kube-system
+spec:
+  selector:
+    matchLabels:
+      component: my-kube-scheduler
+      tier: control-plane
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        component: my-kube-scheduler
+        tier: control-plane
+    spec:
+      serviceAccountName: my-scheduler
+      containers:
+        - command:
+            - kube-scheduler
+            - --config=/etc/kubernetes/my-scheduler/my-scheduler-config.yaml
+          image: registry.k8s.io/kube-scheduler:v1.33.4
+          imagePullPolicy: IfNotPresent
+          name: kube-scheduler
+          volumeMounts:
+            - name: config-volume
+              mountPath: /etc/kubernetes/my-scheduler
+          securityContext:
+            privileged: false
+      volumes:
+        - name: config-volume
+          configMap:
+            name: my-scheduler-config
+```
+
+Apply manifests to host cluster:
+
+```shell
+kubectl --context=kind-scheduler-demo apply -f custom-host-scheduler.yaml
+```
+
+## Deploy custom host scheduler
+
+Create file `custom-virtual-scheduler.yaml` with the following Kubernetes manifests:
+
+```yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: my-scheduler
+  namespace: kube-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: my-scheduler-as-kube-scheduler
+subjects:
+  - kind: ServiceAccount
+    name: my-scheduler
+    namespace: kube-system
+roleRef:
+  kind: ClusterRole
+  name: system:kube-scheduler
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: my-scheduler-as-volume-scheduler
+subjects:
+  - kind: ServiceAccount
+    name: my-scheduler
+    namespace: kube-system
+roleRef:
+  kind: ClusterRole
+  name: system:volume-scheduler
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: my-scheduler-extension-apiserver-authentication-reader
+  namespace: kube-system
+roleRef:
+  kind: Role
+  name: extension-apiserver-authentication-reader
+  apiGroup: rbac.authorization.k8s.io
+subjects:
+  - kind: ServiceAccount
+    name: my-scheduler
+    namespace: kube-system
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: my-scheduler-config
+  namespace: kube-system
+data:
+  my-scheduler-config.yaml: |
+    apiVersion: kubescheduler.config.k8s.io/v1
+    kind: KubeSchedulerConfiguration
+    profiles:
+      - schedulerName: my-virtual-scheduler
+    leaderElection:
+      leaderElect: false
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    component: my-kube-scheduler
+    tier: control-plane
+  name: my-kube-scheduler
+  namespace: kube-system
+spec:
+  selector:
+    matchLabels:
+      component: my-kube-scheduler
+      tier: control-plane
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        component: my-kube-scheduler
+        tier: control-plane
+    spec:
+      serviceAccountName: my-scheduler
+      containers:
+        - command:
+            - kube-scheduler
+            - --config=/etc/kubernetes/my-scheduler/my-scheduler-config.yaml
+          image: registry.k8s.io/kube-scheduler:v1.33.4
+          imagePullPolicy: IfNotPresent
+          name: kube-scheduler
+          volumeMounts:
+            - name: config-volume
+              mountPath: /etc/kubernetes/my-scheduler
+          securityContext:
+            privileged: false
+      volumes:
+        - name: config-volume
+          configMap:
+            name: my-scheduler-config
+```
+
+Apply manifests to virtual cluster:
+
+```shell
+kubectl --context=vcluster_my-vcluster_my-vcluster_kind-scheduler-demo apply -f custom-virtual-scheduler.yaml
+```
+
+## Deploy pods that use custom schedulers
+
+Now, create the following `pods.yaml` manifest with pods that are using different schedulers - one pod is using the
+default scheduler, one pod is using the custom host scheduler, and one pod is using the custom virtual scheduler.
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pod-uses-default-scheduler
+spec:
+  containers:
+    - name: pause
+      image: registry.k8s.io/pause:3.9
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pod-uses-virtual-scheduler
+spec:
+  schedulerName: my-virtual-scheduler
+  containers:
+    - name: pause
+      image: registry.k8s.io/pause:3.9
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pod-uses-host-scheduler
+spec:
+  schedulerName: my-host-scheduler
+  containers:
+    - name: pause
+      image: registry.k8s.io/pause:3.9
+```
+
+Create pods:
+
+```
+kubectl --context=vcluster_my-vcluster_my-vcluster_kind-scheduler-demo apply -f pods.yaml
+```
+
+Wait until all created pods are running.
+
+Finally, you can confirm that the created pods have been scheduled with correct schedulers, by checking Kubernetes
+events:
+
+```shell
+kubectl get events -n default --field-selector reason=Scheduled -o custom-columns=POD:.involvedObject.name,SCHEDULER:.reportingComponent
+POD                          SCHEDULER
+pod-uses-default-scheduler   default-scheduler
+pod-uses-host-scheduler      my-host-scheduler
+pod-uses-virtual-scheduler   my-virtual-scheduler
+```
