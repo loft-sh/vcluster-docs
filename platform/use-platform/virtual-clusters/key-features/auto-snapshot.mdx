@@ -1,0 +1,208 @@
+---
+title: Auto snapshots
+sidebar_label: Auto snapshots
+sidebar_position: 1
+---
+import Tabs from "@theme/Tabs";
+import TabItem from "@theme/TabItem";
+import PartialActivityDetection from "../../../_partials/sleep/activity-detection.mdx";
+import PartialAdvancedConfiguration from "../../../_partials/sleep/advanced-configuration.mdx";
+import PartialWorkingWithSleepMode from "../../../_partials/sleep/working-with-sleep-mode.mdx";
+import PartialSleepConfigureUI from "../../../_partials/sleep/configure-ui.mdx";
+import PartialSleepManualUI from "../../../_partials/sleep/manual-ui.mdx";
+import PartialSleepScheduleUI from "../../../_partials/sleep/schedule-ui.mdx";
+import PartialSleepWakeUI from "../../../_partials/sleep/wake-ui.mdx";
+import PartialAutoDeleteConfigureUI from "../../../_partials/auto-delete/configure-ui.mdx";
+
+# Auto Snapshots
+
+The Auto Snapshot feature allows users to schedule snapshots at regular intervals. This makes it possible to capture and store the vCluster state at a specific point in time and helps protect against infrastructure failures, data corruption, and configuration errors. By maintaining consistent recovery points, administrators can quickly restore the vCluster to a known good state without relying on manual backup processes. For more details on how snapshots work, please refer to the documentation in the [Snapshot and Restore](https://www.vcluster.com/docs/vcluster/manage/backup-restore/) section.
+
+
+## Schedule Snapshots
+
+The vCluster Platform allows you to set the scheduling of vCluster snapshots by configuring the fields under `external.platform.autoSnapshot` in vCluster `config.yaml` or in the UI by navigating to the Virtual Cluster config section and clicking in the Automatic Snapshots option.
+
+The following options are required to schedule snapshots: 
+
+- **enabled**: Determines whether auto snapshots are enabled or disabled. (Defaults to false)
+- **timezone**: Timezone specifies time zone used for scheduled virtual cluster operations. It's not a required field and defaults to UTC.
+- **schedule**: This field configure the schedule of snapshot by specifying a [Cron](https://en.wikipedia.org/wiki/Cron) schedule on which auto-snapshots will be taken.
+- **storage**: Defines the place where the snapshot file will be stored, only one type of storage can be used
+  - **storage.type**: This field defines the type of storage used to store the snapshot, the platform currently supports two types, S3 and OCI
+  - **S3**: If the type is set to S3, then snapshots will be stored on an S3-compatible bucket, such as AWS S3 or MinIO and the configuration to access the storage service will be defined [here](###Store-snapshots-in-S3-buckets)
+  - **OCI**:  If the type is set to OCI registry, then snapshots will be stored on an OCI image registry, such as Docker Hub or GHCR, and the configuration to access the storage service will be configured [here](###Store-snapshots-in-OCI-image-registries)
+- **retention**: Defines retention policies for snapshots, any of the option below matches then the older will be deleted. Note: Retention is only applied if snapshots are being successfully stored
+  - **period**: Number of days that a snapshot will be stored in the storage service, defaults to 30
+  - **maxSnapshots**: Number of snapshots that can be stored in the storage service, defaults to 110
+
+
+Example of a vcluster config with auto snapshots enabled
+```yaml
+autoSnapshot:
+  enabled: true
+  schedule: 0/2 * * * *
+  timezone: Africa/Abidjan
+  storage:
+    ...
+  retention:
+    period: 30
+    maxSnapshots: 110
+```
+
+## Supported storage backends
+
+### Store snapshots in S3 buckets
+
+To store snapshots in an S3-compatible bucket using the s3 protocol. You can authenticate in two ways: by creating a secret with your S3 Credentials or use [AWS pod identity](https://aws.amazon.com/blogs/containers/amazon-eks-pod-identity-a-new-way-for-applications-on-eks-to-obtain-iam-credentials/) to allow access to the S3 bucket in AWS
+
+The following options are required to configure snapshots to be stored in a S3 bucket: 
+- **url**: URL used to access the bucket to store the snapshot, it needs to be prefixed with the `s3://` protocol. eg:`s3://<bucket-name>/snapshots`
+
+- **podIdentityServiceAccount**: Specify the service account for AWS pod identity.
+
+Example of a vcluster config using podIdentity
+```yaml
+autoSnapshot:
+  ...
+  storage:
+    type: s3
+      s3:
+        url: s3://<bucket-name>/snapshots
+        podIdentityServiceAccount: ""
+```
+
+
+- **credential:** You can store the S3 credential on a kubernetes secret and provide the secret name and namespace to where the secret was created
+  - **Secret Name**: Name of the kubernetes secret that hosts the S3 credentials
+  - **Secret Namespace**: Namespace of the kubernetes secret that hosts the S3 credentials
+
+:::info The secret needs to contain all these three keys AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_SESSION_TOKEN :::
+
+```yaml
+apiVersion: v1
+kind: Secret
+type: Opaque
+metadata:
+  name: s3-cred
+  namespace: p-default
+data:
+  AWS_ACCESS_KEY_ID: "id"
+  AWS_SECRET_ACCESS_KEY: "key" 
+  AWS_SESSION_TOKEN: "token"
+```
+
+Example of a vcluster config using a secret with the S3 credentials
+```yaml
+autoSnapshot:
+  ...
+  storage:
+    type: s3
+    s3:
+      url: s3://<bucket-name>/snapshots
+      credential:
+        secretName: s3-cred
+        secretNamespace: p-default
+```
+
+
+### Store snapshots in OCI image registries
+
+You can save snapshots to OCI image registries.
+
+The following options are required to configure snapshots to be stored in a OCI registry: 
+- **repository**: The registry address to where the snapshot will be stored, you can provide the URL either with the oci protocol prefix or without any prefix eg: `oci://<registry-path>` 
+- **credential**: You can store the OCI credential on a kubernetes secret and provide the secret name and namespace to where the secret was created, see here how to create a secret.
+  - **Secret Name**: Name of the kubernetes secret that hosts the OCI credentials
+  - **Secret Namespace**: Namespace of the kubernetes secret that hosts the OCI credentials
+
+:::info The Secret needs to contain these keys `username` and `password` :::
+```yaml
+apiVersion: v1
+kind: Secret
+type: Opaque
+metadata:
+  name: oci-cred
+  namespace: p-default
+data:
+  username: "id" # username to authenticate with the OCI registry
+  password: "key" # password base64 to authenticate with the OCI registry 
+```
+
+Example of a vcluster config using a secret with the OCI credentials
+```yaml
+autoSnapshot:
+    ...
+	storage:
+		type: oci
+		oci:
+			repository: oci://test/test
+			credential:
+                secretName: oci-cred
+                secretNamespace: p-default
+```
+
+You can also especify the username and password directly in the vcluster config by filling up the `username` and `password` fields
+
+Example of a vcluster config with the OCI credentials
+```yaml
+autoSnapshot:
+    ...
+	storage:
+		type: oci
+		oci:
+			repository: oci://test/test
+            username: "test"
+            password: "SVFvSmIzSnBaMmx1WDJWakVHQWFER1YxTFdObGJuUnlZV3d0T=="
+```
+
+## View Snapshots
+
+After configuring Auto Snapshot, you can view the list of snapshots from the platform menu.
+On the left-hand side, select Virtual Clusters, choose a virtual cluster from the list, click in the name, and then select the Automatic Snapshot option in the inner menu to see all available snapshots.
+
+### Snapshot Name
+
+Snapshots are identified by a generated name formatted as `<Virtual Cluster Name>-<Snapshot Timestam>.tar.gz`
+
+
+### Snapshot schedule lifecycle 
+
+Snapshots transition through different statuses as part of their execution lifecycle. A typical flow starts with the snapshot being `Scheduled`, then moves to `In Progress` while it is being stored. If successful, the snapshot moves to `Stored` state. If an error occurs, it temporarily enter `Error` before retrying, and end in `Failed` if it cannot be stored. A snapshot might appear as `Not Found` if it was removed from the storage backend.
+
+- **Scheduled** - A snapshot that is scheduled to be stored in the storage backend service. (Only one snapshot can have the Scheduled status at a time.)
+- **In Progress** - A snapshot that is currently being stored in the storage backend service.
+- **Stored** - A snapshot that has been successfully stored in the storage backend service.
+- **Error** - A snapshot that failed on the first attempt but will be retried.
+- **Failed** - A snapshot that failed to be generated
+- **Not Found** - A snapshot that appears in the list but has been removed from the storage backend service.
+
+
+
+Example of a full vcluster config file for a snapshot configuration for an S3 bucket:
+
+```yaml
+sync:
+  toHost:
+    ingresses:
+      enabled: true
+controlPlane:
+  coredns:
+    enabled: true
+    embedded: true
+external:
+  platform:
+    autoSnapshot:
+      schedule: "* * * * *"
+      enabled: true
+      retention:
+        period: 30
+        maxSnapshots: 110
+      storage:
+        type: s3
+        s3:
+          url: s3://my-bucket/snapshots
+          credential:
+            secretName: 'aws'
+            secretNamespace: 'p-default'
+```
