@@ -43,11 +43,11 @@ controlPlane:
       # HTTP proxy for non-encrypted traffic
       - name: HTTP_PROXY
         value: http://corp-proxy.example.com:3128
-      
-      # HTTPS proxy for encrypted traffic  
+
+      # HTTPS proxy for encrypted traffic
       - name: HTTPS_PROXY
         value: http://corp-proxy.example.com:3128
-      
+
       # NO_PROXY - services that should bypass the proxy
       # Include '<vcluster-name>-etcd' if using external etcd backing store
       - name: NO_PROXY
@@ -91,19 +91,20 @@ controlPlane:
 </TabItem>
 <TabItem value="extended" label="Extended configuration">
 
-Comprehensive configuration including additional internal services and networks:
+Comprehensive configuration including additional internal services and networks with authentication:
 
 ```yaml title="vcluster.yaml"
 controlPlane:
   statefulSet:
     env:
+      # Proxy URLs with authentication variables
       - name: HTTP_PROXY
-        value: http://corp-proxy.example.com:3128
+        value: http://$(PROXY_USERNAME):$(PROXY_PASSWORD)@corp-proxy.example.com:3128
       - name: HTTPS_PROXY
-        value: http://corp-proxy.example.com:3128
+        value: http://$(PROXY_USERNAME):$(PROXY_PASSWORD)@corp-proxy.example.com:3128
       - name: NO_PROXY
         value: localhost,127.0.0.1,.svc,.svc.cluster.local,.local,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,169.254.0.0/16,.example.internal
-      # Optional: proxy credentials if required
+      # Proxy credentials from Kubernetes secret
       - name: PROXY_USERNAME
         valueFrom:
           secretKeyRef:
@@ -141,11 +142,50 @@ Create your `vcluster.yaml` configuration file with the proxy settings:
 '    env:\n' +
 '      - name: HTTP_PROXY\n' +
 '        value: [[VAR:HTTP_PROXY_URL:http://corp-proxy.example.com:3128]]\n' +
-'      - name: HTTPS_PROXY  \n' +
+'      - name: HTTPS_PROXY\n' +
 '        value: [[VAR:HTTPS_PROXY_URL:http://corp-proxy.example.com:3128]]\n' +
 '      - name: NO_PROXY\n' +
 '        # Include vCluster etcd service explicitly for external etcd deployments\n' +
 '        value: [[VAR:VCLUSTER_NAME:demo-vcluster]]-etcd,localhost,127.0.0.1,.svc,.svc.cluster.local,[[VAR:CLUSTER_CIDR:10.0.0.0/8,172.16.0.0/12,192.168.0.0/16]]'}
+  language="yaml"
+/>
+
+</Step>
+<Step>
+
+(Optional) If your proxy requires authentication, create a secret with the credentials:
+
+```bash
+kubectl create secret generic proxy-credentials \
+  --namespace vcluster-proxy \
+  --from-literal=username='your-proxy-username' \
+  --from-literal=password='your-proxy-password'
+```
+
+Then update your `vcluster.yaml` to reference the secret:
+
+<InterpolatedCodeBlock
+  code={'controlPlane:\n' +
+'  statefulSet:\n' +
+'    env:\n' +
+'      # Proxy URLs with authentication\n' +
+'      - name: HTTP_PROXY\n' +
+'        value: http://$(PROXY_USERNAME):$(PROXY_PASSWORD)@[[VAR:PROXY_HOST:corp-proxy.example.com:3128]]\n' +
+'      - name: HTTPS_PROXY\n' +
+'        value: http://$(PROXY_USERNAME):$(PROXY_PASSWORD)@[[VAR:PROXY_HOST:corp-proxy.example.com:3128]]\n' +
+'      - name: NO_PROXY\n' +
+'        value: [[VAR:VCLUSTER_NAME:demo-vcluster]]-etcd,localhost,127.0.0.1,.svc,.svc.cluster.local,[[VAR:CLUSTER_CIDR:10.0.0.0/8,172.16.0.0/12,192.168.0.0/16]]\n' +
+'      # Proxy credentials from secret\n' +
+'      - name: PROXY_USERNAME\n' +
+'        valueFrom:\n' +
+'          secretKeyRef:\n' +
+'            name: proxy-credentials\n' +
+'            key: username\n' +
+'      - name: PROXY_PASSWORD\n' +
+'        valueFrom:\n' +
+'          secretKeyRef:\n' +
+'            name: proxy-credentials\n' +
+'            key: password'}
   language="yaml"
 />
 
@@ -224,7 +264,7 @@ controlPlane:
         statefulSet:
           highAvailability:
             replicas: 3
-  
+
   # Proxy configuration for control plane
   statefulSet:
     env:
@@ -246,9 +286,86 @@ When using external etcd, omitting the etcd service name (format: `<vcluster-nam
 
 ### Use authenticated proxies
 
-If your corporate proxy requires authentication, you can include credentials in the proxy URL or use separate environment variables:
+If your corporate proxy requires authentication, use Kubernetes secrets to securely manage credentials:
 
-```yaml
+<Tabs>
+<TabItem value="secrets" label="Using secrets (recommended)">
+
+First, create a Kubernetes secret with your proxy credentials:
+
+```bash
+kubectl create secret generic proxy-credentials \
+  --namespace <vcluster-namespace> \
+  --from-literal=username='your-proxy-username' \
+  --from-literal=password='your-proxy-password'
+```
+
+Then reference the secret in your vCluster configuration:
+
+```yaml title="vcluster.yaml"
+controlPlane:
+  statefulSet:
+    env:
+      # Proxy URLs with authentication variables
+      - name: HTTP_PROXY
+        value: http://$(PROXY_USERNAME):$(PROXY_PASSWORD)@corp-proxy.example.com:3128
+      - name: HTTPS_PROXY
+        value: http://$(PROXY_USERNAME):$(PROXY_PASSWORD)@corp-proxy.example.com:3128
+      - name: NO_PROXY
+        value: localhost,127.0.0.1,.svc,.svc.cluster.local,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
+      # Proxy credentials from secret
+      - name: PROXY_USERNAME
+        valueFrom:
+          secretKeyRef:
+            name: proxy-credentials
+            key: username
+      - name: PROXY_PASSWORD
+        valueFrom:
+          secretKeyRef:
+            name: proxy-credentials
+            key: password
+```
+
+</TabItem>
+<TabItem value="url-secret" label="Using URL in secret">
+
+Store the complete proxy URL with credentials in a secret:
+
+```bash
+kubectl create secret generic proxy-config \
+  --namespace <vcluster-namespace> \
+  --from-literal=http-proxy-url='http://username:password@corp-proxy.example.com:3128' \
+  --from-literal=https-proxy-url='http://username:password@corp-proxy.example.com:3128'
+```
+
+Reference the secret in your configuration:
+
+```yaml title="vcluster.yaml"
+controlPlane:
+  statefulSet:
+    env:
+      - name: HTTP_PROXY
+        valueFrom:
+          secretKeyRef:
+            name: proxy-config
+            key: http-proxy-url
+      - name: HTTPS_PROXY
+        valueFrom:
+          secretKeyRef:
+            name: proxy-config
+            key: https-proxy-url
+      - name: NO_PROXY
+        value: localhost,127.0.0.1,.svc,.svc.cluster.local,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
+```
+
+</TabItem>
+<TabItem value="inline" label="Inline (not recommended)">
+
+:::warning Security risk
+Hardcoding credentials in configuration files is not recommended as they can be exposed in logs, version control, or to unauthorized users.
+:::
+
+```yaml title="vcluster.yaml"
 controlPlane:
   statefulSet:
     env:
@@ -260,20 +377,8 @@ controlPlane:
         value: localhost,127.0.0.1,.svc,.svc.cluster.local,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
 ```
 
-:::warning Security consideration
-Avoid hardcoding credentials in your configuration files. Use Kubernetes secrets instead:
-
-```yaml
-controlPlane:
-  statefulSet:
-    env:
-      - name: HTTP_PROXY
-        valueFrom:
-          secretKeyRef:
-            name: proxy-config
-            key: http-proxy-url
-```
-:::
+</TabItem>
+</Tabs>
 
 ### Proxy settings for vCluster workloads
 
