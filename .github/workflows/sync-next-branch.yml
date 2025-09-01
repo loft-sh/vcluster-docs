@@ -1,7 +1,7 @@
 name: Sync Next Branch
 
 # This workflow keeps the next branch in sync with main:
-# - Tries to rebase next onto main  
+# - Tries to rebase next onto main
 # - Verifies no commits are lost before pushing
 # - If rebase is clean → automatically pushes to next
 # - If there are conflicts → creates a PR for manual resolution
@@ -33,13 +33,8 @@ jobs:
 
       - name: Sync branches
         run: |
-          # Run sync script and capture output
           ./hack/sync-branches.sh > sync-output.txt 2>&1 || SYNC_EXIT_CODE=$?
-          
-          # Always show output for debugging
-          echo "=== Sync Script Output ==="
           cat sync-output.txt
-          echo "========================="
           
           # Check exit code first - script exits 1 if commit loss detected
           if [ "${SYNC_EXIT_CODE:-0}" -eq 1 ]; then
@@ -47,96 +42,25 @@ jobs:
             exit 1
           fi
           
-          # Check for various outcomes
-          if grep -q "Clean rebase successful" sync-output.txt && grep -q "All commits preserved" sync-output.txt; then
-            echo "::notice::Rebase successful and all commits preserved"
+          if grep -q "Clean rebase successful" sync-output.txt; then
+            git push --force-with-lease origin HEAD:next
+            echo "::notice::Successfully rebased next onto main"
             
-            # Double-check we're not already up to date
-            if grep -q "No push needed" sync-output.txt; then
-              echo "::notice::Next branch is already up to date with main"
-              exit 0
-            fi
+          elif grep -q "No new commits from main" sync-output.txt; then
+            echo "::notice::Next branch is already up to date"
+            exit 0
             
-            # Get current branch SHA before pushing
-            CURRENT_SHA=$(git rev-parse HEAD)
-            echo "Current SHA to push: $CURRENT_SHA"
-            
-            # Push with force-with-lease for safety
-            echo "Pushing rebased branch to next..."
-            if git push --force-with-lease origin HEAD:next; then
-              echo "::notice::Successfully pushed rebased next branch"
-              
-              # Verify the push succeeded
-              git fetch origin next
-              REMOTE_SHA=$(git rev-parse origin/next)
-              if [ "$CURRENT_SHA" = "$REMOTE_SHA" ]; then
-                echo "::notice::Push verified - remote next branch updated correctly"
-              else
-                echo "::warning::Push may have been rejected - remote SHA doesn't match"
-              fi
-            else
-              echo "::error::Push failed - force-with-lease rejected the update"
-              echo "This likely means the remote branch was updated since we started"
-              exit 1
-            fi
-
           elif grep -q "Conflicts detected" sync-output.txt; then
-            echo "::notice::Rebase has conflicts - creating merge PR"
-            
-            # Extract branch name from output
             BRANCH_NAME=$(grep "created branch:" sync-output.txt | cut -d: -f2 | tr -d ' ')
-            
-            if [ -z "$BRANCH_NAME" ]; then
-              echo "::error::Could not extract branch name from sync output"
-              exit 1
-            fi
-            
-            echo "Pushing branch: $BRANCH_NAME"
             git push origin "$BRANCH_NAME"
             
-            # Create PR with detailed information
+            # Create PR
             gh pr create \
               --title "Sync: Merge main into next (rebase conflicts)" \
-              --body "## Automated sync from main to next branch
-
-### Why this PR exists
-Rebase conflicts were detected when trying to rebase \`next\` onto \`main\`.
-This PR uses a merge strategy instead to preserve all commits from both branches.
-
-### What to do
-1. Review and resolve any merge conflicts in this PR
-2. Ensure all tests pass
-3. Merge this PR to update the next branch
-
-### Alternative
-If you prefer a clean history, you can manually rebase \`next\` onto \`main\` locally and force-push.
-**Warning**: Be very careful to preserve all commits unique to the next branch!
-
-### Verification steps
-Before merging, verify that:
-- [ ] All commits from \`next\` are preserved
-- [ ] All commits from \`main\` are included
-- [ ] No documentation or features are lost
-              
-This PR was created because rebasing had conflicts that need manual resolution." \
+              --body "Automated sync from main to next branch. Rebase had conflicts - using merge strategy to preserve all commits. Please resolve conflicts and merge." \
               --base next \
               --head "$BRANCH_NAME" \
-              --label "sync" \
-              --label "automated"
-              
-            echo "::notice::Created PR for manual conflict resolution"
-            
-          elif grep -q "ERROR: Commit loss detected" sync-output.txt; then
-            echo "::error::Commit loss detected during rebase - aborting!"
-            echo "The sync script detected that commits would be lost during the rebase."
-            echo "This is a safety mechanism to prevent data loss."
-            echo "Please investigate manually."
-            exit 1
-            
-          else
-            echo "::warning::Unexpected output from sync script"
-            echo "Please check the sync-output.txt content above"
-            exit 1
+              --label "sync"
           fi
         env:
           GITHUB_TOKEN: ${{ secrets.GH_ACCESS_TOKEN }}
