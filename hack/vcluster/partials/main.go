@@ -48,6 +48,8 @@ var paths = []string{
 	"rbac",
 	"privateNodes",
 	"privateNodes/autoUpgrade",
+	"privateNodes/autoNodes",
+	"privateNodes/vpn",
 	"policies/resourceQuota",
 	"policies/networkPolicy",
 	"policies/limitRange",
