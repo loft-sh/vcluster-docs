@@ -1,0 +1,219 @@
+---
+title: Private Nodes
+sidebar_label: privateNodes
+sidebar_position: 2
+sidebar_class_name: pro private-nodes
+---
+
+import ProAdmonition from '../../_partials/admonitions/pro-admonition.mdx'
+import PrivateNodesYaml from '../../_fragments/private-nodes.mdx'
+import PrivateNodes from '../../_partials/config/privateNodes.mdx'
+import AutoNodes from '../../_fragments/deploy/auto-nodes.mdx';
+import TenancySupport from '../../_fragments/tenancy-support.mdx';
+
+<TenancySupport privateNodes="true" />
+
+<ProAdmonition/>
+<PrivateNodesYaml />
+
+## Auto Nodes
+<AutoNodes />
+
+### Pre-requisites
+
+- vCluster control plane has to be running and in `Ready` state and connected to vCluster Platform
+- A [node provider](/platform/next/administer/node-providers/overview) is configured in vCluster Platform.
+
+### Node Pools
+
+There are two types of node pools, that can be figured independently or combined with each other. 
+
+* **static**: Defines a fixed quantity of each node to provision
+* **dynamic**: No quantity of nodes is defined. The built-in [Karpenter](https://karpenter.sh/) automatically decides how many nodes are needed. 
+
+Deciding how to limit which node types to provision is based on the requirements defined in each node pool. 
+
+```yaml title="Example with both static and dynamic node pools"
+privateNodes:
+  # Private nodes need to be enabled for this feature to work
+  enabled: true 
+  autoNodes:
+    # Fixed size node pool of 2
+    static:
+    - name: my-static-node-pool
+      quantity: 2
+      requirements:
+      - property: vcluster.com/node-provider
+        value: my-node-provider
+    # Dynamic node pool
+    dynamic:
+    - name: my-dynamic-node-pool
+      requirements:
+      - property: vcluster.com/node-provider
+        value: my-node-provider
+```
+
+:::info No vCluster restart required
+Changing fields within `privateNodes.autoNodes` will not restart the vCluster even on a `helm upgrade`
+:::
+
+### Requirements
+
+Requirements on a node pool can be used to include or exclude certain node types.
+ These allow you to select properties on node types via [Kubernetes set-based requirements](https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/#set-based-requirement). 
+
+```yaml title="Examples of how to set requirements"
+privateNodes:
+  enabled: true
+  autoNodes:
+    static:
+      - name: my-static-pool
+        requirements:
+        # Exact match
+        - property: my-property
+          value: my-value
+        # One of
+        - property: my-property
+          operator: In
+          values: ["value-1", "value-2", "value-3"]
+        # Not in
+        - property: my-property
+          operator: NotIn
+          values: ["value-1", "value-2", "value-3"]
+        # Exists
+        - property: my-property
+          operator: Exists
+        # NotExists
+        - property: my-property
+          operator: NotExists
+```
+
+The following operators are available and supported:
+* `In` (default): Matches one or multiple values on the node type
+* `NotIn`: Matches if the given values aren't part of the properties
+* `Exists`: Matches if the property is defined on the node type
+* `NotExists`: Matches if the property is not defined on the node type
+
+#### Built-in node type properties
+
+Each node type automatically has the following properties available. You can also add custom properties to node types. 
+
+| Property | Value | Use Case | 
+|---|---|---|
+| `vcluster.com/node-type` | The name of the node type to use. |  Map vCluster node pools to only use a specific node type. Since node type names are globally unique, they also always map to a single node provider. | 
+| `node.kubernetes.io/instance-type` | Same as `vcluster.com/node-type`, but just the official Kubernetes label. |  Map vCluster node pools to only use a specific node type. Since node type names are globally unique, they also always map to a single node provider. | 
+|  `topology.kubernetes.io/zone` |  Maps to the `spec.zone` field of the node type. If unspecified, will be `global`. | Map vCluster node pools to only use specific regions of node types. |
+|  `karpenter.sh/capacity-type` |  Fixed to `on-demand`. | Only on-demand nodes are supported. |  
+|  `kubernetes.io/os` |  Fixed to `linux`. | Only Linux nodes are supported. |
+
+### Dynamic node pools
+
+Dynamic node pools are powered by Karpenter, and for each dynamic node pool a [Karpenter node pool](https://karpenter.sh/docs/concepts/nodepools/) is created.
+
+```yaml title="Example of only using nodes from the a specific node provider"
+privateNodes:
+  # Private nodes need to be enabled for this feature to work
+  enabled: true 
+  autoNodes:
+    dynamic:
+    - name: my-dynamic-node-pool
+      requirements:
+      - property: vcluster.com/node-provider
+        value: my-node-provider
+```
+
+#### Disruption
+
+Disruption configures how Karpenter should disrupt nodes and the config corresponds to the [Karpenter disruption config](https://karpenter.sh/docs/concepts/disruption/).
+By default, Karpenter will disrupt nodes if they are empty or underutilized after 30 seconds of inactivity.
+
+You can define more advanced ways of disruptions via schedules or budgets according to the [Karpenter config](https://karpenter.sh/docs/concepts/disruption/#nodepool-disruption-budgets).
+
+```yaml title="Example of creating disruption"
+privateNodes:
+  enabled: true
+  autoNodes:
+    dynamic:
+    - name: my-dynamic-node-pool
+      disruption:
+        consolidationPolicy: WhenEmptyOrUnderutilized
+        budgets:
+        - nodes: "20%"
+          reasons:
+          - "Empty"
+          - "Drifted"
+        - nodes: "5"
+        - nodes: "0"
+          schedule: "@daily"
+          duration: 10m
+          reasons:
+          - "Underutilized"
+```
+
+#### Limits
+
+Limits can be used as an upper limit for scheduling. These limits correspond to [Karpenter limits](https://karpenter.sh/docs/concepts/nodepools/#speclimits). Besides what Karpenter offers, it is also possible to specify `nodes` as a limit itself.
+
+```yaml title="Example of limiting 10 nodes or 100 cpus total"
+privateNodes:
+  enabled: true 
+  autoNodes:
+    dynamic:
+    - name: my-dynamic-node-pool
+      limits:
+        cpu: 100  # either combined amount of cpus across all nodes in this node pool
+        nodes: 10 # or maximum amount of nodes
+```
+
+### Static node pools
+
+Static node pools are always created independent regardless of how many nodes are needed. They always require a quantity and a set of requirements to select which node types to deploy. When
+creating static node pools, they are also Karpenter [NodeClaims](https://karpenter.sh/docs/concepts/nodeclaims/), which allows Karpenter to take these static nodes into account when a dynamic node pool is also configured.
+
+```yaml title="Example of a static node pool of 2 nodes from a specific node provider"
+privateNodes:
+  # Private nodes need to be enabled for this feature to work
+  enabled: true 
+  autoNodes:
+    static:
+    - name: my-static-node-pool
+      quantity: 2
+      requirements:
+      - property: vcluster.com/node-provider
+        value: my-node-provider
+```
+
+### Taints and node labels
+
+You can define taints and node labels for each node pool via the `taints` and `nodeLabels` fields which are useful to control scheduling on these nodes.
+
+```yaml title="Example of node pools with taints and node labels"
+privateNodes:
+  enabled: true
+  autoNodes:
+    static:
+      - name: my-static-pool
+        quantity: 1
+        nodeLabels:
+          my-label: my-value
+        taints:
+        - key: my-taint
+          effect: NoSchedule
+    dynamic:
+      - name: my-static-pool
+        nodeLabels:
+          my-label: my-value
+        taints:
+        - key: my-taint
+          effect: NoSchedule
+
+```
+
+## Deploy vCluster by manually joining private nodes
+
+For step-by-step instructions on deploying vCluster with private nodes and joining worker nodes, see the [Deploy private nodes guide](../../../deploy/worker-nodes/private-nodes/).
+
+
+## Config reference
+
+<PrivateNodes />
