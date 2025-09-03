@@ -141,7 +141,10 @@ func TestDetectConflicts(t *testing.T) {
 }
 
 func TestGenerateRedirects(t *testing.T) {
-	tempFile := filepath.Join(t.TempDir(), "_redirects")
+	tempFile := filepath.Join(t.TempDir(), "netlify.toml")
+	
+	// Create initial file
+	os.WriteFile(tempFile, []byte("# Initial content\n"), 0644)
 	
 	r := &Resolver{
 		outputFile: tempFile,
@@ -163,16 +166,18 @@ func TestGenerateRedirects(t *testing.T) {
 
 	contentStr := string(content)
 	
-	expectedPaths := []string{
-		"/docs/vcluster/api/v1 /docs/vcluster/api/v2 301",
-		"/docs/vcluster/next/api/v1 /docs/vcluster/next/api/v2 301",
-		"/docs/vcluster/*/api/v1 /docs/vcluster/:splat/api/v2 301",
-		"/docs/vcluster/old/path /docs/vcluster/new/path 301",
+	// Check for expected redirect patterns
+	expectedPatterns := []string{
+		`from = "/docs/vcluster/api/v1"`,
+		`to = "/docs/vcluster/api/v2"`,
+		`from = "/docs/vcluster/old/path"`,
+		`to = "/docs/vcluster/new/path"`,
+		`status = 301`,
 	}
 
-	for _, expected := range expectedPaths {
+	for _, expected := range expectedPatterns {
 		if !strings.Contains(contentStr, expected) {
-			t.Errorf("Generated redirects missing: %s", expected)
+			t.Errorf("Generated redirects missing pattern: %s", expected)
 		}
 	}
 }
@@ -355,5 +360,92 @@ func TestTransitiveResolution(t *testing.T) {
 
 	if resolved["integrations/scheduler/kai-scheduler"] != "third-party/scheduler/kai-scheduler" {
 		t.Errorf("Transitive resolution failed for intermediate path")
+	}
+}
+
+func TestDetectPathChangesSkipsUnderscoreDirs(t *testing.T) {
+	// Create temporary directory structure
+	tempDir := t.TempDir()
+	
+	// Create test structure
+	vclusterDir := filepath.Join(tempDir, "vcluster")
+	versionedDir := filepath.Join(tempDir, "vcluster_versioned_docs", "version-0.20.0")
+	
+	// Create directories
+	os.MkdirAll(filepath.Join(vclusterDir, "_fragments"), 0755)
+	os.MkdirAll(filepath.Join(vclusterDir, "deploy"), 0755)
+	os.MkdirAll(filepath.Join(versionedDir, "_fragments"), 0755)
+	os.MkdirAll(filepath.Join(versionedDir, "configure"), 0755)
+	
+	// Create files in _fragments (should be ignored)
+	os.WriteFile(filepath.Join(vclusterDir, "_fragments", "test.mdx"), []byte("content"), 0644)
+	os.WriteFile(filepath.Join(versionedDir, "_fragments", "test.mdx"), []byte("content"), 0644)
+	
+	// Create files in normal directories (should be detected)
+	os.WriteFile(filepath.Join(vclusterDir, "deploy", "guide.mdx"), []byte("content"), 0644)
+	os.WriteFile(filepath.Join(versionedDir, "configure", "guide.mdx"), []byte("old content"), 0644)
+	
+	// Run detectPathChanges
+	changes, err := detectPathChanges(tempDir)
+	if err != nil {
+		t.Fatalf("detectPathChanges() error = %v", err)
+	}
+	
+	// Verify that _fragments files are NOT in the changes
+	for _, change := range changes.Changes {
+		if strings.Contains(change.Old, "_fragments") || strings.Contains(change.New, "_fragments") {
+			t.Errorf("detectPathChanges() included _fragments path: %s -> %s", change.Old, change.New)
+		}
+	}
+	
+	// Verify that the normal file change was detected (guide.mdx moved from configure to deploy)
+	foundGuide := false
+	for _, change := range changes.Changes {
+		if change.Old == "configure/guide" && change.New == "deploy/guide" {
+			foundGuide = true
+			break
+		}
+	}
+	
+	if !foundGuide {
+		t.Error("detectPathChanges() did not detect the guide.mdx movement from configure to deploy")
+	}
+}
+
+func TestGenerateRedirectsSkipsUnderscorePaths(t *testing.T) {
+	tempFile := filepath.Join(t.TempDir(), "netlify.toml")
+	
+	// Create initial netlify.toml
+	os.WriteFile(tempFile, []byte("# Test netlify config\n"), 0644)
+	
+	r := &Resolver{
+		outputFile: tempFile,
+	}
+	
+	// Include both normal and underscore paths
+	resolved := map[string]string{
+		"old/path": "new/path",
+		"_fragments/test": "_fragments/new-test",  // Should NOT appear in output
+	}
+	
+	if err := r.GenerateRedirects(resolved); err != nil {
+		t.Fatalf("GenerateRedirects() error = %v", err)
+	}
+	
+	content, err := os.ReadFile(tempFile)
+	if err != nil {
+		t.Fatalf("Failed to read generated file: %v", err)
+	}
+	
+	contentStr := string(content)
+	
+	// Verify normal path is included
+	if !strings.Contains(contentStr, "/docs/vcluster/old/path") {
+		t.Error("GenerateRedirects() did not include normal path redirect")
+	}
+	
+	// Verify underscore path is NOT included
+	if strings.Contains(contentStr, "_fragments") {
+		t.Error("GenerateRedirects() incorrectly included _fragments path in redirects")
 	}
 }

@@ -189,6 +189,11 @@ func (r *Resolver) GenerateHurlTests(resolved map[string]string) error {
 	for _, from := range sortedKeys {
 		to := resolved[from]
 		
+		// Skip any paths with underscores - Docusaurus doesn't generate pages from underscore-prefixed directories
+		if strings.Contains(from, "_") || strings.Contains(to, "_") {
+			continue
+		}
+		
 		// Test unversioned redirect
 		tests.WriteString(fmt.Sprintf("# Test: %s -> %s\n", from, to))
 		tests.WriteString(fmt.Sprintf("GET {{BASE_URL}}%s/%s/\n", basePath, from))
@@ -252,6 +257,11 @@ func (r *Resolver) GenerateRedirects(resolved map[string]string) error {
 
 	for _, from := range sortedKeys {
 		to := resolved[from]
+		
+		// Skip any paths with underscores - Docusaurus doesn't generate pages from underscore-prefixed directories
+		if strings.Contains(from, "_") || strings.Contains(to, "_") {
+			continue
+		}
 		
 		// Unversioned
 		redirects.WriteString("[[redirects]]\n")
@@ -357,6 +367,10 @@ func detectPathChanges(baseDir string) (*PathChanges, error) {
 		if err != nil {
 			return err
 		}
+		// Skip directories that start with underscore - Docusaurus doesn't generate pages from these
+		if info.IsDir() && strings.HasPrefix(info.Name(), "_") {
+			return filepath.SkipDir
+		}
 		if !info.IsDir() && (strings.HasSuffix(path, ".md") || strings.HasSuffix(path, ".mdx")) {
 			relPath := strings.TrimPrefix(path, filepath.Join(baseDir, "vcluster")+"/")
 			relPath = strings.TrimSuffix(relPath, filepath.Ext(relPath))
@@ -372,6 +386,10 @@ func detectPathChanges(baseDir string) (*PathChanges, error) {
 	err = filepath.Walk(latestVersionDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
+		}
+		// Skip directories that start with underscore - Docusaurus doesn't generate pages from these
+		if info.IsDir() && strings.HasPrefix(info.Name(), "_") {
+			return filepath.SkipDir
 		}
 		if !info.IsDir() && (strings.HasSuffix(path, ".md") || strings.HasSuffix(path, ".mdx")) {
 			relPath := strings.TrimPrefix(path, latestVersionDir+"/")
@@ -392,6 +410,10 @@ func detectPathChanges(baseDir string) (*PathChanges, error) {
 
 	for filename, oldPath := range previousFiles {
 		if newPath, exists := currentFiles[filename]; exists && oldPath != newPath {
+			// Never create redirects for underscore directories - Docusaurus doesn't generate pages from these
+			if strings.Contains(oldPath, "/_") || strings.Contains(newPath, "/_") {
+				continue
+			}
 			changes.Changes = append(changes.Changes, Change{
 				Old: oldPath,
 				New: newPath,
