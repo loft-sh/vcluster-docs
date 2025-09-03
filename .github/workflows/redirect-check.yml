@@ -71,23 +71,61 @@ jobs:
 
       - name: Wait for Netlify deployment
         run: |
-          PREVIEW_URL="https://deploy-preview-${{ github.event.pull_request.number }}--vcluster-docs-site.netlify.app/docs/"
-          echo "Waiting for Netlify preview at: $PREVIEW_URL"
+          # Determine the correct preview URL based on branch
+          if [[ "${{ github.base_ref }}" == "next" || "${{ github.head_ref }}" == "next" ]]; then
+            PREVIEW_URL="https://deploy-preview-${{ github.event.pull_request.number }}--next-vcluster-docs-site.netlify.app/docs/"
+          else
+            PREVIEW_URL="https://deploy-preview-${{ github.event.pull_request.number }}--vcluster-docs-site.netlify.app/docs/"
+          fi
           
           for i in {1..60}; do
-            if curl -s -o /dev/null -w "%{http_code}" "$PREVIEW_URL" | grep -q "200\|301\|302"; then
-              echo "Preview is ready!"
+            # Include 401 status - the 'next' branch preview is password protected but still "ready"
+            if curl -s -o /dev/null -w "%{http_code}" "$PREVIEW_URL" | grep -q "200\|301\|302\|401"; then
               break
             fi
-            echo "Attempt $i/60: Preview not ready yet..."
             sleep 10
           done
 
       - name: Test redirects against preview
         run: |
           if [ -f "hack/test-redirects.hurl" ]; then
-            PREVIEW_URL="https://deploy-preview-${{ github.event.pull_request.number }}--vcluster-docs-site.netlify.app"
-            echo "Testing redirects against preview URL: $PREVIEW_URL"
-            hurl --test --variable BASE_URL=$PREVIEW_URL hack/test-redirects.hurl || \
-              echo "Some redirect tests failed - new redirects may not work until deployed"
+            # Determine the correct preview URL based on branch
+            if [[ "${{ github.base_ref }}" == "next" || "${{ github.head_ref }}" == "next" ]]; then
+              PREVIEW_URL="https://deploy-preview-${{ github.event.pull_request.number }}--next-vcluster-docs-site.netlify.app"
+              IS_NEXT_BRANCH=true
+            else
+              PREVIEW_URL="https://deploy-preview-${{ github.event.pull_request.number }}--vcluster-docs-site.netlify.app"
+              IS_NEXT_BRANCH=false
+            fi
+            
+            
+            # Check if preview is password protected
+            HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$PREVIEW_URL/docs/")
+            
+            if [[ "$HTTP_STATUS" == "401" ]] && [[ "$IS_NEXT_BRANCH" == "true" ]]; then
+              # Check if we have the password secret
+              if [[ -n "${{ secrets.NETLIFY_SITE_PASSWORD }}" ]]; then
+                # Authenticate and save cookies
+                hurl --cookie-jar /tmp/netlify-cookies.txt \
+                  --variable BASE_URL="$PREVIEW_URL" \
+                  --variable NETLIFY_PASSWORD='${{ secrets.NETLIFY_SITE_PASSWORD }}' \
+                  hack/netlify-auth.hurl
+                
+                if [ $? -eq 0 ]; then
+                  # Run tests with saved cookies
+                  hurl --test --cookie /tmp/netlify-cookies.txt \
+                    --variable BASE_URL="$PREVIEW_URL" \
+                    hack/test-redirects.hurl || \
+                    echo "Some redirect tests failed - new redirects may not work until deployed"
+                else
+                  echo "Authentication failed, skipping redirect tests"
+                fi
+              else
+                echo "NETLIFY_SITE_PASSWORD secret not configured, skipping redirect tests"
+              fi
+            else
+              # Not password protected or not next branch - run tests normally
+              hurl --test --variable BASE_URL="$PREVIEW_URL" hack/test-redirects.hurl || \
+                echo "Some redirect tests failed - new redirects may not work until deployed"
+            fi
           fi
