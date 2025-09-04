@@ -9,8 +9,7 @@ Read more about working with vale in the contribution guidelines: https://github
 
 
 ## Preview Link 
-<!-- The preview link from Netlify needs `/docs` appended after it.
-If you want the preview link to be available in the Linear issue, you must include the word `preview` in the markdown link name [Document Preview](https://netlify.preview/docs/xxxx). -->
+<!-- The preview link or links to the documents-->
 
 
 ## Internal Reference
