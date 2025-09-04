@@ -16,5 +16,4 @@ Read more about working with vale in the contribution guidelines: https://github
 <!--Add the GitHub or Linear ticket reference-->
 Closes DOC-
 
-@netlify /docs
-@netlify /docs/vcluster
+@netlify /docs /docs/vcluster
