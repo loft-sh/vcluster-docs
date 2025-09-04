@@ -17,3 +17,5 @@ If you want the preview link to be available in the Linear issue, you must inclu
 <!--Add the GitHub or Linear ticket reference-->
 Closes DOC-
 
+@netlify /docs
+
