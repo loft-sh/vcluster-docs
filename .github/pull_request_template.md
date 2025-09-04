@@ -17,4 +17,4 @@ Read more about working with vale in the contribution guidelines: https://github
 Closes DOC-
 
 @netlify /docs
-
+@netlify /docs/vcluster
