@@ -102,6 +102,12 @@ function isInProtectedArea(content, position, term) {
     return true;
   }
   
+  // Check if inside an admonition title (:::note, :::warning, :::tip, :::info, :::caution, :::danger)
+  const admonitionPattern = /^:::(note|warning|tip|info|caution|danger)\s/;
+  if (admonitionPattern.test(currentLine.trim())) {
+    return true;
+  }
+  
   // Check if inside code blocks (backticks)
   let insideCode = false;
   let backticksCount = 0;
