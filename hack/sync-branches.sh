@@ -35,4 +35,6 @@ else
     echo "Manual resolution required"
 fi
 
+# Abort any merge in progress before switching branches
+git merge --abort 2>/dev/null || true
 git checkout "$CURRENT_BRANCH"
