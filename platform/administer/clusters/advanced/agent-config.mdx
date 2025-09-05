@@ -11,37 +11,31 @@ import Button from "@site/src/components/Button";
 import Label from "@site/src/components/Label";
 import Input from "@site/src/components/Input";
 import Expander from "@site/src/components/Expander";
+import InterpolatedCodeBlock from "@site/src/components/InterpolatedCodeBlock";
 
 As outlined in the 'What are Clusters' section, during the initial setup, vCluster Platform tries to install a vCluster Platform Agent on the connected cluster to handle further communication with the cluster. vCluster Platform allows certain level of control over the installation and upgradation of the vCluster Platform Agent release.
 
-### Disable vCluster Platform Agent
+## Finding Agent Pods
 
-There might be cases where you don't want vCluster Platform to automatically handle vCluster Platform agent updates for you and you want to manually install or upgrade the vCluster Platform agent. This can be achieved either by setting the environment variable `DISABLE_AGENT` to `true` in the vCluster Platform container or by setting the annotation `loft.sh/cluster-ignore-agent: 'true'` on a connected cluster. This can be achieved in the vCluster Platform UI as below
+The [platform agent](../../../configure/config.mdx#what-is-the-platform-agent) runs as a pod in each connected cluster. Locate agent pods to verify connectivity and troubleshoot issues:
 
-<Flow id="cluster-disable-vcluster-platform-agent">
-  <Step>
-    Go to the <NavStep>Clusters</NavStep> view using the menu on the left.
-  </Step>
-  <Step>
-    Click the drop down arrow next to the cluster name you wish to modify. In
-    the drop down menu click the <Label>Edit</Label> button.
-  </Step>
-  <Step>
-    In the drawer that appears from the right, click on the <Label>Agent</Label>{" "}
-    configuration pane and select the 'Ignore Agent' checkbox.
-  </Step>
-  <Step>
-    Click on the <Button>Save Changes</Button> button.
-  </Step>
-</Flow>
+<InterpolatedCodeBlock
+  code={`kubectl get pods -n [[VAR:MANAGEMENT_NAMESPACE:vcluster-platform]] -l app=loft`}
+  language="bash"
+  title="List agent pods"
+/>
 
-:::warning
-If you do not install vCluster Platform agent into a connected cluster at all, certain functionality, such as Spaces, Sleep Mode, Apps, Accounts, Account Quotas & Security Templates will not be available in the cluster
-:::
+Example output:
+```
+NAME                   READY   STATUS    RESTARTS   AGE
+loft-d6c6d5576-7kqwx   1/1     Running   0          9d
+```
 
-### Agent Values
+## Agent Values
 
-The vCluster Platform Agent is installed on the connected cluster as a Helm Release. You can provide additional values for the release by setting the `loft.sh/agent-values` annotation on the Cluster object. These values would be merged with the default configuration values of the Agent's chart and subsequently applied to the Agent release. This can be achieved in the vCluster Platform UI as below.
+The vCluster Platform Agent is installed on the connected cluster as a Helm Release. Provide additional values for the release by setting the `loft.sh/agent-values` annotation on the Cluster object. These values are merged with the default configuration values of the Agent's chart and subsequently applied to the Agent release.
+
+### Setting Agent Values via UI
 
 <Flow id="cluster-extravalues-vcluster-platform-agent">
   <Step>
@@ -61,6 +55,170 @@ The vCluster Platform Agent is installed on the connected cluster as a Helm Rele
   </Step>
 </Flow>
 
-### Troubleshooting
+### Setting Agent Values via CLI
 
-If you encounter issues while configuring agent values or deploying it manually, you might want to take a look at the [Cluster troubleshooting](cluster-troubleshooting.mdx) guide.
+Export the current Cluster resource (this is a platform CRD, not vcluster.yaml):
+
+<InterpolatedCodeBlock
+  code={`export CLUSTER_NAME=[[VAR:CLUSTER_NAME:my-cluster]]
+kubectl get cluster $CLUSTER_NAME -o yaml > cluster-resource.yaml`}
+  language="bash"
+  title="Export Cluster resource"
+/>
+
+Edit `cluster-resource.yaml` and add the `loft.sh/agent-values` annotation:
+
+```yaml title="cluster-resource.yaml excerpt"
+apiVersion: management.loft.sh/v1
+kind: Cluster
+metadata:
+  name: my-cluster
+  annotations:
+    # Add this annotation to configure agent
+    loft.sh/agent-values: |
+      resources:
+        requests:
+          memory: 256Mi
+          cpu: 100m
+spec:
+  displayName: My Cluster
+  managementNamespace: vcluster-platform
+```
+
+:::info
+The Cluster resource is a Custom Resource Definition (CRD) managed by <GlossaryTerm term="platform">the platform</GlossaryTerm>. It represents a connected cluster and stores configuration like agent values.
+:::
+
+Apply the updated configuration:
+
+<InterpolatedCodeBlock
+  code={`kubectl apply -f cluster-resource.yaml`}
+  language="bash"
+  title="Apply updated configuration"
+/>
+
+### Security Context Configuration
+
+Security context is one of the common agent configurations. Agent pods support multiple levels of security context configuration.
+
+:::info Security Context Precedence
+When multiple security contexts are configured, the agent uses this precedence order (highest to lowest):
+1. Cluster-specific `agentValues` (via `loft.sh/agent-values` annotation)
+2. Platform-wide `agentValues` (in platform values.yaml)
+3. Platform default `securityContext` and `podSecurityContext`
+
+See [Platform configuration](../../../configure/config.mdx#agent-configuration) for platform-wide settings.
+:::
+
+Inspect the security context applied to agent pods:
+
+<InterpolatedCodeBlock
+  code={`kubectl get pod -n [[VAR:MANAGEMENT_NAMESPACE:vcluster-platform]] -l app=loft -o yaml | grep -A 10 "securityContext:"`}
+  language="bash"
+  title="View security contexts"
+/>
+
+Example output:
+```yaml
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+    - ALL
+  privileged: false
+  runAsNonRoot: true
+```
+
+:::info Container vs Pod Security Context
+- **Container Security Context** (`securityContext`): Applied to individual containers within a pod. Controls settings like user ID, privilege escalation, and capabilities.
+- **Pod Security Context** (`podSecurityContext`): Applied at the pod level. Controls settings like filesystem group, supplemental groups, and sysctls that affect all containers in the pod.
+
+Both Agent Pod and Agent Proxy Pod (deployed during upgrades) follow the same precedence order.
+:::
+
+#### Example: Platform-wide Security Context
+
+Configure security contexts in your `vcluster-platform` values file during platform installation:
+
+```yaml title="vcluster-platform values.yaml"
+# Platform-wide default security contexts
+securityContext:
+  allowPrivilegeEscalation: false
+  runAsNonRoot: true
+  runAsUser: 1000
+  capabilities:
+    drop:
+    - ALL
+
+podSecurityContext:
+  fsGroup: 2000
+  runAsGroup: 3000
+  
+# Default agent values that apply to all connected clusters
+agentValues:
+  securityContext:
+    allowPrivilegeEscalation: false
+    runAsNonRoot: true
+    runAsUser: 1001
+    capabilities:
+      drop:
+      - ALL
+  podSecurityContext:
+    fsGroup: 2001
+    runAsGroup: 3001
+```
+
+#### Example: Cluster-specific Security Context
+
+Override security contexts for specific clusters using the `loft.sh/agent-values` annotation:
+
+```yaml title="cluster-specific-agent-values.yaml"
+# Applied via loft.sh/agent-values annotation on the Cluster resource
+securityContext:
+  allowPrivilegeEscalation: false
+  runAsNonRoot: true
+  runAsUser: 1002
+  capabilities:
+    drop:
+    - ALL
+    add:
+    - NET_BIND_SERVICE
+
+podSecurityContext:
+  fsGroup: 2002
+  runAsGroup: 3002
+  supplementalGroups:
+  - 4000
+  - 5000
+```
+
+To apply cluster-specific security context through the UI, follow the steps in [Setting Agent Values via UI](#setting-agent-values-via-ui) and add your security context configuration in the Extra Agent Values textarea.
+
+## Disable vCluster Platform Agent
+
+There might be cases where you don't want vCluster Platform to automatically handle vCluster Platform agent updates. This can be achieved either by setting the environment variable `DISABLE_AGENT` to `true` in the vCluster Platform container or by setting the annotation `loft.sh/cluster-ignore-agent: 'true'` on a connected cluster.
+
+<Flow id="cluster-disable-vcluster-platform-agent">
+  <Step>
+    Go to the <NavStep>Clusters</NavStep> view using the menu on the left.
+  </Step>
+  <Step>
+    Click the drop down arrow next to the cluster name you wish to modify. In
+    the drop down menu click the <Label>Edit</Label> button.
+  </Step>
+  <Step>
+    In the drawer that appears from the right, click on the <Label>Agent</Label>{" "}
+    configuration pane and select the 'Ignore Agent' checkbox.
+  </Step>
+  <Step>
+    Click on the <Button>Save Changes</Button> button.
+  </Step>
+</Flow>
+
+:::warning
+If you do not install vCluster Platform agent into a connected cluster at all, certain functionality, such as Spaces, <GlossaryTerm term="sleep-mode">Sleep Mode</GlossaryTerm>, Apps, Accounts, Account Quotas & Security Templates will not be available in the cluster
+:::
+
+## Troubleshooting
+
+For issues configuring agent values or manual deployment, see the [Cluster troubleshooting](cluster-troubleshooting.mdx) guide.
