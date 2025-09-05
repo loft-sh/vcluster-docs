@@ -1,23 +1,18 @@
 ---
-title: Private Nodes
-sidebar_label: privateNodes
-sidebar_position: 2
-sidebar_class_name: pro private-nodes
+title: Auto Nodes
+sidebar_label: autoNodes
+sidebar_position: 1
 ---
 
-import ProAdmonition from '../../_partials/admonitions/pro-admonition.mdx'
-import PrivateNodesYaml from '../../_fragments/private-nodes.mdx'
-import PrivateNodes from '../../_partials/config/privateNodes.mdx'
-import AutoNodes from '../../_fragments/deploy/auto-nodes.mdx';
-import TenancySupport from '../../_fragments/tenancy-support.mdx';
+import AutoNodes from '../../../_fragments/deploy/auto-nodes.mdx';
+import AutoNodesScheduling from '../../../_fragments/deploy/auto-nodes-scheduling.mdx';
+import PrivateNodesAutoNodes from '../../../_partials/config/privateNodes/autoNodes.mdx';
 
-<TenancySupport privateNodes="true" />
-
-<ProAdmonition/>
-<PrivateNodesYaml />
-
-## Auto Nodes
 <AutoNodes />
+
+### How does it work?
+
+<AutoNodesScheduling />
 
 ### Pre-requisites
 
@@ -29,7 +24,7 @@ import TenancySupport from '../../_fragments/tenancy-support.mdx';
 There are two types of node pools, that can be figured independently or combined with each other. 
 
 * **static**: Defines a fixed quantity of each node to provision
-* **dynamic**: No quantity of nodes is defined. The built-in [Karpenter](https://karpenter.sh/) automatically decides how many nodes are needed. 
+* **dynamic**: No quantity of nodes is defined. The built-in [Karpenter](https://karpenter.sh/) automatically decides how many nodes are needed. You can define a limit of nodes to provision.
 
 Deciding how to limit which node types to provision is based on the requirements defined in each node pool. 
 
@@ -41,21 +36,49 @@ privateNodes:
     # Fixed size node pool of 2
     static:
     - name: my-static-node-pool
+      provider: my-node-provider
       quantity: 2
-      requirements:
-      - property: vcluster.com/node-provider
-        value: my-node-provider
     # Dynamic node pool
     dynamic:
     - name: my-dynamic-node-pool
-      requirements:
-      - property: vcluster.com/node-provider
-        value: my-node-provider
+      provider: my-node-provider
+      limits:
+        nodes: 3
 ```
 
 :::info No vCluster restart required
 Changing fields within `privateNodes.autoNodes` will not restart the vCluster even on a `helm upgrade`
 :::
+
+It's also possible to mix different providers within the same vCluster. You can specify the provider via the `provider` field that should reference a node provider created in the platform.
+```yaml title="Example mixing multiple providers"
+privateNodes:
+  enabled: true
+  # Enable vCluster VPN so that nodes can talk to each other
+  # even if they are not in the same network.
+  vpn:
+    enabled: true
+    nodeToNode:
+      enabled: true
+  autoNodes:
+    static:
+    # Nodes from AWS
+    - name: aws-pool
+      provider: aws
+      quantity: 1
+      requirements:
+      - property: vcluster.com/node-type
+        value: t3.medium
+    # Nodes from GCP
+    - name: gcp-pool
+      provider: gcp
+      quantity: 1
+      requirements:
+      - property: vcluster.com/node-type
+        value: n4-standard-2
+```
+
+This allows you to easily create cross-cloud vClusters either statically or through the dynamic scaling via Karpenter.
 
 ### Requirements
 
@@ -68,6 +91,7 @@ privateNodes:
   autoNodes:
     static:
       - name: my-static-pool
+        provider: my-provider
         requirements:
         # Exact match
         - property: my-property
@@ -117,9 +141,7 @@ privateNodes:
   autoNodes:
     dynamic:
     - name: my-dynamic-node-pool
-      requirements:
-      - property: vcluster.com/node-provider
-        value: my-node-provider
+      provider: my-node-provider
 ```
 
 #### Disruption
@@ -129,14 +151,16 @@ By default, Karpenter will disrupt nodes if they are empty or underutilized afte
 
 You can define more advanced ways of disruptions via schedules or budgets according to the [Karpenter config](https://karpenter.sh/docs/concepts/disruption/#nodepool-disruption-budgets).
 
-```yaml title="Example of creating disruption"
+```yaml title="Example of creating advanced disruption configuration"
 privateNodes:
   enabled: true
   autoNodes:
     dynamic:
     - name: my-dynamic-node-pool
+      provider: my-provider
       disruption:
         consolidationPolicy: WhenEmptyOrUnderutilized
+        consolidateAfter: 10s
         budgets:
         - nodes: "20%"
           reasons:
@@ -160,14 +184,20 @@ privateNodes:
   autoNodes:
     dynamic:
     - name: my-dynamic-node-pool
+      provider: my-provider
       limits:
         cpu: 100  # either combined amount of cpus across all nodes in this node pool
         nodes: 10 # or maximum amount of nodes
 ```
 
+:::warning Too small limits
+When limits are too low (e.g. cpu is 1 and the smallest node type has cpu of 2) **nodes will not provision**. Make sure to use appropriate limits. When using `limits.nodes` consider that this might be the biggest nodes, so its usually a good idea to use a combination of `limits.cpu` and `limits.nodes`.
+:::
+
 ### Static node pools
 
-Static node pools are always created independent regardless of how many nodes are needed. They always require a quantity and a set of requirements to select which node types to deploy. When
+Static node pools are always created independent regardless of how many nodes are needed. 
+They always require a quantity and a set of requirements to select which node types to deploy. When
 creating static node pools, they are also Karpenter [NodeClaims](https://karpenter.sh/docs/concepts/nodeclaims/), which allows Karpenter to take these static nodes into account when a dynamic node pool is also configured.
 
 ```yaml title="Example of a static node pool of 2 nodes from a specific node provider"
@@ -177,11 +207,11 @@ privateNodes:
   autoNodes:
     static:
     - name: my-static-node-pool
+      provider: my-provider
       quantity: 2
-      requirements:
-      - property: vcluster.com/node-provider
-        value: my-node-provider
 ```
+
+You can change the quantity of static node pools without restarting vCluster and vCluster will scale these nodes up or down based on the changing quantity.
 
 ### Taints and node labels
 
@@ -193,6 +223,7 @@ privateNodes:
   autoNodes:
     static:
       - name: my-static-pool
+        provider: my-provider
         quantity: 1
         nodeLabels:
           my-label: my-value
@@ -201,6 +232,7 @@ privateNodes:
           effect: NoSchedule
     dynamic:
       - name: my-static-pool
+        provider: my-provider
         nodeLabels:
           my-label: my-value
         taints:
@@ -209,11 +241,6 @@ privateNodes:
 
 ```
 
-## Deploy vCluster by manually joining private nodes
-
-For step-by-step instructions on deploying vCluster with private nodes and joining worker nodes, see the [Deploy private nodes guide](../../../deploy/worker-nodes/private-nodes/).
-
-
 ## Config reference
 
-<PrivateNodes />
+<PrivateNodesAutoNodes />

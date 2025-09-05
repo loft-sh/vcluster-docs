@@ -50,6 +50,7 @@ var paths = []string{
 	"privateNodes/autoUpgrade",
 	"privateNodes/autoNodes",
 	"privateNodes/vpn",
+	"deploy",
 	"policies/resourceQuota",
 	"policies/networkPolicy",
 	"policies/limitRange",
