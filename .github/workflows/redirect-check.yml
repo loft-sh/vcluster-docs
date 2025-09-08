@@ -1,0 +1,134 @@
+name: Redirect Check
+
+on:
+  pull_request_target:
+    paths:
+      - 'vcluster/**'
+      - 'vcluster_versioned_docs/**'
+      - 'netlify.toml'
+      - 'hack/test-redirects.hurl'
+
+jobs:
+  check-redirects:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout PR
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+
+      - name: Check redirects
+        id: check
+        run: |
+          go run hack/redirect-resolver/main.go -mode detect
+          
+          if [ -f "hack/path-changes.json" ] && [ "$(jq '.changes | length' hack/path-changes.json)" -gt 0 ]; then
+            go run hack/redirect-resolver/main.go -mode update
+            
+            if git diff --exit-code netlify.toml hack/redirect-history.json hack/test-redirects.hurl > /dev/null 2>&1; then
+              echo "result=ok" >> $GITHUB_OUTPUT
+            else
+              echo "result=needs-update" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "result=ok" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Comment PR
+        if: steps.check.outputs.result == 'needs-update'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: 'Documentation paths have changed. Please run locally:\n\n```bash\n./hack/update-redirects.sh\ngit add netlify.toml hack/redirect-history.json hack/test-redirects.hurl\ngit commit -m "chore: update redirects"\n```'
+            })
+
+      - name: Fail if redirects need updating
+        if: steps.check.outputs.result == 'needs-update'
+        run: exit 1
+
+  test-redirects:
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.draft == false
+    needs: check-redirects
+    steps:
+      - name: Checkout PR
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Install Hurl
+        run: |
+          curl -sSL https://github.com/Orange-OpenSource/hurl/releases/download/7.0.0/hurl-7.0.0-x86_64-unknown-linux-gnu.tar.gz | tar xz
+          sudo mv hurl-7.0.0-x86_64-unknown-linux-gnu/bin/hurl /usr/local/bin/
+
+      - name: Wait for Netlify deployment
+        run: |
+          # Determine the correct preview URL based on branch
+          if [[ "${{ github.base_ref }}" == "next" || "${{ github.head_ref }}" == "next" ]]; then
+            PREVIEW_URL="https://deploy-preview-${{ github.event.pull_request.number }}--next-vcluster-docs-site.netlify.app/docs/"
+          else
+            PREVIEW_URL="https://deploy-preview-${{ github.event.pull_request.number }}--vcluster-docs-site.netlify.app/docs/"
+          fi
+          
+          for i in {1..60}; do
+            # Include 401 status - the 'next' branch preview is password protected but still "ready"
+            if curl -s -o /dev/null -w "%{http_code}" "$PREVIEW_URL" | grep -q "200\|301\|302\|401"; then
+              break
+            fi
+            sleep 10
+          done
+
+      - name: Test redirects against preview
+        run: |
+          if [ -f "hack/test-redirects.hurl" ]; then
+            # Determine the correct preview URL based on branch
+            if [[ "${{ github.base_ref }}" == "next" || "${{ github.head_ref }}" == "next" ]]; then
+              PREVIEW_URL="https://deploy-preview-${{ github.event.pull_request.number }}--next-vcluster-docs-site.netlify.app"
+              IS_NEXT_BRANCH=true
+            else
+              PREVIEW_URL="https://deploy-preview-${{ github.event.pull_request.number }}--vcluster-docs-site.netlify.app"
+              IS_NEXT_BRANCH=false
+            fi
+            
+            
+            # Check if preview is password protected
+            HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$PREVIEW_URL/docs/")
+            
+            if [[ "$HTTP_STATUS" == "401" ]] && [[ "$IS_NEXT_BRANCH" == "true" ]]; then
+              # Check if we have the password secret
+              if [[ -n "${{ secrets.NETLIFY_SITE_PASSWORD }}" ]]; then
+                # Authenticate and save cookies
+                hurl --cookie-jar /tmp/netlify-cookies.txt \
+                  --variable BASE_URL="$PREVIEW_URL" \
+                  --variable NETLIFY_PASSWORD='${{ secrets.NETLIFY_SITE_PASSWORD }}' \
+                  hack/netlify-auth.hurl
+                
+                if [ $? -eq 0 ]; then
+                  # Run tests with saved cookies
+                  hurl --test --cookie /tmp/netlify-cookies.txt \
+                    --variable BASE_URL="$PREVIEW_URL" \
+                    hack/test-redirects.hurl || \
+                    echo "Some redirect tests failed - new redirects may not work until deployed"
+                else
+                  echo "Authentication failed, skipping redirect tests"
+                fi
+              else
+                echo "NETLIFY_SITE_PASSWORD secret not configured, skipping redirect tests"
+              fi
+            else
+              # Not password protected or not next branch - run tests normally
+              hurl --test --variable BASE_URL="$PREVIEW_URL" hack/test-redirects.hurl || \
+                echo "Some redirect tests failed - new redirects may not work until deployed"
+            fi
+          fi

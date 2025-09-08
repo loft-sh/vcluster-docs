@@ -1,0 +1,51 @@
+name: Sync Next Branch
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history required
+          token: ${{ secrets.GH_ACCESS_TOKEN }}
+
+      - name: Configure git
+        run: |
+          git config --global user.name "Loft Bot"
+          git config --global user.email "loft-bot@users.noreply.github.com"
+
+      - name: Sync branches
+        run: |
+          ./hack/sync-branches.sh > sync-output.txt 2>&1
+          cat sync-output.txt
+
+          if grep -q "Clean merge successful" sync-output.txt; then
+            git push origin next
+            echo "::notice::Successfully synced next with main"
+
+          elif grep -q "Conflicts detected" sync-output.txt; then
+            BRANCH_NAME=$(grep "created branch:" sync-output.txt | cut -d: -f2 | tr -d ' ')
+            git push origin "$BRANCH_NAME"
+
+            gh pr create \
+              --title "Sync: Merge main into next" \
+              --body "Automated sync from main to next branch. Please resolve conflicts and merge." \
+              --base next \
+              --head "$BRANCH_NAME" \
+              --label "sync"
+
+            echo "::notice::Created PR for manual conflict resolution"
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_ACCESS_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_ACCESS_TOKEN }}
