@@ -1,0 +1,463 @@
+---
+title: "Configure External Access & TLS"
+sidebar_label: "Custom Domain"
+sidebar_position: 4
+description: Learn how to configure external access and TLS for your vCluster Platform deployment, including setting up ingress controllers, load balancers, and various certificate options.
+---
+
+import Tabs from "@theme/Tabs";
+import TabItem from "@theme/TabItem";
+import Flow, { Step } from "@site/src/components/Flow";
+import PartialExposeNginx from "../_partials/install/external-access-nginx.mdx";
+import PartialExposeNginxManual from "../_partials/install/external-access-nginx-manual.mdx";
+import PartialExposeLoadBalancerAWS from "../_partials/install/external-access-loadbalancer-aws.mdx";
+import PartialExposeLoadBalancerOther from "../_partials/install/external-access-loadbalancer-other.mdx";
+import PartialExposeLoadBalancerApply from "../_partials/install/external-access-loadbalancer-apply.mdx";
+import PartialAdminSetVersion from "../_partials/install/set-version.mdx";
+import PartialExposeLoadBalancerExternalIP from "../_partials/install/external-access-loadbalancer-get-external-ip.mdx";
+import PartialExposeLoadBalancerValidate from "../_partials/install/external-access-loadbalancer-validate.mdx";
+import PartialAdminUpgrade from "../_partials/install/upgrade.mdx";
+
+After deploying the platform, you may want to access the deployment via a routable IP address or a resolvable domain name. You may also wish to secure the deployment with a TLS certificate. This is particularly useful for sharing platform access with other team members who may or may not have direct access to Kubernetes.
+
+:::tip Requirements
+Setting up the platform for access via routable IP or domain name, and securing it via TLS requires the following:
+- The cluster where the platform is deployed must have an available load balancer or ingress controller
+- Appropriate DNS settings must be in place
+- A mechanism for assigning TLS certificates (such as cert-manager) must be available
+:::
+
+## External access
+
+The platform, like any other service in Kubernetes, can be exposed in multiple ways. This section outlines how to expose the platform via an ingress controller (using NGINX ingress controller as an example) and via a `LoadBalancer`.
+
+<details>
+  <summary>
+
+### External access via NGINX ingress controller
+
+  </summary>
+  <Tabs
+    defaultValue="automatic"
+    values={[
+      { label: "Automatic or existing installation", value: "automatic" },
+      { label: "Manual ingress controller installation", value: "manual" },
+    ]}
+  >
+    <TabItem value="automatic">
+      <PartialExposeNginx />
+    </TabItem>
+    <TabItem value="manual">
+      <PartialExposeNginxManual />
+    </TabItem>
+  </Tabs>
+</details>
+
+<details>
+  <summary>
+
+### External access via LoadBalancer
+
+  </summary>
+
+<Flow>
+    <Step>
+        <Tabs
+            defaultValue="aws"
+            values={[
+                {label: 'AWS ELB + ACM', value: 'aws'},
+                {label: 'Other load balancers', value: 'other'},
+            ]}>
+            <TabItem value="aws">
+                <PartialExposeLoadBalancerAWS/>
+            </TabItem>
+            <TabItem value="other">
+                <PartialExposeLoadBalancerOther/>
+            </TabItem>
+        </Tabs>
+    </Step>
+    <Step>
+        <PartialExposeLoadBalancerApply/>
+    </Step>
+    <Step>
+        <PartialExposeLoadBalancerExternalIP/>
+    </Step>
+    <Step>
+        <PartialExposeLoadBalancerValidate/>
+    </Step>
+</Flow>
+</details>
+
+## Configure `TLS`
+
+This section provides various options for configuring TLS for your platform deployment. Choose the method that best fits your infrastructure and requirements.
+
+<details>
+  <summary>
+
+### Cert-Manager
+
+  </summary>
+
+<Flow id="cert-manager">
+  <Step>
+
+Install `cert-manager` to your cluster:
+
+```bash title="Install cert-manager"
+helm upgrade --install  cert-manager cert-manager  --repository-config=''\
+  --namespace cert-manager  --create-namespace \
+  --repo https://charts.jetstack.io \
+  --set installCRDs=true \
+  --wait
+```
+
+  </Step>
+  <Step>
+
+Edit your existing `vcluster-platform.yaml` file, or create a new file named `vcluster-platform.yaml` with the following content:
+
+```yaml title="vcluster-platform.yaml" {3-4}
+ingress:
+  enabled: true
+  annotations:
+    # Make sure the following line matches the name of your issuer (or use the section below to create one)
+    cert-manager.io/cluster-issuer: lets-encrypt-http-issuer
+  tls:
+    enabled: true
+    secret: tls-vcluster-platform
+
+certIssuer:
+  create: true # Change this if you already have your own cert-issuer
+  name: lets-encrypt-http-issuer
+  email: "YOUR_EMAIL" # REQUIRED
+  secretName: vcluster-platform-letsencrypt-credentials
+  httpResolver:
+    enabled: true
+    ingressClass: nginx
+  resolvers: []
+  server: https://acme-v02.api.letsencrypt.org/directory
+```
+
+  </Step>
+  <Step>
+    <PartialAdminSetVersion/>
+  </Step>
+  <Step>
+    <PartialAdminUpgrade/>
+  </Step>
+</Flow>
+
+</details>
+
+<details>
+  <summary>
+
+### AWS Certificate Manager (ACM)
+
+  </summary>
+
+<Tabs
+  defaultValue="ingress"
+  values={[
+    { label: 'Domain via ingress', value: 'ingress', },
+    { label: 'Domain via load balancer', value: 'lb', },
+  ]
+}>
+<TabItem value="ingress">
+
+<Flow id="acm-ingress">
+  <Step>
+
+Determine the External-IP address of your ingress:
+
+```bash title="Get ingress external IP"
+kubectl get ingress -n vcluster-platform
+NAME           CLASS    HOSTS                ADDRESS          PORTS     AGE
+loft-ingress   <none>   vcluster-platform.mydomain.tld    x.x.x.x          80, 443   10m
+                                             ^^^^^^^
+```
+
+  </Step>
+  <Step>
+
+Find the AWS Elastic Load Balancer (ELB) for this IP address in the AWS console.
+
+  </Step>
+  <Step>
+
+Switch to the "Listeners" tab.
+
+  </Step>
+  <Step>
+
+In the "SSL Certificates" column, click on the "View/edit certificates" link.
+
+  </Step>
+  <Step>
+
+Click on the "+" symbol next to the "Certificates" tab and add your Access Control Manager (ACM) managed certificate to the ingress controller's Load Balancer.
+
+  </Step>
+</Flow>
+
+</TabItem>
+<TabItem value="lb">
+
+Make sure to follow the [Load Balancer > AWS ELB + ACM](#external-access-via-loadbalancer) guide above.
+
+</TabItem>
+</Tabs>
+
+</details>
+
+<details>
+  <summary>
+
+### Manually provisioned certificate
+
+  </summary>
+
+<Flow id="cert-manual">
+  <Step>
+
+Create a Kubernetes secret from your certificate:
+
+```bash title="Create TLS secret"
+kubectl create secret generic tls-vcluster-platform -n vcluster-platform --type=kubernetes.io/tls \
+  --from-file=tls.crt=tls.crt \
+  --from-file=tls.key=tls.key
+```
+
+  </Step>
+  <Step>
+
+Edit your existing `vcluster-platform.yaml` file, or create a new file named `vcluster-platform.yaml` with the following content:
+
+<Tabs
+  defaultValue="ingress"
+  values={[
+    { label: 'Platform ingress handles TLS', value: 'ingress', },
+    { label: 'Platform pod handles TLS', value: 'vcluster-platform', },
+    { label: 'Load balancer handles TLS', value: 'lb', },
+  ]
+}>
+<TabItem value="ingress">
+
+```yaml title="vcluster-platform.yaml for ingress TLS"
+ingress:
+  tls:
+    enabled: true
+    secret: tls-vcluster-platform # Make sure this matches the name of your cert from the previous step
+```
+
+If you want to [configure the platform with additionalCA](/platform/configure/config.mdx#using-a-custom-certificate-authority), the Certificate Authority used for signing this certificate has to be added as a base64 encoded value:
+
+```bash title="Encode CA certificate"
+cat ca.crt | base64
+```
+
+Use this output in the `.additionalCA` helm value.
+
+</TabItem>
+<TabItem value="vcluster-platform">
+
+```yaml title="vcluster-platform.yaml for pod TLS"
+tls:
+  enabled: true
+  secret: tls-vcluster-platform # Make sure this matches the name of your cert from the previous step
+```
+
+</TabItem>
+<TabItem value="lb">
+
+This must be configured outside of the platform deployment.
+
+</TabItem>
+</Tabs>
+
+  </Step>
+  <Step>
+    <PartialAdminSetVersion/>
+  </Step>
+  <Step>
+    <PartialAdminUpgrade/>
+  </Step>
+</Flow>
+
+</details>
+
+<details>
+  <summary>
+
+### Self-signed certificate
+
+  </summary>
+
+For testing or internal use, you can create and use a self-signed certificate.
+
+<Flow id="cert-self-signed">
+  <Step>
+Create a new private key for Certificate Authority:
+
+```bash title="Generate CA private key"
+openssl genrsa 2048 > ca-key.pem
+```
+
+  </Step>
+  <Step>
+
+Create a new certificate authority:
+
+```bash title="Generate CA certificate"
+openssl req -new -x509 -nodes -days 365000 -key ca-key.pem -out ca.crt
+```
+
+  </Step>
+  <Step>
+
+Create a new private key:
+
+```bash title="Generate private key"
+openssl genrsa -out tls.key 4096
+```
+
+  </Step>
+
+  <Step>
+
+Create a file named `ssl.conf` with the following content:
+
+```ini title="ssl.conf" {9-12,26-27}
+[ req ]
+default_bits       = 4096
+distinguished_name = req_distinguished_name
+x509_extensions    = v3_ca
+req_extensions     = v3_req
+x509_extensions    = usr_cert
+
+[ req_distinguished_name ]
+organizationName          = Organization Name (for example company)
+organizationName_default  = vcluster-platform
+commonName                = Common Name (for example server FQDN or YOUR name)
+commonName_default        = vcluster-platform.mydomain.tld
+
+[ usr_cert ]
+basicConstraints  = CA:FALSE
+nsCertType        = client, server
+keyUsage          = digitalSignature
+extendedKeyUsage  = serverAuth, clientAuth
+
+[ v3_req ]
+subjectAltName   = @alt_names
+extendedKeyUsage = serverAuth, clientAuth
+basicConstraints = CA:FALSE
+keyUsage         = digitalSignature
+
+[ alt_names ]
+DNS.1 = localhost
+```
+
+Set `commonName_default` and `DNS.1` to the domain you want to use.
+
+  </Step>
+  <Step>
+
+Create a certificate signing request:
+
+```bash title="Generate certificate signing request"
+openssl req -new -sha256 \
+    -out tls.csr \
+    -key tls.key \
+    -config ssl.conf
+```
+
+  </Step>
+  <Step>
+
+Generate the certificate:
+
+```bash title="Generate certificate"
+openssl x509 -req \
+    -sha256 \
+    -days 3650 \
+    -in tls.csr \
+    -out tls.crt \
+    -extensions v3_req \
+    -extfile ssl.conf \
+    -CA ca.crt \
+    -CAkey ca-key.pem
+```
+
+  </Step>
+  <Step>
+
+Create a Kubernetes secret from your certificate:
+
+```bash title="Create TLS secret"
+kubectl create secret generic tls-vcluster-platform -n vcluster-platform --type=kubernetes.io/tls \
+  --from-file=tls.crt=tls.crt \
+  --from-file=tls.key=tls.key
+```
+
+If you want to [configure the platform with additionalCA](/platform/configure/config.mdx#using-a-custom-certificate-authority), use:
+
+```bash title="Encode CA certificate"
+cat ca.crt | base64
+```
+
+as an input for the `.additionalCA` helm value.
+
+  </Step>
+  <Step>
+
+Edit your existing `vcluster-platform.yaml` file, or create a new file named `vcluster-platform.yaml` with the following content:
+
+<Tabs
+  defaultValue="ingress"
+  values={[
+    { label: 'Platform ingress handles TLS', value: 'ingress', },
+    { label: 'Platform pod handles TLS', value: 'vcluster-platform', },
+    { label: 'Load balancer handles TLS', value: 'lb', },
+  ]
+}>
+<TabItem value="ingress">
+
+```yaml title="vcluster-platform.yaml for ingress TLS"
+ingress:
+  tls:
+    enabled: true
+    secret: tls-vcluster-platform # Make sure this matches the name of your cert from the previous step
+
+tls:
+  enabled: true # Virtual clusters running on the same host as the platform directly use the platform service.
+  secret: tls-vcluster-platform # Ensure this matches the name of your cert from the previous step
+```
+
+</TabItem>
+<TabItem value="vcluster-platform">
+
+```yaml title="vcluster-platform.yaml for pod TLS"
+tls:
+  enabled: true
+  secret: tls-vcluster-platform # Make sure this matches the name of your cert from the previous step
+```
+
+</TabItem>
+<TabItem value="lb">
+
+This must be configured outside of the platform deployment.
+
+</TabItem>
+</Tabs>
+
+  </Step>
+  <Step>
+    <PartialAdminSetVersion/>
+  </Step>
+  <Step>
+    <PartialAdminUpgrade/>
+  </Step>
+</Flow>
+
+</details>
