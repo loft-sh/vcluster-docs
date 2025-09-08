@@ -14,10 +14,11 @@ HTTP 200
 [Asserts]
 body contains "vCluster Platform"
 
-# Test 2: Platform 4.4.0 doesn't have versioned URL (latest uses /docs/platform/)
-# This should 404 as latest version doesn't use version in URL
+# Test 2: Platform 4.4.0 redirects to main platform docs (latest doesn't use version in URL)
 GET {{BASE_URL}}/docs/platform/4.4.0
-HTTP 404
+HTTP 301
+[Asserts]
+header "Location" contains "/docs/platform/"
 
 # Test 3: Platform 4.3.0 redirects to main platform docs (preview behavior)
 GET {{BASE_URL}}/docs/platform/4.3.0
@@ -25,12 +26,12 @@ HTTP 301
 [Asserts]
 header "Location" contains "/docs/platform/"
 
-# Test 3b: Platform versioned docs in preview redirect to main
-# Note: In production, versioned URLs work differently
+# Test 3b: Platform 4.3.0 versioned docs are accessible
+# Note: Versioned platform docs exist and are accessible
 GET {{BASE_URL}}/docs/platform/4.3.0/
-HTTP 301
+HTTP 200
 [Asserts]
-header "Location" contains "/docs/platform/"
+body contains "vCluster Platform"
 
 # Test 4: Verify create-templates page exists in Platform 4.4
 GET {{BASE_URL}}/docs/platform/administer/templates/create-templates
@@ -44,12 +45,12 @@ HTTP 200
 [Asserts]
 body contains "templates"
 
-# Test 5: In preview, Platform 4.3.0 URLs redirect without version
-# This test documents that versioned platform docs redirect in preview
+# Test 5: Platform 4.3.0 URLs redirect to add trailing slash (stay in 4.3.0)
+# Versioned platform docs stay within their version
 GET {{BASE_URL}}/docs/platform/4.3.0/administer/templates/create-virtual-cluster-template
 HTTP 301
 [Asserts]
-header "Location" contains "/docs/platform/administer/templates/create-virtual-cluster-template"
+header "Location" contains "/docs/platform/4.3.0/administer/templates/create-virtual-cluster-template/"
 
 # Test 5b: The consolidated create-templates page should exist in current platform
 GET {{BASE_URL}}/docs/platform/administer/templates/create-templates/
