@@ -14,7 +14,9 @@ import (
 	managementv1 "github.com/loft-sh/api/v4/pkg/apis/management/v1"
 	storagev1 "github.com/loft-sh/api/v4/pkg/apis/storage/v1"
 	orderedmap "github.com/wk8/go-ordered-map/v2"
+	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -949,6 +951,74 @@ spec:
 				},
 			},
 			Status: managementv1.ClusterRoleTemplateStatus{},
+		},
+		Create: true,
+	})
+
+	// NodeProvider
+	util.GenerateObjectOverview(&util.ObjectInformation{
+		Title:       "Node Provider",
+		Name:        "NodeProvider",
+		Resource:    "nodeproviders",
+		Description: "NodeProvider holds the node provider information",
+		File:        path.Join(util.BaseResourcesPath, "nodeprovider.mdx"),
+		Object: &managementv1.NodeProvider{
+			TypeMeta: metav1.TypeMeta{
+				Kind:       "NodeProvider",
+				APIVersion: managementv1.SchemeGroupVersion.String(),
+			},
+			ObjectMeta: metav1.ObjectMeta{},
+			Spec: managementv1.NodeProviderSpec{
+				NodeProviderSpec: storagev1.NodeProviderSpec{
+					DisplayName: "Terraform Example",
+					Terraform: &storagev1.NodeProviderTerraform{
+						NodeTemplate: &storagev1.TerraformTemplate{
+							Git: &storagev1.TerraformTemplateSourceGit{
+								Repository: "https://github.com/my-org/my-repo.git",
+							},
+						},
+						NodeTypes: []storagev1.TerraformNodeTypeSpec{
+							{
+								Name: "medium",
+								NodeTypeSpec: storagev1.NodeTypeSpec{
+									Resources: corev1.ResourceList{
+										corev1.ResourceCPU:    resource.MustParse("2"),
+										corev1.ResourceMemory: resource.MustParse("4Gi"),
+									},
+									Properties: map[string]string{
+										"instance-type": "t3.medium",
+									},
+								},
+							},
+							{
+								Name: "large",
+								NodeTypeSpec: storagev1.NodeTypeSpec{
+									Resources: corev1.ResourceList{
+										corev1.ResourceCPU:    resource.MustParse("2"),
+										corev1.ResourceMemory: resource.MustParse("8Gi"),
+									},
+									Properties: map[string]string{
+										"instance-type": "t3.large",
+									},
+								},
+							},
+							{
+								Name: "xlarge",
+								NodeTypeSpec: storagev1.NodeTypeSpec{
+									Resources: corev1.ResourceList{
+										corev1.ResourceCPU:    resource.MustParse("4"),
+										corev1.ResourceMemory: resource.MustParse("8Gi"),
+									},
+									Properties: map[string]string{
+										"instance-type": "c5.xlarge",
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			Status: managementv1.NodeProviderStatus{},
 		},
 		Create: true,
 	})
