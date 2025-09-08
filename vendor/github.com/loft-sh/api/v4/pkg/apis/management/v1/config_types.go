@@ -71,12 +71,18 @@ type ConfigStatus struct {
 	// DisableLoftConfigEndpoint will disable setting config via the UI and config.management.loft.sh endpoint
 	DisableConfigEndpoint bool `json:"disableConfigEndpoint,omitempty"`
 
+	// AuthenticateVersionEndpoint will force authentication for the '/version' endpoint. Will only work with vCluster v0.27 & later
+	AuthenticateVersionEndpoint bool `json:"authenticateVersionEndpoint,omitempty"`
+
 	// Cloud holds the settings to be used exclusively in vCluster Cloud based
 	// environments and deployments.
 	Cloud *Cloud `json:"cloud,omitempty"`
 
 	// CostControl holds the settings related to the Cost Control ROI dashboard and its metrics gathering infrastructure
 	CostControl *CostControl `json:"costControl,omitempty"`
+
+	// PlatformDB holds the settings related to the postgres database that platform uses to store data
+	PlatformDB *PlatformDB `json:"platformDB,omitempty"`
 
 	// ImageBuilder holds the settings related to the image builder
 	ImageBuilder *ImageBuilder `json:"imageBuilder,omitempty"`
@@ -742,6 +748,11 @@ type CostControl struct {
 
 	// Settings specify price-related settings that are taken into account for the ROI dashboard calculations.
 	Settings *CostControlSettings `json:"settings,omitempty"`
+}
+
+type PlatformDB struct {
+	// StorageClass sets the storage class for the PersistentVolumeClaim used by the platform database statefulSet.
+	StorageClass string `json:"storageClass,omitempty"`
 }
 
 type CostControlGlobalConfig struct {

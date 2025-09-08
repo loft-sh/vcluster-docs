@@ -105,9 +105,9 @@ const config = {
                 return { ...item, priority: 1.0, changefreq: 'daily' };
               }
 
-              // Latest stable versions get highest priority (0.27.0 for vCluster, 4.3.0 for platform)
+              // Latest stable versions get highest priority (0.27.0 for vCluster, 4.4.0 for platform)
               if (item.url.match(/\/vcluster\/0\.27\.0\//) ||
-                  item.url.match(/\/platform\/4\.3\.0\//)) {
+                  item.url.match(/\/platform\/4\.4\.0\//)) {
                 return { ...item, priority: 1.0, changefreq: 'daily' };
               }
 
@@ -223,19 +223,24 @@ const config = {
         editUrl: ({ versionDocsDirPath, docPath }) =>
           `https://github.com/loft-sh/vcluster-docs/edit/main/${versionDocsDirPath}/${docPath}`,
         editCurrentVersion: true,
-        lastVersion: "4.3.0",
+        lastVersion: "4.4.0",
         versions: {
           current: {
             label: "main 🚧",
           },
+          "4.4.0": {
+            label: "v4.4 Stable",
+            banner: "none",
+            badge: true,
+          },
           "4.3.0": {
-            label: "v4.3 Stable",
+            label: "v4.3",
             banner: "none",
             badge: true,
           },
           "4.2.0": {
             label: "v4.2",
-            banner: "none",
+            banner: "unmaintained",
             badge: true,
           },
         },
@@ -377,9 +382,9 @@ const config = {
         additionalLanguages: ["bash", "hcl"],
       },
       announcementBar: {
-        id: "vcluster-0-27-release",
+        id: "platform-4-4-release",
         content:
-          '🚀 <strong>New release: <a href="https://www.vcluster.com/releases/en/changelog?hideLogo=true&hideMenu=true&theme=dark&embed=true&c=vCluster" target="_blank">vCluster 0.27 is now available!</a></strong>',
+          '🚀 <strong>New releases: <a href="https://www.vcluster.com/releases/en/changelog?hideLogo=true&hideMenu=true&theme=dark&embed=true&c=vCluster" target="_blank">vCluster Platform 4.4 and vCluster 0.27</a></strong>',
         backgroundColor: "#4a90e2",
         textColor: "#ffffff",
         isCloseable: true,
