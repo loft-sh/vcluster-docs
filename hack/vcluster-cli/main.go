@@ -54,10 +54,19 @@ func main() {
 		}
 	}
 
+	// Generate docs directly here instead of calling external script
 	docsDir := filepath.Join(workDir, "docs", "pages", "cli")
 	os.MkdirAll(docsDir, 0755)
 
-	genCmd := exec.Command("go", "run", "-mod=mod", "./hack/docs/main.go")
+	// Copy our docs_gen.go to the vcluster directory
+	docsGenPath := filepath.Join(workDir, "docs_gen.go")
+	if err := copyFile("./docs_gen.go", docsGenPath); err != nil {
+		log.Fatal(err)
+	}
+	defer os.Remove(docsGenPath)
+
+	// Run the generation
+	genCmd := exec.Command("go", "run", "-mod=mod", docsGenPath, docsDir)
 	genCmd.Dir = workDir
 	genCmd.Stdout = os.Stdout
 	genCmd.Stderr = os.Stderr
@@ -65,11 +74,13 @@ func main() {
 		log.Fatal(err)
 	}
 
+	// Copy to final destination
 	os.MkdirAll(cliDocsDir, 0755)
-	if err := copyDir(filepath.Join(workDir, "docs", "pages", "cli"), cliDocsDir); err != nil {
+	if err := copyDir(docsDir, cliDocsDir); err != nil {
 		log.Fatal(err)
 	}
 
+	// Fix home directory paths
 	exec.Command("sh", "-c",
 		fmt.Sprintf("rg -l '/home/[^/]+/.vcluster/config.json' --glob '*.md' %s | xargs sed -i 's|/home/[^/]\\+/.vcluster/config.json|~/.vcluster/config.json|g'", cliDocsDir)).Run()
 
