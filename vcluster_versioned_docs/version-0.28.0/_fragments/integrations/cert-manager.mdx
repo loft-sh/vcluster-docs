@@ -1,0 +1,543 @@
+import Highlight from "@site/src/components/Highlight/Highlight";
+
+import Flow, { Step } from "@site/src/components/Flow";
+import NavStep from "@site/src/components/NavStep";
+import Field from "@site/src/components/Field";
+import Tabs from "@theme/Tabs";
+import TabItem from "@theme/TabItem";
+
+import CertManagerPartial from "../../_partials/config/integrations/certManager.mdx";
+import BasePrerequisites from "@site/docs/_partials/base-prerequisites.mdx";
+import CodeBlock from "@theme/CodeBlock";
+import Deploy from "../../_partials/deploy/deploy.mdx";
+import ProAdmonition from "../../_partials/admonitions/pro-admonition.mdx";
+
+<ProAdmonition />
+
+You can integrate cert-manager with your virtual cluster to manage TLS certificates across host and virtual environments.
+
+## Prerequisites
+
+<BasePrerequisites />
+
+- cert-manager operator installed on your host cluster. For setup instructions, see the [cert-manager installation guide](https://cert-manager.io/docs/installation/).
+
+<!-- vale off -->
+
+## Enable the integration
+
+Enable cert-manager integration in your virtual cluster configuration:
+
+```yaml title="Enable cert-manager integration"
+integrations:
+  certManager:
+    enabled: true
+```
+
+This configuration enables the integration and configures automatic resource sync:
+
+- **Imports**: Cluster-scoped `ClusterIssuers` from your host cluster into the virtual cluster
+- **Exports**: Namespaced `Issuers` and `Certificates` from the virtual cluster to the host cluster
+- **Syncs**: Generated certificate secrets back to the virtual cluster automatically
+
+
+## Set up cluster contexts
+
+Create or update a virtual cluster following the [vCluster quick start guide](/vcluster/#deploy-vcluster).
+Configure cluster contexts to simplify switching between host and virtual clusters:
+
+```bash
+export HOST_CTX="your-host-context"
+export VCLUSTER_CTX="vcluster-ctx"
+```
+
+:::tip Find your contexts
+Run `kubectl config get-contexts` to list available contexts.
+:::
+
+## Certificate issuer configurations
+
+Choose the appropriate certificate issuer based on your security and operational requirements.
+
+<details>
+<summary>Self-signed certificates for development</summary>
+
+Self-signed certificates work well for development environments and internal services that don't require public trust.
+
+<Flow id="self-signed-setup">
+<Step>
+
+<Highlight color="green">Virtual Cluster</Highlight> Create a self-signed issuer
+
+```yaml title="self-signed-issuer.yaml"
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: selfsigned-issuer
+  namespace: default
+spec:
+  selfSigned: {}
+```
+
+Apply the issuer:
+
+```bash title="Apply self-signed issuer"
+kubectl --context=$VCLUSTER_CTX apply -f self-signed-issuer.yaml
+```
+
+</Step>
+
+<Step>
+
+<Highlight color="green">Virtual Cluster</Highlight> Create a certificate
+
+```yaml title="self-signed-certificate.yaml"
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: app-tls-cert
+  namespace: default
+spec:
+  secretName: app-tls-secret
+  duration: 2160h # 90 days
+  renewBefore: 360h # 15 days
+  commonName: myapp.local
+  dnsNames:
+  - myapp.local
+  - api.myapp.local
+  privateKey:
+    algorithm: RSA
+    size: 2048
+  issuerRef:
+    name: selfsigned-issuer
+    kind: Issuer
+```
+
+Apply the certificate:
+
+```bash title="Apply certificate"
+kubectl --context=$VCLUSTER_CTX apply -f self-signed-certificate.yaml
+```
+
+</Step>
+</Flow>
+
+:::warning
+Self-signed certificates generate browser warnings and should not be used in production environments accessible to external users.
+:::
+
+</details>
+
+<details>
+<summary>Private PKI for enterprise environments</summary>
+
+Private PKI configurations provide enterprise-grade certificate management with custom certificate authorities.
+
+<Flow id="private-pki-setup">
+<Step>
+
+<Highlight>Host Cluster</Highlight> Create a root CA certificate
+
+Create a self-signed root CA in the host cluster (ClusterIssuers are imported from host to virtual cluster):
+
+```yaml title="root-ca.yaml"
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: selfsigned-issuer
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: root-ca-cert
+  namespace: cert-manager
+spec:
+  isCA: true
+  commonName: "Enterprise Root CA"
+  subject:
+    organizations:
+      - "Enterprise Corp"
+    organizationalUnits:
+      - "IT Security"
+    countries:
+      - "US"
+  secretName: root-ca-secret
+  duration: 87600h # 10 years
+  renewBefore: 78840h # 9 years
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  issuerRef:
+    name: selfsigned-issuer
+    kind: ClusterIssuer
+```
+
+Apply in the host cluster:
+
+```bash title="Apply root CA in host cluster"
+kubectl --context=$HOST_CTX apply -f root-ca.yaml
+```
+
+</Step>
+
+<Step>
+
+<Highlight>Host Cluster</Highlight> Create a CA issuer
+
+```yaml title="ca-issuer.yaml"
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: enterprise-ca-issuer
+spec:
+  ca:
+    secretName: root-ca-secret
+```
+
+Apply in the host cluster:
+
+```bash title="Apply CA issuer in host cluster"
+kubectl --context=$HOST_CTX apply -f ca-issuer.yaml
+```
+
+</Step>
+
+<Step>
+
+<Highlight color="green">Virtual Cluster</Highlight> Issue certificates from your CA
+
+```yaml title="ca-signed-certificate.yaml"
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: enterprise-app-cert
+  namespace: default
+spec:
+  secretName: enterprise-app-tls
+  duration: 8760h # 1 year
+  renewBefore: 720h # 30 days
+  commonName: myapp.enterprise.local
+  dnsNames:
+  - myapp.enterprise.local
+  - api.myapp.enterprise.local
+  subject:
+    organizations:
+      - "Enterprise Corp"
+    organizationalUnits:
+      - "Application Services"
+  usages:
+  - digital signature
+  - key encipherment
+  - server auth
+  issuerRef:
+    name: enterprise-ca-issuer
+    kind: ClusterIssuer
+```
+
+Apply in the virtual cluster:
+
+```bash title="Apply certificate in virtual cluster"
+kubectl --context=$VCLUSTER_CTX apply -f ca-signed-certificate.yaml
+```
+
+</Step>
+</Flow>
+
+**Security considerations**: 
+- Store root CA private keys securely and offline when possible
+- Implement proper certificate lifecycle management
+- Monitor certificate expiration dates
+- Establish clear revocation procedures
+
+</details>
+
+<details>
+<summary>ACME for public-facing services</summary>
+
+[ACME](https://cert-manager.io/docs/configuration/acme/) (Automatic Certificate Management Environment) issuers like [Let's Encrypt](https://letsencrypt.org) provide free, automatically-renewed certificates for public-facing services.
+
+<Flow id="acme-setup">
+<Step>
+
+<Highlight color="green">Virtual Cluster</Highlight> Create an ACME issuer
+
+```yaml title="acme-issuer.yaml"
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: letsencrypt-prod
+  namespace: default
+spec:
+  acme:
+    email: admin@yourdomain.com
+    server: https://acme-v02.api.letsencrypt.org/directory
+    privateKeySecretRef:
+      name: letsencrypt-prod-account-key
+    solvers:
+    - http01:
+        ingress:
+          ingressClassName: nginx
+    - dns01:
+        cloudflare:
+          email: admin@yourdomain.com
+          apiKeySecretRef:
+            name: cloudflare-api-key-secret
+            key: api-key
+```
+
+</Step>
+
+<Step>
+
+<Highlight color="green">Virtual Cluster</Highlight> Create an ACME certificate
+
+```yaml title="acme-certificate.yaml"
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: public-app-cert
+  namespace: default
+spec:
+  secretName: public-app-secret
+  duration: 2160h # 90 days
+  renewBefore: 720h # 30 days
+  dnsNames:
+  - myapp.example.com
+  - api.myapp.example.com
+  issuerRef:
+    name: letsencrypt-prod
+    kind: Issuer
+```
+
+</Step>
+</Flow>
+
+**Rate limits**: Let's Encrypt enforces rate limits. Use staging environment (`https://acme-staging-v02.api.letsencrypt.org/directory`) for testing.
+
+</details>
+
+<details>
+<summary>PKI for compliance requirements</summary>
+
+PKI configurations require specific certificate formats and validation procedures for compliance with standards.
+
+```yaml title="gov-compliant-certificate.yaml"
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: gov-service-cert
+  namespace: default
+spec:
+  secretName: gov-service-secret
+  duration: 8760h # 1 year maximum
+  renewBefore: 2160h # 90 days
+  commonName: service.application.1234567890
+  subject:
+    organizations:
+      - "Organization"
+    organizationalUnits:
+      - "PKI"
+      - "CONTRACTOR"
+    countries:
+      - "US"
+  usages:
+  - digital signature
+  - key encipherment
+  - server auth
+  privateKey:
+    algorithm: RSA
+    size: 2048  # Federal minimum requirement
+  issuerRef:
+    name: gov-pki-issuer
+    kind: ClusterIssuer
+```
+
+**Compliance requirements**:
+- Use hierarchical 3-tier CA structure
+- Include specific Distinguished Name fields
+- Maintain Certificate Revocation Lists (CRLs)
+- Follow Federal PKI Certificate Policy guidelines
+
+</details>
+
+## Verify certificate creation
+
+Check that your certificates generate correctly:
+
+<Flow id="verification">
+<Step>
+
+<Highlight color="green">Virtual Cluster</Highlight> Check certificate status
+
+```bash title="Verify certificate creation"
+kubectl --context=$VCLUSTER_CTX describe certificate <certificate-name> -n <namespace>
+```
+
+Look for `Ready: True` in the status conditions.
+
+</Step>
+
+<Step>
+
+<Highlight color="green">Virtual Cluster</Highlight> Verify secret creation
+
+```bash title="Check certificate secret"
+kubectl --context=$VCLUSTER_CTX get secret <secret-name> -n <namespace> -o yaml
+```
+
+Confirm the secret contains `tls.crt` and `tls.key` data.
+
+</Step>
+
+<Step>
+
+<Highlight>Host Cluster</Highlight> Confirm synchronization
+
+```bash title="Check host cluster resources"
+kubectl --context=$HOST_CTX get certificate,issuer -A
+```
+
+Verify resources appear in the host cluster namespace.
+
+</Step>
+</Flow>
+
+## Use certificates in applications
+
+Reference your certificate secrets in Ingress resources:
+
+```yaml title="secure-ingress.yaml"
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: secure-app-ingress
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+spec:
+  tls:
+    - hosts:
+        - myapp.example.com
+      secretName: your-tls-secret  # Use the secretName from your Certificate
+  rules:
+    - host: myapp.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: app-service
+                port:
+                  number: 80
+```
+
+:::tip
+Replace `your-tls-secret` with the actual `secretName` specified in your Certificate resource (e.g., `app-tls-secret`, `enterprise-app-tls`, or `public-app-secret` from the examples above).
+:::
+
+## Troubleshooting
+
+<details>
+<summary>Certificate creation issues</summary>
+
+**Check certificate status**:
+```bash
+kubectl --context=$VCLUSTER_CTX describe certificate <name>
+```
+
+**Common problems**:
+- **Pending status**: Check CertificateRequest events
+- **Failed validation**: Verify DNS/HTTP challenge accessibility
+- **Rate limiting**: Switch to staging ACME server for testing
+
+**Examine certificate requests**:
+```bash
+kubectl --context=$VCLUSTER_CTX get certificaterequests
+kubectl --context=$VCLUSTER_CTX describe certificaterequest <name>
+```
+
+</details>
+
+<details>
+<summary>Integration synchronization problems</summary>
+
+**Verify integration status**:
+
+<Highlight>Host Cluster</Highlight>
+```bash title="Check cert-manager installation"
+kubectl --context=$HOST_CTX -n cert-manager get pods
+kubectl --context=$HOST_CTX -n cert-manager logs deployment/cert-manager
+```
+
+<Highlight color="green">Virtual Cluster</Highlight>
+```bash title="Verify integration configuration"
+# Check if integration is enabled
+kubectl --context=$VCLUSTER_CTX get configmap vcluster-config -o yaml
+
+# Check resource synchronization
+kubectl --context=$VCLUSTER_CTX get events --field-selector reason=Sync
+```
+
+**Common synchronization issues**:
+- RBAC permissions missing on host cluster
+- Network policies blocking communication
+- Resource naming conflicts between clusters
+
+</details>
+
+<details>
+<summary>ACME challenge failures</summary>
+
+For detailed troubleshooting of ACME challenges:
+
+**Check challenge status**:
+```bash
+kubectl --context=$VCLUSTER_CTX describe order <order-name>
+kubectl --context=$VCLUSTER_CTX describe challenge <challenge-name>
+```
+
+For comprehensive ACME troubleshooting, including HTTP-01 and DNS-01 challenge issues, see the [cert-manager ACME troubleshooting guide](https://cert-manager.io/docs/troubleshooting/acme/).
+
+</details>
+
+For troubleshooting guidance, see the [cert-manager troubleshooting documentation](https://cert-manager.io/docs/troubleshooting/).
+
+## Advanced configuration
+
+<details>
+<summary>Custom sync configurations</summary>
+
+Fine-tune resource synchronization behavior:
+
+```yaml title="Advanced cert-manager integration"
+integrations:
+  certManager:
+    enabled: true
+    sync:
+      toHost:
+        certificates:
+          enabled: true
+        issuers:
+          enabled: true
+      fromHost:
+        clusterIssuers:
+          enabled: true
+          selector:
+            labels:
+              vcluster.loft.sh/managed: "true"
+    resyncInterval: 30s
+```
+
+**Configuration options**:
+- `resyncInterval`: How often to check for resource changes
+- `selector`: Filter which ClusterIssuers to import
+- Individual resource type controls for granular sync management
+
+</details>
+
+## Configuration reference
+
+<CertManagerPartial />
