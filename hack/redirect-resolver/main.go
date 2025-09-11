@@ -409,7 +409,14 @@ func detectPathChanges(baseDir string) (*PathChanges, error) {
 	}
 
 	for filename, oldPath := range previousFiles {
-		if newPath, exists := currentFiles[filename]; exists && oldPath != newPath {
+		newPath, exists := currentFiles[filename]
+		// Only create redirects for files that exist in current docs but have moved
+		// Skip files that have been deleted (not in currentFiles)
+		if !exists {
+			// File was deleted, no redirect needed
+			continue
+		}
+		if oldPath != newPath {
 			// Never create redirects for underscore directories - Docusaurus doesn't generate pages from these
 			if strings.Contains(oldPath, "/_") || strings.Contains(newPath, "/_") {
 				continue
