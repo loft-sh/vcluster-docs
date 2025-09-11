@@ -449,3 +449,121 @@ func TestGenerateRedirectsSkipsUnderscorePaths(t *testing.T) {
 		t.Error("GenerateRedirects() incorrectly included _fragments path in redirects")
 	}
 }
+
+func TestDetectPathChangesIgnoresDeletedFiles(t *testing.T) {
+	// Create temporary directory structure
+	tempDir := t.TempDir()
+	
+	// Create test structure
+	vclusterDir := filepath.Join(tempDir, "vcluster")
+	versionedDir := filepath.Join(tempDir, "vcluster_versioned_docs", "version-0.20.0")
+	
+	// Create directories
+	os.MkdirAll(filepath.Join(vclusterDir, "deploy"), 0755)
+	os.MkdirAll(filepath.Join(vclusterDir, "configure"), 0755)
+	os.MkdirAll(filepath.Join(versionedDir, "deploy"), 0755)
+	os.MkdirAll(filepath.Join(versionedDir, "configure"), 0755)
+	os.MkdirAll(filepath.Join(versionedDir, "manage"), 0755)
+	
+	// Scenario 1: File moved from configure to deploy (should create redirect)
+	os.WriteFile(filepath.Join(vclusterDir, "deploy", "moved.mdx"), []byte("content"), 0644)
+	os.WriteFile(filepath.Join(versionedDir, "configure", "moved.mdx"), []byte("content"), 0644)
+	
+	// Scenario 2: File deleted entirely (should NOT create redirect)
+	// File exists in versioned docs but not in current docs
+	os.WriteFile(filepath.Join(versionedDir, "manage", "deleted.mdx"), []byte("content"), 0644)
+	// NOT creating the file in vclusterDir - simulating deletion
+	
+	// Scenario 3: File unchanged (should NOT create redirect)
+	os.WriteFile(filepath.Join(vclusterDir, "configure", "unchanged.mdx"), []byte("content"), 0644)
+	os.WriteFile(filepath.Join(versionedDir, "configure", "unchanged.mdx"), []byte("content"), 0644)
+	
+	// Run detectPathChanges
+	changes, err := detectPathChanges(tempDir)
+	if err != nil {
+		t.Fatalf("detectPathChanges() error = %v", err)
+	}
+	
+	// Verify that only the moved file is in changes
+	if len(changes.Changes) != 1 {
+		t.Errorf("detectPathChanges() found %d changes, want 1 (only moved file)", len(changes.Changes))
+		for _, change := range changes.Changes {
+			t.Logf("  Found change: %s -> %s", change.Old, change.New)
+		}
+	}
+	
+	// Verify the moved file is detected correctly
+	foundMoved := false
+	for _, change := range changes.Changes {
+		if change.Old == "configure/moved" && change.New == "deploy/moved" {
+			foundMoved = true
+		}
+		// Ensure deleted file is NOT in changes
+		if strings.Contains(change.Old, "deleted") || strings.Contains(change.New, "deleted") {
+			t.Errorf("detectPathChanges() incorrectly created redirect for deleted file: %s -> %s", change.Old, change.New)
+		}
+	}
+	
+	if !foundMoved {
+		t.Error("detectPathChanges() did not detect the moved.mdx file movement")
+	}
+}
+
+func TestDetectPathChangesHandlesMultipleScenarios(t *testing.T) {
+	// Create temporary directory structure
+	tempDir := t.TempDir()
+	
+	// Create test structure
+	vclusterDir := filepath.Join(tempDir, "vcluster")
+	versionedDir := filepath.Join(tempDir, "vcluster_versioned_docs", "version-0.27.0")
+	
+	// Create directories
+	os.MkdirAll(filepath.Join(vclusterDir, "deploy"), 0755)
+	os.MkdirAll(filepath.Join(vclusterDir, "configure"), 0755)
+	os.MkdirAll(filepath.Join(vclusterDir, "manage"), 0755)
+	os.MkdirAll(filepath.Join(versionedDir, "deploy"), 0755)
+	os.MkdirAll(filepath.Join(versionedDir, "configure"), 0755)
+	os.MkdirAll(filepath.Join(versionedDir, "manage", "backup-restore"), 0755)
+	
+	// Simulate the real scenario from the PR:
+	// backup-restore/README.mdx was deleted from both current and versioned docs
+	os.WriteFile(filepath.Join(versionedDir, "manage/backup-restore", "README.mdx"), []byte("backup content"), 0644)
+	// NOT creating in vclusterDir - it's been deleted
+	
+	// Add some legitimate moves
+	os.WriteFile(filepath.Join(vclusterDir, "deploy", "api.mdx"), []byte("api content"), 0644)
+	os.WriteFile(filepath.Join(versionedDir, "configure", "api.mdx"), []byte("api content"), 0644)
+	
+	// Run detectPathChanges
+	changes, err := detectPathChanges(tempDir)
+	if err != nil {
+		t.Fatalf("detectPathChanges() error = %v", err)
+	}
+	
+	// Should only have the moved file, not the deleted backup-restore
+	if len(changes.Changes) != 1 {
+		t.Errorf("detectPathChanges() found %d changes, want 1", len(changes.Changes))
+		for _, change := range changes.Changes {
+			t.Logf("  Found change: %s -> %s", change.Old, change.New)
+		}
+	}
+	
+	// Verify backup-restore is NOT in changes
+	for _, change := range changes.Changes {
+		if strings.Contains(change.Old, "backup-restore") || strings.Contains(change.New, "backup-restore") {
+			t.Errorf("detectPathChanges() incorrectly included deleted backup-restore: %s -> %s", change.Old, change.New)
+		}
+	}
+	
+	// Verify api.mdx move is detected
+	foundApi := false
+	for _, change := range changes.Changes {
+		if change.Old == "configure/api" && change.New == "deploy/api" {
+			foundApi = true
+		}
+	}
+	
+	if !foundApi {
+		t.Error("detectPathChanges() did not detect the api.mdx movement")
+	}
+}
