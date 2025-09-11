@@ -22,7 +22,7 @@ Generate partials for a specific version:
 go run hack/vcluster/partials/main.go configsrc/v0.21/ vcluster_versioned_docs/version-0.21.0/_partials/config
 
 # For current development version
-go run hack/vcluster/partials/main.go configsrc/main/ vcluster/_partials/config
+go run hack/vcluster/partials/main.go configsrc/vcluster/main/ vcluster/_partials/config
 ```
 
 ## Version compatibility

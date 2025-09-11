@@ -98,6 +98,10 @@ func New() *License {
 						Name:        "vcp-distro-external-database",
 					},
 					{
+						DisplayName: "Private Nodes",
+						Name:        "vcp-distro-private-nodes",
+					},
+					{
 						DisplayName: "Database Connector",
 						Name:        "connector-external-database",
 					},
@@ -212,6 +216,26 @@ func New() *License {
 					{
 						DisplayName: "Istio Integration",
 						Name:        "istio-integration",
+					},
+					{
+						DisplayName: "Hybrid Scheduling",
+						Name:        "hybrid-scheduling",
+					},
+					{
+						DisplayName: "Sync Namespaces toHost",
+						Name:        "sync-namespaces-tohost",
+					},
+					{
+						DisplayName: "Schedule Virtual Clusters Snapshots",
+						Name:        "scheduled-snapshots",
+					},
+					{
+						DisplayName: "Private Nodes VPN",
+						Name:        "private-nodes-vpn",
+					},
+					{
+						DisplayName: "Private Nodes Auto Nodes",
+						Name:        "private-nodes-auto-nodes",
 					},
 				},
 			},

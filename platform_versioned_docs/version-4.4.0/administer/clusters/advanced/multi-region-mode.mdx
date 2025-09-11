@@ -1,0 +1,140 @@
+---
+title: Multi-region mode
+sidebar_label: Multi-Region Mode
+---
+
+Running vCluster Platform in multi-region mode provides a way to avoid routing through the central vCluster Platform instance and connect directly to a connected cluster. By default, all Kubernetes contexts created through vCluster Platform route Kubernetes traffic (such as `kubectl get pods`) through the central vCluster Platform instance. This allows the platform to handle authentication, authorization, auditing, and sleep mode activity.
+
+However, if you have multiple connected clusters in a platform instance that are spread across the globe, traffic redirection through the central vCluster Platform gateway can increase request delays. A solution to this is direct cluster endpoints, which avoid rerouting traffic to the central vCluster Platform instance and instead handle authentication, authorization, and other functions directly within the connected cluster through the installed vCluster Platform agent.
+
+## Enable multi-region mode
+
+To enable multi-region mode, expose Direct Cluster Endpoints. The automatically installed vCluster Platform agent includes these endpoints, which you can activate by adding an annotation to the connected cluster object.
+
+Expose the vCluster Platform agent through either an Ingress or a LoadBalancer/NodePort service. Create an `ingress.yaml` file and apply it using `kubectl`:
+
+```yaml title="ingress.yaml"
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: loft-agent-ingress
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "43200"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "43200"
+    nginx.ingress.kubernetes.io/proxy-buffers-number: "8 32k"
+    nginx.ingress.kubernetes.io/proxy-buffer-size: "32k"
+    nginx.org/websocket-services: loft-agent
+    cert-manager.io/cluster-issuer: my-cluster-issuer
+spec:
+  rules:
+    - host: my-cluster-endpoint.com
+      http:
+        paths:
+          - path: /
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: loft-agent
+                port:
+                  number: 80
+  tls:
+    - hosts:
+        - my-cluster-endpoint.com
+      secretName: name-of-tls-secret
+```
+
+Then apply the ingress using `kubectl`:
+
+```bash title="Apply ingress configuration"
+kubectl apply -n vcluster-platform -f ingress.yaml
+ingress.networking.k8s.io/loft-agent-ingress created
+```
+
+<!-- vale off -->
+
+:::tip
+As `kubectl` requires an HTTPS connection, the direct cluster endpoint must also be reachable using HTTPS. By default, the ingress uses a self-signed certificate, which is insecure. It is recommended to use either cert-manager to issue a "Let's Encrypt" certificate or to provide your own trusted certificate.
+:::
+
+After creating the ingress, ensure that the direct cluster endpoint is reachable:
+
+```bash title="Test direct cluster endpoint health"
+# Omit --insecure if have a valid TLS certificate
+curl https://my-cluster-endpoint.com/healthz -I --insecure
+
+HTTP/2 200
+date: Mon, 30 Aug 2021 08:40:20 GMT
+access-control-allow-headers: *
+access-control-allow-methods: POST, GET, OPTIONS, PUT, DELETE, PATCH
+access-control-allow-origin: *
+cache-control: no-cache, private
+strict-transport-security: max-age=15724800; includeSubDomains
+```
+
+## Enable a direct cluster endpoint
+
+To configure the platform to use a direct cluster endpoint for a connected cluster, add an annotation to the cluster object:
+
+```yaml title="Cluster configuration with direct endpoint"
+apiVersion: management.loft.sh/v1
+kind: Cluster
+metadata:
+  name: test
+  annotations:
+    # Domain of the direct cluster endpoint
+    loft.sh/direct-cluster-endpoint: my-direct-cluster-endpoint.com
+    #
+    # Optional option to tell vCluster Platform the endpoint is insecure
+    #
+    #loft.sh/direct-cluster-endpoint-insecure: 'true'
+    #
+    # Optional option to use this base64 encoded ca cert for the endpoint
+    #
+    #loft.sh/direct-cluster-endpoint-ca-data: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tC...
+spec:
+  config: {}
+```
+
+The following annotations can be specified:
+
+- **`loft.sh/direct-cluster-endpoint`**: This is the domain name that should be used to connect to the cluster directly. This usually corresponds to the ingress host that you have specified earlier. As soon as this annotation is set, the direct cluster endpoint for the connected cluster is turned on and is preferred in future over the central vCluster Platform instance
+- **`loft.sh/direct-cluster-endpoint-insecure`** (_Optional_): If this is `true`, vCluster Platform creates Kubernetes contexts with `insecure-skip-tls-verify: true` for this endpoint
+- **`loft.sh/direct-cluster-endpoint-ca-data`** (_Optional_): Base64 encoded ca cert of the direct cluster endpoint
+
+## Use a direct cluster endpoint
+
+:::tip
+This is supported in vCluster CLI v0.26+
+:::
+
+If a direct cluster endpoint is enabled via the `loft.sh/direct-cluster-endpoint` annotation on a connected cluster, the vCluster Platform commands `vcluster platform connect cluster`, `vcluster platform connect space`, `vcluster platform connect vcluster` and `vcluster platform create namespace` use the direct cluster endpoint instead of the central vCluster Platform gateway.
+
+The CLI also notifies you when running one of the above commands if a direct cluster endpoint is used:
+
+```bash title="Connect to cluster"
+vcluster platform connect cluster test
+```
+
+```bash title="Example output"
+11:45:26 info Using direct host endpoint: https://my-direct-cluster-endpoint.com
+11:45:26 done Successfully updated kube context to use cluster agent
+```
+
+You can then check which server is contacted by running:
+
+```bash title="Get namespaces with verbose logging"
+kubectl get ns -v 6
+```
+
+```bash title="Example output"
+I0624 15:53:30.287997   70943 loader.go:379] Config loaded from file:  /xxx/.kube/config
+I0624 15:53:30.307530   70943 round_trippers.go:445] GET https://my-cluster-endpoint.com/kubernetes/cluster/api/v1/namespaces?limit=500 200 OK in 13 milliseconds
+NAME              STATUS   AGE
+default           Active   164m
+kube-node-lease   Active   164m
+kube-public       Active   164m
+kube-system       Active   164m
+```
+
+The `kubectl` commands now route traffic directly to the cluster endpoint rather than through the vCluster Platform instance.
