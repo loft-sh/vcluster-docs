@@ -99,6 +99,8 @@ var paths = []string{
 	"controlPlane/backingStore/database/embedded",
 	"controlPlane/backingStore/database/external",
 	"controlPlane/backingStore",
+	"controlPlane/standalone",
+	"controlPlane/standalone/joinNode",
 	"controlPlane",
 	"logging",
 }
