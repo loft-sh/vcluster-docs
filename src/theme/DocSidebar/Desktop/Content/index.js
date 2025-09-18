@@ -49,7 +49,7 @@ export default function ContentWrapper(props) {
       ]} />}
       {shouldShowPlatformVersioning && <VersionSelector docsPluginId={"platform"} dropdownItemsAfter={[
         {
-          to: "https://loft.sh/docs/getting-started/install", label: "v3.4"
+          to: "https://loft.sh/docs/getting-started/install", label: "v3.4 (EOL) ↗"
         }
       ]} />}
       <Content {...props} />

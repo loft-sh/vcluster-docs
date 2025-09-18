@@ -244,7 +244,7 @@ const config = {
             badge: true,
           },
           "4.2.0": {
-            label: "v4.2",
+            label: "v4.2 (EOL)",
             banner: "unmaintained",
             badge: true,
           },
