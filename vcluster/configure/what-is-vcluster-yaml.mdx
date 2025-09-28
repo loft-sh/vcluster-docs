@@ -10,6 +10,8 @@ import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 import Flow, { Step } from '@site/src/components/Flow';
 
+import TenancySupport from '../_fragments/tenancy-support.mdx';
+
 <!-- vale off -->
 
 Every virtual cluster requires configuration settings that define how the vCluster operates. 
@@ -27,9 +29,13 @@ The `vcluster.yaml` file organizes configuration into logical sections. Each sec
 
 ### Control plane settings
 
-The control plane section defines how vCluster runs its Kubernetes API server, controller manager, and data storage. Key configuration areas include:
+The control plane section defines how vCluster runs its Kubernetes API server, controller manager, and data storage. 
 
-- **Deployment settings**: Configure how the control plane pods deploy, including resource limits, node selectors, and affinity rules.
+Key configuration areas include:
+
+- **Deployment settings**: 
+  - **Run as a container** - Configure how the control plane pods deploy, including resource limits, node selectors, and affinity rules.
+  - **Run as a binary on a node** - Configure if you want the control plane to be deployed as a binary. Note: Worker node pool can only be private nodes. 
 - **Backing store selection**: Choose between different storage backends for the vCluster control plane's [backing store](./vcluster-yaml/control-plane/components/backing-store/). Options include embedded databases, managed etcd or external databases.
 - **Networking options**: Define how external traffic reaches the virtual cluster's API server, including ingress configuration and service exposure methods.
 
@@ -38,7 +44,7 @@ The control plane section defines how vCluster runs its Kubernetes API server, c
 You can configure which type of worker nodes to use for the virtual cluster. 
 
 - **Host Cluster's Worker Nodes**: Choose either all or specific set of nodes of the host cluster's worker nodes. 
-- **Individual Nodes**: Choose to use individual nodes that are not connected to any other Kubernetes cluster. You can either join manually provisioned nodes to a vCluster or can configure vCluster
+- **Private Nodes**: Choose to use individual nodes that are not connected to any other Kubernetes cluster. You can either join manually provisioned nodes to a vCluster or can configure vCluster
 to automatically provision and join nodes based on resource requirements.
 
 ### Access configuration
@@ -50,14 +56,28 @@ You can configure access settings to control how users and applications connect 
 
 ### Resource sync rules
 
-When using the host cluster's worker nodes, virtual clusters need to share certain resources with their host cluster to function properly. The sync configuration controls this sharing in both directions:
+<TenancySupport hostNodes="true" />
+
+When running the deployment as a container and using the host cluster's worker nodes, virtual clusters need to share certain resources with their host cluster to function properly. The sync configuration controls this sharing in both directions:
 
 - **From host to virtual**: Configure which host cluster resources appear inside the virtual cluster through [host-to-virtual synchronization](/vcluster/configure/vcluster-yaml/sync/from-host/). Common examples include nodes, storage classes, and priority classes.
 - **From virtual to host**: Define which virtual cluster resources sync to the host cluster through [virtual-to-host synchronization](/vcluster/configure/vcluster-yaml/sync/to-host/). This typically includes pods, services, and persistent volume claims that need to run on the host.
 
 ## Example vcluster.yaml configuration
 
-The following example demonstrates a common configuration and explains each section's purpose:
+The following examples demonstrates common configurations and explains each section's purpose:
+
+Each configuration section has a specific purpose in the virtual cluster setup:
+
+- **Control plane with embedded storage**: The configuration uses [embedded etcd](/vcluster/configure/vcluster-yaml/control-plane/components/backing-store/etcd/embedded) as the data store for the virtual cluster's control plane. This approach reduces operational complexity because etcd runs inside the vCluster pod rather than requiring a separate database.
+- **API server exposure**: An [Ingress](/vcluster/configure/vcluster-yaml/control-plane/deployment/ingress) resource exposes the virtual cluster's API server through a hostname. This allows external tools and users to access the virtual cluster without port-forwarding or `NodePort` services.
+- **ServiceAccount synchronization**: The configuration enables [`ServiceAccount`](/vcluster/configure/vcluster-yaml/sync/to-host/advanced/service-accounts) syncing from the virtual cluster to the host. This synchronization supports workloads that need specific permissions on the host cluster, such as operators or controllers that manage host resources.
+- **Real node synchronization**: Instead of using vCluster's default "pseudo" nodes, this configuration syncs real [node](/vcluster/configure/vcluster-yaml/sync/from-host/nodes) information from the host cluster. The `clearImageStatus` option removes image information from synced nodes to reduce data transfer and storage requirements.
+- **Kubeconfig access**: The configuration defines how vCluster exports the [kubeconfig](/vcluster/configure/vcluster-yaml/export-kube-config) for accessing the virtual cluster. The exported kubeconfig gets stored in a Kubernetes secret, making it available for CI/CD pipelines, ArgoCD apps, or Terraform configurations.
+
+### Control plane as a container and host nodes
+
+<TenancySupport hostNodes="true" />
 
 ```yaml title="vcluster.yaml"
 # Control plane configuration
@@ -94,13 +114,67 @@ exportKubeConfig:
     name: my-vcluster-kubeconfig  # Secret name for storing kubeconfig
 ```
 
-Each configuration section has a specific purpose in the virtual cluster setup:
 
-- **Control plane with embedded storage**: The configuration uses [embedded etcd](/vcluster/configure/vcluster-yaml/control-plane/components/backing-store/etcd/embedded) as the data store for the virtual cluster's control plane. This approach reduces operational complexity because etcd runs inside the vCluster pod rather than requiring a separate database.
-- **API server exposure**: An [Ingress](/vcluster/configure/vcluster-yaml/control-plane/deployment/ingress) resource exposes the virtual cluster's API server through a hostname. This allows external tools and users to access the virtual cluster without port-forwarding or `NodePort` services.
-- **ServiceAccount synchronization**: The configuration enables [`ServiceAccount`](/vcluster/configure/vcluster-yaml/sync/to-host/advanced/service-accounts) syncing from the virtual cluster to the host. This synchronization supports workloads that need specific permissions on the host cluster, such as operators or controllers that manage host resources.
-- **Real node synchronization**: Instead of using vCluster's default "pseudo" nodes, this configuration syncs real [node](/vcluster/configure/vcluster-yaml/sync/from-host/nodes) information from the host cluster. The `clearImageStatus` option removes image information from synced nodes to reduce data transfer and storage requirements.
-- **Kubeconfig access**: The configuration defines how vCluster exports the [kubeconfig](/vcluster/configure/vcluster-yaml/export-kube-config) for accessing the virtual cluster. The exported kubeconfig gets stored in a Kubernetes secret, making it available for CI/CD pipelines, ArgoCD apps, or Terraform configurations.
+### Control plane as a container and private nodes
+
+<TenancySupport privateNodes="true" />
+
+```yaml title="vcluster.yaml"
+# Control plane configuration
+controlPlane:
+  # Configure the backing store for vCluster's data
+  backingStore: # Enterprise feature - requires license
+    etcd:
+      embedded: 
+        enabled: true  # Run etcd inside the vCluster pod
+  
+  # Expose the API server via ingress
+  ingress:
+    enabled: true
+    host: vcluster-k8s-api.example.com  # Your API server hostname
+
+# Enabling private nodes as worker nodes
+privateNodes:
+  enabled: true
+
+# Kubeconfig export configuration
+exportKubeConfig:
+  context: my-vcluster-context  # Name in the kubeconfig file
+  server: https://vcluster-k8s-api.example.com  # API server URL
+  secret:
+    name: my-vcluster-kubeconfig  # Secret name for storing kubeconfig
+```
+
+### Control plane as a binary and private nodes
+
+<TenancySupport standalone="true" />
+
+```yaml title="vcluster.yaml"
+# Control plane configuration
+controlPlane:
+  # Enabling control plane to be installed as a binary on a node
+  standalone:
+    enabled: true
+    joinNode:
+      enabled: true
+      
+  # Configure the backing store for vCluster's data
+  backingStore: # Enterprise feature - requires license
+    etcd:
+      embedded: 
+        enabled: true  # Run etcd inside the vCluster pod
+
+# Enabling private nodes as worker nodes
+privateNodes:
+  enabled: true
+
+# Kubeconfig export configuration
+exportKubeConfig:
+  context: my-vcluster-context  # Name in the kubeconfig file
+  server: https://vcluster-k8s-api.example.com  # API server URL
+  secret:
+    name: my-vcluster-kubeconfig  # Secret name for storing kubeconfig
+```
 
 ## Deploy a virtual cluster 
 
@@ -108,6 +182,8 @@ Before you deploy, you should review the [different tenancy models](./tenancy-mo
 cluster will be configured. 
 
 Once you've determined your tenancy model, read the different ways to deploy:
+
+### Control plane as a container
 
 * [Basics](../deploy/control-plane/container/basics)
 * [High Availability](../deploy/control-plane/container/high-availability)
@@ -117,6 +193,11 @@ Once you've determined your tenancy model, read the different ways to deploy:
   * [AKS](../deploy/control-plane/container/environment/aks)
   * [GKE](../deploy/control-plane/container/environment/gke)
   * [OpenShift](../deploy/control-plane/container/environment/openshift)
+
+### Control plane as a binary
+* [Basics](../deploy/control-plane/binary/basics)
+* [High Availability](../deploy/control-plane/binary/high-availability)
+
 
 ## Frequently asked questions
 
