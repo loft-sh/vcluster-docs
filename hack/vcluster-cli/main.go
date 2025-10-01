@@ -60,7 +60,12 @@ func main() {
 
 	// Copy our docs_gen.go to the vcluster directory
 	docsGenPath := filepath.Join(workDir, "docs_gen.go")
-	if err := copyFile("./docs_gen.go", docsGenPath); err != nil {
+	docsGenSource := filepath.Join(filepath.Dir(os.Args[0]), "docs_gen.go")
+	// If running with go run, the source is in the same directory as main.go
+	if _, err := os.Stat(docsGenSource); os.IsNotExist(err) {
+		docsGenSource = "./hack/vcluster-cli/docs_gen.go"
+	}
+	if err := copyFile(docsGenSource, docsGenPath); err != nil {
 		log.Fatal(err)
 	}
 	defer os.Remove(docsGenPath)

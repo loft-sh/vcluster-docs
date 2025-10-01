@@ -1,0 +1,647 @@
+---
+title: Isolate clusters on VLANs with Netris
+sidebar_label: Bare Metal (Netris)
+sidebar_position: 5
+id: bare-metal
+sidebar_class_name: private-nodes
+---
+
+One deployment model for vCluster is through private nodes.
+It allows for stronger isolation between the virtual clusters, since the virtual cluster Pods don't share the same Nodes.
+However, the network of a virtual cluster is not isolated from other workloads by default.
+
+This guide shows how to isolate a virtual cluster spanning mixed bare metal and VM private nodes that share the same underlying hardware with an exclusive network using VLAN and [Netris](https://netris.ai/).
+
+![Architecture](/img/netris_architecture.svg)
+
+After preparing the host cluster, we will:
+
+1. Configure the VLAN membership of the switch ports with Netris
+2. Deploy the vCluster control plane on the VLAN with a load balancer
+3. Create a VM as a private node in the virtual cluster
+4. Provision a bare metal server as a private node in the virtual cluster
+
+Like in traditional Kubernetes clusters, Nodes share the same L2 domain.
+Instead of control plane _nodes_, the vCluster control plane runs as (multihomed) Pods in the host cluster.
+This is transparent to the virtual cluster, however, the host cluster remains inaccessible.
+
+This can be repeated for any number of clusters, and it's limited mainly by compute resources and VLAN ids or what the switch can handle.
+The VPCs of each virtual cluster may also be peered to access shared services across clusters.
+
+## Netris
+
+Netris provides software for managing and automating the switch fabric in a datacenter.
+
+We use the [Netris controller](https://netris.ai/docs/controller/) to manage the architecture logically (switch port VLAN membership) while the [Netris agent](https://netris.ai/docs/agent/) will implement it on the physical switches.
+
+The architecture can be replicated without Netris.
+Then, the switches must be configured manually (VLANs, ports).
+
+## Prerequisites
+
+We assume the following:
+
+- Hardware deployed
+- Netris controller & agent installed & configured
+- Bare metal Kubernetes "host cluster" set up (See [below](#prepare-host-cluster))
+
+## Tools used
+
+- [Multus CNI](https://github.com/k8snetworkplumbingwg/multus-cni)
+- [Bridge operator](https://github.com/k8snetworkplumbingwg/bridge-operator)
+- [Whereabouts IPAM plugin](https://github.com/k8snetworkplumbingwg/whereabouts)
+- [KubeVirt](https://kubevirt.io/user-guide/docs/latest/administration/intro.html)
+- [Kube-vip](https://kube-vip.io/)
+
+## Prepare host cluster
+
+The switch ports the host cluster nodes are connected to must be managed by Netris.
+It is advisable to install Kubernetes after the network has been configured accordingly.
+
+### Configure switch fabric
+
+The host cluster gets its own VLAN, which spans all shared servers.
+In contrast to the virtual cluster, the VLAN traffic for the host cluster is untagged, so no special considerations are necessary in the nodes' OS.
+
+1. Create ServerClusterTemplate in Netris
+
+    This template is exclusively used for the host cluster.
+
+    ```json
+    [
+        {
+            "ipv4Gateway": "192.168.55.254/21",
+            "ipv4DhcpEnabled": true,
+            "postfix": "nodes",
+            "serverNics": [
+                "eth9",
+                "eth10"
+            ],
+            "type": "l2vpn",
+            "vlan": "untagged",
+            "vlanID": "auto"
+        }
+    ]
+    ```
+
+2. Create ServerCluster in Netris
+
+    Create a ServerCluster in Netris using the template and add the shared servers to it.
+
+    This configures the connected ports as access ports with the same VLAN.
+
+    ![ServerCluster](/img/netris_create_host_cluster_servercluster.png)
+
+### Install Kubernetes
+
+Most Kubernetes distributions should work without any modifications.
+
+There must be a default StorageClass available.
+
+### Install compatible CNI plugin
+
+Since the host cluster Nodes handle VLAN traffic, some CNI plugin configurations are not compatible.
+
+We have tested the following plugins:
+
+- Flannel
+- Calico in VXLAN mode (eBPF mode seems to drop VLAN tagged frames)
+- Cilium
+    - Must set `cni.exclusive: false`
+    - Must set `bpf.vlanBypass: '{0}'`
+
+### Install tooling
+
+There are a few tools we need to install in the host cluster.
+They manage interfaces on the host cluster nodes that allow adding Pods and VMs to the virtual cluster VLAN.
+
+#### Multus
+
+See install instructions in [Multus CNI](https://github.com/k8snetworkplumbingwg/multus-cni).
+
+Multus adds additional interfaces to the vCluster control plane Pods and KubeVirt VMs to attach them to the virtual cluster VLAN.
+
+#### Bridge operator
+
+See install instructions in [Bridge operator](https://github.com/k8snetworkplumbingwg/bridge-operator).
+
+The Bridge operator creates an unfiltered bridge on the host for the virtual cluster VLAN.
+It's connected to a VLAN interface that tags any egress traffic to put it on the virtual cluster VLAN.
+
+Multiple Pods and VMs can be connected to the same bridge on the same host.
+
+#### Whereabouts IPAM plugin
+
+See install instructions in [Whereabouts IPAM plugin](https://github.com/k8snetworkplumbingwg/whereabouts).
+
+The _Whereabouts_ IPAM plugin assigns well-known IPs to the vCluster control plane Pods.
+It tracks the allocations of the pool cluster-wide, to avoid IP conflicts across different nodes.
+
+<!-- vale off -->
+[//]: # (vale doesn't like the capitalization)
+#### KubeVirt
+<!-- vale on -->
+
+See install instructions in [KubeVirt](https://kubevirt.io/user-guide/docs/latest/administration/intro.html).
+
+KubeVirt works together with Multus and manages the VMs in the host cluster.
+
+The example below also uses the [containerized data importer](https://kubevirt.io/user-guide/storage/containerized_data_importer/) to create a large enough disk to install and run Kubernetes on top of Ubuntu 24.04.
+
+## Start vCluster platform
+
+:::info
+Running vCluster platform and registering grants you 2 weeks of full access to all platform features, including private nodes which is required for this setup.
+:::
+
+```bash title="Start vCluster Platform"
+vcluster platform start
+```
+
+Provide your email address and complete the onboarding process in the browser.
+
+## Deploy vCluster
+
+The following steps can be repeated for additional vCluster deployments.
+
+### Configure switch fabric for the virtual cluster
+
+1. Create ServerClusterTemplate
+
+    This template can be reused for multiple clusters.
+
+    ```json
+    [
+        {
+            "ipv4Gateway": {
+                "assignType": "auto",
+                "allocation": "192.168.64.0/18",
+                "childSubnetPrefixLength": 22,
+                "hostnum": 1022
+            },
+            "ipv4DhcpEnabled": true,
+            "postfix": "nodes",
+            "serverNics": [
+                "eth9",
+                "eth10"
+            ],
+            "type": "l2vpn",
+            "vlan": "untagged",
+            "vlanID": "auto"
+        }
+    ]
+    ```
+
+2. Create ServerCluster
+
+    Create a ServerCluster in Netris using the template and add the shared servers to it as _shared_ endpoints.
+
+    This configures the ports on the shared servers as trunk ports (additionally) carrying tagged VLAN traffic.
+
+    ![ServerCluster](/img/netris_create_vcluster_servercluster.png)
+
+3. Look up the Vnet's VLAN id
+
+    Netris creates a vnet and assigns it a VLAN id.
+    We need the VLAN id (here it's `3`) in the next steps.
+
+    ![VnetId](/img/netris_edit_vcluster_vnet.png)
+
+### Configure VLAN integration on host cluster nodes
+
+1. Create namespace for network config
+
+    ```bash
+    kubectl create namespace vcluster-networks
+    ```
+
+2. Create VLAN interface and bridge
+
+    ```yaml
+    apiVersion: bridgeoperator.k8s.cni.npwg.io/v1alpha1
+    kind: BridgeConfiguration
+    metadata:
+      name: br-vlan-3
+    spec:
+      nodeSelector:
+        matchLabels:
+          kubernetes.io/os: linux
+      egressVlanInterfaces:
+        - name: bond0
+          protocol: 802.1q
+          id: 3
+    ```
+
+    The brigde operator creates a bridge with the name `br-vlan-3` on every Node and attach the VLAN interface on top of the default interface.
+    Egress from any (VLAN unaware) device attached to the bridge is tagged and thus part of the L2 domain of the virtual cluster.
+    Likewise, the tag from VLAN ingress is stripped.
+
+3. Create NetworkAttachmentDefinitions
+
+    We create separate NetworkAttachmentDefinitions to have control over IPAM:
+
+    - The vCluster control plane Pods should get IPs from the same range
+    - The load balancer gets no IP, since kube-vip assigns a static virtual IP
+    - The VMs should just use DHCP
+
+    ```yaml
+    apiVersion: k8s.cni.cncf.io/v1
+    kind: NetworkAttachmentDefinition
+    metadata:
+      name: control-plane
+      namespace: vcluster-networks
+    spec:
+      config: |
+        {
+          "cniVersion": "1.0.0",
+          "type": "bridge",
+          "bridge": "br-vlan-3",
+          "promiscMode": true,
+          "ipam": {
+            "type": "whereabouts",
+            "range": "192.168.64.0/22",
+            "range_start": "192.168.67.250",
+            "range_end": "192.168.67.252"
+          }
+        }
+
+    ---
+    apiVersion: k8s.cni.cncf.io/v1
+    kind: NetworkAttachmentDefinition
+    metadata:
+      name: api-load-balancer
+      namespace: vcluster-networks
+    spec:
+      config: |
+        {
+          "cniVersion": "1.0.0",
+          "type": "bridge",
+          "bridge": "br-vlan-3",
+          "promiscMode": true
+        }
+
+    ---
+    apiVersion: k8s.cni.cncf.io/v1
+    kind: NetworkAttachmentDefinition
+    metadata:
+      name: virtual
+      namespace: vcluster-networks
+    spec:
+      config: |
+        {
+          "cniVersion": "1.0.0",
+          "type": "bridge",
+          "bridge": "br-vlan-3",
+          "promiscMode": true
+        }
+    ```
+
+### Deploy vCluster control plane
+
+1. Create vCluster
+
+    Use the following configuration and install vCluster in the `vcluster-netris` namespace:
+
+    ```yaml title="vcluster.yaml"
+    controlPlane:
+      endpoint: 192.168.67.253:443
+      statefulSet:
+        pods:
+          annotations:
+            k8s.v1.cni.cncf.io/networks: "vcluster-networks/control-plane"
+        highAvailability:
+          replicas: 3
+      backingStore:
+        etcd:
+          embedded:
+            enabled: true
+      coredns:
+        enabled: true
+    privateNodes:
+      enabled: true
+    ```
+
+    Connect to the host Kubernetes cluster and run:
+
+    ```bash
+    vcluster platform create vcluster -n vcluster-netris netris --values vcluster.yaml
+    ```
+
+    - The vCluster control plane Pods get an additional interface on the VLAN.
+    - The endpoint is the IP of the load balancer.
+
+2. Deploy load balancer in front of vCluster control plane Pods
+
+    The load balancer exposes the vCluster control plane Pods on a single IP on the subnet.
+    A kube-vip sidecar assigns the IP on only one of the load balancer Pods at a time and provides active failover.
+
+    Update the target cluster address in the following manifest to `<vcluster name>.<namespace>.svc.cluster.local`:
+
+    ```yaml
+    apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: envoy-config
+      namespace: vcluster-netris
+    data:
+      envoy.yaml: |
+        static_resources:
+          listeners:
+            - name: listener_https_443
+              address:
+                socket_address:
+                  address: 0.0.0.0
+                  port_value: 443
+              filter_chains:
+                - filters:
+                    - name: envoy.filters.network.tcp_proxy
+                      typed_config:
+                        "@type": type.googleapis.com/envoy.extensions.filters.network.tcp_proxy.v3.TcpProxy
+                        stat_prefix: tcp_proxy
+                        cluster: target_cluster
+          clusters:
+            - name: target_cluster
+              type: STRICT_DNS
+              connect_timeout: 5s
+              load_assignment:
+                cluster_name: target_cluster
+                endpoints:
+                  - lb_endpoints:
+                      - endpoint:
+                          address:
+                            socket_address:
+                              address: netris.vcluster-netris.svc.cluster.local
+                              port_value: 443
+
+    ---
+    apiVersion: v1
+    kind: ServiceAccount
+    metadata:
+      name: apiserver-lb
+      namespace: vcluster-netris
+
+    ---
+    # Minimal permissions for leader election (Leases in this namespace)
+    apiVersion: rbac.authorization.k8s.io/v1
+    kind: Role
+    metadata:
+      name: apiserver-lb-leader-election
+      namespace: vcluster-netris
+    rules:
+      - apiGroups: ["coordination.k8s.io"]
+        resources: ["leases"]
+        verbs: ["get", "list", "watch", "create", "update", "patch"]
+
+    ---
+    apiVersion: rbac.authorization.k8s.io/v1
+    kind: RoleBinding
+    metadata:
+      name: apiserver-lb-leader-election
+      namespace: vcluster-netris
+    subjects:
+      - kind: ServiceAccount
+        name: apiserver-lb
+        namespace: vcluster-netris
+    roleRef:
+      kind: Role
+      name: apiserver-lb-leader-election
+      apiGroup: rbac.authorization.k8s.io
+
+    ---
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: apiserver-lb
+      namespace: vcluster-netris
+    spec:
+      replicas: 2
+      selector:
+        matchLabels:
+          app: apiserver-lb
+      template:
+        metadata:
+          labels:
+            app: apiserver-lb
+          annotations:
+            k8s.v1.cni.cncf.io/networks: vcluster-networks/api-load-balancer
+        spec:
+          serviceAccountName: apiserver-lb
+          containers:
+            - name: envoy
+              image: envoyproxy/envoy:v1.30.0
+              args: ["-c", "/etc/envoy/envoy.yaml", "--log-level", "info"]
+              env:
+                - name: ENVOY_UID
+                  value: "0"
+                - name: ENVOY_GID
+                  value: "0"
+              ports:
+                - name: https
+                  containerPort: 443
+              volumeMounts:
+                - name: envoy-config
+                  mountPath: /etc/envoy
+                  readOnly: true
+            - name: kube-vip
+              image: ghcr.io/kube-vip/kube-vip:v1.0.0
+              args: ["manager"]
+              env:
+                - name: vip_arp
+                  value: "true"
+                - name: port
+                  value: "443"
+                - name: vip_nodename
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: metadata.name
+                - name: vip_interface
+                  value: net1
+                - name: vip_subnet
+                  value: "22"
+                - name: cp_enable
+                  value: "true"
+                - name: cp_namespace
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: metadata.namespace
+                - name: vip_leaderelection
+                  value: "true"
+                - name: vip_leasename
+                  value: apiserver-lb
+                - name: vip_leaseduration
+                  value: "5"
+                - name: vip_renewdeadline
+                  value: "3"
+                - name: vip_retryperiod
+                  value: "1"
+                - name: address
+                  value: "192.168.67.253"
+              securityContext:
+                capabilities:
+                  add: ["NET_ADMIN", "NET_RAW"]
+                  drop: ["ALL"]
+          volumes:
+            - name: envoy-config
+              configMap:
+                name: envoy-config
+                items:
+                  - key: envoy.yaml
+                    path: envoy.yaml
+    ```
+
+    Verify that the load balancer is working:
+
+    ```bash
+    $ kubectl --context <host cluster context> -n vcluster-netris debug -it --image=nicolaka/netshoot netris-0 -- nc -w1 -z -v 192.168.67.253 443                                                                                                                                                                1s 04:55:36PM
+    Connection to 192.168.67.253 443 port [tcp/https] succeeded!
+    ```
+
+    This shows that the load balancer (Pod) is a neighbor on the virtual cluster VLAN subnet.
+
+    The Pods may reside on the same host as the load balancer, in which case the traffic would remain on the bridge and never be tagged.
+    To circumvent this, pick a different Pod to run the command from.
+
+## Join bare metal server
+
+1. Add server to ServerCluster
+
+    ![Add bare metal server](/img/netris_add_vcluster_bare_metal_server.png)
+
+2. Provision server with OS and configure the default interface (bond)
+
+    Verify:
+
+    ```bash
+    $ ip -br a show bond0
+    bond0            UP             192.168.64.9/22 metric 10 fe80::6cb4:6fff:fedb:d0bb/64
+    ```
+
+3. Obtain join token from vCluster
+
+    Connect to the virtual cluster and run `vcluster token create`.
+    The output should be something like this:
+
+    ```bash
+    curl -sfLk "https://192.168.67.253:443/node/join?token=ooj3s3.6glbz3pq4e15s25g" | sh -
+    ```
+
+4. Run join command on server
+
+    This downloads the necessary Kubernetes binaries and container runtime, configures Kubelet and joins the virtual cluster as a new node.
+
+    You may have to configure NAT so the server can reach the internet or any package mirrors.
+    This depends on the operating system of your choice.
+
+5. Verify that the server joined the virtual cluster
+
+    ```bash
+    $ kubectl get no
+    NAME                STATUS   ROLES    AGE   VERSION
+    hgx-pod00-su0-h24   Ready    <none>   68s   v1.32.1
+    ```
+
+## Join VM running in host cluster infrastructure
+
+1. Obtain join token from the virtual cluster
+
+    ```bash
+    $ vcluster token create
+    curl -sfLk "https://192.168.67.253:443/node/join?token=tvkoek.om6n9cjltoeh9g5y" | sh -
+    ```
+
+2. Create a VM in the host cluster that automatically joins the virtual cluster
+
+    We pass the join command as a cloud-init `runCmd`, so it runs after the first boot.
+
+    With the following manifest, KubeVirt creates a VM running in the host cluster:
+
+    ```yaml
+    apiVersion: kubevirt.io/v1
+    kind: VirtualMachine
+    metadata:
+      name: netris-vm
+      namespace: vcluster-netris
+    spec:
+      running: true
+      dataVolumeTemplates:
+        - metadata:
+            name: ubuntu
+          spec:
+            pvc:
+              accessModes:
+                - ReadWriteOnce
+              resources:
+                requests:
+                  storage: 20Gi
+            source:
+              http:
+                url: "https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img"
+      template:
+        metadata:
+          labels:
+            kubevirt.io/domain: vcluster-netris
+        spec:
+          domain:
+            cpu:
+              cores: 2
+            devices:
+              disks:
+                - name: rootdisk
+                  disk:
+                    bus: virtio
+                - name: cloudinitdisk
+                  disk:
+                    bus: virtio
+              interfaces:
+                - name: vlan
+                  bridge: {}
+            resources:
+              requests:
+                memory: 2Gi
+                cpu: "2000m"
+          networks:
+            - name: vlan
+              multus:
+                networkName: vcluster-networks/virtual
+          volumes:
+            - name: rootdisk
+              dataVolume:
+                name: ubuntu
+            - name: cloudinitdisk
+              cloudInitNoCloud:
+                userData: |
+                  #cloud-config
+                  hostname: netris-vm
+                  manage_etc_hosts: true
+                  users:
+                    - name: ubuntu
+                      gecos: Ubuntu
+                      sudo: ALL=(ALL) NOPASSWD:ALL
+                      shell: /bin/bash
+                      lock_passwd: false
+                  ssh_pwauth: true
+                  chpasswd:
+                    list: |
+                      ubuntu:ubuntu
+                    expire: false
+                  runcmd:
+                    - curl -sfLk "https://192.168.67.253:443/node/join?token=tvkoek.om6n9cjltoeh9g5y" | sh -
+                networkData: |
+                  version: 2
+                  ethernets:
+                    enp1s0:
+                      dhcp4: true
+    ```
+
+    Multus creates an additional interface attached to the bridge, which becomes the default interface in the VM.
+
+    After the OS is initialized, the join command is executed, which installs Kubernetes and joins the virtual cluster as a new node.
+
+    After a short time, the VM shows up in the virtual cluster:
+
+    ```bash
+    $ kubectl get nodes -w
+    NAME                STATUS   ROLES    AGE     VERSION
+    hgx-pod00-su0-h24   Ready    <none>   25m     v1.32.1
+    netris-vm           NotReady <none>   0s      v1.32.1
+    ```
