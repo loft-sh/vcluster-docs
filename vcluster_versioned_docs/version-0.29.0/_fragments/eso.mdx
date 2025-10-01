@@ -1,0 +1,108 @@
+import ProAdmonition from '../_partials/admonitions/pro-admonition.mdx'
+import Admonition from '@theme/Admonition';
+
+<ProAdmonition/>
+
+### Prerequisites
+
+- `kubectl` installed
+- `external-secrets` operator installed on your host cluster. See instructions at https://external-secrets.io/latest/
+
+:::warning External secrets version
+By default, vCluster uses the same CRD version as the External Secrets Operator installed on your host cluster.
+The `version` field allows you to explicitly set which CRD version to use (e.g., `v1beta1` or `v1`).
+Ensure your chosen version is supported by the External Secrets Operator on your host cluster.
+:::
+
+# External secrets integration
+
+:::warning Configuration Changes
+The sync configuration for this integration has been updated.
+
+Configuration for each resource type is now defined under the relevant `toHost` or `fromHost` section.
+For more information, see the [configuration reference](#config-reference).
+
+Label selectors are now supported for all resources and follow the format used by the upstream Kubernetes API.
+
+Previous configuration keys are deprecated starting in version 0.27.0.
+:::
+
+To enable the external secret integration, set the following fields:
+
+```yaml
+integrations:
+  externalSecrets:
+    enabled: true
+    version: v1 # Optional. If not specified, uses the same CRD version as your host cluster's External Secrets Operator
+    sync:
+      toHost:
+        stores:
+          enabled: true
+      fromHost:
+        clusterStores:
+          enabled: true
+```
+
+This enables the integration and the sync for all CRDs:
+- `ExternalSecret`: namespaced, synced from virtual cluster into host cluster and then bi-directionally
+- `SecretStore`: namespaced, synced from virtual cluster into host cluster
+- `ClusterSecretStore`: cluster scoped, synced from host cluster into virtual cluster
+
+Once the virtual cluster is up and running, you can create a `SecretStore` inside the virtual cluster.
+For this guide, you use the `fake` store type, which prefills data instead of connecting to a distant secret store.
+
+:::info API Version Compatibility
+External Secrets Operator `v0.16.2` is the last supporting `v1beta1` API version.
+For `v0.17.0+` versions, it provides exclusively `v1`.
+:::
+
+```yaml
+apiVersion: external-secrets.io/v1
+kind: SecretStore
+metadata:
+  name: fake
+spec:
+  provider:
+    fake:
+      data:
+      - key: "/foo/bar"
+        value: "HELLO1"
+        version: "v1"
+      - key: "/foo/bar"
+        value: "HELLO2"
+        version: "v2"
+      - key: "/foo/baz"
+        value: '{"john": "doe"}'
+        version: "v1"
+```
+
+Inside the virtual cluster, create the store with `kubectl apply -f fake.yaml`.
+This creates a corresponding store in the host cluster.
+You can then create an `ExternalSecret` in the virtual cluster, which references the `SecretStore`.
+
+```yaml
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: example
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: fake
+    kind: SecretStore
+  target:
+    name: secret-to-be-created
+  data:
+  - secretKey: foo_bar
+    remoteRef:
+      key: /foo/bar
+      version: v1
+  dataFrom:
+  - extract:
+      key: /foo/baz
+      version: v1
+```
+
+After the `ExternalSecret` is created in the virtual cluster, the integration creates a corresponding resource inside the host cluster.
+The external secret operator running in the host creates the corresponding Kubernetes secret which the integration imports into the virtual cluster.
+Running `kubectl get secrets` in the virtual cluster includes the `secret-to-be-created` in its output.
