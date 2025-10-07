@@ -1,4 +1,27 @@
-var firstCall = true;
+let firstCall = true;
+
+// Helper to close all details except those in the keep-open set
+const closeOtherConfigDetails = function(keepOpenSet) {
+  document.querySelectorAll('details.config-field[open]').forEach(function(el) {
+    if (!keepOpenSet.has(el)) {
+      el.open = false;
+      el.setAttribute('data-collapsed', 'true');
+    }
+  });
+};
+
+// Helper to get parent details elements
+const getParentConfigDetails = function(element) {
+  const parents = [];
+  let current = element;
+  while (current && current !== document) {
+    if (current.tagName === 'DETAILS') {
+      parents.push(current);
+    }
+    current = current.parentElement;
+  }
+  return parents;
+};
 
 const highlightDetailsOnActiveHash = function(activeHash, doNotOpen) {
     const activeAnchors = document.querySelectorAll(".anchor[id='" + activeHash + "'");
@@ -30,7 +53,7 @@ const highlightDetailsOnActiveHash = function(activeHash, doNotOpen) {
     }
 
     for (let i = 0; i < detailsElements.length; i++) {
-        let detailsElement = detailsElements[i];
+        const detailsElement = detailsElements[i];
 
         detailsElement.classList.remove("active");
     }
@@ -45,7 +68,46 @@ const highlightDetailsOnActiveHash = function(activeHash, doNotOpen) {
 
                     if (!doNotOpen) {
                         element.open = true;
+                        element.setAttribute('data-collapsed', 'false');
+                        // Also expand the collapsible content by removing inline styles
+                        const collapsibleContent = element.querySelector(':scope > div[style]');
+                        if (collapsibleContent) {
+                            collapsibleContent.style.display = 'block';
+                            collapsibleContent.style.overflow = 'visible';
+                            collapsibleContent.style.height = 'auto';
+                        }
                     }
+                }
+            }
+        }
+    }
+
+    // Also handle elements with matching IDs (for nested config fields)
+    // Use getElementById for security (safer than querySelector with user input)
+    const targetElement = activeHash ? document.getElementById(activeHash) : null;
+    if (targetElement) {
+        // Get all parent details
+        const parentDetails = getParentConfigDetails(targetElement);
+        const keepOpenSet = new Set(parentDetails);
+
+        // Close all other details if not in doNotOpen mode
+        if (!doNotOpen) {
+            closeOtherConfigDetails(keepOpenSet);
+        }
+
+        // Process parent details
+        for (let i = 0; i < parentDetails.length; i++) {
+            const element = parentDetails[i];
+            element.classList.add("active");
+            if (!doNotOpen) {
+                element.open = true;
+                element.setAttribute('data-collapsed', 'false');
+                // Also expand the collapsible content by removing inline styles
+                const collapsibleContent = element.querySelector(':scope > div[style]');
+                if (collapsibleContent) {
+                    collapsibleContent.style.display = 'block';
+                    collapsibleContent.style.overflow = 'visible';
+                    collapsibleContent.style.height = 'auto';
                 }
             }
         }
@@ -53,13 +115,13 @@ const highlightDetailsOnActiveHash = function(activeHash, doNotOpen) {
 };
 
 const highlightActiveOnPageLink = function() {
-    var activeHash;
+    let activeHash;
 
     if (firstCall) {
         firstCall = false;
 
         if (location.hash.length > 0) {
-            activeHash = location.hash.substr(1);
+            activeHash = location.hash.substring(1);
 
             highlightDetailsOnActiveHash(activeHash);
         }

@@ -321,7 +321,7 @@ const generateYaml = function (element, processedElements = new Set()) {
         let i = 0;
 
         function parseValue() {
-          if (str.substr(i, 4) === 'map[') {
+          if (str.substring(i, i + 4) === 'map[') {
             i += 4; // skip 'map['
             const obj = {};
             while (str[i] !== ']' && i < str.length) {
@@ -358,7 +358,7 @@ const generateYaml = function (element, processedElements = new Set()) {
             return arr;
           } else {
             // Parse until space, ':', ']', or ','
-            let start = i;
+            const start = i;
             while (
               i < str.length &&
               ![' ', ':', ']', ',', '\n'].includes(str[i])
@@ -371,7 +371,7 @@ const generateYaml = function (element, processedElements = new Set()) {
 
         function parseKey() {
           // Parse until ':', space, or ']'
-          let start = i;
+          const start = i;
           while (
             i < str.length &&
             ![':', ' ', ']'].includes(str[i])
@@ -391,8 +391,8 @@ const generateYaml = function (element, processedElements = new Set()) {
     const generateYamlFromObject = function (obj, indentLevel = 1) {
       const indent = '  '.repeat(indentLevel);
       let lines = [];
-      for (let k in obj) {
-        let v = obj[k];
+      for (const k in obj) {
+        const v = obj[k];
         if (Array.isArray(v)) {
           if (v.length === 0) {
             lines.push(`${indent}${k}: []`);
@@ -463,8 +463,8 @@ const generateYaml = function (element, processedElements = new Set()) {
           let depth = 0;
           let currentItem = '';
           for (let i = 0; i < arrayContent.length; i++) {
-            let char = arrayContent[i];
-            if (arrayContent.substr(i, 4) === 'map[') {
+            const char = arrayContent[i];
+            if (arrayContent.substring(i, i + 4) === 'map[') {
               depth++;
               currentItem += 'map[';
               i += 3;
@@ -512,6 +512,51 @@ const generateYaml = function (element, processedElements = new Set()) {
   return yaml;
 };
 
+// Helper function to open a details element and its collapsible content
+const openDetailsElement = function(detailsEl) {
+  if (detailsEl && detailsEl.tagName === 'DETAILS' && !detailsEl.open) {
+    detailsEl.open = true;
+    detailsEl.setAttribute('data-collapsed', 'false');
+    // Expand the collapsible content by removing inline styles
+    const collapsibleContent = detailsEl.querySelector(':scope > div[style]');
+    if (collapsibleContent) {
+      collapsibleContent.style.display = 'block';
+      collapsibleContent.style.overflow = 'visible';
+      collapsibleContent.style.height = 'auto';
+    }
+  }
+};
+
+// Helper function to close a details element
+const closeDetailsElement = function(detailsEl) {
+  if (detailsEl && detailsEl.tagName === 'DETAILS' && detailsEl.open) {
+    detailsEl.open = false;
+    detailsEl.setAttribute('data-collapsed', 'true');
+  }
+};
+
+// Helper function to get all parent details elements
+const getParentDetailsElements = function(element) {
+  const parents = [];
+  let current = element;
+  while (current && current !== document.documentElement) {
+    if (current.tagName === 'DETAILS') {
+      parents.push(current);
+    }
+    current = current.parentElement;
+  }
+  return parents;
+};
+
+// Helper function to close all details except those in the provided set
+const closeOtherDetails = function(keepOpenSet) {
+  document.querySelectorAll('details.config-field[open]').forEach(function(el) {
+    if (!keepOpenSet.has(el)) {
+      closeDetailsElement(el);
+    }
+  });
+};
+
 const preserveExpansionStates = ExecutionEnvironment.canUseDOM ? function(skipEventListener) {
   const state = new URLSearchParams(window.location.search.substring(1));
 
@@ -527,11 +572,22 @@ const preserveExpansionStates = ExecutionEnvironment.canUseDOM ? function(skipEv
     const stateChangeElAll = el.querySelectorAll(':scope > summary, :scope > [role="tablist"] > *');
     const anchorLinks = el.querySelectorAll(':scope a[href="' + location.hash + '"]');
 
-    if (anchorLinks.length > 0) {
+    // Check if this details element or any of its descendants contains the target ID
+    const targetId = location.hash.substring(1);
+    // Use getElementById for security (safer than querySelector with user input)
+    const targetEl = targetId ? document.getElementById(targetId) : null;
+    const containsTarget = targetEl && (el.id === targetId || el.contains(targetEl));
+
+    if (anchorLinks.length > 0 || containsTarget) {
       if (el.querySelectorAll(':scope > summary a[href="' + location.hash + '"]').length > 0) {
         el.classList.add("-contains-target-link");
       }
       state.set(expansionKey, 1);
+
+      // Immediately open the details if it contains the target
+      if (containsTarget) {
+        openDetailsElement(el);
+      }
     } else {
       el.classList.remove("-contains-target-link");
       state.delete(expansionKey);
@@ -578,6 +634,7 @@ const preserveExpansionStates = ExecutionEnvironment.canUseDOM ? function(skipEv
           e.preventDefault();
 
           const newHash = anchorLink.getAttribute("href");
+          const targetId = newHash.substring(1);
 
           document.querySelectorAll(".-contains-target-link").forEach(function(el) {
             if (el.querySelectorAll(':scope > summary a[href="' + newHash + '"]').length == 0) {
@@ -591,7 +648,29 @@ const preserveExpansionStates = ExecutionEnvironment.canUseDOM ? function(skipEv
           }
           window.history.replaceState(null, '', window.location.pathname + query + newHash);
 
-          if (!el.hasAttribute("open")) {
+          // Use getElementById for security (safer than querySelector with user input)
+          const targetEl = targetId ? document.getElementById(targetId) : null;
+          if (targetEl) {
+            // Get all parent details elements
+            const parentDetails = getParentDetailsElements(targetEl);
+            const keepOpenSet = new Set(parentDetails);
+
+            // Close all other details elements
+            closeOtherDetails(keepOpenSet);
+
+            // Open all parent details
+            parentDetails.forEach(openDetailsElement);
+
+            // Scroll to the target element
+            setTimeout(() => {
+              window.scroll({
+                behavior: 'smooth',
+                left: 0,
+                top: targetEl.getBoundingClientRect().top + window.scrollY - 280
+              });
+            }, 100);
+          } else if (!el.hasAttribute("open")) {
+            // Fallback to old behavior if target not found
             anchorLink.parentElement.click();
           }
         });
@@ -613,14 +692,32 @@ const preserveExpansionStates = ExecutionEnvironment.canUseDOM ? function(skipEv
       if (document.querySelectorAll('details.config-field').length > 0) {
         setTimeout(addCopyButtons, 200);
       }
+      // Immediately open parent details on hash change
+      const targetId = location.hash.substring(1);
+      if (targetId) {
+        const targetEl = document.getElementById(targetId);
+        if (targetEl) {
+          // Get all parent details elements
+          const parentDetails = getParentDetailsElements(targetEl);
+          const keepOpenSet = new Set(parentDetails);
+
+          // Close all other details elements
+          closeOtherDetails(keepOpenSet);
+
+          // Open all parent details
+          parentDetails.forEach(openDetailsElement);
+        }
+      }
+      // Re-run expansion logic on hash change
+      setTimeout(() => preserveExpansionStates(true), 100);
     });
-    
+
     document.addEventListener('visibilitychange', function() {
       if (!document.hidden && document.querySelectorAll('details.config-field').length > 0) {
         setTimeout(addCopyButtons, 100);
       }
     });
-    
+
     // Use interval check instead of MutationObserver to avoid React conflicts
     let checkCount = 0;
     const maxChecks = 10;
@@ -639,30 +736,61 @@ const preserveExpansionStates = ExecutionEnvironment.canUseDOM ? function(skipEv
 } : () => {};
 
 if (ExecutionEnvironment.canUseDOM) {
-  preserveExpansionStates();
-  
   // Ensure copy buttons are added when DOM is fully loaded
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', function() {
       setTimeout(addCopyButtons, 100);
+      setTimeout(() => preserveExpansionStates(), 200);
     });
   } else {
     setTimeout(addCopyButtons, 100);
+    preserveExpansionStates();
   }
 
+  // Handle initial page load with hash
   if (location.hash) {
-    setTimeout(() => {
-      location.href = location.href;
+    const openParentDetailsAndScroll = (shouldScroll = true) => {
+      const targetId = location.hash.substring(1);
+      const targetEl = document.getElementById(targetId);
 
-      const targetEl = document.querySelector('[id="' + location.hash.substr(1) + '"]');
       if (targetEl) {
-        window.scroll({
-          behavior: 'smooth',
-          left: 0,
-          top: targetEl.getBoundingClientRect().top + window.scrollY - 120
+        // Get all parent details elements
+        const parentDetails = getParentDetailsElements(targetEl);
+        const keepOpenSet = new Set(parentDetails);
+
+        // Close all other details elements
+        closeOtherDetails(keepOpenSet);
+
+        // Open all parents forcefully
+        parentDetails.forEach(el => {
+          el.setAttribute('open', '');
+          openDetailsElement(el);
         });
+
+        // Scroll to the target element
+        if (shouldScroll) {
+          setTimeout(() => {
+            const targetRect = targetEl.getBoundingClientRect();
+            if (targetRect.top !== 0 || targetRect.left !== 0) {
+              window.scroll({
+                behavior: 'smooth',
+                left: 0,
+                top: targetEl.getBoundingClientRect().top + window.scrollY - 280
+              });
+            }
+          }, 150);
+        }
+
+        return parentDetails.length > 0;
       }
-    }, 1000);
+      return false;
+    };
+
+    // Reduced timeouts for better performance
+    // Try multiple times to handle React re-renders
+    setTimeout(() => openParentDetailsAndScroll(false), 200);
+    setTimeout(() => openParentDetailsAndScroll(false), 500);
+    setTimeout(() => openParentDetailsAndScroll(true), 1000);
   }
 }
 
