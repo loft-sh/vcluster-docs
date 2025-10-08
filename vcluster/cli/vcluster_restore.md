@@ -38,6 +38,7 @@ vcluster restore my-vcluster container:///data/my-local-snapshot.tar.gz
       --pod-image-pull-secret stringArray   Additional pull secrets for the created pod
       --pod-mount stringArray               Additional mounts for the created pod. Use form <type>:<name>/<key>:<mount>. Supported types are: pvc, secret, configmap. E.g.: pvc:my-pvc:/path-in-pod or secret:my-secret/my-key:/path-in-pod
       --pod-service-account string          Service account to use for the created pod
+      --restore-volumes                     Restore volumes from volume snapshots
 ```
 
 

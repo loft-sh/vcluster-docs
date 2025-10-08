@@ -11,16 +11,17 @@ import (
 	"strings"
 )
 
-const cliDocsDir = "./vcluster/cli"
-
 func main() {
-	var branch, vclusterDir string
+	var branch, vclusterDir, outputDir string
 	var useLocal bool
 
 	flag.StringVar(&branch, "branch", "current", "vCluster branch to checkout")
 	flag.StringVar(&vclusterDir, "vcluster-dir", "~/loft/vcluster", "Path to local vCluster repository")
+	flag.StringVar(&outputDir, "output", "./vcluster/cli", "Output directory for generated CLI docs")
 	flag.BoolVar(&useLocal, "local", true, "Use local vCluster repository")
 	flag.Parse()
+
+	cliDocsDir := outputDir
 
 	if strings.HasPrefix(vclusterDir, "~/") {
 		home, _ := os.UserHomeDir()
@@ -79,6 +80,11 @@ func main() {
 		log.Fatal(err)
 	}
 
+	// Remove old generated CLI docs (*.md files only, preserve *.mdx and _category_.json)
+	if err := cleanupOldDocs(cliDocsDir); err != nil {
+		log.Fatal(err)
+	}
+
 	// Copy to final destination
 	os.MkdirAll(cliDocsDir, 0755)
 	if err := copyDir(docsDir, cliDocsDir); err != nil {
@@ -119,4 +125,31 @@ func copyFile(src, dst string) error {
 	defer out.Close()
 	_, err = io.Copy(out, in)
 	return err
+}
+
+// cleanupOldDocs removes old generated .md files (CLI docs) while preserving
+// manually created .mdx files and _category_.json
+func cleanupOldDocs(dir string) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil // Directory doesn't exist yet, nothing to clean
+		}
+		return err
+	}
+
+	for _, entry := range entries {
+		// Skip directories and non-.md files
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
+			continue
+		}
+
+		// Remove .md files (auto-generated CLI docs)
+		path := filepath.Join(dir, entry.Name())
+		if err := os.Remove(path); err != nil {
+			return fmt.Errorf("failed to remove %s: %w", path, err)
+		}
+	}
+
+	return nil
 }

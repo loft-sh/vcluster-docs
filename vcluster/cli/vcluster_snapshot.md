@@ -4,7 +4,7 @@ sidebar_label: vcluster snapshot
 ---
 
 
-Snapshot a virtual cluster
+Snapshot a virtual cluster (deprecated, use 'vcluster snapshot create' instead)
 
 ## Synopsis
 
@@ -16,7 +16,7 @@ vcluster snapshot VCLUSTER_NAME [flags]
 #######################################################
 ################# vcluster snapshot ###################
 #######################################################
-Snapshot a virtual cluster.
+Snapshot a virtual cluster. Deprecated, use 'vcluster snapshot create' instead.
 
 Example:
 # Snapshot to oci image
