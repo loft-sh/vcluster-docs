@@ -784,17 +784,35 @@ const preserveExpansionStates = ExecutionEnvironment.canUseDOM ? function(skipEv
   }
 } : () => {};
 
-if (ExecutionEnvironment.canUseDOM) {
-  // Ensure copy buttons are added when DOM is fully loaded
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', function() {
-      setTimeout(addCopyButtons, 100);
-      setTimeout(() => preserveExpansionStates(), 200);
-    });
-  } else {
-    setTimeout(addCopyButtons, 100);
-    preserveExpansionStates();
-  }
-}
+// ============================================================================
+// Docusaurus Lifecycle Hooks
+// ============================================================================
 
-export default ExecutionEnvironment.canUseDOM ? preserveExpansionStates : () => {};
+let isInitialized = false;
+
+/**
+ * Called after route has updated and DOM is ready
+ * This ensures DOM manipulation happens AFTER React hydration
+ */
+export function onRouteDidUpdate({ location }) {
+  if (!ExecutionEnvironment.canUseDOM) {
+    return;
+  }
+
+  // Wait for React hydration to complete before manipulating DOM
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      // Call preserveExpansionStates on initial load
+      if (!isInitialized) {
+        isInitialized = true;
+        preserveExpansionStates();
+      } else {
+        // On subsequent navigations, skip event listener setup
+        preserveExpansionStates(true);
+      }
+
+      // Always add copy buttons
+      addCopyButtons();
+    });
+  });
+}
