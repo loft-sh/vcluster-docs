@@ -7,7 +7,7 @@ provider "http" {
 }
 
 provider "helm" {
-  kubernetes {
+  kubernetes = {
     config_path = "${path.module}/kubeconfig_${var.cluster_name}"
   }
 }
