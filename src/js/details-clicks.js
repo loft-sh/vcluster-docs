@@ -564,6 +564,22 @@ const preserveExpansionStates = ExecutionEnvironment.canUseDOM ? function(skipEv
     return setTimeout(preserveExpansionStates, 100);
   }
 
+  // Wait for React hydration to complete on initial page load with hash
+  // Check if React has hydrated by looking for React internal properties
+  if (!skipEventListener && location.hash && !window.__hydrationComplete) {
+    const rootElement = document.getElementById('__docusaurus');
+    // Check if React has attached its fiber root (sign of hydration completion)
+    const isHydrated = rootElement && (rootElement._reactRootContainer || rootElement._reactRootContainer === null || Object.keys(rootElement).some(key => key.startsWith('__react')));
+
+    if (!isHydrated) {
+      return setTimeout(preserveExpansionStates, 100);
+    }
+
+    // Extra safety delay after hydration detected
+    window.__hydrationComplete = true;
+    return setTimeout(preserveExpansionStates, 50);
+  }
+
   // Add copy buttons to config fields
   addCopyButtons();
 
