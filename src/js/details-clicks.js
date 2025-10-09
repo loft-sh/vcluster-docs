@@ -567,6 +567,25 @@ const preserveExpansionStates = ExecutionEnvironment.canUseDOM ? function(skipEv
   // Add copy buttons to config fields
   addCopyButtons();
 
+  // Track if this is initial call with hash for scrolling
+  const isInitialCallWithHash = !skipEventListener && location.hash;
+
+  // Debounce helper to prevent "too many calls" errors with History API
+  let historyUpdateTimer = null;
+  const debouncedHistoryUpdate = function(url) {
+    if (historyUpdateTimer) {
+      clearTimeout(historyUpdateTimer);
+    }
+    historyUpdateTimer = setTimeout(() => {
+      try {
+        window.history.replaceState(null, '', url);
+      } catch (e) {
+        // Silently catch "operation is insecure" errors
+        console.warn('History replaceState failed:', e.message);
+      }
+    }, 50);
+  };
+
   document.querySelectorAll('details, .tabs-container').forEach(function(el, index) {
     const expansionKey = "x" + (el.id || index);
     const stateChangeElAll = el.querySelectorAll(':scope > summary, :scope > [role="tablist"] > *');
@@ -587,6 +606,20 @@ const preserveExpansionStates = ExecutionEnvironment.canUseDOM ? function(skipEv
       // Immediately open the details if it contains the target
       if (containsTarget) {
         openDetailsElement(el);
+
+        // Scroll to target on initial page load
+        if (isInitialCallWithHash && targetEl) {
+          setTimeout(() => {
+            const targetRect = targetEl.getBoundingClientRect();
+            if (targetRect.top !== 0 || targetRect.left !== 0) {
+              window.scroll({
+                behavior: 'smooth',
+                left: 0,
+                top: targetEl.getBoundingClientRect().top + window.scrollY - 280
+              });
+            }
+          }, 100);
+        }
       }
     } else {
       el.classList.remove("-contains-target-link");
@@ -615,7 +648,7 @@ const preserveExpansionStates = ExecutionEnvironment.canUseDOM ? function(skipEv
           query = '?' + query.replace(/^[?]/, "");
         }
 
-        window.history.replaceState(null, '', window.location.pathname + query + window.location.hash);
+        debouncedHistoryUpdate(window.location.pathname + query + window.location.hash);
       }
     };
 
@@ -646,7 +679,7 @@ const preserveExpansionStates = ExecutionEnvironment.canUseDOM ? function(skipEv
           if (query) {
             query = '?' + query.replace(/^[?]/, "");
           }
-          window.history.replaceState(null, '', window.location.pathname + query + newHash);
+          debouncedHistoryUpdate(window.location.pathname + query + newHash);
 
           // Use getElementById for security (safer than querySelector with user input)
           const targetEl = targetId ? document.getElementById(targetId) : null;
@@ -745,52 +778,6 @@ if (ExecutionEnvironment.canUseDOM) {
   } else {
     setTimeout(addCopyButtons, 100);
     preserveExpansionStates();
-  }
-
-  // Handle initial page load with hash
-  if (location.hash) {
-    const openParentDetailsAndScroll = (shouldScroll = true) => {
-      const targetId = location.hash.substring(1);
-      const targetEl = document.getElementById(targetId);
-
-      if (targetEl) {
-        // Get all parent details elements
-        const parentDetails = getParentDetailsElements(targetEl);
-        const keepOpenSet = new Set(parentDetails);
-
-        // Close all other details elements
-        closeOtherDetails(keepOpenSet);
-
-        // Open all parents forcefully
-        parentDetails.forEach(el => {
-          el.setAttribute('open', '');
-          openDetailsElement(el);
-        });
-
-        // Scroll to the target element
-        if (shouldScroll) {
-          setTimeout(() => {
-            const targetRect = targetEl.getBoundingClientRect();
-            if (targetRect.top !== 0 || targetRect.left !== 0) {
-              window.scroll({
-                behavior: 'smooth',
-                left: 0,
-                top: targetEl.getBoundingClientRect().top + window.scrollY - 280
-              });
-            }
-          }, 150);
-        }
-
-        return parentDetails.length > 0;
-      }
-      return false;
-    };
-
-    // Reduced timeouts for better performance
-    // Try multiple times to handle React re-renders
-    setTimeout(() => openParentDetailsAndScroll(false), 200);
-    setTimeout(() => openParentDetailsAndScroll(false), 500);
-    setTimeout(() => openParentDetailsAndScroll(true), 1000);
   }
 }
 

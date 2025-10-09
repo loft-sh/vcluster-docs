@@ -1,5 +1,3 @@
-let firstCall = true;
-
 // Helper to close all details except those in the keep-open set
 const closeOtherConfigDetails = function(keepOpenSet) {
   document.querySelectorAll('details.config-field[open]').forEach(function(el) {
@@ -114,73 +112,30 @@ const highlightDetailsOnActiveHash = function(activeHash, doNotOpen) {
     }
 };
 
+// Highlight sidebar links based on current hash
 const highlightActiveOnPageLink = function() {
-    let activeHash;
-
-    if (firstCall) {
-        firstCall = false;
-
-        if (location.hash.length > 0) {
-            activeHash = location.hash.substring(1);
-
-            highlightDetailsOnActiveHash(activeHash);
-        }
-        window.addEventListener('scroll', highlightActiveOnPageLink);
+    if (!location.hash) {
+        return;
     }
 
-    setTimeout(function() {
-        if (!activeHash) {
-            const anchors = document.querySelectorAll("h2 > .anchor, h3 > .anchor");
+    const activeHash = location.hash.substring(1);
+    const allLinks = document.querySelectorAll("a");
 
-            if (anchors.length > 0) {
-                if (document.scrollingElement.scrollTop < 100) {
-                    activeHash = anchors[0].attributes.id.value;
-                } else if (document.scrollingElement.scrollTop == document.scrollingElement.scrollHeight - document.scrollingElement.clientHeight) {
-                    activeHash = anchors[anchors.length - 1].attributes.id.value;
-                } else {
-                    for (let i = 0; i < anchors.length; i++) {
-                        const anchor = anchors[i];
+    // Remove active class from all links
+    for (let i = 0; i < allLinks.length; i++) {
+        const link = allLinks[i];
+        link.classList.remove("active");
 
-                        if (anchor.parentElement.getBoundingClientRect().top < window.screen.availHeight*0.5) {
-                            activeHash = anchor.attributes.id.value;
-                        } else {
-                            break;
-                        }
-                    }
-                }
-            }
-
-            if (!activeHash) {
-                const firstOnPageNavLink = document.querySelectorAll(".toc-headings:first-child > li:first-child > a");
-
-                if (firstOnPageNavLink.attributes) {
-                    activeHash = firstOnPageNavLink.attributes.href.value.substr(1);
-                }
-            }
+        if (link.parentElement && link.parentElement.parentElement && link.parentElement.parentElement.tagName == "UL") {
+            link.parentElement.parentElement.classList.remove("active")
         }
+    }
 
-        const allLinks = document.querySelectorAll("a");
-
-        for (let i = 0; i < allLinks.length; i++) {
-            const link = allLinks[i];
-            link.classList.remove("active");
-
-            if (link.parentElement && link.parentElement.parentElement && link.parentElement.parentElement.tagName == "UL") {
-                link.parentElement.parentElement.classList.remove("active")
-            }
-        }
-
-        const activeLinks = document.querySelectorAll("a[href='#" + activeHash + "'");
-
-        for (let i = 0; i < activeLinks.length; i++) {
-            const link = activeLinks[i];
-            link.classList.add("active");
-
-            if (link.parentElement && link.parentElement.parentElement && link.parentElement.parentElement.tagName == "UL") {
-                link.parentElement.parentElement.classList.add("active")
-            }
-        }
-    }, 100)
+    // Add active class to links matching current hash
+    const activeLinks = document.querySelectorAll("a[href='#" + activeHash + "'");
+    for (let i = 0; i < activeLinks.length; i++) {
+        activeLinks[i].classList.add("active");
+    }
 };
 
 const hashLinkClickSet = false;
@@ -200,17 +155,29 @@ const allowHashLinkClick = function() {
     }
 };
 
-window.addEventListener('load', allowHashLinkClick);
-window.addEventListener('load', highlightActiveOnPageLink);
-window.addEventListener('popstate', function (event) {
-    highlightDetailsOnActiveHash(location.hash.substr(1));
-}, false);
-window.addEventListener("click", function (e) {
-    if (e.target.nodeName == "A" || e.target == document) {
-        setTimeout(function() {
-            highlightDetailsOnActiveHash(location.hash.substr(1));
-        }, 1000);
+// Initialize on page load - delay to avoid React hydration mismatch
+window.addEventListener('load', function() {
+    allowHashLinkClick();
+    if (location.hash) {
+        // Double RAF to ensure React hydration is complete before modifying DOM
+        requestAnimationFrame(function() {
+            requestAnimationFrame(function() {
+                highlightDetailsOnActiveHash(location.hash.substring(1));
+                highlightActiveOnPageLink();
+            });
+        });
     }
+});
+
+// Respond to browser back/forward
+window.addEventListener('popstate', function (event) {
+    highlightDetailsOnActiveHash(location.hash.substring(1));
+    highlightActiveOnPageLink();
+}, false);
+
+// Respond to hash changes (triggered by details-clicks.js)
+window.addEventListener('hashchange', function() {
+    highlightActiveOnPageLink();
 });
 
 /*
