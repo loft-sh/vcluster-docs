@@ -71,19 +71,16 @@ copyButton.style.cssText = `
   color: var(--ifm-color-content);
   transition: all 0.2s;
   opacity: 0;
-  margin: 0 4px 0 8px;  /* Increased left margin to 8px */
+  margin: 0 4px 0 8px;
   vertical-align: middle;
 `;
 
       const summary = el.querySelector('summary');
       if (summary) {
-        // Find the hash link
         const hashLink = summary.querySelector('a.hash-link');
         if (hashLink) {
-          // Insert the button right after the hash link
           hashLink.insertAdjacentElement('afterend', copyButton);
 
-          // Show button on summary hover
           summary.addEventListener('mouseenter', () => {
             copyButton.style.opacity = '1';
           });
@@ -93,7 +90,6 @@ copyButton.style.cssText = `
         }
       }
 
-      // Rest of the click handler code remains the same
       copyButton.addEventListener('click', async function(e) {
         e.preventDefault();
         e.stopPropagation();
@@ -186,11 +182,9 @@ const generateMapYaml = function(parsed, indent = 2) {
     yaml += `${' '.repeat(indent)}${key}:`;
 
     if (value.startsWith('map[')) {
-      // Handle nested map
       const nestedParsed = parseMapValue(value);
       if (nestedParsed) {
         yaml += generateMapYaml(nestedParsed, indent + 2);
-        // Only add newline if this isn't the last entry
         if (index < array.length - 1) {
           yaml += '\n';
         }
@@ -199,7 +193,6 @@ const generateMapYaml = function(parsed, indent = 2) {
       }
     } else {
       yaml += ` ${value}`;
-      // Only add newline if this isn't the last entry
       if (index < array.length - 1) {
         yaml += '\n';
       }
@@ -270,7 +263,6 @@ const generateYaml = function (element, processedElements = new Set()) {
       yaml += nestedYamls.join('\n');
     }
   } else {
-    // Function to decode HTML entities
     const decodeHTMLEntities = function (text) {
       const txt = document.createElement('textarea');
       txt.innerHTML = text;
@@ -291,10 +283,9 @@ const generateYaml = function (element, processedElements = new Set()) {
         .querySelector('summary .config-field-type')
         ?.textContent?.trim() || '';
 
-    // Helper function to format values appropriately
+    // Quote strings that could be misinterpreted in YAML
     const formatValue = function (value) {
       if (typeof value === 'string') {
-        // Quote the string if it could be misinterpreted in YAML
         if (
           value === 'true' ||
           value === 'false' ||
@@ -315,7 +306,6 @@ const generateYaml = function (element, processedElements = new Set()) {
       }
     };
 
-    // Updated parseMapString function
     const parseMapString = function (str) {
       function parse() {
         let i = 0;
@@ -439,12 +429,10 @@ const generateYaml = function (element, processedElements = new Set()) {
     };
 
     if (defaultValue.startsWith('map[')) {
-      // Map handling
       const obj = parseMapString(defaultValue);
       const yamlString = generateYamlFromObject(obj, 1);
       yaml += '\n' + yamlString;
     } else if (defaultValue.startsWith('[')) {
-      // Array handling
       const trimmedValue = defaultValue.trim();
       if (
         trimmedValue === '[]' ||
@@ -512,12 +500,11 @@ const generateYaml = function (element, processedElements = new Set()) {
   return yaml;
 };
 
-// Helper function to open a details element and its collapsible content
 const openDetailsElement = function(detailsEl) {
   if (detailsEl && detailsEl.tagName === 'DETAILS' && !detailsEl.open) {
     detailsEl.open = true;
     detailsEl.setAttribute('data-collapsed', 'false');
-    // Expand the collapsible content by removing inline styles
+    // Expand collapsible content by removing inline styles
     const collapsibleContent = detailsEl.querySelector(':scope > div[style]');
     if (collapsibleContent) {
       collapsibleContent.style.display = 'block';
@@ -527,7 +514,6 @@ const openDetailsElement = function(detailsEl) {
   }
 };
 
-// Helper function to close a details element
 const closeDetailsElement = function(detailsEl) {
   if (detailsEl && detailsEl.tagName === 'DETAILS' && detailsEl.open) {
     detailsEl.open = false;
@@ -535,7 +521,6 @@ const closeDetailsElement = function(detailsEl) {
   }
 };
 
-// Helper function to get all parent details elements
 const getParentDetailsElements = function(element) {
   const parents = [];
   let current = element;
@@ -548,7 +533,6 @@ const getParentDetailsElements = function(element) {
   return parents;
 };
 
-// Helper function to close all details except those in the provided set
 const closeOtherDetails = function(keepOpenSet) {
   document.querySelectorAll('details.config-field[open]').forEach(function(el) {
     if (!keepOpenSet.has(el)) {
@@ -564,29 +548,24 @@ const preserveExpansionStates = ExecutionEnvironment.canUseDOM ? function(skipEv
     return setTimeout(preserveExpansionStates, 100);
   }
 
-  // Wait for React hydration to complete on initial page load with hash
-  // Check if React has hydrated by looking for React internal properties
+  // Wait for React hydration before manipulating DOM on initial page load with hash
   if (!skipEventListener && location.hash && !window.__hydrationComplete) {
     const rootElement = document.getElementById('__docusaurus');
-    // Check if React has attached its fiber root (sign of hydration completion)
     const isHydrated = rootElement && (rootElement._reactRootContainer || rootElement._reactRootContainer === null || Object.keys(rootElement).some(key => key.startsWith('__react')));
 
     if (!isHydrated) {
       return setTimeout(preserveExpansionStates, 100);
     }
 
-    // Extra safety delay after hydration detected
     window.__hydrationComplete = true;
     return setTimeout(preserveExpansionStates, 50);
   }
 
-  // Add copy buttons to config fields
   addCopyButtons();
 
-  // Track if this is initial call with hash for scrolling
   const isInitialCallWithHash = !skipEventListener && location.hash;
 
-  // Debounce helper to prevent "too many calls" errors with History API
+  // Debounce to prevent "too many calls" errors with History API
   let historyUpdateTimer = null;
   const debouncedHistoryUpdate = function(url) {
     if (historyUpdateTimer) {
@@ -596,7 +575,6 @@ const preserveExpansionStates = ExecutionEnvironment.canUseDOM ? function(skipEv
       try {
         window.history.replaceState(null, '', url);
       } catch (e) {
-        // Silently catch "operation is insecure" errors
         console.warn('History replaceState failed:', e.message);
       }
     }, 50);
@@ -607,9 +585,7 @@ const preserveExpansionStates = ExecutionEnvironment.canUseDOM ? function(skipEv
     const stateChangeElAll = el.querySelectorAll(':scope > summary, :scope > [role="tablist"] > *');
     const anchorLinks = el.querySelectorAll(':scope a[href="' + location.hash + '"]');
 
-    // Check if this details element or any of its descendants contains the target ID
     const targetId = location.hash.substring(1);
-    // Use getElementById for security (safer than querySelector with user input)
     const targetEl = targetId ? document.getElementById(targetId) : null;
     const containsTarget = targetEl && (el.id === targetId || el.contains(targetEl));
 
@@ -619,22 +595,9 @@ const preserveExpansionStates = ExecutionEnvironment.canUseDOM ? function(skipEv
       }
       state.set(expansionKey, 1);
 
-      // Immediately open the details if it contains the target
       if (containsTarget) {
         openDetailsElement(el);
-
-        if (isInitialCallWithHash && targetEl) {
-          setTimeout(() => {
-            const targetRect = targetEl.getBoundingClientRect();
-            if (targetRect.top !== 0 || targetRect.left !== 0) {
-              window.scroll({
-                behavior: 'smooth',
-                left: 0,
-                top: window.scrollY + targetRect.top - 280
-              });
-            }
-          }, 150);
-        }
+        // NOTE: Initial page load scrolling is handled by ConfigNavigationClient
       }
     } else {
       el.classList.remove("-contains-target-link");
@@ -675,7 +638,10 @@ const preserveExpansionStates = ExecutionEnvironment.canUseDOM ? function(skipEv
         stateChangeEl.addEventListener("click", persistState.bind(stateChangeEl, i + 1));
       });
 
-      el.querySelectorAll(':scope > summary a[href^="#"]').forEach(anchorLink => {
+      const anchorLinks = el.querySelectorAll(':scope > summary a[href^="#"]');
+      anchorLinks.forEach(anchorLink => {
+        anchorLink.setAttribute('data-has-handler', 'true');
+
         anchorLink.addEventListener("click", (e) => {
           e.stopImmediatePropagation();
           e.stopPropagation();
@@ -696,18 +662,15 @@ const preserveExpansionStates = ExecutionEnvironment.canUseDOM ? function(skipEv
           }
           debouncedHistoryUpdate(window.location.pathname + query + newHash);
 
-          // Use getElementById for security (safer than querySelector with user input)
           const targetEl = targetId ? document.getElementById(targetId) : null;
           if (targetEl) {
-            // Get all parent details elements
             const parentDetails = getParentDetailsElements(targetEl);
             const keepOpenSet = new Set(parentDetails);
 
-            // Close all other details elements
             closeOtherDetails(keepOpenSet);
-
             parentDetails.forEach(openDetailsElement);
 
+            // replaceState doesn't trigger hashchange, so we must scroll here
             setTimeout(() => {
               const targetRect = targetEl.getBoundingClientRect();
               if (targetRect.top !== 0 || targetRect.left !== 0) {
@@ -719,7 +682,6 @@ const preserveExpansionStates = ExecutionEnvironment.canUseDOM ? function(skipEv
               }
             }, 150);
           } else if (!el.hasAttribute("open")) {
-            // Fallback to old behavior if target not found
             anchorLink.parentElement.click();
           }
         });
@@ -737,30 +699,6 @@ const preserveExpansionStates = ExecutionEnvironment.canUseDOM ? function(skipEv
   });
 
   if (!skipEventListener) {
-    window.addEventListener('hashchange', function() {
-      if (document.querySelectorAll('details.config-field').length > 0) {
-        setTimeout(addCopyButtons, 200);
-      }
-      // Immediately open parent details on hash change
-      const targetId = location.hash.substring(1);
-      if (targetId) {
-        const targetEl = document.getElementById(targetId);
-        if (targetEl) {
-          // Get all parent details elements
-          const parentDetails = getParentDetailsElements(targetEl);
-          const keepOpenSet = new Set(parentDetails);
-
-          // Close all other details elements
-          closeOtherDetails(keepOpenSet);
-
-          // Open all parent details
-          parentDetails.forEach(openDetailsElement);
-        }
-      }
-      // Re-run expansion logic on hash change
-      setTimeout(() => preserveExpansionStates(true), 100);
-    });
-
     document.addEventListener('visibilitychange', function() {
       if (!document.hidden && document.querySelectorAll('details.config-field').length > 0) {
         setTimeout(addCopyButtons, 100);
@@ -788,30 +726,81 @@ const preserveExpansionStates = ExecutionEnvironment.canUseDOM ? function(skipEv
 // Docusaurus Lifecycle Hooks
 // ============================================================================
 
+// Universal hash link handler (including TOC sidebar)
+// Fixes Docusaurus's buggy hash navigation and enables CSS :target highlighting
+if (ExecutionEnvironment.canUseDOM) {
+  document.addEventListener('click', function(e) {
+    let target = e.target;
+    let anchor = null;
+
+    while (target && target !== document) {
+      if (target.tagName === 'A') {
+        anchor = target;
+        break;
+      }
+      target = target.parentElement;
+    }
+
+    if (anchor && anchor.getAttribute('href')?.startsWith('#')) {
+      const hash = anchor.getAttribute('href');
+      const targetId = hash.substring(1);
+
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+
+      const targetEl = targetId ? document.getElementById(targetId) : null;
+      if (targetEl) {
+        const parentDetails = getParentDetailsElements(targetEl);
+        const keepOpenSet = new Set(parentDetails);
+        closeOtherDetails(keepOpenSet);
+        parentDetails.forEach(openDetailsElement);
+
+        setTimeout(() => {
+          const currentScrollY = window.scrollY;
+
+          // Setting location.hash triggers :target CSS for highlighting
+          if (window.location.hash !== hash) {
+            window.location.hash = hash;
+          }
+
+          // Cancel browser's automatic scroll
+          window.scrollTo(0, currentScrollY);
+
+          // Do our own controlled scroll
+          setTimeout(() => {
+            const rect = targetEl.getBoundingClientRect();
+            if (rect.top !== 0 || rect.left !== 0) {
+              const y = window.scrollY + rect.top - 280;
+              window.scrollTo({ top: y, behavior: 'smooth' });
+            }
+          }, 50);
+        }, 150);
+      }
+    }
+  }, true); // Capture phase
+}
+
 let isInitialized = false;
 
 /**
- * Called after route has updated and DOM is ready
- * This ensures DOM manipulation happens AFTER React hydration
+ * Docusaurus lifecycle hook - called after route updates and DOM is ready
+ * Ensures DOM manipulation happens AFTER React hydration
  */
 export function onRouteDidUpdate({ location }) {
   if (!ExecutionEnvironment.canUseDOM) {
     return;
   }
 
-  // Wait for React hydration to complete before manipulating DOM
   requestAnimationFrame(() => {
     requestAnimationFrame(() => {
-      // Call preserveExpansionStates on initial load
       if (!isInitialized) {
         isInitialized = true;
         preserveExpansionStates();
       } else {
-        // On subsequent navigations, skip event listener setup
         preserveExpansionStates(true);
       }
 
-      // Always add copy buttons
       addCopyButtons();
     });
   });
