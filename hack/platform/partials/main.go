@@ -979,8 +979,9 @@ spec:
 						},
 						NodeTypes: []storagev1.TerraformNodeTypeSpec{
 							{
-								Name: "medium",
-								NodeTypeSpec: storagev1.NodeTypeSpec{
+								NamedNodeTypeSpec: storagev1.NamedNodeTypeSpec{
+									Name: "medium",
+									NodeTypeSpec: storagev1.NodeTypeSpec{
 									Resources: corev1.ResourceList{
 										corev1.ResourceCPU:    resource.MustParse("2"),
 										corev1.ResourceMemory: resource.MustParse("4Gi"),
@@ -989,10 +990,12 @@ spec:
 										"instance-type": "t3.medium",
 									},
 								},
+								},
 							},
 							{
-								Name: "large",
-								NodeTypeSpec: storagev1.NodeTypeSpec{
+								NamedNodeTypeSpec: storagev1.NamedNodeTypeSpec{
+									Name: "large",
+									NodeTypeSpec: storagev1.NodeTypeSpec{
 									Resources: corev1.ResourceList{
 										corev1.ResourceCPU:    resource.MustParse("2"),
 										corev1.ResourceMemory: resource.MustParse("8Gi"),
@@ -1001,10 +1004,12 @@ spec:
 										"instance-type": "t3.large",
 									},
 								},
+								},
 							},
 							{
-								Name: "xlarge",
-								NodeTypeSpec: storagev1.NodeTypeSpec{
+								NamedNodeTypeSpec: storagev1.NamedNodeTypeSpec{
+									Name: "xlarge",
+									NodeTypeSpec: storagev1.NodeTypeSpec{
 									Resources: corev1.ResourceList{
 										corev1.ResourceCPU:    resource.MustParse("4"),
 										corev1.ResourceMemory: resource.MustParse("8Gi"),
@@ -1012,6 +1017,7 @@ spec:
 									Properties: map[string]string{
 										"instance-type": "c5.xlarge",
 									},
+								},
 								},
 							},
 						},
