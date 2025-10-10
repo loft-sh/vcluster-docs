@@ -623,7 +623,6 @@ const preserveExpansionStates = ExecutionEnvironment.canUseDOM ? function(skipEv
       if (containsTarget) {
         openDetailsElement(el);
 
-        // Scroll to target on initial page load
         if (isInitialCallWithHash && targetEl) {
           setTimeout(() => {
             const targetRect = targetEl.getBoundingClientRect();
@@ -631,10 +630,10 @@ const preserveExpansionStates = ExecutionEnvironment.canUseDOM ? function(skipEv
               window.scroll({
                 behavior: 'smooth',
                 left: 0,
-                top: targetEl.getBoundingClientRect().top + window.scrollY - 280
+                top: window.scrollY + targetRect.top - 280
               });
             }
-          }, 100);
+          }, 150);
         }
       }
     } else {
@@ -707,17 +706,18 @@ const preserveExpansionStates = ExecutionEnvironment.canUseDOM ? function(skipEv
             // Close all other details elements
             closeOtherDetails(keepOpenSet);
 
-            // Open all parent details
             parentDetails.forEach(openDetailsElement);
 
-            // Scroll to the target element
             setTimeout(() => {
-              window.scroll({
-                behavior: 'smooth',
-                left: 0,
-                top: targetEl.getBoundingClientRect().top + window.scrollY - 280
-              });
-            }, 100);
+              const targetRect = targetEl.getBoundingClientRect();
+              if (targetRect.top !== 0 || targetRect.left !== 0) {
+                window.scroll({
+                  behavior: 'smooth',
+                  left: 0,
+                  top: window.scrollY + targetRect.top - 280
+                });
+              }
+            }, 150);
           } else if (!el.hasAttribute("open")) {
             // Fallback to old behavior if target not found
             anchorLink.parentElement.click();

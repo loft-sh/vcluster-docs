@@ -228,25 +228,10 @@ const handleHashNavigation = function(hash) {
 
 /**
  * Initialize event handlers for hash links and history navigation
+ * Hash link clicks are handled by DetailsClicksClient to avoid race conditions
  */
 const initializeEventHandlers = function() {
-  // Set up hash link click handlers
-  const hashLinkIcons = document.querySelectorAll('.hash-link-icon');
-  for (let i = 0; i < hashLinkIcons.length; i++) {
-    const hashLinkIcon = hashLinkIcons[i];
-
-    // Only add event listener if not already added
-    if (!hashLinkIcon.hasAttribute('data-nav-handler')) {
-      hashLinkIcon.setAttribute('data-nav-handler', 'true');
-
-      hashLinkIcon.addEventListener('mousedown', function() {
-        const href = hashLinkIcon.parentElement.attributes.href.value;
-        history.pushState(null, null, href);
-        highlightActiveOnPageLink();
-        highlightDetailsOnActiveHash(location.hash.substr(1), true);
-      });
-    }
-  }
+  // Empty - event handlers managed by DetailsClicksClient
 };
 
 // ============================================================================
