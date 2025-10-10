@@ -25,6 +25,7 @@ var paths = []string{
 	"sync/toHost/networkPolicies",
 	"sync/toHost/ingresses",
 	"sync/toHost/endpoints",
+	"sync/toHost/endpointSlices",
 	"sync/toHost/secrets",
 	"sync/toHost/pods",
 	"sync/toHost/configMaps",
