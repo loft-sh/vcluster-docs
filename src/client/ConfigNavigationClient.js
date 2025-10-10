@@ -13,20 +13,9 @@
 
 import ExecutionEnvironment from '@docusaurus/ExecutionEnvironment';
 
-// ============================================================================
-// State Management
-// ============================================================================
-
 let isInitialized = false;
 let previousHash = null;
 
-// ============================================================================
-// Helper Functions
-// ============================================================================
-
-/**
- * Get all parent details elements for a given element
- */
 const getParentDetailsElements = function(element) {
   const parents = [];
   let current = element;
@@ -39,14 +28,11 @@ const getParentDetailsElements = function(element) {
   return parents;
 };
 
-/**
- * Open a details element and its collapsible content
- */
 const openDetailsElement = function(detailsEl) {
   if (detailsEl && detailsEl.tagName === 'DETAILS' && !detailsEl.open) {
     detailsEl.open = true;
     detailsEl.setAttribute('data-collapsed', 'false');
-    // Expand the collapsible content by removing inline styles
+    // Expand collapsible content by removing inline styles
     const collapsibleContent = detailsEl.querySelector(':scope > div[style]');
     if (collapsibleContent) {
       collapsibleContent.style.display = 'block';
@@ -56,9 +42,6 @@ const openDetailsElement = function(detailsEl) {
   }
 };
 
-/**
- * Close a details element
- */
 const closeDetailsElement = function(detailsEl) {
   if (detailsEl && detailsEl.tagName === 'DETAILS' && detailsEl.open) {
     detailsEl.open = false;
@@ -66,9 +49,6 @@ const closeDetailsElement = function(detailsEl) {
   }
 };
 
-/**
- * Close all details except those in the keep-open set
- */
 const closeOtherDetails = function(keepOpenSet) {
   document.querySelectorAll('details.config-field[open]').forEach(function(el) {
     if (!keepOpenSet.has(el)) {
@@ -77,22 +57,15 @@ const closeOtherDetails = function(keepOpenSet) {
   });
 };
 
-// ============================================================================
-// Core Navigation Functions
-// ============================================================================
-
-/**
- * Highlight sidebar links based on current hash
- */
-const highlightActiveOnPageLink = function() {
-  if (!location.hash) {
+const highlightActiveOnPageLink = function(hash) {
+  const hashToUse = hash || location.hash;
+  if (!hashToUse) {
     return;
   }
 
-  const activeHash = location.hash.substring(1);
+  const activeHash = hashToUse.substring(1);
   const allLinks = document.querySelectorAll('a');
 
-  // Remove active class from all links
   for (let i = 0; i < allLinks.length; i++) {
     const link = allLinks[i];
     link.classList.remove('active');
@@ -102,27 +75,21 @@ const highlightActiveOnPageLink = function() {
     }
   }
 
-  // Add active class to links matching current hash
   const activeLinks = document.querySelectorAll("a[href='#" + activeHash + "']");
   for (let i = 0; i < activeLinks.length; i++) {
     activeLinks[i].classList.add('active');
   }
 };
 
-/**
- * Highlight and expand details elements containing the active hash
- */
 const highlightDetailsOnActiveHash = function(activeHash, doNotOpen) {
   const activeAnchors = document.querySelectorAll(".anchor[id='" + activeHash + "']");
   const detailsElements = document.querySelectorAll('details');
   const activeSectionElements = document.querySelectorAll('.active-section');
 
-  // Remove active-section class from all elements
   for (let i = 0; i < activeSectionElements.length; i++) {
     activeSectionElements[i].classList.remove('active-section');
   }
 
-  // Add active-section class to elements following the active anchor
   for (let i = 0; i < activeAnchors.length; i++) {
     const headline = activeAnchors[i].parentElement;
     const headlineRank = activeAnchors[i].parentElement.nodeName.substr(1);
@@ -143,12 +110,10 @@ const highlightDetailsOnActiveHash = function(activeHash, doNotOpen) {
     }
   }
 
-  // Remove active class from all details
   for (let i = 0; i < detailsElements.length; i++) {
     detailsElements[i].classList.remove('active');
   }
 
-  // Add active class and open parent details
   if (activeAnchors.length > 0) {
     for (let i = 0; i < activeAnchors.length; i++) {
       let element = activeAnchors[i];
@@ -172,18 +137,15 @@ const highlightDetailsOnActiveHash = function(activeHash, doNotOpen) {
     }
   }
 
-  // Handle elements with matching IDs (for nested config fields)
   const targetElement = activeHash ? document.getElementById(activeHash) : null;
   if (targetElement) {
     const parentDetails = getParentDetailsElements(targetElement);
     const keepOpenSet = new Set(parentDetails);
 
-    // Close all other details if not in doNotOpen mode
     if (!doNotOpen) {
       closeOtherDetails(keepOpenSet);
     }
 
-    // Process parent details
     for (let i = 0; i < parentDetails.length; i++) {
       const element = parentDetails[i];
       element.classList.add('active');
@@ -201,99 +163,100 @@ const highlightDetailsOnActiveHash = function(activeHash, doNotOpen) {
   }
 };
 
-/**
- * Handle hash navigation - expand details and highlight links
- */
+// NOTE: This does NOT scroll - scrolling is handled by DetailsClicksClient
 const handleHashNavigation = function(hash) {
   if (!hash) return;
 
   const targetId = hash.substring(1);
-
-  // Expand parent details elements
   highlightDetailsOnActiveHash(targetId);
-
-  // Highlight active sidebar link
   highlightActiveOnPageLink();
-
-  // Scroll to target (with delay for animation)
-  setTimeout(() => {
-    const element = document.getElementById(targetId);
-    if (element) {
-      const yOffset = -280;
-      const y = element.getBoundingClientRect().top + window.scrollY + yOffset;
-      window.scrollTo({ top: y, behavior: 'smooth' });
-    }
-  }, 100);
 };
 
-/**
- * Initialize event handlers for hash links and history navigation
- * Hash link clicks are handled by DetailsClicksClient to avoid race conditions
- */
+// Hash link clicks are handled by DetailsClicksClient to avoid race conditions
 const initializeEventHandlers = function() {
   // Empty - event handlers managed by DetailsClicksClient
 };
 
-// ============================================================================
-// Docusaurus Lifecycle Hooks
-// ============================================================================
-
 /**
- * Called on client-side navigation (before DOM update)
+ * Docusaurus lifecycle hook - called before DOM update
  */
 export function onRouteUpdate({ location, previousLocation }) {
-  // Track previous hash for comparison
   if (previousLocation) {
     previousHash = previousLocation.hash;
   }
 }
 
 /**
- * Called after route has updated and DOM is ready
- * This is where we safely manipulate DOM after React hydration
+ * Docusaurus lifecycle hook - called after route updates and DOM is ready
+ * Safely manipulates DOM after React hydration
  */
 export function onRouteDidUpdate({ location, previousLocation }) {
   if (!ExecutionEnvironment.canUseDOM) {
     return;
   }
 
-  // Initialize on first load
   if (!isInitialized) {
     isInitialized = true;
 
-    // Wait for React hydration to complete
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
-        // Initialize event handlers
         initializeEventHandlers();
 
-        // Handle initial hash if present
         if (location.hash) {
+          const targetId = location.hash.substring(1);
+          const targetEl = document.getElementById(targetId);
+
           handleHashNavigation(location.hash);
+
+          if (targetEl) {
+            setTimeout(() => {
+              const y = targetEl.getBoundingClientRect().top + window.scrollY - 280;
+              window.scrollTo({ top: y, behavior: 'smooth' });
+            }, 150);
+          }
         }
       });
     });
 
-    // Set up browser back/forward navigation handler
+    // For popstate, we DO want to scroll since DetailsClicksClient isn't involved
     window.addEventListener('popstate', function() {
-      handleHashNavigation(location.hash);
+      const hash = location.hash;
+      if (!hash) return;
+
+      const targetId = hash.substring(1);
+      const targetEl = document.getElementById(targetId);
+
+      handleHashNavigation(hash);
+
+      if (targetEl) {
+        setTimeout(() => {
+          const y = targetEl.getBoundingClientRect().top + window.scrollY - 280;
+          window.scrollTo({ top: y, behavior: 'smooth' });
+        }, 150);
+      }
     });
 
-    // Set up hashchange handler (triggered by internal navigation)
-    window.addEventListener('hashchange', function() {
-      highlightActiveOnPageLink();
-      handleHashNavigation(location.hash);
+    // NOTE: hashchange only handles highlighting, NOT scrolling (to avoid race condition)
+    // Scrolling is handled by DetailsClicksClient's universal click handler
+    window.addEventListener('hashchange', function(e) {
+      const newHash = e.newURL ? e.newURL.split('#')[1] : '';
+      const hashToUse = newHash ? '#' + newHash : location.hash;
+
+      if (!hashToUse) {
+        return;
+      }
+
+      const targetId = hashToUse.substring(1);
+      highlightActiveOnPageLink(hashToUse);
+      highlightDetailsOnActiveHash(targetId);
     });
 
     return;
   }
 
-  // Handle hash changes on subsequent navigations
-  if (location.hash !== previousHash) {
-    handleHashNavigation(location.hash);
-    previousHash = location.hash;
-  }
-
-  // Re-initialize event handlers for newly rendered elements
+  // Hash changes on subsequent navigations are handled by:
+  // - hashchange listener (for browser back/forward, URL bar edits)
+  // - DetailsClicksClient click handler (for link clicks)
+  previousHash = location.hash;
   initializeEventHandlers();
 }
