@@ -57,7 +57,6 @@ Here is a sequence diagram that shows how vCluster creates snapshots:
 ```mermaid
 sequenceDiagram
     autonumber
-    box gray Host Cluster
     participant User as Host cluster user
     participant CLI as vCluster CLI
     participant API as K8s API (host)
@@ -66,7 +65,6 @@ sequenceDiagram
     participant ESS as external-snapshotter sidecar (host)
     participant CSI as CSI Driver (host)
     participant SNAPSTORE as Snapshot location (S3/OCI/container)
-    end
 
     User->>CLI: run vCluster snapshot create ...
     CLI->>API: Create snapshot request Secret
@@ -105,7 +103,6 @@ Here is a sequence diagram that shows how vCluster creates snapshots:
 ```mermaid
 sequenceDiagram
     autonumber
-    box gray Host Cluster
     participant User as Host cluster user
     participant CLI as vCluster CLI
     participant API as K8s API (virtual)
@@ -114,7 +111,6 @@ sequenceDiagram
     participant ESS as external-snapshotter sidecar (virtual)
     participant CSI as CSI Driver (virtual)
     participant SNAPSTORE as Snapshot location (S3/OCI/container)
-    end
 
     User->>CLI: run `vcluster snapshot create`
     CLI->>API: Create snapshot request Secret
@@ -142,12 +138,159 @@ sequenceDiagram
 
 This section describes who or what is responsible for which part of the volume restore process.
 
-TBA
+**Host cluster user**:
+- Runs the vCluster CLI commands;
+- Installs snapshot-controller and CSI driver in the host or in the virtual cluster, depending on the multi-tenancy model.
+
+**vCluster CLI**:
+- Downloads previously created snapshot archive from the snapshot location;
+- Restores etcd data from the snapshot;
+- Creates volume restore requests in the host cluster.
+
+**vCluster**:
+- Processes and updates restore request that are created in the host cluster;
+- Creates pre-provisioned VolumeSnapshotContent and VolumeSnapshot in the host or in the virtual cluster, depending on the multi-tenancy model. The pre-provisioned VolumeSnapshotContent references a volume snapshot that has been already created when vCluster snapshot was taken.
+- Creates PersistentVolumeClaims that reference the pre-provisioned VolumeSnapshot, so created volumes have data restored from the snapshot.
+- Syncs virtual PersistentVolumeClaims with restored PersistentVolumeClaims in the host cluster, if using shared nodes.
+
+**Kubernetes snapshot-controller**:
+- Runs in the host or in the virtual cluster, depending on the multi-tenancy model;
+- Processes and updates dynamic VolumeSnapshots;
+
+**External snapshotter CSI driver sidecar**:
+- Runs as a sidecar container in the CSI driver pod in the host or in the virtual cluster, depending on the multi-tenancy model;
+- Processes and updates VolumeSnapshotContent resources;
+- Makes calls to the CSI driver via RPCs (ListSnapshots, if implemented).
+
+**CSI Driver**:
+- Runs in the host or in the virtual cluster, depending on the multi-tenancy model;
+- Makes provider-specific API calls to list provider-specific disk snapshots.
 
 ### Restore volumes with shared host nodes
 
-TBA details and sequence charts
+vCluster with shared nodes restores volumes in the host cluster.
+
+Host cluster admin needs to complete the following setup before being able to restore volumes with vCluster:
+- Install common Kubernetes snapshot-controller and volume snapshot CRDs in the host cluster.
+- Installs CSI driver in the host cluster.
+- Install VolumeSnapshotClass and annotate it as default for the CSI driver.
+
+Here is a sequence diagram that shows how vCluster restores volumes from snapshots:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    box User
+    participant User as Host user
+    participant CLI as vCluster CLI
+    end
+    box S3/OCI/container
+    participant STORE as Snapshot location
+    end
+    box Host cluster
+    participant ETCD as ETCD (host)
+    participant API as K8s API (host)
+    participant VCL as vCluster (restore controller)
+    participant KSC as snapshot-controller (host)
+    participant ESS as external-snapshotter (host)
+    participant EP as external-provisioner (host)
+    participant CSID as CSI Driver (host)
+    end
+    box Workload
+    participant VAPI as V API (host)
+    end
+
+    %% 1) Restore etcd and create restore request
+    User->>CLI: vcluster restore mycluster ...
+    CLI->>API: Pause (scale down) vCluster
+    CLI->>STORE: Download snapshot archive (metadata + handles)
+    CLI->>ETCD: Restore data (control-plane state)
+    CLI->>API: Create restore request (ConfigMap + Secret)
+    CLI->>API: Unpause (scale up) vCluster
+    ETCD-->>VAPI: Read restored data
+
+    %% 2) vCluster creates pre-provisioned VSC/VS
+    API-->>VCL: Watch: restore request ConfigMap
+    VCL->>API: Create VolumeSnapshotContent (pre-provisioned, with snapshot handle)
+    VCL->>API: Create VolumeSnapshot (references VolumeSnapshotContent)
+
+    %% 3) Bind + discover status
+    API-->>KSC: Watch: VolumeSnapshot/VolumeSnapshotContent
+    KSC->>API: Bind VolumeSnapshot <-> VolumeSnapshotContent
+    API-->>ESS: Watch: VolumeSnapshotContent (for this driver)
+    KSC->>API: Update VolumeSnapshot.status (readyToUse=true, restoreSize=…)
+
+    %% 4) PVC restore from snapshot
+    VCL->>API: Create PVC with dataSource=<VolumeSnapshot>
+    API-->>EP: Watch: new PVC (StorageClass=driver)
+    EP->>CSID: CSI CreateVolume(from Snapshot=<handle>)
+    CSID-->>EP: volumeID, capacity
+    EP->>API: Create PersistentVolume & set volume handle
+
+    %% 5) Sync back PVC
+    API-->>VCL: Get: Restored PVC
+    VCL->>VAPI: Sync back: Recreate virtual PVC (new volumeName)
+```
 
 ### Restore volumes with private nodes
 
-TBA details and sequence charts
+vCluster with private nodes restores volumes in the virtual cluster.
+
+Virtual cluster has to be created with `deploy.volumeSnapshotController.enabled` config set to `true`. With this config, vCluster installs the common snapshot-controller, and VolumeSnapshot, VolumeSnapshotContent and VolumeSnapshotClass CRDs in your virtual cluster.
+
+Then, the following setup needs to be completed to be able to restore volumes from snapshots with vCluster:
+- Installs CSI driver in the virtual cluster.
+- Install VolumeSnapshotClass and annotate it as default for the CSI driver.
+
+Here is a sequence diagram that shows how vCluster restores volumes from snapshots:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    box User
+    participant User as Host user
+    participant CLI as vCluster CLI
+    end
+    box S3/OCI/container
+    participant STORE as Snapshot location
+    end
+    box Host cluster
+    participant ETCD as ETCD
+    participant HAPI as K8s API
+    participant VCL as vCluster
+    end
+    box Virtual cluster
+    participant API as K8s API
+    participant KSC as snapshot-controller
+    participant ESS as external-snapshotter
+    participant EP as external-provisioner
+    participant CSID as CSI Driver
+    end
+
+    %% 1) Restore etcd and create restore request
+    User->>CLI: vcluster restore mycluster ...
+    CLI->>HAPI: Pause (scale down) vCluster
+    CLI->>STORE: Download snapshot archive (metadata + handles)
+    CLI->>ETCD: Restore data (control-plane state)
+    CLI->>HAPI: Create restore request (ConfigMap + Secret)
+    CLI->>HAPI: Unpause (scale up) vCluster
+    ETCD-->>API: Read restored data
+
+    %% 2) vCluster creates pre-provisioned VolumeSnapshotContent/VolumeSnapshot
+    HAPI-->>VCL: Watch: restore request ConfigMap
+    VCL->>API: Create VolumeSnapshotContent (pre-provisioned, with snapshot handle)
+    VCL->>API: Create VolumeSnapshot (references VolumeSnapshotContent)
+
+    %% 3) Bind + discover status
+    API-->>KSC: Watch: VolumeSnapshot/VolumeSnapshotContent
+    KSC->>API: Bind VolumeSnapshot <-> VolumeSnapshotContent
+    API-->>ESS: Watch: VolumeSnapshotContent (for this driver)
+    KSC->>API: Update VolumeSnapshot.status (readyToUse=true, restoreSize=…)
+
+    %% 4) PVC restore from snapshot
+    VCL->>API: Create PVC with dataSource=<VolumeSnapshot>
+    API-->>EP: Watch: new PVC (StorageClass=driver)
+    EP->>CSID: CSI CreateVolume(from Snapshot=<handle>)
+    CSID-->>EP: volumeID, capacity
+    EP->>API: Create PersistentVolume & set volume handle
+```
