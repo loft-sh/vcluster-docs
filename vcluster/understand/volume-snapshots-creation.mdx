@@ -20,13 +20,13 @@ This section start with describing who or what is responsible for which part of 
 
 **Host cluster user**:
 - Runs the vCluster CLI commands;
-- Configures storage components in the host or in the virtual cluster, depending on the multi-tenancy model.
+- Installs snapshot-controller and CSI driver in the host or in the virtual cluster, depending on the multi-tenancy model.
 
 **vCluster CLI**:
 - Creates snapshot requests in the host cluster.
 
-**vCluster snapshot controller**:
-- Processes and updates snapshot request that created in the host cluster;
+**vCluster**:
+- Processes and updates snapshot request that are created in the host cluster;
 - Creates dynamic VolumeSnapshots in the host or in the virtual cluster, depending on the multi-tenancy model.
 
 **Kubernetes snapshot-controller**:
@@ -37,7 +37,7 @@ This section start with describing who or what is responsible for which part of 
 **External snapshotter CSI driver sidecar**:
 - Runs as a sidecar container in the CSI driver pod in the host or in the virtual cluster, depending on the multi-tenancy model;
 - Processes VolumeSnapshotContent resources;
-- Talks to the CSI driver via RPCs (CreateSnapshot, DeleteSnapshot, and, optionally, the ListSnapshots).
+- Makes calls to the CSI driver via RPCs (CreateSnapshot, DeleteSnapshot, and, optionally, the ListSnapshots).
 
 **CSI Driver**:
 - Runs in the host or in the virtual cluster, depending on the multi-tenancy model;
@@ -45,11 +45,98 @@ This section start with describing who or what is responsible for which part of 
 
 ### Create volume snapshots with shared host nodes
 
-TBA details and sequence charts
+vCluster with shared nodes creates volume snapshots in the host cluster.
+
+Host cluster admin needs to complete the following setup before being able to create volume snapshots with vCluster:
+- Install common Kubernetes snapshot-controller and volume snapshot CRDs in the host cluster.
+- Installs CSI driver in the host cluster.
+- Install VolumeSnapshotClass and annotate it as default for the CSI driver.
+
+Here is a sequence diagram that shows how vCluster creates snapshots:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    box gray Host Cluster
+    participant User as Host cluster user
+    participant CLI as vCluster CLI
+    participant API as K8s API (host)
+    participant VSCTRL as vCluster
+    participant KSCTRL as snapshot-controller (host)
+    participant ESS as external-snapshotter sidecar (host)
+    participant CSI as CSI Driver (host)
+    participant SNAPSTORE as Snapshot location (S3/OCI/container)
+    end
+
+    User->>CLI: run vCluster snapshot create ...
+    CLI->>API: Create snapshot request Secret
+    CLI->>API: Create snapshot request ConfigMap
+
+    API-->>VSCTRL: Watch event: snapshot request ConfigMap
+    VSCTRL->>API: Create VolumeSnapshot for PVC
+
+    API-->>KSCTRL: Watch: new VolumeSnapshot
+    KSCTRL->>API: Create VolumeSnapshotContent (Pending)
+
+    API-->>ESS: Watch: new VolumeSnapshotContent (driver matches)
+    ESS->>CSI: CSI CreateSnapshot(volumeHandle, params)
+    CSI-->>ESS: snapshotHandle, size, ready
+
+    ESS->>API: Update VolumeSnapshotContent.status (ready, handle)
+    KSCTRL->>API: Update VolumeSnapshot.status (readyToUse=true, bound)
+
+    VSCTRL->>API: Update snapshot request (snapshot handle, phase=Completed)
+    VSCTRL->>SNAPSTORE: Save snapshot request details
+    VSCTRL->>SNAPSTORE: Save etcd backup
+```
 
 ### Create volume snapshots with private nodes
 
-TBA details and sequence charts
+vCluster with private nodes creates volume snapshots in the virtual cluster.
+
+Virtual cluster has to be created with `deploy.volumeSnapshotController.enabled` config set to `true`. With this config, vCluster installs the common snapshot-controller, and VolumeSnapshot, VolumeSnapshotContent and VolumeSnapshotClass CRDs in your virtual cluster.
+
+Then, the following setup needs to be completed to be able to create volume snapshots with vCluster:
+- Installs CSI driver in the virtual cluster.
+- Install VolumeSnapshotClass and annotate it as default for the CSI driver.
+
+Here is a sequence diagram that shows how vCluster creates snapshots:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    box gray Host Cluster
+    participant User as Host cluster user
+    participant CLI as vCluster CLI
+    participant API as K8s API (virtual)
+    participant VSCTRL as vCluster
+    participant KSCTRL as snapshot-controller (virtual)
+    participant ESS as external-snapshotter sidecar (virtual)
+    participant CSI as CSI Driver (virtual)
+    participant SNAPSTORE as Snapshot location (S3/OCI/container)
+    end
+
+    User->>CLI: run `vcluster snapshot create`
+    CLI->>API: Create snapshot request Secret
+    CLI->>API: Create snapshot request ConfigMap
+
+    API-->>VSCTRL: Watch event: snapshot request ConfigMap
+    VSCTRL->>API: Create VolumeSnapshot for PVC
+
+    API-->>KSCTRL: Watch: new VolumeSnapshot
+    KSCTRL->>API: Create VolumeSnapshotContent (Pending, driver=<from VSC>)
+
+    API-->>ESS: Watch: new VolumeSnapshotContent (driver matches)
+    ESS->>CSI: CSI CreateSnapshot(volumeHandle, params)
+    CSI-->>ESS: snapshotHandle, size, ready
+
+    ESS->>API: Update VolumeSnapshotContent.status (ready, handle)
+    KSCTRL->>API: Update VolumeSnapshot.status (readyToUse=true, bound)
+
+    VSCTRL->>API: Update snapshot request (snapshot handle, phase=Completed)
+    VSCTRL->>SNAPSTORE: Save snapshot request details
+    VSCTRL->>SNAPSTORE: Save etcd backup
+```
 
 ## How are volumes restored from snapshots?
 
