@@ -19,9 +19,11 @@ export const InlineSearch = () => {
   const [isExpanded, setIsExpanded] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [debouncedQuery, setDebouncedQuery] = useState('');
+  const [isIframeReady, setIsIframeReady] = useState(false);
   const inputRef = useRef(null);
   const iframeRef = useRef(null);
   const debounceTimerRef = useRef(null);
+  const dropdownSelections = useRef({});
 
   useEffect(() => {
     if (isExpanded && inputRef.current) {
@@ -46,96 +48,168 @@ export const InlineSearch = () => {
     };
   }, [searchQuery]);
 
-  // Keep focus on input when iframe loads
-  useEffect(() => {
-    if (iframeRef.current && isExpanded) {
-      const iframe = iframeRef.current;
-      const handleIframeLoad = () => {
-        // Restore focus to input after iframe loads
-        if (inputRef.current) {
-          inputRef.current.focus();
+  // Handle iframe load event
+  const handleIframeLoad = () => {
+    // Restore focus to input
+    if (inputRef.current) {
+      inputRef.current.focus();
+    }
+
+    const iframe = iframeRef.current;
+    if (!iframe) return;
+
+    try {
+      const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
+      if (!iframeDoc) return;
+
+      // Inject CSS to hide elements
+      const style = iframeDoc.createElement('style');
+      style.textContent = `
+        /* Hide navbar */
+        nav.navbar { display: none !important; }
+        /* Hide page title "Search the documentation" */
+        .container > h1, .container h1:first-of-type,
+        article > h1, article h1:first-of-type { display: none !important; }
+        /* Hide the search input box in iframe - target all possible selectors */
+        .ais-SearchBox { display: none !important; }
+        .ais-SearchBox-form { display: none !important; }
+        .ais-SearchBox-input { display: none !important; }
+        input[type="search"] { display: none !important; }
+        form input[placeholder*="search"],
+        form input[placeholder*="Search"] { display: none !important; }
+        /* Hide the entire form if it only contains search */
+        .ais-SearchBox,
+        [class*="searchBox"],
+        [class*="SearchBox"] { display: none !important; }
+        /* Hide footer */
+        footer, .footer, [class*="footer"] { display: none !important; }
+        /* Adjust container padding */
+        .container, article, main { padding-top: 1rem !important; }
+      `;
+      iframeDoc.head.appendChild(style);
+
+      // Intercept all link clicks and navigate parent window
+      const handleLinkClick = (e) => {
+        const link = e.target.closest('a');
+        if (link && link.href) {
+          e.preventDefault();
+          e.stopPropagation();
+          window.top.location.href = link.href;
         }
       };
-      iframe.addEventListener('load', handleIframeLoad);
-      return () => iframe.removeEventListener('load', handleIframeLoad);
-    }
-  }, [isExpanded, debouncedQuery]);
 
-  // Inject CSS to hide elements in iframe and modify link behavior
-  useEffect(() => {
-    if (iframeRef.current && isExpanded) {
-      const iframe = iframeRef.current;
-      const injectStyles = () => {
-        try {
-          const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
-          if (iframeDoc) {
-            // Inject CSS to hide elements
-            const style = iframeDoc.createElement('style');
-            style.textContent = `
-              /* Hide navbar */
-              nav.navbar { display: none !important; }
-              /* Hide page title "Search the documentation" */
-              .container > h1, .container h1:first-of-type,
-              article > h1, article h1:first-of-type { display: none !important; }
-              /* Hide the search input box in iframe - target all possible selectors */
-              .ais-SearchBox { display: none !important; }
-              .ais-SearchBox-form { display: none !important; }
-              .ais-SearchBox-input { display: none !important; }
-              input[type="search"] { display: none !important; }
-              form input[placeholder*="search"],
-              form input[placeholder*="Search"] { display: none !important; }
-              /* Hide the entire form if it only contains search */
-              .ais-SearchBox,
-              [class*="searchBox"],
-              [class*="SearchBox"] { display: none !important; }
-              /* Hide footer */
-              footer, .footer, [class*="footer"] { display: none !important; }
-              /* Adjust container padding */
-              .container, article, main { padding-top: 1rem !important; }
-            `;
-            iframeDoc.head.appendChild(style);
+      iframeDoc.addEventListener('click', handleLinkClick, true);
 
-            // Intercept all link clicks and navigate parent window
-            const handleLinkClick = (e) => {
-              const link = e.target.closest('a');
-              if (link && link.href) {
-                e.preventDefault();
-                e.stopPropagation();
-                window.top.location.href = link.href;
-              }
-            };
-
-            iframeDoc.addEventListener('click', handleLinkClick, true);
-
-            // Also observe for dynamically added links
-            const observer = new MutationObserver((mutations) => {
-              mutations.forEach((mutation) => {
-                mutation.addedNodes.forEach((node) => {
-                  if (node.nodeName === 'A') {
-                    node.addEventListener('click', handleLinkClick, true);
-                  } else if (node.querySelectorAll) {
-                    node.querySelectorAll('a').forEach(link => {
-                      link.addEventListener('click', handleLinkClick, true);
-                    });
-                  }
-                });
+      // Also observe for dynamically added links
+      const linkObserver = new MutationObserver((mutations) => {
+        mutations.forEach((mutation) => {
+          mutation.addedNodes.forEach((node) => {
+            if (node.nodeName === 'A') {
+              node.addEventListener('click', handleLinkClick, true);
+            } else if (node.querySelectorAll) {
+              node.querySelectorAll('a').forEach(link => {
+                link.addEventListener('click', handleLinkClick, true);
               });
-            });
+            }
+          });
+        });
+      });
 
-            observer.observe(iframeDoc.body, {
-              childList: true,
-              subtree: true
-            });
+      linkObserver.observe(iframeDoc.body, {
+        childList: true,
+        subtree: true
+      });
+
+      // Initialize and restore dropdown selections
+      const initializeDropdowns = () => {
+        const selects = iframeDoc.querySelectorAll('select');
+
+        // Check if we have selects with options
+        let hasValidSelects = false;
+        selects.forEach((select) => {
+          if (select.options && select.options.length > 0) {
+            hasValidSelects = true;
           }
-        } catch (e) {
-          console.log('Cannot inject styles into iframe:', e);
+        });
+
+        if (!hasValidSelects) {
+          return false; // Not ready yet
         }
+
+        // Set dropdowns to saved values or default to "Stable"
+        selects.forEach((select, idx) => {
+          if (!select.options) return;
+
+          // Get the select element's identifier (use index or name/id if available)
+          const selectId = select.name || select.id || `select-${idx}`;
+
+          // If we have a saved value, restore it
+          if (dropdownSelections.current[selectId]) {
+            const savedValue = dropdownSelections.current[selectId];
+            select.value = savedValue;
+            // Update selectedIndex to match
+            for (let i = 0; i < select.options.length; i++) {
+              if (select.options[i].value === savedValue) {
+                select.selectedIndex = i;
+                break;
+              }
+            }
+          } else {
+            // First time: find and set to "Stable"
+            for (let i = 0; i < select.options.length; i++) {
+              const option = select.options[i];
+              const label = option.getAttribute('label') || option.text;
+
+              if (label.includes('Stable')) {
+                select.value = option.value;
+                select.selectedIndex = i;
+                dropdownSelections.current[selectId] = option.value;
+                break;
+              }
+            }
+          }
+
+          // Trigger events to ensure Algolia picks up the change
+          select.dispatchEvent(new Event('change', { bubbles: true }));
+          select.dispatchEvent(new Event('input', { bubbles: true }));
+
+          const form = select.closest('form');
+          if (form) {
+            form.dispatchEvent(new Event('change', { bubbles: true }));
+          }
+
+          // Listen for user changes to this dropdown
+          select.addEventListener('change', () => {
+            dropdownSelections.current[selectId] = select.value;
+          });
+        });
+
+        return true; // Successfully initialized
       };
 
-      iframe.addEventListener('load', injectStyles);
-      return () => iframe.removeEventListener('load', injectStyles);
+      // Try to initialize immediately
+      if (initializeDropdowns()) {
+        setIsIframeReady(true);
+      } else {
+        // Watch for select elements to appear
+        const selectObserver = new MutationObserver(() => {
+          if (initializeDropdowns()) {
+            setIsIframeReady(true);
+            selectObserver.disconnect();
+          }
+        });
+
+        selectObserver.observe(iframeDoc.body, {
+          childList: true,
+          subtree: true
+        });
+      }
+    } catch (e) {
+      console.error('Cannot inject styles into iframe:', e);
+      // Show iframe anyway even if injection failed
+      setIsIframeReady(true);
     }
-  }, [isExpanded]);
+  };
 
   // Update iframe src with debounced search query
   const iframeSrc = debouncedQuery ? `/docs/search?q=${encodeURIComponent(debouncedQuery)}` : '/docs/search';
@@ -188,6 +262,8 @@ export const InlineSearch = () => {
               onClick={() => {
                 setIsExpanded(false);
                 setSearchQuery('');
+                setIsIframeReady(false);
+                dropdownSelections.current = {};
               }}
               style={{
                 background: 'transparent',
@@ -215,17 +291,42 @@ export const InlineSearch = () => {
             overflow: 'auto',
             boxShadow: '0 4px 12px rgba(0, 0, 0, 0.1)',
             transition: 'all 0.3s ease',
-            height: '700px'
+            height: '700px',
+            position: 'relative'
           }}
         >
+          {/* Loading indicator while iframe initializes */}
+          {!isIframeReady && (
+            <div
+              style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                right: 0,
+                bottom: 0,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                backgroundColor: 'white',
+                zIndex: 10
+              }}
+            >
+              <div style={{ color: 'var(--ifm-color-content-secondary)' }}>
+                Loading search...
+              </div>
+            </div>
+          )}
           <iframe
             ref={iframeRef}
             src={iframeSrc}
+            onLoad={handleIframeLoad}
             sandbox="allow-same-origin allow-scripts allow-top-navigation allow-top-navigation-by-user-activation"
             style={{
               width: '100%',
               height: '100%',
-              border: 'none'
+              border: 'none',
+              opacity: isIframeReady ? 1 : 0,
+              transition: 'opacity 0.2s ease'
             }}
             title="Search Documentation"
           />
@@ -238,9 +339,9 @@ export const InlineSearch = () => {
 {/* Centered Hero Section */}
 <div style={{textAlign: 'center', maxWidth: '900px', margin: '0 auto 4rem', padding: '2rem 1rem'}}>
   <img src="/docs/media/rebranding/vCluster_horizontal-orange.svg" alt="vCluster" style={{height: '70px', marginBottom: '1.5rem'}} />
-  <p style={{fontSize: '1.15rem', lineHeight: '1.6', marginBottom: '2.5rem', color: 'var(--ifm-color-content-secondary)'}}>
+  <div style={{fontSize: '1.15rem', lineHeight: '1.6', marginBottom: '2.5rem', color: 'var(--ifm-color-content-secondary)'}}>
     vCluster is an open-source solution that enables teams to run virtual Kubernetes clusters inside existing infrastructure. These virtual clusters are Certified Kubernetes Distributions that provide strong workload isolation while running as nested environments on top of another Kubernetes cluster.
-  </p>
+  </div>
 
   {/* Inline Search with expansion */}
   <BrowserOnly fallback={<div style={{maxWidth: '700px', margin: '0 auto', height: '56px', border: '2px solid var(--ifm-color-emphasis-300)', borderRadius: '12px', display: 'flex', alignItems: 'center', padding: '0 1.5rem', color: 'var(--ifm-color-content-secondary)'}}>
