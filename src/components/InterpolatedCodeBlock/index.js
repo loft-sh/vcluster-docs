@@ -1,47 +1,66 @@
 import React, { useState } from 'react';
 import CodeBlock from '@theme/CodeBlock';
+import { usePageVariables } from '../PageVariables/PageVariablesContext';
 
 /**
  * InterpolatedCodeBlock - Interactive code block with editable variables
- * 
+ *
  * Creates a code block that allows users to customize variable values.
  * Variables are defined directly in the code using [[VAR:NAME:default]] syntax.
- * 
+ * Global variables can be referenced using [[GLOBAL:NAME]] syntax.
+ *
  * Features:
  * - Automatically detects variables in the code
  * - Generates input fields for each variable
  * - Populates input fields with default values
  * - Updates the code in real-time as users type
  * - Works with any language syntax highlighting
- * 
- * Usage Example:
+ * - Supports page-level global variables via PageVariables component
+ *
+ * Usage Example (local variables):
  * ```jsx
  * <InterpolatedCodeBlock
  *   code={`# Create a Kubernetes namespace
  * kubectl create namespace [[VAR:NAMESPACE:my-namespace]]
- * 
+ *
  * # Set up Helm with custom values
  * helm install my-app ./chart --set region=[[VAR:REGION:us-west-1]]`}
  *   language="bash"
  * />
  * ```
- * 
- * @param {string} code - The code block content with variables in [[VAR:NAME:default]] format
+ *
+ * Usage Example (global variables):
+ * ```jsx
+ * <PageVariables VCLUSTER_VERSION="0.25.0" REGISTRY="ecr.io/myteam" />
+ *
+ * <InterpolatedCodeBlock
+ *   code={`export VCLUSTER_VERSION=[[GLOBAL:VCLUSTER_VERSION]]
+ * export REGISTRY=[[GLOBAL:REGISTRY]]`}
+ *   language="bash"
+ * />
+ * ```
+ *
+ * @param {string} code - The code block content with variables in [[VAR:NAME:default]] or [[GLOBAL:NAME]] format
  * @param {string} language - Language for syntax highlighting (default: "bash")
  */
 const InterpolatedCodeBlock = ({ code = '', language = 'bash' }) => {
+  // Get global variables from page store
+  const globalVariables = usePageVariables();
+
   // Parse variables using [[VAR:name:default]] pattern
   const varPattern = /\[\[VAR:([^:]+):([^\]]*)\]\]/g;
-  
-  // Extract all variables from the code
+  // Parse global variables using [[GLOBAL:name]] pattern
+  const globalPattern = /\[\[GLOBAL:([^\]]+)\]\]/g;
+
+  // Extract all local variables from the code
   const initialVariables = {};
   let match;
-  
+
   // Create a copy of the pattern to avoid state issues with regex
   const patternForMatching = new RegExp(varPattern);
-  
+
   if (typeof code === 'string') {
-    // Find all variables in the code
+    // Find all local variables in the code
     while ((match = patternForMatching.exec(code)) !== null) {
       initialVariables[match[1]] = match[2];
     }
@@ -50,15 +69,22 @@ const InterpolatedCodeBlock = ({ code = '', language = 'bash' }) => {
   const [values, setValues] = useState(initialVariables);
 
   // Replace placeholders with values for rendering
-  const processedCode = typeof code === 'string' 
-    ? code.replace(varPattern, (_, name) => {
-        return values[name] || initialVariables[name] || '';
-      })
+  const processedCode = typeof code === 'string'
+    ? code
+        // First replace global variables
+        .replace(globalPattern, (_, name) => {
+          return globalVariables[name] || `[[GLOBAL:${name}]]`;
+        })
+        // Then replace local variables
+        .replace(varPattern, (_, name) => {
+          return values[name] || initialVariables[name] || '';
+        })
     : code;
 
-  // Skip rendering the interactive UI if no variables found
+  // Skip rendering the interactive UI if no local variables found
+  // (global variables don't need inputs since they're defined at page level)
   if (Object.keys(initialVariables).length === 0) {
-    return <CodeBlock language={language}>{code}</CodeBlock>;
+    return <CodeBlock language={language}>{processedCode}</CodeBlock>;
   }
 
   // Simple wrapper with light grey background
