@@ -165,6 +165,41 @@ Use `<>` to indicate placeholders in code blocks. For example:
 kubectl get pods <pod-name>
 ```
 
+#### Interactive code blocks
+
+For code blocks that contain values users need to customize, use the `InterpolatedCodeBlock` component instead of regular code blocks. This allows users to edit values directly in the documentation.
+
+**Using local variables** (user can edit each instance):
+```mdx
+import InterpolatedCodeBlock from '@site/src/components/InterpolatedCodeBlock';
+
+<InterpolatedCodeBlock
+  code={`kubectl create namespace [[VAR:NAMESPACE:my-namespace]]`}
+  language="bash"
+/>
+```
+
+**Using global variables** (define once, use everywhere on the page):
+```mdx
+import PageVariables from '@site/src/components/PageVariables';
+import InterpolatedCodeBlock from '@site/src/components/InterpolatedCodeBlock';
+
+<PageVariables VCLUSTER_VERSION="0.25.0" REGISTRY="ecr.io/myteam" />
+
+<InterpolatedCodeBlock
+  code={`export VCLUSTER_VERSION=[[GLOBAL:VCLUSTER_VERSION]]
+export REGISTRY=[[GLOBAL:REGISTRY]]`}
+  language="bash"
+/>
+```
+
+This eliminates repeated export statements across multiple code blocks. Use `PageVariables` when the same values (like version numbers or registry URLs) appear in multiple code examples on a page.
+
+Notes:
+- Place `PageVariables` before any code blocks that use those variables
+- Can be placed anywhere on the page (doesn't have to be at the top)
+- Multiple `PageVariables` components will merge together
+
 #### Formatting and variables
 
 To make code blocks easier to work with, consider adding variables and use
