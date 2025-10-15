@@ -11,16 +11,17 @@ import (
 	"strings"
 )
 
-const cliDocsDir = "./vcluster/cli"
-
 func main() {
-	var branch, vclusterDir string
+	var branch, vclusterDir, outputDir string
 	var useLocal bool
 
 	flag.StringVar(&branch, "branch", "current", "vCluster branch to checkout")
 	flag.StringVar(&vclusterDir, "vcluster-dir", "~/loft/vcluster", "Path to local vCluster repository")
+	flag.StringVar(&outputDir, "output", "./vcluster/cli", "Output directory for generated CLI docs")
 	flag.BoolVar(&useLocal, "local", true, "Use local vCluster repository")
 	flag.Parse()
+
+	cliDocsDir := outputDir
 
 	if strings.HasPrefix(vclusterDir, "~/") {
 		home, _ := os.UserHomeDir()
@@ -54,10 +55,24 @@ func main() {
 		}
 	}
 
+	// Generate docs directly here instead of calling external script
 	docsDir := filepath.Join(workDir, "docs", "pages", "cli")
 	os.MkdirAll(docsDir, 0755)
 
-	genCmd := exec.Command("go", "run", "-mod=mod", "./hack/docs/main.go")
+	// Copy our docs_gen.go to the vcluster directory
+	docsGenPath := filepath.Join(workDir, "docs_gen.go")
+	docsGenSource := filepath.Join(filepath.Dir(os.Args[0]), "docs_gen.go")
+	// If running with go run, the source is in the same directory as main.go
+	if _, err := os.Stat(docsGenSource); os.IsNotExist(err) {
+		docsGenSource = "./hack/vcluster-cli/docs_gen.go"
+	}
+	if err := copyFile(docsGenSource, docsGenPath); err != nil {
+		log.Fatal(err)
+	}
+	defer os.Remove(docsGenPath)
+
+	// Run the generation
+	genCmd := exec.Command("go", "run", "-mod=mod", docsGenPath, docsDir)
 	genCmd.Dir = workDir
 	genCmd.Stdout = os.Stdout
 	genCmd.Stderr = os.Stderr
@@ -65,11 +80,18 @@ func main() {
 		log.Fatal(err)
 	}
 
-	os.MkdirAll(cliDocsDir, 0755)
-	if err := copyDir(filepath.Join(workDir, "docs", "pages", "cli"), cliDocsDir); err != nil {
+	// Remove old generated CLI docs (*.md files only, preserve *.mdx and _category_.json)
+	if err := cleanupOldDocs(cliDocsDir); err != nil {
 		log.Fatal(err)
 	}
 
+	// Copy to final destination
+	os.MkdirAll(cliDocsDir, 0755)
+	if err := copyDir(docsDir, cliDocsDir); err != nil {
+		log.Fatal(err)
+	}
+
+	// Fix home directory paths
 	exec.Command("sh", "-c",
 		fmt.Sprintf("rg -l '/home/[^/]+/.vcluster/config.json' --glob '*.md' %s | xargs sed -i 's|/home/[^/]\\+/.vcluster/config.json|~/.vcluster/config.json|g'", cliDocsDir)).Run()
 
@@ -103,4 +125,31 @@ func copyFile(src, dst string) error {
 	defer out.Close()
 	_, err = io.Copy(out, in)
 	return err
+}
+
+// cleanupOldDocs removes old generated .md files (CLI docs) while preserving
+// manually created .mdx files and _category_.json
+func cleanupOldDocs(dir string) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil // Directory doesn't exist yet, nothing to clean
+		}
+		return err
+	}
+
+	for _, entry := range entries {
+		// Skip directories and non-.md files
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
+			continue
+		}
+
+		// Remove .md files (auto-generated CLI docs)
+		path := filepath.Join(dir, entry.Name())
+		if err := os.Remove(path); err != nil {
+			return fmt.Errorf("failed to remove %s: %w", path, err)
+		}
+	}
+
+	return nil
 }

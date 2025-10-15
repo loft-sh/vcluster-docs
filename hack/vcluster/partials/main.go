@@ -48,6 +48,9 @@ var paths = []string{
 	"rbac",
 	"privateNodes",
 	"privateNodes/autoUpgrade",
+	"privateNodes/autoNodes",
+	"privateNodes/vpn",
+	"deploy",
 	"policies/resourceQuota",
 	"policies/networkPolicy",
 	"policies/limitRange",
@@ -96,6 +99,8 @@ var paths = []string{
 	"controlPlane/backingStore/database/embedded",
 	"controlPlane/backingStore/database/external",
 	"controlPlane/backingStore",
+	"controlPlane/standalone",
+	"controlPlane/standalone/joinNode",
 	"controlPlane",
 	"logging",
 }

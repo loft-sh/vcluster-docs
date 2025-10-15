@@ -24,11 +24,11 @@ export default function ContentWrapper(props) {
       {shouldShowVClusterVersioning && <VersionSelector docsPluginId={"vcluster"} dropdownItemsAfter={[
         {
           to: "https://vcluster.com/docs/v0.24",
-          label: "v0.24 (EOS) ↗"
+          label: "v0.24 (EOL) ↗"
         },
         {
           to: "https://vcluster.com/docs/v0.23",
-          label: "v0.23 (EOS) ↗"
+          label: "v0.23 (EOL) ↗"
         },
         {
           to: "https://vcluster.com/docs/v0.22",
@@ -49,7 +49,7 @@ export default function ContentWrapper(props) {
       ]} />}
       {shouldShowPlatformVersioning && <VersionSelector docsPluginId={"platform"} dropdownItemsAfter={[
         {
-          to: "https://loft.sh/docs/getting-started/install", label: "v3.4"
+          to: "https://loft.sh/docs/getting-started/install", label: "v3.4 (EOL) ↗"
         }
       ]} />}
       <Content {...props} />
