@@ -4,6 +4,7 @@ import GlossaryTerm from '@site/src/components/GlossaryTerm'
 
 import Tabs from "@theme/Tabs";
 import TabItem from "@theme/TabItem";
+import Highlight from "@site/src/components/Highlight/Highlight"
 import CodeBlock from '@theme/CodeBlock';
 import TerraformDeploy from '!!raw-loader!./terraform-deploy.tf'
 import InstallCLIFragment from './install-cli.mdx'
@@ -22,7 +23,8 @@ All of the deployment options below have the following assumptions:
     { label: "vCluster CLI", value: "cli" },
     { label: 'Helm', value: 'helm' },
     { label: 'Terraform', value: 'terraform' },
-    { label: 'Argo CD', value: 'argo' },
+    { label: 'ArgoCD', value: 'argo' },
+    { label: 'Flux', value: 'flux' },
     { label: 'Cluster API', value: 'cluster-api' },
   ]
 }>
@@ -41,9 +43,9 @@ Install the vCluster CLI:
 <Step>
 Deploy vCluster:
 
-<InterpolatedCodeBlock 
-  code={`vcluster create [[VAR:CLUSTER NAME:my-vcluster]] --namespace [[VAR:NAMESPACE:team-x]] --values [[VAR:CONFIG FILE:vcluster.yaml]]`} 
-  language="bash" 
+<InterpolatedCodeBlock
+  code={`vcluster create [[VAR:CLUSTER NAME:my-vcluster]] --namespace [[VAR:NAMESPACE:team-x]] --values [[VAR:CONFIG FILE:vcluster.yaml]]`}
+  language="bash"
 />
 
 :::note
@@ -63,14 +65,14 @@ Helm provides fine-grained control over the deployment process and integrates we
 
 Deploy vCluster using the `helm upgrade` command:
 
-<InterpolatedCodeBlock 
+<InterpolatedCodeBlock
   code={`helm upgrade --install [[VAR:CLUSTER NAME:my-vcluster]] vcluster \\
     --values [[VAR:CONFIG FILE:vcluster.yaml]] \\
     --repo https://charts.loft.sh \\
     --namespace [[VAR:NAMESPACE:team-x]] \\
     --repository-config='' \\
-    --create-namespace`} 
-  language="bash" 
+    --create-namespace`}
+  language="bash"
 />
 
 </Step>
@@ -145,24 +147,26 @@ To deploy vCluster using ArgoCD, you need the following files:
 Create the ArgoCD `Application` file `<CLUSTER_NAME>-app.yaml`, which references the vCluster Helm chart:
 
 <InterpolatedCodeBlock
-  code={`apiVersion: argoproj.io/v1alpha1
-kind: Application
-metadata:
-  name: [[VAR:CLUSTER NAME:my-vcluster]]
-  namespace: argocd
-spec:
-  project: default
-  source:
-    chart: vcluster
-    repoURL: https://charts.loft.sh
-    helm:
-      releaseName: [[VAR:CLUSTER NAME:my-vcluster]]
-      valueFiles:
-        - vcluster.yaml
-  destination:
-    server: https://kubernetes.default.svc
-    namespace: [[VAR:NAMESPACE:team-x]]`} 
-  language="yaml" 
+  code={`---
+  apiVersion: argoproj.io/v1alpha1
+  kind: Application
+  metadata:
+    name: [[VAR:CLUSTER NAME:my-vcluster]]
+    namespace: argocd
+  spec:
+    project: default
+    source:
+      chart: vcluster
+      repoURL: https://charts.loft.sh
+      helm:
+        releaseName: [[VAR:CLUSTER NAME:my-vcluster]]
+        valueFiles:
+          - vcluster.yaml
+    destination:
+      server: https://kubernetes.default.svc
+      namespace: [[VAR:NAMESPACE:team-x]]
+  `}
+  language="yaml"
 />
 
 </Step>
@@ -177,10 +181,155 @@ Commit and push these files to your configured ArgoCD repository.
 
 Sync your ArgoCD repository with your configured cluster:
 
-<InterpolatedCodeBlock 
- code={`argocd app sync [[VAR:CLUSTER NAME:my-vcluster]]`} 
- language="bash" 
+<InterpolatedCodeBlock
+ code={`argocd app sync [[VAR:CLUSTER NAME:my-vcluster]]`}
+ language="bash"
 />
+
+</Step>
+</Flow>
+
+</TabItem>
+<TabItem value="flux">
+<Flow id="flux-deploy-vcluster">
+<Step>
+Create a `HelmRepository` source in the Git repository that Flux monitors, so Flux can fetch the vCluster Helm charts automatically. In this example, the related files are stored under the `clusters` folder.
+Save the following file as `clusters/sources/vcluster-repository.yaml`:
+
+<InterpolatedCodeBlock
+  code={`---
+  apiVersion: source.toolkit.fluxcd.io/v1
+  kind: HelmRepository
+  metadata:
+    name: [[VAR:REPOSITORY NAME:vcluster]]
+    namespace: [[VAR:FLUX NAMESPACE:flux-system]]
+  spec:
+    interval: 1h
+    url: https://charts.loft.sh
+  `}
+  language="yaml"
+/>
+
+</Step>
+
+<Step>
+The vCluster will be deployed into the namespace `team-x` of the host cluster. If this namespace doesn’t already exist, create it with:
+<InterpolatedCodeBlock
+ code={`kubectl create namespace [[VAR:NAMESPACE:team-x]]`}
+ language="bash"
+/>
+
+
+</Step>
+
+<Step>
+
+Create a vCluster `HelmRelease` file in your Git repository. This `HelmRelease` tells Flux how to deploy a vCluster in your Kubernetes cluster using the configured Helm charts in Step 1.
+Save the following file as `clusters/production/vcluster-demo.yaml`:
+
+<InterpolatedCodeBlock
+  code={`---
+  apiVersion: helm.toolkit.fluxcd.io/v2
+  kind: HelmRelease
+  metadata:
+    name: [[VAR:RELEASE NAME:vcluster-demo]]
+    namespace: [[VAR:NAMESPACE:team-x]]
+  spec:
+    interval: 10m
+    chart:
+      spec:
+        chart: vcluster
+        version: "0.28.x"
+        sourceRef:
+          kind: HelmRepository
+          name: [[VAR:REPOSITORY NAME:vcluster]]
+          namespace: [[VAR:FLUX NAMESPACE:flux-system]]
+    values:
+      # Configure TLS SAN for the certificate
+      controlPlane:
+        proxy:
+          extraSANs:
+            - "[[VAR:RELEASE NAME:vcluster-demo]].[[VAR:NAMESPACE:team-x]].svc.cluster.local"
+        coredns:
+          enabled: true
+
+      exportKubeConfig:
+        # Set a meaningful context name
+        context: default
+        # Use a server URL that matches the TLS SAN
+        server: https://[[VAR:RELEASE NAME:vcluster-demo]].[[VAR:NAMESPACE:team-x]].svc.cluster.local:443
+        # Skip TLS verification when Flux connects to the vCluster
+        insecure: true
+        # Specify the secret where the KubeConfig is stored
+        secret:
+          name: [[VAR:SECRET NAME:vcluster-flux-kubeconfig]]
+      sync:
+        toHost:
+          ingresses:
+            enabled: true
+  `}
+  language="yaml"
+/>
+The content in `vcluster.yaml` should be placed under the `values`.
+
+Unlike ArgoCD, Flux requires the KubeConfig secret to be able to access the vCluter's API server and deploy to vCluster. 
+The `exportKubeConfig` configuration under `values`:
+- Exports the virtual cluster KubeConfig as a Secret in the host namespace
+- Makes the Secret available for Flux to use with the `spec.kubeConfig` field
+- Uses a server URL that is accessible from the Flux controllers (replace `vcluster-name` and `team-x` with your actual values)
+- Sets `insecure: true` to automatically skip TLS certificate verification
+- Adds a TLS SAN (Subject Alternative Name) that matches the server URL, which helps prevent certificate verification errors
+
+:::info KubeConfig Secret key
+The vCluster `exportKubeConfig` configuration creates a Secret with the KubeConfig data stored under the key `config`. When referring to this Secret in Flux resources, you must specify this key in the `secretRef.key` field, as shown in the examples below.
+
+<InterpolatedCodeBlock
+  code={`# In Flux HelmRelease
+spec:
+  kubeConfig:
+    secretRef:
+      name: [[VAR:SECRET NAME:vcluster-flux-kubeconfig]]
+      key: config  # Must match the key used in the vCluster-generated Secret`}
+  language="yaml"
+/>
+:::
+
+:::warning Certificate verification considerations
+When using vCluster with Flux, proper TLS certificate configuration is essential:
+
+1. Set `exportKubeConfig.insecure: true` in your vCluster configuration
+2. Configure proper TLS SANs with the `--tls-san` flag in vCluster configuration
+3. Ensure the server URL matches the certificate's SAN
+
+<InterpolatedCodeBlock
+  code={`
+# In your vCluster configuration
+controlPlane:
+  proxy:
+    extraSANs:
+      - "[[VAR:RELEASE NAME:vcluster-demo]].[[VAR:NAMESPACE:team-x]].svc.cluster.local"
+
+exportKubeConfig:
+  server: https://[[VAR:RELEASE NAME:vcluster-demo]].[[VAR:NAMESPACE:team-x]].svc.cluster.local:443
+  insecure: true`}
+  language="yaml"
+/>
+:::
+
+</Step>
+
+<Step>
+After adding the `HelmRelease` and any supporting files to your Git repository, commit and push them:
+
+<InterpolatedCodeBlock
+  code={`git add [[VAR:FOLDER NAME:clusters]]/
+git commit -m "Add vCluster demo configuration"
+git push`}
+  language="bash"
+/>
+
+
+Once the changes are pushed, Flux will automatically detect them and deploy the vCluster according to the configuration in your repository.
 
 </Step>
 </Flow>
@@ -211,11 +360,11 @@ clusterctl init --infrastructure vcluster:v0.2.0
 
 Export environment variables for the Cluster API provider to create the manifest. The manifest is applied to your Kubernetes cluster, which deploys a vCluster.
 
-<InterpolatedCodeBlock 
+<InterpolatedCodeBlock
   code={`export CLUSTER_NAME=[[VAR:CLUSTER NAME:my-vcluster]]
 export CLUSTER_NAMESPACE=[[VAR:NAMESPACE:team-x]]
-export VCLUSTER_YAML=$(awk '{printf "%s\\n", $0}' [[VAR:CONFIG FILE:vcluster.yaml]])`} 
-  language="bash" 
+export VCLUSTER_YAML=$(awk '{printf "%s\\n", $0}' [[VAR:CONFIG FILE:vcluster.yaml]])`}
+  language="bash"
 />
 
 </Step>
@@ -224,9 +373,9 @@ export VCLUSTER_YAML=$(awk '{printf "%s\\n", $0}' [[VAR:CONFIG FILE:vcluster.yam
 
 Create the namespace for the vCluster using the exported variable:
 
-<InterpolatedCodeBlock 
-  code={`kubectl create namespace [[VAR:CLUSTER NAMESPACE:team-x]]`} 
-  language="bash" 
+<InterpolatedCodeBlock
+  code={`kubectl create namespace [[VAR:CLUSTER NAMESPACE:team-x]]`}
+  language="bash"
 />
 </Step>
 
