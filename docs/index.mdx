@@ -12,15 +12,331 @@ custom_edit_url: null
 import Link from '@docusaurus/Link';
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
+import BrowserOnly from '@docusaurus/BrowserOnly';
+import React, { useState, useRef, useEffect } from 'react';
 
-<div className="intro-card">
-  <div style={{marginBottom: '1.5rem', display: 'flex', alignItems: 'center'}}>
-    <img src="/docs/media/rebranding/vCluster_horizontal-orange.svg" alt="vCluster" style={{height: '40px'}} />
-  </div>
-  <div style={{fontSize: '1.1rem', lineHeight: '1.6', marginBottom: '1.5rem'}}>
+export const InlineSearch = () => {
+  const [isExpanded, setIsExpanded] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [debouncedQuery, setDebouncedQuery] = useState('');
+  const [isIframeReady, setIsIframeReady] = useState(false);
+  const inputRef = useRef(null);
+  const iframeRef = useRef(null);
+  const debounceTimerRef = useRef(null);
+
+  // Detect Mac for keyboard shortcut hint
+  const isMac = typeof navigator !== 'undefined' && navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+
+  useEffect(() => {
+    if (isExpanded && inputRef.current) {
+      inputRef.current.focus();
+    }
+  }, [isExpanded]);
+
+  // Keyboard shortcuts: Ctrl/Cmd+K to open, Esc to close
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      // Ctrl+K or Cmd+K to open search
+      if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+        e.preventDefault();
+        e.stopPropagation();
+        setIsExpanded(true);
+      }
+      // Esc to close search
+      if (e.key === 'Escape' && isExpanded) {
+        e.preventDefault();
+        setIsExpanded(false);
+        setSearchQuery('');
+        setIsIframeReady(false);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown, true);
+    return () => window.removeEventListener('keydown', handleKeyDown, true);
+  }, [isExpanded]);
+
+  // Debounce search query to avoid iframe reloading on every keystroke
+  useEffect(() => {
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+    }
+
+    debounceTimerRef.current = setTimeout(() => {
+      setDebouncedQuery(searchQuery);
+      // Reset iframe visibility when query changes (new iframe load)
+      setIsIframeReady(false);
+    }, 300); // Wait 300ms after user stops typing
+
+    return () => {
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+      }
+    };
+  }, [searchQuery]);
+
+  // Handle iframe load event
+  const handleIframeLoad = () => {
+    // Restore focus to input
+    if (inputRef.current) {
+      inputRef.current.focus();
+    }
+
+    const iframe = iframeRef.current;
+    if (!iframe) return;
+
+    try {
+      const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
+      if (!iframeDoc) return;
+
+      // Inject CSS to hide elements
+      const style = iframeDoc.createElement('style');
+      style.textContent = `
+        /* Hide announcement bar */
+        div[class*="announcementBar"],
+        div[class*="AnnouncementBar"],
+        [class*="announcementBarContent"] {
+          display: none !important;
+          visibility: hidden !important;
+          height: 0 !important;
+          overflow: hidden !important;
+        }
+
+        /* Hide navbar completely */
+        nav.navbar,
+        nav[class*="navbar"],
+        header.navbar,
+        header[class*="navbar"] {
+          display: none !important;
+          visibility: hidden !important;
+          height: 0 !important;
+          overflow: hidden !important;
+        }
+
+        /* Hide page title "Search the documentation" */
+        .container > h1,
+        .container h1:first-of-type,
+        .container h1:first-child,
+        article > h1,
+        article h1:first-of-type,
+        article h1:first-child,
+        main > h1,
+        main h1:first-of-type,
+        main h1:first-child {
+          display: none !important;
+          visibility: hidden !important;
+        }
+
+        /* Hide the search input box in iframe */
+        .ais-SearchBox,
+        .ais-SearchBox-form,
+        .ais-SearchBox-input,
+        [class*="SearchBox"],
+        [class*="searchBox"],
+        input[type="search"],
+        form input[placeholder*="search" i],
+        form input[placeholder*="type" i] {
+          display: none !important;
+          visibility: hidden !important;
+          height: 0 !important;
+          pointer-events: none !important;
+        }
+
+        /* Hide footer */
+        footer,
+        .footer,
+        [class*="footer"] {
+          display: none !important;
+          visibility: hidden !important;
+        }
+
+        /* Adjust container padding */
+        .container,
+        article,
+        main {
+          padding-top: 1rem !important;
+        }
+      `;
+      iframeDoc.head.appendChild(style);
+
+      // Show iframe now that CSS is injected (eliminates FOUC)
+      setIsIframeReady(true);
+
+      // Intercept all link clicks and navigate parent window
+      const handleLinkClick = (e) => {
+        const link = e.target.closest('a');
+        if (link && link.href) {
+          e.preventDefault();
+          e.stopPropagation();
+          window.top.location.href = link.href;
+        }
+      };
+
+      iframeDoc.addEventListener('click', handleLinkClick, true);
+
+      // Observe for dynamically added links
+      const linkObserver = new MutationObserver((mutations) => {
+        mutations.forEach((mutation) => {
+          mutation.addedNodes.forEach((node) => {
+            if (node.nodeName === 'A') {
+              node.addEventListener('click', handleLinkClick, true);
+            } else if (node.querySelectorAll) {
+              node.querySelectorAll('a').forEach(link => {
+                link.addEventListener('click', handleLinkClick, true);
+              });
+            }
+          });
+        });
+      });
+
+      linkObserver.observe(iframeDoc.body, {
+        childList: true,
+        subtree: true
+      });
+    } catch (e) {
+      console.error('Cannot inject styles into iframe:', e);
+      // Show iframe even on error to avoid permanent blank state
+      setIsIframeReady(true);
+    }
+  };
+
+  // Update iframe src with debounced search query
+  const iframeSrc = debouncedQuery ? `/docs/search?q=${encodeURIComponent(debouncedQuery)}` : '/docs/search';
+
+  const handleSearch = (e) => {
+    const value = e.target.value;
+    setSearchQuery(value);
+  };
+
+  return (
+    <div style={{maxWidth: '1400px', margin: '0 auto'}}>
+      {/* Custom Search Box */}
+      <div className="hero-search-wrapper" style={{maxWidth: '700px', margin: '0 auto'}}>
+        <div
+          style={{
+            width: '100%',
+            backgroundColor: 'var(--ifm-background-color)',
+            border: '2px solid var(--ifm-color-emphasis-300)',
+            borderRadius: '12px',
+            height: '56px',
+            padding: '0 1.5rem',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.5rem',
+            transition: 'all 0.2s ease',
+            boxShadow: isExpanded ? '0 2px 8px rgba(0, 0, 0, 0.1)' : 'none'
+          }}
+        >
+          <svg width="20" height="20" viewBox="0 0 20 20">
+            <path d="M14.386 14.386l4.0877 4.0877-4.0877-4.0877c-2.9418 2.9419-7.7115 2.9419-10.6533 0-2.9419-2.9418-2.9419-7.7115 0-10.6533 2.9418-2.9419 7.7115-2.9419 10.6533 0 2.9419 2.9418 2.9419 7.7115 0 10.6533z" stroke="currentColor" fill="none" fillRule="evenodd" strokeLinecap="round" strokeLinejoin="round"></path>
+          </svg>
+          <input
+            ref={inputRef}
+            type="text"
+            placeholder="Search..."
+            value={searchQuery}
+            onChange={handleSearch}
+            onFocus={() => setIsExpanded(true)}
+            style={{
+              flex: 1,
+              border: 'none',
+              outline: 'none',
+              fontSize: '1rem',
+              backgroundColor: 'transparent',
+              color: 'var(--ifm-font-color-base)'
+            }}
+          />
+          {!isExpanded && (
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.25rem',
+                fontSize: '0.85rem',
+                color: 'var(--ifm-color-emphasis-500)',
+                opacity: 0.6,
+                fontFamily: 'monospace',
+                padding: '0.25rem 0.5rem',
+                border: '1px solid var(--ifm-color-emphasis-300)',
+                borderRadius: '4px'
+              }}
+            >
+              {isMac ? '⌘K' : 'Ctrl+K'}
+            </div>
+          )}
+          {isExpanded && (
+            <button
+              onClick={() => {
+                setIsExpanded(false);
+                setSearchQuery('');
+                setIsIframeReady(false);
+              }}
+              style={{
+                background: 'transparent',
+                border: 'none',
+                cursor: 'pointer',
+                fontSize: '1.2rem',
+                color: 'var(--ifm-color-content-secondary)',
+                padding: '0'
+              }}
+            >
+              ✕
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Inline Search Results */}
+      {isExpanded && (
+        <div
+          style={{
+            marginTop: '2rem',
+            backgroundColor: 'white',
+            borderRadius: '12px',
+            border: '2px solid var(--ifm-color-emphasis-300)',
+            overflow: 'hidden',
+            boxShadow: '0 4px 12px rgba(0, 0, 0, 0.1)',
+            transition: 'all 0.3s ease',
+            height: '700px',
+            position: 'relative'
+          }}
+        >
+          <iframe
+            ref={iframeRef}
+            src={iframeSrc}
+            onLoad={handleIframeLoad}
+            sandbox="allow-same-origin allow-scripts allow-top-navigation allow-top-navigation-by-user-activation"
+            style={{
+              width: '100%',
+              height: '100%',
+              border: 'none',
+              visibility: isIframeReady ? 'visible' : 'hidden',
+              opacity: isIframeReady ? '1' : '0',
+              transition: 'opacity 0.15s ease-in-out'
+            }}
+            title="Search Documentation"
+          />
+        </div>
+      )}
+    </div>
+  );
+};
+
+{/* Centered Hero Section */}
+<div style={{textAlign: 'center', maxWidth: '900px', margin: '0 auto 4rem', padding: '2rem 1rem'}}>
+  <img src="/docs/media/rebranding/vCluster_horizontal-orange.svg" alt="vCluster" style={{height: '70px', marginBottom: '1.5rem'}} />
+  <div style={{fontSize: '1.15rem', lineHeight: '1.6', marginBottom: '2.5rem', color: 'var(--ifm-color-content-secondary)'}}>
     vCluster is an open-source solution that enables teams to run virtual Kubernetes clusters inside existing infrastructure. These virtual clusters are Certified Kubernetes Distributions that provide strong workload isolation while running as nested environments on top of another Kubernetes cluster.
   </div>
-  <a href="/docs/vcluster/" className="button button--primary" style={{textDecoration: 'none', padding: '0.75rem 1.25rem', fontSize: '1.05rem'}}>Get started →</a>
+
+  {/* Inline Search with expansion */}
+  <BrowserOnly fallback={<div style={{maxWidth: '700px', margin: '0 auto', height: '56px', border: '2px solid var(--ifm-color-emphasis-300)', borderRadius: '12px', display: 'flex', alignItems: 'center', padding: '0 1.5rem', color: 'var(--ifm-color-content-secondary)'}}>
+    <svg width="20" height="20" viewBox="0 0 20 20" style={{marginRight: '0.5rem'}}>
+      <path d="M14.386 14.386l4.0877 4.0877-4.0877-4.0877c-2.9418 2.9419-7.7115 2.9419-10.6533 0-2.9419-2.9418-2.9419-7.7115 0-10.6533 2.9418-2.9419 7.7115-2.9419 10.6533 0 2.9419 2.9418 2.9419 7.7115 0 10.6533z" stroke="currentColor" fill="none" fillRule="evenodd" strokeLinecap="round" strokeLinejoin="round"></path>
+    </svg>
+    Search...
+  </div>}>
+    {() => <InlineSearch />}
+  </BrowserOnly>
 </div>
 
 <style dangerouslySetInnerHTML={{__html: `
