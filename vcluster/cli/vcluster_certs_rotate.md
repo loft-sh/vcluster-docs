@@ -12,9 +12,10 @@ Rotates control-plane client and server certs
 vcluster certs rotate VCLUSTER_NAME [flags]
 ```
 
+<!-- vale off -->
 ```
 ##############################################################
-################### vcluster certs rotate ####################
+################### vcluster/cli/vcluster_connect.mdluster certs rotate ####################
 ##############################################################
 Rotates the control-plane client and server leaf certificates
 of the given virtual cluster.
@@ -23,6 +24,7 @@ Examples:
 vcluster -n test certs rotate test
 ##############################################################
 ```
+<!-- vale on -->
 
 
 ## Flags

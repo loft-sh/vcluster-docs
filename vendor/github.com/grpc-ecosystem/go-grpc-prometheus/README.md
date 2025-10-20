@@ -209,7 +209,7 @@ sum(rate(grpc_server_started_total{job="foo",grpc_type="server_stream"}[10m])) b
 For `job="foo"` what is the `grpc_service`-wide `10m` average of messages returned for all `
 server_stream` RPCs. This allows you to track the stream sizes returned by your system, e.g. allows 
 you to track when clients started to send "wide" queries that ret
-Note the divisor is the number of started RPCs, in order to account for in-flight requests.
+Note the divisor is the number of started RPCs, to account for in-flight requests.
 
 ### 99%-tile latency of unary requests
 ```jsoniq

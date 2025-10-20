@@ -24,8 +24,8 @@
 
 ## [v3.10.2] - 2023-03-09 - DO NOT USE
 
-- introduced MergePathStrategy to be able to revert behaviour of path concatenation to 3.9.0
-  see comment in Readme how to customize this behaviour.
+- introduced MergePathStrategy to be able to revert behavior of path concatenation to 3.9.0
+  see comment in Readme how to customize this behavior.
 
 ## [v3.10.1] - 2022-11-19 - DO NOT USE
 
@@ -46,8 +46,8 @@
 
 - use exact matching of allowed domain entries, issue #489 (#493)
 	- this changes fixes [security] Authorization Bypass Through User-Controlled Key
-	  by changing the behaviour of the AllowedDomains setting in the CORS filter.
-	  To support the previous behaviour, the CORS filter type now has a AllowedDomainFunc
+	  by changing the behavior of the AllowedDomains setting in the CORS filter.
+	  To support the previous behavior, the CORS filter type now has a AllowedDomainFunc
 	  callback mechanism which is called when a simple domain match fails. 
 - add test and fix for POST without body and Content-type, issue #492 (#496)
 - [Minor] Bad practice to have a mix of Receiver types. (#491)
@@ -288,7 +288,7 @@ v2.6.0
 - (api add) ReturnsError allows you to document Http codes in swagger
 - fixed problem with greedy CurlyRouter
 - (api add) Access-Control-Max-Age in CORS
-- add tracing functionality (injectable) for debugging purposes
+- add tracing capability (injectable) for debugging purposes
 - support JSON parse 64bit int 
 - fix empty parameters for swagger
 - WebServicesUrl is now optional for swagger

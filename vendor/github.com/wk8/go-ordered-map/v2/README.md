@@ -147,7 +147,7 @@ err := yaml.Unmarshal(data, &om)
 
 ## Alternatives
 
-There are several other ordered map golang implementations out there, but I believe that at the time of writing none of them offer the same functionality as this library; more specifically:
+There are several other ordered map golang implementations out there, but I believe that at the time of writing none of them offer the same capability as this library; more specifically:
 * [iancoleman/orderedmap](https://github.com/iancoleman/orderedmap) only accepts `string` keys, its `Delete` operations are linear
 * [cevaris/ordered_map](https://github.com/cevaris/ordered_map) uses a channel for iterations, and leaks goroutines if the iteration is interrupted before fully traversing the map
 * [mantyr/iterator](https://github.com/mantyr/iterator) also uses a channel for iterations, and its `Delete` operations are linear

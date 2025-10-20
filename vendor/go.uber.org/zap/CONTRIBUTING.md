@@ -60,7 +60,7 @@ project maintainers will merge them.
 
 We're much more likely to approve your changes if you:
 
-- Add tests for new functionality.
+- Add tests for new capability.
 - Write a [good commit message][commit-message].
 - Maintain backward compatibility.
 

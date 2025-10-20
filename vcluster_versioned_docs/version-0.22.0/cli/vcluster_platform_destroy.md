@@ -41,7 +41,7 @@ VirtualClusterInstances managed with driver helm will be deleted, but the underl
       --context string            The kube context to use for installation
       --delete-namespace          Whether to delete the namespace or not (default true)
       --force                     Try uninstalling even if the platform is not installed. '--namespace' is required if true
-      --force-remove-finalizers   IMPORTANT! Removing finalizers may cause unintended behaviours like leaving resources behind, but will ensure the platform is uninstalled.
+      --force-remove-finalizers   IMPORTANT! Removing finalizers may cause unintended behaviors like leaving resources behind, but will ensure the platform is uninstalled.
   -h, --help                      help for destroy
       --ignore-not-found          Exit successfully if platform installation is not found
       --namespace string          The namespace vCluster Platform is installed in

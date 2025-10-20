@@ -205,7 +205,7 @@ jsonparser.EachKey(smallFixture, func(idx int, value []byte, vt jsonparser.Value
 ```go
 func Set(data []byte, setValue []byte, keys ...string) (value []byte, err error)
 ```
-Receives existing data structure, key path to set, and value to set at that key. *This functionality is experimental.*
+Receives existing data structure, key path to set, and value to set at that key. *This capability is experimental.*
 
 Returns:
 * `value` - Pointer to original data structure with updated or added key value.
@@ -219,7 +219,7 @@ Note that keys can be an array indexes: `jsonparser.Set(data, []byte("http://git
 ```go
 func Delete(data []byte, keys ...string) value []byte
 ```
-Receives existing data structure, and key path to delete. *This functionality is experimental.*
+Receives existing data structure, and key path to delete. *This capability is experimental.*
 
 Returns:
 * `value` - Pointer to original data structure with key path deleted if it can be found. If there is no key path, then the whole data structure is deleted.

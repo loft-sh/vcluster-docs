@@ -170,7 +170,7 @@ OpenTelemetry is an evolving specification, one where the desires and
 use cases are clear, but the method to satisfy those uses cases are
 not.
 
-As such, Contributions should provide functionality and behavior that
+As such, Contributions should provide capability and behavior that
 conforms to the specification, but the interface and structure is
 flexible.
 
@@ -516,9 +516,9 @@ issue.
 
 #### How to Change Other Interfaces
 
-If new functionality is needed for an interface that cannot be changed it MUST
+If new capability is needed for an interface that cannot be changed it MUST
 be added by including an additional interface. That added interface can be a
-simple interface for the specific functionality that you want to add or it can
+simple interface for the specific capability that you want to add or it can
 be a super-set of the original interface. For example, if you wanted to a
 `Close` method to the `Exporter` interface:
 
@@ -565,10 +565,10 @@ and the `Close` method called.
 This super-set approach can be useful if there is explicit behavior that needs
 to be coupled with the original type and passed as a unified type to a new
 function, but, because of this coupling, it also limits the applicability of
-the added functionality. If there exist other interfaces where this
-functionality should be added, each one will need their own super-set
+the added capability. If there exist other interfaces where this
+capability should be added, each one will need their own super-set
 interfaces and will duplicate the pattern. For this reason, the simple targeted
-interface that defines the specific functionality should be preferred.
+interface that defines the specific capability should be preferred.
 
 See also:
 [Keeping Your Modules Compatible: Working with interfaces](https://go.dev/blog/module-compatibility#working-with-interfaces).
@@ -594,7 +594,7 @@ There are two known exceptions to this rule:
 
 - `go.opentelemetry.io/otel/internal/global`
   - This package manages global state for all of opentelemetry-go. It needs to
-  be a single package in order to ensure the uniqueness of the global state.
+  be a single package to ensure the uniqueness of the global state.
 - `go.opentelemetry.io/otel/internal/baggage`
   - This package provides values in a `context.Context` that need to be
   recognized by `go.opentelemetry.io/otel/baggage` and

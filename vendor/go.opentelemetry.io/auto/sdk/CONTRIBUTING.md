@@ -24,4 +24,4 @@ Ideally, it adds none.
 It also needs to operate efficiently.
 
 Finally, this module is designed to be user-friendly to Go development.
-It hides complexity in order to provide simpler APIs when the previous goals can all still be met.
+It hides complexity to provide simpler APIs when the previous goals can all still be met.

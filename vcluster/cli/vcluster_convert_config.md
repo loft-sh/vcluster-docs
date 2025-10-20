@@ -11,7 +11,7 @@ Converts virtual cluster config values to the v0.20 format
 ```
 vcluster convert config [flags]
 ```
-
+<!-- vale off -->  
 ```
 ##############################################################
 ################## vcluster convert config ###################
@@ -24,6 +24,7 @@ vcluster convert config --distro k8s -f /my/k8s/values.yaml
 vcluster convert config --distro k3s < /my/k3s/values.yaml
 ##############################################################
 ```
+<!-- vale on -->  
 
 
 ## Flags

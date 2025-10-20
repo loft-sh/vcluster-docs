@@ -15,7 +15,7 @@ which is also exposed for users interested in a more low-level API.
 ```go
 // myH is your app's http handler, perhaps a http.ServeMux or similar.
 var myH http.Handler
-// wrappedH wraps myH in order to log every request.
+// wrappedH wraps myH to log every request.
 wrappedH := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 	m := httpsnoop.CaptureMetrics(myH, w, r)
 	log.Printf(

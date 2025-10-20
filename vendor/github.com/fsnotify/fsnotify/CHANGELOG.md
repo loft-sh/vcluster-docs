@@ -9,7 +9,7 @@
 
 ### Changes and fixes
 
-- windows: fix behaviour of `WatchList()` to be consistent with other platforms ([#610])
+- windows: fix behavior of `WatchList()` to be consistent with other platforms ([#610])
 
 - kqueue: ignore events with Ident=0 ([#590])
 

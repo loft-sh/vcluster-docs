@@ -277,7 +277,7 @@ that vCluster creates. Use **virtual clusters**.
 
 - vCluster: open source project that helps you create virtual clusters
 - vCluster Pro: a single enhanced/paid/upgraded virtual cluster that uses Pro
-  functionality (as labeled "Pro")
+  capability (as labeled "Pro")
 - vCluster Platform: the management platform and UI for managing open source and
   commercial vCluster instances
 
@@ -311,7 +311,7 @@ To maintain quality and consistency in our technical documentation, we use
 
 ### What is Vale?
 
-[Vale](https://vale.sh/) is an open-source, command-line linter that helps you
+[Vale](https://vale.sh/) is an open source, command-line linter that helps you
 enforce style and grammar rules in written documentation. It’s highly
 configurable, allowing you to define custom rules that suit your project’s
 needs. By integrating it into our CI pipeline, contributors can receive

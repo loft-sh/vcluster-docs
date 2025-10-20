@@ -16,7 +16,7 @@ This package can be used to generate [JSON Schemas](http://json-schema.org/lates
 This repository is a fork of the original [jsonschema](https://github.com/alecthomas/jsonschema) by [@alecthomas](https://github.com/alecthomas). At [Invopop](https://invopop.com) we use jsonschema as a cornerstone in our [GOBL library](https://github.com/invopop/gobl), and wanted to be able to continue building and adding features without taking up Alec's time. There have been a few significant changes that probably mean this version is a not compatible with with Alec's:
 
 - The original was stuck on the draft-04 version of JSON Schema, we've now moved to the latest JSON Schema Draft 2020-12.
-- Schema IDs are added automatically from the current Go package's URL in order to be unique, and can be disabled with the `Anonymous` option.
+- Schema IDs are added automatically from the current Go package's URL to be unique, and can be disabled with the `Anonymous` option.
 - Support for the `FullyQualifyTypeName` option has been removed. If you have conflicts, you should use multiple schema files with different IDs, set the `DoNotReference` option to true to hide definitions completely, or add your own naming strategy using the `Namer` property.
 - Support for `yaml` tags and related options has been dropped for the sake of simplification. There were a [few inconsistencies](https://github.com/invopop/jsonschema/pull/21) around this that have now been fixed.
 
@@ -125,9 +125,9 @@ Support for `yaml` tags has now been removed. If you feel very strongly about th
 
 The recommended approach if you need to deal with YAML data is to first convert to JSON. The [invopop/yaml](https://github.com/invopop/yaml) library will make this trivial.
 
-## Configurable behaviour
+## Configurable behavior
 
-The behaviour of the schema generator can be altered with parameters when a `jsonschema.Reflector`
+The behavior of the schema generator can be altered with parameters when a `jsonschema.Reflector`
 instance is created.
 
 ### ExpandedStruct

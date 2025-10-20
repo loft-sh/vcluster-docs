@@ -12,6 +12,7 @@ Rotates the CA certificate
 vcluster certs rotate-ca VCLUSTER_NAME [flags]
 ```
 
+<!-- vale off -->  
 ```
 ##############################################################
 ################## vcluster certs rotate-ca ##################
@@ -28,6 +29,7 @@ Examples:
 vcluster certs rotate-ca test
 ##############################################################
 ```
+<!-- vale on -->  
 
 
 ## Flags

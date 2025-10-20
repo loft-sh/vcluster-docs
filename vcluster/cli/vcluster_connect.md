@@ -11,7 +11,7 @@ Connect to a virtual cluster
 ```
 vcluster connect VCLUSTER_NAME [flags]
 ```
-
+<!-- vale off -->  
 ```
 #######################################################
 ################## vcluster connect ###################
@@ -25,6 +25,7 @@ vcluster connect test -n test -- bash
 vcluster connect test -n test -- kubectl get ns
 #######################################################
 ```
+<!-- vale on -->  
 
 
 ## Flags

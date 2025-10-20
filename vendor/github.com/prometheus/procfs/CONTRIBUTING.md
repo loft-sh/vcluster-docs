@@ -83,7 +83,7 @@ should contain the path to the file(s) being read and a URL of the linux kernel 
 
 ### Reading vs. Parsing
 
-Most functionality in this library consists of reading files and then parsing the text into structured data.  In most
+Most capability in this library consists of reading files and then parsing the text into structured data.  In most
 cases reading and parsing should be separated into different functions/methods with a public `fs.Thing()` method and 
 a private `parseThing(r Reader)` function.  This provides a logical separation and allows parsing to be tested
 directly without the need to read from the filesystem.  Using a `Reader` argument is preferred over other data types

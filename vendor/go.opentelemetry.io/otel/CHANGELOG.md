@@ -164,7 +164,7 @@ The next release will require at least [Go 1.22].
 - Update the concurrency requirements of `Exporter` in `go.opentelemetry.io/otel/sdk/log`. (#5666)
 - `SimpleProcessor` in `go.opentelemetry.io/otel/sdk/log` synchronizes `OnEmit` calls. (#5666)
 - The `Processor` interface in `go.opentelemetry.io/otel/sdk/log` no longer includes the `Enabled` method.
-  See the `FilterProcessor` interface type added in `go.opentelemetry.io/otel/sdk/log/internal/x` to continue providing this functionality. (#5692)
+  See the `FilterProcessor` interface type added in `go.opentelemetry.io/otel/sdk/log/internal/x` to continue providing this capability. (#5692)
 - The `SimpleProcessor` type in `go.opentelemetry.io/otel/sdk/log` is no longer comparable. (#5693)
 - The `BatchProcessor` type in `go.opentelemetry.io/otel/sdk/log` is no longer comparable. (#5693)
 
@@ -311,7 +311,7 @@ The next release will require at least [Go 1.22].
   This value represents an unset severity level. (#5072)
 - Add `Empty` function in `go.opentelemetry.io/otel/log` to return a `KeyValue` for an empty value. (#5076)
 - Add `go.opentelemetry.io/otel/log/global` to manage the global `LoggerProvider`.
-  This package is provided with the anticipation that all functionality will be migrate to `go.opentelemetry.io/otel` when `go.opentelemetry.io/otel/log` stabilizes.
+  This package is provided with the anticipation that all capability will be migrate to `go.opentelemetry.io/otel` when `go.opentelemetry.io/otel/log` stabilizes.
   At which point, users will be required to migrage their code, and this package will be deprecated then removed. (#5085)
 - Add support for `Summary` metrics in the `go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp` and `go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc` exporters. (#5100)
 - Add `otel.scope.name` and `otel.scope.version` tags to spans exported by `go.opentelemetry.io/otel/exporters/zipkin`. (#5108)
@@ -1690,7 +1690,7 @@ This release includes an API and SDK for the tracing signal that will comply wit
 
 - Added `ErrorHandlerFunc` to use a function as an `"go.opentelemetry.io/otel".ErrorHandler`. (#2149)
 - Added `"go.opentelemetry.io/otel/trace".WithStackTrace` option to add a stack trace when using `span.RecordError` or when panic is handled in `span.End`. (#2163)
-- Added typed slice attribute types and functionality to the `go.opentelemetry.io/otel/attribute` package to replace the existing array type and functions. (#2162)
+- Added typed slice attribute types and capability to the `go.opentelemetry.io/otel/attribute` package to replace the existing array type and functions. (#2162)
   - `BoolSlice`, `IntSlice`, `Int64Slice`, `Float64Slice`, and `StringSlice` replace the use of the `Array` function in the package.
 - Added the `go.opentelemetry.io/otel/example/fib` example package.
   Included is an example application that computes Fibonacci numbers. (#2203)
@@ -1711,7 +1711,7 @@ This release includes an API and SDK for the tracing signal that will comply wit
 ### Deprecated
 
 - The `go.opentelemetry.io/otel/bridge/opencensus/utils` package is deprecated.
-  All functionality from this package now exists in the `go.opentelemetry.io/otel/bridge/opencensus` package.
+  All capability from this package now exists in the `go.opentelemetry.io/otel/bridge/opencensus` package.
   The functions from that package should be used instead. (#2166)
 - The `"go.opentelemetry.io/otel/attribute".Array` function and the related `ARRAY` value type is deprecated.
   Use the typed `*Slice` functions and types added to the package instead. (#2162)
@@ -2005,7 +2005,7 @@ with major version 0.
 - Updated the Jaeger exporter to have a default endpoint, `http://localhost:14250`, for the collector. (#1824)
 - Changed the function `WithCollectorEndpoint` in the Jaeger exporter to no longer accept an endpoint as an argument.
   The endpoint can be passed with the `CollectorEndpointOption` using the `WithEndpoint` function or by setting the `OTEL_EXPORTER_JAEGER_ENDPOINT` environment variable value appropriately. (#1824)
-- The Jaeger exporter no longer batches exported spans itself, instead it relies on the SDK's `BatchSpanProcessor` for this functionality. (#1830)
+- The Jaeger exporter no longer batches exported spans itself, instead it relies on the SDK's `BatchSpanProcessor` for this capability. (#1830)
 - The Jaeger exporter creation functions (`NewRawExporter`, `NewExportPipeline`, and `InstallNewPipeline`) no longer accept the removed `Option` type as a variadic argument. (#1830)
 
 ### Removed
@@ -2035,7 +2035,7 @@ with major version 0.
   These functions are provided as a way to easily setup or install the exporter with what are deemed reasonable SDK settings for common use cases.
   If the SDK needs to be configured differently, the `NewRawExporter` function and direct setup of the SDK with the desired settings should be used. (#1825)
 - The `WithBufferMaxCount` and `WithBatchMaxCount` `Option`s from the Jaeger exporter are removed.
-  The exporter no longer batches exports, instead relying on the SDK's `BatchSpanProcessor` for this functionality. (#1830)
+  The exporter no longer batches exports, instead relying on the SDK's `BatchSpanProcessor` for this capability. (#1830)
 - The Jaeger exporter `Option` type is removed.
   The type is no longer used by the exporter to configure anything.
   All the previous configurations these options provided were duplicates of SDK configuration.
@@ -2210,7 +2210,7 @@ with major version 0.
 ### Removed
 
 - Remove `errUninitializedSpan` as its only usage is now obsolete. (#1360)
-- Remove Metric export functionality related to quantiles and summary data points: this is not specified (#1412)
+- Remove Metric export capability related to quantiles and summary data points: this is not specified (#1412)
 - Remove DDSketch metric aggregator; our intention is to re-introduce this as an option of the histogram aggregator after [new OTLP histogram data types](https://github.com/open-telemetry/opentelemetry-proto/pull/226) are released (#1412)
 
 ### Fixed
@@ -2294,7 +2294,7 @@ with major version 0.
 ### Fixed
 
 - Rename `MergeItererator` to `MergeIterator` in the `go.opentelemetry.io/otel/label` package. (#1244)
-- The `go.opentelemetry.io/otel/api/global` packages global TextMapPropagator now delegates functionality to a globally set delegate for all previously returned propagators. (#1258)
+- The `go.opentelemetry.io/otel/api/global` packages global TextMapPropagator now delegates capability to a globally set delegate for all previously returned propagators. (#1258)
 - Fix condition in `label.Any`. (#1299)
 - Fix global `TracerProvider` to pass options to its configured provider. (#1329)
 - Fix missing handler for `ExactKind` aggregator in OTLP metrics transformer (#1309)
@@ -2330,7 +2330,7 @@ with major version 0.
 - The `Propagators` interface from the `go.opentelemetry.io/otel/api/propagation` package was removed to conform to the OpenTelemetry specification.
    The explicit `TextMapPropagator` type can be used in its place as this is the `Propagator` type the specification defines. (#1212)
 - The `SetAttribute` method of the `Span` from the `go.opentelemetry.io/otel/api/trace` package was removed given its redundancy with the `SetAttributes` method. (#1216)
-- The internal implementation of Baggage storage is removed in favor of using the new Baggage API functionality. (#1217)
+- The internal implementation of Baggage storage is removed in favor of using the new Baggage API capability. (#1217)
 - Remove duplicate hostname key `HostHostNameKey` in Resource semantic conventions. (#1219)
 - Nested array/slice support has been removed. (#1226)
 
@@ -2453,7 +2453,7 @@ with major version 0.
 - The `grpctrace` instrumentation was moved to the `go.opentelemetry.io/contrib` repository and out of this repository.
    This move includes moving the `grpc` example to the `go.opentelemetry.io/contrib` as well. (#1027)
 - The `WithSpan` method of the `Tracer` interface.
-   The functionality this method provided was limited compared to what a user can provide themselves.
+   The capability this method provided was limited compared to what a user can provide themselves.
    It was removed with the understanding that if there is sufficient user need it can be added back based on actual user usage. (#1043)
 - The `RegisterSpanProcessor` and `UnregisterSpanProcessor` functions.
    These were holdovers from an approach prior to the TracerProvider design. They were not used anymore. (#1077)
@@ -2626,7 +2626,7 @@ This release implements the v0.5.0 version of the OpenTelemetry specification.
 - Default service config to enable retries for retry-able failed requests in the OTLP exporter and an option to override this default. (#777)
 - New `go.opentelemetry.io/otel/api/oterror` package to uniformly support error handling and definitions for the project. (#778)
 - New `global` default implementation of the `go.opentelemetry.io/otel/api/oterror.Handler` interface to be used to handle errors prior to an user defined `Handler`.
-   There is also functionality for the user to register their `Handler` as well as a convenience function `Handle` to handle an error with this global `Handler`(#778)
+   There is also capability for the user to register their `Handler` as well as a convenience function `Handle` to handle an error with this global `Handler`(#778)
 - Options to specify propagators for httptrace and grpctrace instrumentation. (#784)
 - The required `application/json` header for the Zipkin exporter is included in all exports. (#774)
 - Integrate HTTP semantics helpers from the contrib repository into the `api/standard` package. #769
@@ -2870,13 +2870,13 @@ This release implements the v0.5.0 version of the OpenTelemetry specification.
 
 ## [0.3.0] - 2020-03-21
 
-This is a first official beta release, which provides almost fully complete metrics, tracing, and context propagation functionality.
+This is a first official beta release, which provides almost fully complete metrics, tracing, and context propagation capability.
 There is still a possibility of breaking changes.
 
 ### Added
 
 - Add `Observer` metric instrument. (#474)
-- Add global `Propagators` functionality to enable deferred initialization for propagators registered before the first Meter SDK is installed. (#494)
+- Add global `Propagators` capability to enable deferred initialization for propagators registered before the first Meter SDK is installed. (#494)
 - Simplified export setup pipeline for the jaeger exporter to match other exporters. (#459)
 - The zipkin trace exporter. (#495)
 - The OTLP exporter to export metric and trace telemetry to the OpenTelemetry collector. (#497) (#544) (#545)

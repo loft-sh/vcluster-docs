@@ -12,7 +12,7 @@ Do not depend on this in publicly available modules.
 * **Mostly backwards compatible:** If possible, v2 should aim to be _mostly_
 compatible with v1 in terms of both API and default behavior to ease migration.
 For example, the `Marshal` and `Unmarshal` functions are the most widely used
-declarations in the v1 package. It seems sensible for equivalent functionality
+declarations in the v1 package. It seems sensible for equivalent capability
 in v2 to be named the same and have the same signature.
 Behaviorally, we should aim for 95% to 99% backwards compatibility.
 We do not aim for 100% compatibility since we want the freedom to break
@@ -64,7 +64,7 @@ over the existing v1 `encoding/json` package. Thus, we abandon this effort.
 2. We propose a v2 `encoding/json` design, but it is rejected in favor of some
 other design that is considered superior.
 3. We propose a v2 `encoding/json` design, but rather than adding an entirely
-new v2 `encoding/json` package, we decide to merge its functionality into
+new v2 `encoding/json` package, we decide to merge its capability into
 the existing v1 `encoding/json` package.
 4. We propose a v2 `encoding/json` design and it is accepted, resulting in
 its addition to the standard library.
@@ -110,8 +110,8 @@ data types like `[]byte`, `io.Writer`, `io.Reader`, `Encoder`, or `Decoder`).
 This diagram provides a high-level overview of the v2 `json` package.
 Purple blocks represent types, while blue blocks represent functions or methods.
 The arrows and their direction represent the approximate flow of data.
-The bottom half of the diagram contains functionality that is only concerned
-with syntax, while the upper half contains functionality that assigns
+The bottom half of the diagram contains capability that is only concerned
+with syntax, while the upper half contains capability that assigns
 semantic meaning to syntactic data handled by the bottom half.
 
 In contrast to v1 `encoding/json`, options are represented as separate types

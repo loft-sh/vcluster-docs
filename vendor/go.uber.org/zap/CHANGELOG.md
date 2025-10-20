@@ -250,7 +250,7 @@ Enhancements:
 * [#852][]: Optimize console encoder by pooling the underlying JSON encoder.
 * [#844][]: Add ability to include the calling function as part of logs.
 * [#843][]: Add `StackSkip` for including truncated stacks as a field.
-* [#861][]: Add options to customize Fatal behaviour for better testability.
+* [#861][]: Add options to customize Fatal behavior for better testability.
 
 Thanks to @SteelPhase, @tmshn, @lixingwang, @wyxloading, @moul, @segevfiner, @andy-retailnext and @jcorbin for their contributions to this release.
 
@@ -681,7 +681,7 @@ breaking changes and improvements from the pre-release version. Most notably:
 
 This is a minor version, tagged to allow users to pin to the pre-1.0 APIs and
 upgrade at their leisure. Since this is the first tagged release, there are no
-backward compatibility concerns and all functionality is new.
+backward compatibility concerns and all capability is new.
 
 Early zap adopters should pin to the 0.1.x minor version until they're ready to
 upgrade to the upcoming stable release.

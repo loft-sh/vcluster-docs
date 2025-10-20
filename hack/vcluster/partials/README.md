@@ -67,7 +67,7 @@ The CI workflow:
 2. Runs this partials generation tool
 3. Creates a PR with the updated documentation
 
-## Troubleshoot common issues
+## Troubleshooting common issues
 
 ### Panic: "Couldn't find schema path"
 

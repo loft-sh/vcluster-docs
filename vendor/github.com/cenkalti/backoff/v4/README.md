@@ -4,7 +4,7 @@ This is a Go port of the exponential backoff algorithm from [Google's HTTP Clien
 
 [Exponential backoff][exponential backoff wiki]
 is an algorithm that uses feedback to multiplicatively decrease the rate of some process,
-in order to gradually find an acceptable rate.
+to gradually find an acceptable rate.
 The retries exponentially increase and stop increasing when a certain threshold is met.
 
 ## Usage

@@ -16,7 +16,7 @@ defers the actual act of writing logs (to files, to stdout, or whatever) to the
 
 The `LogSink` interface is intended for logging library implementers.  It is a
 pure interface which can be implemented by logging frameworks to provide the actual logging
-functionality.
+capability.
 
 This decoupling allows application and library developers to write code in
 terms of `logr.Logger` (which has very low dependency fan-out) while the
@@ -398,7 +398,7 @@ much harder to use.  `Sprintf()` is for values, not for keys!
 
 #### Why is this not a pure interface?
 
-The Logger type is implemented as a struct in order to allow the Go compiler to
+The Logger type is implemented as a struct to allow the Go compiler to
 optimize things like high-V `Info` logs that are not triggered.  Not all of
 these implementations are implemented yet, but this structure was suggested as
 a way to ensure they *can* be implemented.  All of the real work is behind the

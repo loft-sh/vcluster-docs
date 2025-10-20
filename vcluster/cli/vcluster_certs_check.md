@@ -12,8 +12,9 @@ Checks the current certificates
 vcluster certs check VCLUSTER_NAME [flags]
 ```
 
+<!-- vale off -->  
 ```
-##############################################################
+#############################################################
 ################### vcluster certs check #####################
 ##############################################################
 Checks the current certificates.
@@ -22,7 +23,7 @@ Examples:
 vcluster -n test certs check test
 ##############################################################
 ```
-
+<!-- vale on -->  
 
 ## Flags
 

@@ -9,7 +9,7 @@ merge PRs in a reasonable timeframe, but please be aware that:
   all supported platforms.
 
 - Changes will need to be compatible; old code should still compile, and the
-  runtime behaviour can't change in ways that are likely to lead to problems for
+  runtime behavior can't change in ways that are likely to lead to problems for
   users.
 
 Testing

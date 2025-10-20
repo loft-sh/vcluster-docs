@@ -1,5 +1,5 @@
 # JSON-Patch
-`jsonpatch` is a library which provides functionality for both applying
+`jsonpatch` is a library which provides capability for both applying
 [RFC6902 JSON patches](http://tools.ietf.org/html/rfc6902) against documents, as
 well as for calculating & applying [RFC7396 JSON merge patches](https://tools.ietf.org/html/rfc7396).
 
@@ -32,7 +32,7 @@ go get -u github.com/evanphx/json-patch/v5
 * There is a global configuration variable `jsonpatch.SupportNegativeIndices`.
   This defaults to `true` and enables the non-standard practice of allowing
   negative indices to mean indices starting at the end of an array. This
-  functionality can be disabled by setting `jsonpatch.SupportNegativeIndices =
+  capability can be disabled by setting `jsonpatch.SupportNegativeIndices =
   false`.
 
 * There is a global configuration variable `jsonpatch.AccumulatedCopySizeLimit`,

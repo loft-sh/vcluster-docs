@@ -15,7 +15,7 @@ Versioning and stability
 ------------------------
 
 Although the master branch is supposed to remain always backward compatible, the repository
-contains version tags in order to support vendoring tools.
+contains version tags to support vendoring tools.
 The tag names follow semantic versioning conventions and have the following format `v1.0.0`.
 This package supports Go modules introduced with version 1.11.
 

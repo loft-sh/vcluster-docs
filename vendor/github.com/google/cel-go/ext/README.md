@@ -536,7 +536,7 @@ Sets provides set relationship tests.
 
 There is no set type within CEL, and while one may be introduced in the
 future, there are cases where a `list` type is known to behave like a set.
-For such cases, this library provides some basic functionality for
+For such cases, this library provides some basic capability for
 determining set containment, equivalence, and intersection.
 
 ### Sets.Contains
@@ -785,7 +785,7 @@ Examples:
 
 Returns a new string whose characters are the same as the target string, only formatted in
 reverse order.
-This function relies on converting strings to rune arrays in order to reverse.
+This function relies on converting strings to rune arrays to reverse.
 It can be located in Version 3 of strings.
 
     <string>.reverse() -> <string>
