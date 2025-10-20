@@ -96,7 +96,7 @@ All pull requests are squashed to a single commit upon merge to `main`.
 
 ### How to Receive Comments
 
-* If the PR is not ready for review, please put `[WIP]` in the title,
+* If the PR is not ready for review,  put `[WIP]` in the title,
   tag it as `work-in-progress`, or mark it as
   [`draft`](https://github.blog/2019-02-14-introducing-draft-pull-requests/).
 * Make sure CLA is signed and CI is clear.

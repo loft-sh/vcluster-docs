@@ -16,7 +16,7 @@ When filing an issue, make sure to answer these five questions:
 
 ## Contributing code
 
-Before submitting changes, please follow these guidelines:
+Before submitting changes,  follow these guidelines:
 
 1. Check the open issues and pull requests for existing discussions.
 2. Open an issue to discuss a new feature.

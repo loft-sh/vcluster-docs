@@ -48,7 +48,7 @@ How to use klog
 - For more logging conventions (See [Logging Conventions](https://github.com/kubernetes/community/blob/master/contributors/devel/sig-instrumentation/logging.md))
 - See our documentation on [pkg.go.dev/k8s.io](https://pkg.go.dev/k8s.io/klog).
 
-**NOTE**: please use the newer go versions that support semantic import versioning in modules, ideally go 1.11.4 or greater.
+**NOTE**:  use the newer go versions that support semantic import versioning in modules, ideally go 1.11.4 or greater.
 
 ### Coexisting with klog/v2
 

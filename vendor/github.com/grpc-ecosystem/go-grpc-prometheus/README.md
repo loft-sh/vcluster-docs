@@ -17,7 +17,7 @@ A sister implementation for [gRPC Java](https://github.com/grpc/grpc-java) (same
 by a gRPC Server before the request is passed onto the user's application logic. It is a perfect way to implement
 common patterns: auth, logging and... monitoring.
 
-To use Interceptors in chains, please see [`go-grpc-middleware`](https://github.com/mwitkow/go-grpc-middleware).
+To use Interceptors in chains,  see [`go-grpc-middleware`](https://github.com/mwitkow/go-grpc-middleware).
 
 ## Usage
 
@@ -130,7 +130,7 @@ grpc_server_handled_total{grpc_code="OK",grpc_method="PingList",grpc_service="mw
 [Prometheus histograms](https://prometheus.io/docs/concepts/metric_types/#histogram) are a great way
 to measure latency distributions of your RPCs. However, since it is bad practice to have metrics
 of [high cardinality](https://prometheus.io/docs/practices/instrumentation/#do-not-overuse-labels)
-the latency monitoring metrics are disabled by default. To enable them please call the following
+the latency monitoring metrics are disabled by default. To enable them  call the following
 in your server initialization code:
 
 ```jsoniq

@@ -7,7 +7,7 @@ This is a fork of github.com/google/gofuzz, which was archived.
 
 NOTE: This repo is supported only for use within Kubernetes.  It is not our
 intention to support general use.  That said, if it works for you, that's
-great!  If you have a problem, please feel free to file an issue, but be aware
+great!  If you have a problem,  feel free to file an issue, but be aware
 that it may not be a priority for us to fix it unless it is affecting
 Kubernetes.  PRs are welcome, within reason.
 

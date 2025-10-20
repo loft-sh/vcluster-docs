@@ -21,5 +21,5 @@ maintainers of the CEL project may take action, removing issues,
 comments, and PRs or blocking accounts as deemed appropriate.
 
 If you are subject to or witness unacceptable behavior, or have any
-other concerns, please email us at
+other concerns,  email us at
 [cel-conduct@google.com](mailto:cel-conduct@google.com).
