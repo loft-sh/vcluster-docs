@@ -1,5 +1,5 @@
 # Auto-generated redirect tests
-# Generated: 2025-10-21 12:51:48 UTC
+# Generated: 2025-10-21 12:54:38 UTC
 # Usage: hurl --test --variable BASE_URL=https://www.vcluster.com test-redirects.hurl
 
 # Test: deploy/control-plane/container/flux -> third-party-integrations/git-operations/flux
