@@ -90,7 +90,7 @@ var paths = []string{
 	"controlPlane/proxy",
 	"controlPlane/hostPathMapper",
 	"controlPlane/distro/k8s",
-	"controlPlane/distro/k3s",
+	// "controlPlane/distro/k3s",
 	"controlPlane/distro/k0s",
 	"controlPlane/distro",
 	"controlPlane/coredns",
