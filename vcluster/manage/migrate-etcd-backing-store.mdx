@@ -72,7 +72,9 @@ You should see the deployed etcd StatefulSet running.
 
 **Create migration configuration**
 
-Create a new values file that enables embedded etcd with the migration flag:
+Create a new values file that enables embedded etcd with the migration flag. Since embedded etcd runs inside the vCluster StatefulSet pod, storage is configured under `controlPlane.statefulSet.persistence` (not under the `backingStore` section like deployed etcd).
+
+The `migrateFromDeployedEtcd: true` flag tells vCluster to copy data from the deployed etcd before switching to embedded mode. During migration, both etcd instances temporarily coexist, with the deployed etcd remaining available as a fallback.
 
 ```yaml title="migrate-to-embedded.yaml"
 controlPlane:
@@ -80,24 +82,21 @@ controlPlane:
     etcd:
       embedded:
         enabled: true
-        # CRITICAL: This flag preserves your data during migration
         migrateFromDeployedEtcd: true
         # Optional: Configure embedded etcd settings
         extraArgs:
           - '--auto-compaction-mode=periodic'
           - '--auto-compaction-retention=30m'
-          - '--quota-backend-bytes=8589934592'  # 8GB
-  # Optional: Configure storage for embedded etcd
-  persistence:
-    volumeClaim:
-      size: 10Gi  # Adjust based on your deployed etcd size
-      # storageClass: "your-storage-class"  # Optional: specify if not using default
+          - '--quota-backend-bytes=8589934592'
+  statefulSet:
+    persistence:
+      volumeClaim:
+        size: 10Gi
+        # storageClassName: "your-storage-class"  # Optional
 ```
 
-:::info Important notes
-- The `migrateFromDeployedEtcd: true` flag is crucial for data preservation
-- During migration, both etcd instances will temporarily coexist
-- The deployed etcd remains available as a fallback during migration
+:::warning Admission controllers
+If your cluster uses admission controllers (Kyverno, OPA Gatekeeper, etc.), ensure they allow StatefulSet spec modifications and volume claim changes. You may need to add temporary exceptions for the vCluster namespace during migration.
 :::
 
 </Step>
@@ -106,15 +105,14 @@ controlPlane:
 
 **Apply the migration configuration**
 
-Upgrade your vCluster with the migration configuration:
+Upgrade your vCluster with the migration configuration. Note that you should not use `--reuse-values` for the migration, as it will cause a conflict between the deployed and embedded etcd configurations. Instead, include all necessary values in your migration configuration file.
 
 <!-- vale off -->
-<InterpolatedCodeBlock 
+<InterpolatedCodeBlock
   code={`helm upgrade [[VAR:VCLUSTER NAME:my-vcluster]] vcluster \\
   --repo https://charts.loft.sh \\
   --namespace [[VAR:NAMESPACE:vcluster-my-team]] \\
   --version [[VAR:VCLUSTER VERSION:0.27.0]] \\
-  --reuse-values \\
   -f migrate-to-embedded.yaml \\
   --wait`}
   language="bash"
@@ -159,26 +157,26 @@ controlPlane:
     etcd:
       embedded:
         enabled: true
-        # Migration flag removed - deployed etcd will be deleted
+        # Optional: Configure embedded etcd settings
         extraArgs:
           - '--auto-compaction-mode=periodic'
           - '--auto-compaction-retention=30m'
-          - '--quota-backend-bytes=8589934592'  # 8GB
-  persistence:
-    volumeClaim:
-      size: 10Gi  # Keep the same size as during migration
-      # storageClass: "your-storage-class"  # Optional: if you specified one during migration
+          - '--quota-backend-bytes=8589934592'
+  statefulSet:
+    persistence:
+      volumeClaim:
+        size: 10Gi
+        # storageClassName: "your-storage-class"  # Optional
 ```
 
 Apply the final configuration:
 
 <!-- vale off -->
-<InterpolatedCodeBlock 
+<InterpolatedCodeBlock
   code={`helm upgrade [[VAR:VCLUSTER NAME:my-vcluster]] vcluster \\
   --repo https://charts.loft.sh \\
   --namespace [[VAR:NAMESPACE:vcluster-my-team]] \\
   --version [[VAR:VCLUSTER VERSION:0.27.0]] \\
-  --reuse-values \\
   -f final-embedded.yaml \\
   --wait`}
   language="bash"
@@ -235,9 +233,10 @@ Embedded etcd creates a new PVC for storage. The default size is 5Gi, but you ca
 
 ```yaml
 controlPlane:
-  persistence:
-    volumeClaim:
-      size: 10Gi  # Adjust based on your needs
+  statefulSet:
+    persistence:
+      volumeClaim:
+        size: 10Gi
 ```
 
 ### Storage migration
@@ -298,19 +297,37 @@ If resources seem missing after migration:
 3. Ensure you're connected to the correct vCluster context
 4. Review the vCluster pod logs for any errors
 
-### StatefulSet modification errors
+### StatefulSet immutability errors
 
-If you encounter errors like "StatefulSet.apps is invalid: spec: forbidden":
+During migration, you might encounter errors about forbidden StatefulSet spec updates:
+
+```
+error when patching: StatefulSet.apps "vcluster-name" is invalid:
+spec: Forbidden: updates to statefulset spec for fields other than
+'replicas', 'ordinals', 'template', 'updateStrategy',
+'persistentVolumeClaimRetentionPolicy' and 'minReadySeconds' are forbidden
+```
+
+This happens because:
+- The migration converts a Deployment to a StatefulSet (for embedded etcd)
+- Kubernetes StatefulSets have strict immutability rules for certain fields
+- Some fields like `volumeClaimTemplates` cannot be modified after creation
+
+**Solution:**
 
 1. Delete the StatefulSet with `--cascade=orphan` to keep pods running:
    <!-- vale off -->
-   <InterpolatedCodeBlock 
-     code={`kubectl delete statefulset [[VAR:VCLUSTER NAME:my-vcluster]]-etcd -n [[VAR:NAMESPACE:vcluster-my-team]] --cascade=orphan`}
+   <InterpolatedCodeBlock
+     code={`kubectl delete statefulset [[VAR:VCLUSTER NAME:my-vcluster]] -n [[VAR:NAMESPACE:vcluster-my-team]] --cascade=orphan`}
      language="bash"
    />
    <!-- vale on -->
 
-2. Then retry the Helm upgrade
+2. Then retry the Helm upgrade - it will recreate the StatefulSet with correct configuration
+
+:::info Why cascade=orphan?
+Using `--cascade=orphan` removes the StatefulSet object but leaves pods running, minimizing downtime during the migration process.
+:::
 
 ## Next steps
 
