@@ -287,10 +287,7 @@ The command line interface name is `vcluster`.
 
 ### Abbreviations for Kubernetes distros
 
-- [Lightweight Kubernetes](https://k3s.io/): K3s
 - [Kubernetes](https://kubernetes.io/): K8s
-- [Zero Friction Kubernetes](https://k0sproject.io/): k0s Note that k0s is the
-  only Kubernetes distro to use a lower case 'k'
 - [AWS Elastic Kubernetes Service](https://aws.amazon.com/eks/): EKS
 
 ### Other product terms

@@ -21,7 +21,6 @@ Reads from stdin if no file is given via "-f".
 
 Examples:
 vcluster convert config --distro k8s -f /my/k8s/values.yaml
-vcluster convert config --distro k3s < /my/k3s/values.yaml
 ##############################################################
 ```
 
@@ -29,7 +28,7 @@ vcluster convert config --distro k3s < /my/k3s/values.yaml
 ## Flags
 
 ```
-      --distro string   Kubernetes distro of the config. Allowed distros: k8s, k3s
+      --distro string   Kubernetes distro of the config. Allowed distros: k8s
   -f, --file string     Path to the input file
   -h, --help            help for config
   -o, --output string   Prints the output in the specified format. Allowed values: yaml, json (default "yaml")
