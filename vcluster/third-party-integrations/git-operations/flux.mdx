@@ -12,14 +12,11 @@ import Highlight from "@site/src/components/Highlight/Highlight"
 import Flow, { Step } from "@site/src/components/Flow"
 import BasePrerequisites from '@site/docs/_partials/base-prerequisites.mdx'
 
-import WorkerNodeOptions from '../../../_fragments/deploy/worker-nodes.mdx'
-import ControlPlaneOptions from '../../../_fragments/deploy/control-plane.mdx'
-
 <!-- vale off -->
 # Deploy with Flux
 <!-- vale on -->
 
-This guide shows how to deploy and manage virtual clusters using [Flux](https://fluxcd.io/), a GitOps tool for Kubernetes. Flux uses GitOps to keep your Kubernetes clusters in sync with the desired state defined in your Git repository.
+This guide shows how to manage virtual clusters using [Flux](https://fluxcd.io/), a GitOps tool for Kubernetes. Flux uses GitOps to keep your Kubernetes clusters in sync with the desired state defined in your Git repository.
 
 ## Prerequisites
 
@@ -36,13 +33,7 @@ Additionally, you'll need:
 
 When using Flux with virtual clusters, choose an architecture that aligns well with your GitOps workflow. You can configure Flux to work with virtual clusters in several ways, each offering different benefits and limitations.
 
-:::info Flux and multi-cluster management
 Unlike ArgoCD, which treats other clusters as first-class objects, Flux manages workloads on other clusters through KubeConfig references in `HelmRelease` and `Kustomization` resources. This difference in design influences how you'll structure your GitOps workflows when working with virtual clusters.
-:::
-
-:::tip Scaling considerations for ephemeral environments
-The standalone approach—deploying Flux in each virtual cluster—might not scale effectively when managing large numbers of virtual clusters, particularly in ephemeral environments like pull request previews. In these cases, a hub-and-spoke model or a Flux instance per host cluster is typically more resource-efficient and can reduce the overhead of running multiple Flux controllers.
-:::
 
 The following are common approaches for integrating Flux with virtual clusters, each suited to different use cases:
 
@@ -61,14 +52,14 @@ flowchart TD
     B2 -->|deploys| C4[vCluster 4]
 ```
 
-:::info Architecture characteristics
+Architecture characteristics:
 - One Flux instance per host cluster
 - Each Flux instance manages multiple virtual clusters on that host
 - Virtual cluster KubeConfig Secret management is simplified since Secrets are local to the cluster
 - Clear separation of responsibilities by host cluster
 - Recommended if you already use a Flux instance per traditional cluster
 - Provides better resource utilization since the Flux controllers are shared
-:::
+
 
 ### 2. Hub and spoke model {#hub-and-spoke}
 
@@ -83,14 +74,13 @@ flowchart TD
     B -->|deploys to| C4[vCluster D in Host 2]
 ```
 
-:::info Architecture characteristics
+Architecture characteristics:
 - One central Flux instance manages multiple virtual clusters across different hosts
 - Works well with existing hub and spoke Flux setups
 - Requires secure KubeConfig Secret management between clusters
 - More efficient for large numbers of virtual clusters
 - Provides a single control point for all virtual cluster management
 - Can simplify GitOps workflows by having a single source of truth
-:::
 
 ### 3. Flux inside virtual clusters {#flux-inside-vclusters}
 
@@ -107,20 +97,20 @@ flowchart TD
     B3 -->|deploys| C3[Workloads]
 ```
 
-:::info Architecture characteristics
+Architecture characteristics:
 - Each virtual cluster runs its own Flux instance
 - Provides complete isolation between environments
 - Teams can manage their own GitOps workflows independently
 - Increased resource overhead (each vCluster needs its own Flux controllers)
 - More complex to manage at scale
 - Suitable for environments where strict isolation is required
-:::
 
+The standalone approach—deploying Flux in each virtual cluster—might not scale effectively when managing large numbers of virtual clusters, particularly in ephemeral environments like pull request previews. In these cases, a hub-and-spoke model or a Flux instance per host cluster is typically more resource-efficient and can reduce the overhead of running multiple Flux controllers.
 <!-- vale off -->
 ## Enable KubeConfig export {#enable-kubeconfig-export}
 <!-- vale on -->
 
-To enable Flux to deploy to virtual clusters, you must create a KubeConfig `Secret` that Flux can reference.
+To enable Flux to deploy to virtual clusters, you must create a KubeConfig Secret that Flux can reference.
 
 ```yaml title="Configure KubeConfig export in vcluster.yaml"
 exportKubeConfig:
@@ -146,7 +136,6 @@ This configuration:
 - Sets `insecure: true` to automatically skip TLS certificate verification
 - Adds a TLS SAN (Subject Alternative Name) that matches the server URL, which helps prevent certificate verification errors
 
-:::info KubeConfig Secret key
 The vCluster `exportKubeConfig` configuration creates a Secret with the KubeConfig data stored under the key `config`. When referring to this Secret in Flux resources, you must specify this key in the `secretRef.key` field, as shown in the examples below.
 
 ```yaml
@@ -157,7 +146,6 @@ spec:
       name: vcluster-flux-kubeconfig
       key: config  # Must match the key used in the vCluster-generated Secret
 ```
-:::
 
 :::warning Certificate verification considerations
 When using vCluster with Flux, proper TLS certificate configuration is essential:
@@ -180,116 +168,6 @@ exportKubeConfig:
 
 See the [Troubleshooting](#tls-certificate-verification-errors) section for solutions to certificate issues.
 :::
-
-## Predeployment configuration options
-
-Before deploying, it's recommended to review the set of configuration options that cannot be updated post deployment. These options require deploying a new vCluster instead of upgrading your vCluster with new options.
-
-<ControlPlaneOptions showHA="true" />
-<WorkerNodeOptions />
-
-## Deploy virtual clusters with Flux
-
-<Flow id="flux-deploy-vcluster">
-<Step>
-
-<Highlight>Git Repository</Highlight> Create the vCluster Helm repository definition
-
-Create a source for the vCluster Helm charts in your Git repository:
-
-```yaml title="clusters/sources/vcluster-repository.yaml"
----
-apiVersion: source.toolkit.fluxcd.io/v1
-kind: HelmRepository
-metadata:
-  name: vcluster
-  namespace: flux-system
-spec:
-  interval: 1h
-  url: https://charts.loft.sh
-```
-
-</Step>
-
-<Step>
-
-<Highlight>Git Repository</Highlight> Define your vCluster configuration
-
-Create a vCluster configuration file in your Git repository:
-
-```yaml title="clusters/production/vcluster-demo.yaml"
----
-apiVersion: helm.toolkit.fluxcd.io/v2
-kind: HelmRelease
-metadata:
-  name: vcluster-demo
-  namespace: vcluster-demo
-spec:
-  interval: 10m
-  chart:
-    spec:
-      chart: vcluster
-      version: "0.24.x"
-      sourceRef:
-        kind: HelmRepository
-        name: vcluster
-        namespace: flux-system
-  values:
-    # Configure TLS SAN for the certificate
-    controlPlane:
-      proxy:
-        extraSANs:
-          - "vcluster-demo.vcluster-demo.svc.cluster.local"
-      coredns:
-        enabled: true
-
-    exportKubeConfig:
-      # Set a meaningful context name
-      context: default
-      # Use a server URL that matches the TLS SAN
-      server: https://vcluster-demo.vcluster-demo.svc.cluster.local:443
-      # Skip TLS verification when Flux connects to the vCluster
-      insecure: true
-      # Specify the secret where the KubeConfig is stored
-      secret:
-        name: vcluster-flux-kubeconfig
-    sync:
-      toHost:
-        ingresses:
-          enabled: true
-      
-```
-
-You can include any standard vCluster configuration in the `values` section.
-
-</Step>
-
-<Step>
-
-<Highlight>Kubernetes Cluster</Highlight> Apply the vCluster namespace
-
-Before applying the `HelmRelease`, ensure that the target namespace exists:
-
-```bash title="Create the namespace"
-kubectl create namespace vcluster-demo
-```
-
-</Step>
-
-<Step>
-
-<Highlight>Git Repository</Highlight> Commit and push your changes
-
-```bash title="Commit and push to the repository"
-git add clusters/
-git commit -m "Add vCluster demo configuration"
-git push
-```
-
-Flux detects the changes and deploy the vCluster according to your configuration.
-
-</Step>
-</Flow>
 
 ## Deploy applications to virtual clusters
 
@@ -356,7 +234,7 @@ spec:
 ```
 
 :::tip Handling TLS certificate verification
-The `kubeConfig` section references the `Secret` created by the vCluster using the `exportKubeConfig` setting. To allow Flux to connect to the virtual cluster with a self-signed certificate, you must configure both Flux and vCluster to permit insecure TLS connections:
+The `kubeConfig` section references the Secret created by the vCluster using the `exportKubeConfig` setting. To allow Flux to connect to the virtual cluster with a self-signed certificate, you must configure both Flux and vCluster to permit insecure TLS connections:
 
 - **Flux Helm Controller configuration**:  
   Add the `--insecure-kubeconfig-tls` flag to the [Helm Controller configuration](https://fluxcd.io/flux/components/helm/options/). This allows Flux to honor `insecure-skip-tls-verify: true` in the referenced kubeconfig and skip certificate verification when connecting to the virtual cluster.  
@@ -365,7 +243,7 @@ The `kubeConfig` section references the `Secret` created by the vCluster using t
 - **vCluster configuration**:  
   Ensure your vCluster config includes both the TLS SAN and `insecure: true` settings, as shown in the previous example. This enables the vCluster API server to serve with a self-signed (or otherwise untrusted) certificate and accept insecure connections.
 
-- **If you still encounter certificate errors**: Use a modified `Secret` created with the solution in the [troubleshooting section](#tls-certificate-verification-errors):
+- **If you still encounter certificate errors**: Use a modified Secret created with the solution in the [troubleshooting section](#tls-certificate-verification-errors):
 
 ```yaml title="Use a modified KubeConfig Secret"
 kubeConfig:
@@ -606,7 +484,7 @@ The Flux controllers already running on your host cluster is going to:
 - Detect the new vCluster configuration
 - Create the required namespace
 - Deploy the vCluster using the Helm chart
-- Create the KubeConfig `Secret`
+- Create the KubeConfig Secret
 - Use the exported KubeConfig to deploy apps to the vCluster
 
 This entire process follows GitOps principles, with your Git repository as the source of truth, and Flux handling the reconciliation—all without requiring manual intervention or imperative commands.
@@ -627,9 +505,9 @@ For organizations managing many virtual clusters—especially in dynamic, epheme
 ## Troubleshoot
 
 <Highlight>Host Cluster</Highlight>
-- Verify the virtual cluster KubeConfig `Secret` exists with the correct format
+- Verify the virtual cluster KubeConfig Secret exists with the correct format
 - Check Flux controller logs for errors
-- Ensure Flux has the necessary permissions to access the `Secret`
+- Ensure Flux has the necessary permissions to access the Secret
 
 ```bash title="Check Flux source controller logs"
 kubectl logs -n flux-system deployment/source-controller
@@ -687,7 +565,7 @@ This ensures the certificate includes the correct SAN for the service DNS name.
 ##### Solution 2: Use a modified KubeConfig Secret
 <!-- vale on -->
 
-If you're still encountering issues, create a modified KubeConfig `Secret` with TLS verification disabled:
+If you're still encountering issues, create a modified KubeConfig Secret with TLS verification disabled:
 
 ```bash title="Create a modified KubeConfig Secret"
 # Set your environment variables
@@ -736,7 +614,7 @@ kubectl create secret generic ${KUBECONFIG_SECRET}-modified -n $NAMESPACE --from
 rm -rf $TMPDIR
 ```
 
-Update your Flux resource to use this `Secret`:
+Update your Flux resource to use this Secret:
 
 ```yaml title="Update HelmRelease or Kustomization"
 spec:
