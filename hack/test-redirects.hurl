@@ -1,5 +1,5 @@
 # Auto-generated redirect tests
-# Generated: 2025-10-24 13:29:35 UTC
+# Generated: 2025-10-24 13:36:09 UTC
 # Usage: hurl --test --variable BASE_URL=https://www.vcluster.com test-redirects.hurl
 
 # Test: configure/vcluster-yaml/sync/to-host/storage/volume-snapshots -> understand/volume-snapshots
