@@ -631,6 +631,81 @@ func TestExtractDocPath(t *testing.T) {
 	}
 }
 
+// TestDetectPathChanges_NoVersionTags verifies fallback to origin/main when no version tags exist
+func TestDetectPathChanges_NoVersionTags(t *testing.T) {
+	repoPath, cleanup := createTestGitRepo(t)
+	defer cleanup()
+
+	// Create initial commit on main
+	createFile(t, repoPath, "vcluster/old.mdx", "# Old content")
+	runGitCmd(t, repoPath, "add", ".")
+	runGitCmd(t, repoPath, "commit", "-m", "Initial commit")
+
+	// Create remote tracking branch
+	runGitCmd(t, repoPath, "checkout", "-b", "origin/main")
+	runGitCmd(t, repoPath, "checkout", "-b", "feature-branch")
+
+	// Move file
+	targetDir := filepath.Join(repoPath, "vcluster/new-dir")
+	if err := os.MkdirAll(targetDir, 0755); err != nil {
+		t.Fatalf("Failed to create target directory: %v", err)
+	}
+	runGitCmd(t, repoPath, "mv", "vcluster/old.mdx", "vcluster/new-dir/new.mdx")
+	runGitCmd(t, repoPath, "commit", "-m", "Move file")
+
+	// No version tags exist - should fall back to origin/main
+	changes, err := detectPathChanges(repoPath)
+	if err != nil {
+		t.Fatalf("detectPathChanges() error = %v", err)
+	}
+
+	// Should use "latest" as version
+	if changes.Version != "latest" {
+		t.Errorf("detectPathChanges() version = %s, want 'latest'", changes.Version)
+	}
+
+	// Should detect the move
+	if len(changes.Changes) != 1 {
+		t.Errorf("detectPathChanges() found %d changes, want 1", len(changes.Changes))
+	}
+}
+
+// TestDetectPathChanges_WithVersionTags verifies normal behavior when version tags exist
+func TestDetectPathChanges_WithVersionTags(t *testing.T) {
+	repoPath, cleanup := createTestGitRepo(t)
+	defer cleanup()
+
+	// Create initial commit with tag
+	createFile(t, repoPath, "vcluster/old.mdx", "# Old content")
+	runGitCmd(t, repoPath, "add", ".")
+	runGitCmd(t, repoPath, "commit", "-m", "Initial commit")
+	runGitCmd(t, repoPath, "tag", "v0.27.0")
+
+	// Move file
+	targetDir := filepath.Join(repoPath, "vcluster/new-dir")
+	if err := os.MkdirAll(targetDir, 0755); err != nil {
+		t.Fatalf("Failed to create target directory: %v", err)
+	}
+	runGitCmd(t, repoPath, "mv", "vcluster/old.mdx", "vcluster/new-dir/new.mdx")
+	runGitCmd(t, repoPath, "commit", "-m", "Move file")
+
+	// Should use version from tag
+	changes, err := detectPathChanges(repoPath)
+	if err != nil {
+		t.Fatalf("detectPathChanges() error = %v", err)
+	}
+
+	// Should extract version from tag
+	if changes.Version != "0.27.0" {
+		t.Errorf("detectPathChanges() version = %s, want '0.27.0'", changes.Version)
+	}
+
+	// Should detect the move
+	if len(changes.Changes) != 1 {
+		t.Errorf("detectPathChanges() found %d changes, want 1", len(changes.Changes))
+	}
+}
+
 func TestGenerateRedirectsSkipsUnderscorePaths(t *testing.T) {
 	tempFile := filepath.Join(t.TempDir(), "netlify.toml")
 
