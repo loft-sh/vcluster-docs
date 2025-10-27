@@ -457,13 +457,19 @@ func DetectFileMoves(repoPath, oldRef, newRef string) ([]FileMove, error) {
 
 func detectPathChanges(baseDir string) (*PathChanges, error) {
 	// Get latest version tag (e.g., v0.27.0)
+	// If no tags exist, fall back to comparing with origin/main
 	latestTag, err := getLatestVersionTag(baseDir)
-	if err != nil {
-		return nil, fmt.Errorf("getting latest version tag: %w", err)
-	}
+	var version string
+	var baseRef string
 
-	// Extract version number from tag (v0.27.0 -> 0.27.0)
-	version := strings.TrimPrefix(latestTag, "v")
+	if err != nil {
+		fmt.Printf("No version tags found, using origin/main as base\n")
+		baseRef = "origin/main"
+		version = "latest"
+	} else {
+		baseRef = latestTag
+		version = strings.TrimPrefix(latestTag, "v")
+	}
 
 	// Get current ref (branch or HEAD)
 	currentRef, err := getCurrentRef(baseDir)
@@ -472,7 +478,7 @@ func detectPathChanges(baseDir string) (*PathChanges, error) {
 	}
 
 	// Use git to detect file moves
-	moves, err := DetectFileMoves(baseDir, latestTag, currentRef)
+	moves, err := DetectFileMoves(baseDir, baseRef, currentRef)
 	if err != nil {
 		return nil, fmt.Errorf("detecting file moves: %w", err)
 	}
