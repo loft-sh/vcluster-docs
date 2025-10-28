@@ -1,0 +1,391 @@
+---
+title: Platform configuration
+sidebar_label: Platform Config
+sidebar_position: 1
+description: Learn how to configure the vCluster Platform, modify its behavior, and enable or disable features such as SSO login, custom branding, and auditing.
+---
+
+import VClusterProConfig from "../api/_partials/resources/config/status_reference.mdx";
+
+This document explains how to configure <GlossaryTerm term="platform">the platform</GlossaryTerm>, including its operational settings and features such as SSO login, custom branding, and auditing.
+
+## Understand platform configuration {#understanding-platform-configuration}
+
+Configure the platform through the `vcluster-platform` Helm chart, which comes from the [loft-sh/loft](https://github.com/loft-sh/loft/tree/master/chart) repository. Find the default configuration values in the chart's [values.yaml](https://github.com/loft-sh/loft/blob/master/chart/values.yaml) file.
+
+### Identify configuration types {#types-of-platform-configuration}
+
+The platform's `values.yaml` file contains multiple configuration sections:
+
+1. **Installation settings** - Control how the platform deploys
+   - Top-level fields in the `vcluster-platform` chart's `values.yaml`
+   - Located in the platform Helm chart ([loft-sh/loft](https://github.com/loft-sh/loft/tree/master/chart))
+   - Examples: `replicaCount`, `resources`, `ingress`, `persistence`, etc.
+   - These configure Kubernetes deployment aspects like resources and replicas
+
+<!-- vale off -->
+2. **Operational settings** - Control how the platform functions after deployment
+   - These are grouped under the `config:` section of the `vcluster-platform` chart
+   - Located in the platform Helm chart ([loft-sh/loft](https://github.com/loft-sh/loft/tree/master/chart))
+   - Examples: `config.auth`, `config.audit`, `config.loftHost`
+   - You can also manage these through the UI in **Admin > Config**
+<!-- vale on -->
+
+3. **Agent settings** - Control how the platform agent operates in connected clusters
+   - Set through the top-level `agentValues:` section of the `vcluster-platform` chart
+   - Located in the platform Helm chart ([loft-sh/loft](https://github.com/loft-sh/loft/tree/master/chart))
+   - You can [override](#understanding-agent-values) these per-cluster with annotations
+
+### Distinguish between values.yaml and config sections {#understanding-the-difference}
+
+When configuring the platform, understand the difference between the main `values.yaml` settings and the `config` section inside it:
+
+- **values.yaml (installation settings)** - Controls **how** the platform itself installs
+  - Affects the Kubernetes resources created during installation
+  - Examples: replica count, resource limits, persistence settings, ingress configuration
+  - You typically set these options once during deployment
+  - Not accessible through the UI after installation
+  - Requires a Helm upgrade to change after initial deployment
+
+<!-- vale off -->
+- **config section** - Controls **what** the platform does after installation
+  - Located in the `vcluster-platform` chart's `values.yaml` as the `config:` key
+  - Defined in [`loft-sh/loft/chart/values.yaml`](https://github.com/loft-sh/loft/blob/07ee94fecd7265607f6c4a3ec42b14d3ef87391f/chart/values.yaml#L167)
+  - Stores settings in a dedicated Kubernetes resource that persists across platform upgrades
+  - Contains settings that the platform reads and applies at runtime
+  - Affects the platform's behavior, features, and integrations
+  - Examples: authentication options, audit settings, UI customization
+  - You can change these any time through the UI in **Admin > Config**
+  - Changes are detected and applied without requiring a restart or redeployment
+<!-- vale on -->
+
+#### Complete common configuration tasks {#common-configuration-tasks}
+
+For common tasks, configure the following:
+
+| Task | Configuration location | Example |
+|------|------------------------|---------|
+| Setting admin credentials | `admin:` section (root level) | `admin.username`, `admin.password` |
+| Configuring replicas for HA | `replicaCount:` setting (root level) | `replicaCount: 2` |
+| Setting up ingress | `ingress:` section (root level) | `ingress.enabled: true` |
+| Setting resource limits | `resources:` section (root level) | `resources.limits.memory` |
+| Configuring auth providers | `config.auth:` section | `config.auth.github` |
+| Setting custom domain | `config:` section | `config.loftHost` |
+
+### Review platform configuration example {#platform-configuration-example}
+
+The following example is of a platform `values.yaml` file showing the configuration sections:
+
+```yaml title="Example platform values.yaml with all configuration sections"
+
+# Installation settings (top-level)
+replicaCount: 2
+resources:
+  requests:
+    memory: 512Mi
+    cpu: 400m
+
+# Admin user settings (top-level)
+admin:
+  create: true
+  username: my-admin-user
+  password: my-secure-password
+
+# Ingress configuration (top-level)
+ingress:
+  enabled: true
+  host: platform.example.com
+
+# Agent settings (top-level)
+agentValues:
+  resources:
+    requests:
+      memory: 256Mi
+  # Security contexts for agent pods
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1001
+  podSecurityContext:
+    fsGroup: 2001
+
+# Operational settings (inside config section)
+config:
+  loftHost: platform.example.com
+  audit:
+    enabled: true
+  auth:
+    github:
+      clientId: $CLIENT_ID
+```
+
+## Apply configuration {#applying-configuration}
+
+<!-- vale off -->
+Apply the platform configuration in two ways:
+- Through `helm` values when installing or upgrading the platform
+- Through the UI in **Admin > Config** after installation (operational settings only)
+<!-- vale on -->
+
+Using `helm` values allows you to manage configuration declaratively and enables deployment through [GitOps solutions](../install/gitops) such as ArgoCD.
+
+Here's an example of applying platform configuration with `helm`:
+
+```bash title="Apply platform configuration using Helm"
+RELEASE_NAME=vcluster-platform
+RELEASE_NAMESPACE=vcluster-platform
+PLATFORM_VERSION='' # Set this to a specific version or leave empty for latest
+
+helm upgrade $RELEASE_NAME vcluster-platform \
+  --install \
+  --repo https://charts.loft.sh/ \
+  --namespace $RELEASE_NAMESPACE \
+  --create-namespace \
+  --values values.yaml \
+  ${PLATFORM_VERSION:+--version $PLATFORM_VERSION}
+```
+
+## Set a custom domain {#setting-a-custom-domain}
+
+The `loftHost` variable is a critical configuration setting that defines the domain where users access the platform.
+
+### Determine when to set this value {#when-to-set-this-value}
+
+Set the `loftHost` value after:
+1. Installing the platform
+2. Configuring TLS certificates
+3. Setting up ingress with a [custom domain](./domain.mdx)
+
+### Define what to set {#what-to-set}
+
+The `loftHost` value should be:
+- The same hostname specified in your ingress resource
+- Only the hostname (e.g., `platform.example.com`)
+- Without protocols (e.g., no `https://`)
+- Without subpaths (e.g., no `/platform`)
+
+```yaml title="Configure custom domain in platform config"
+config:
+  loftHost: platform.example.com
+```
+
+### Reconnect clusters after changing the domain {#after-changing-the-domain}
+
+After updating the `loftHost` value, you must reconnect all clusters to the platform by running the same connection commands in each Kubernetes context. See [connecting clusters](../administer/clusters/connect-cluster.mdx) for detailed instructions.
+
+:::info Important
+You must also reconnect clusters if you change the `additionalCA` or `insecureSkipVerify` values after the initial setup.
+:::
+
+## Manage sensitive information {#managing-sensitive-information}
+
+Many configuration options require sensitive information such as API keys or tokens. Rather than storing these directly in your `values.yaml` file, you can use environment variable placeholders.
+
+### Use secret references {#using-secret-references}
+
+To securely provide sensitive information, store it in a Kubernetes secret and reference it in your configuration:
+
+```yaml title="Store sensitive values using Kubernetes secrets"
+# Secret references
+envValueFrom:
+  CLIENT_ID:
+    secretKeyRef:
+      name: github-auth-secret
+      key: client_id
+  CLIENT_SECRET:
+    secretKeyRef:
+      name: github-auth-secret
+      key: client_secret
+
+# Platform configuration
+config:
+  auth:
+    github:
+      clientId: $CLIENT_ID
+      clientSecret: $CLIENT_SECRET
+      redirectURI: https://my-platform.example.com/auth/github/callback
+```
+
+## Configure custom HTTP headers {#custom-http-headers}
+
+You can configure the platform to add custom HTTP headers to all API responses. This is useful for security-related headers or when integrating with specific environments.
+
+```yaml title="Adding custom HTTP headers"
+config:
+  auth:
+    customHttpHeaders:
+      X-Frame-Options: SAMEORIGIN
+      X-XSS-Protection: 1; mode=block
+      Content-Security-Policy: default-src 'self'
+```
+
+## Manage certificates {#certificate-management}
+
+### Use a custom certificate authority {#using-a-custom-certificate-authority}
+
+If you want all virtual clusters to trust a specific certificate authority when communicating with the platform, you can configure it centrally rather than in each individual virtual cluster.
+
+:::info Prerequisite
+Before setting a custom certificate authority, you must [configure TLS for the platform](/platform/configure/domain#configure-tls).
+:::
+
+```yaml title="Setting a custom certificate authority"
+# Base64-encoded CA certificate - top-level setting, not inside config:
+additionalCA: "(base64 encoded CA)"
+```
+
+### Import existing virtual clusters with certificate validation {#importing-existing-virtual-clusters}
+
+When importing externally managed virtual clusters, you can enable secure communication by using the same certificate authority:
+
+1. Get the current certificate authority from your platform:
+
+```bash title="Get the certificate authority value"
+helm get values --namespace $RELEASE_NAMESPACE $RELEASE_NAME --all | grep additionalCA
+```
+
+2. Import the virtual cluster with certificate validation:
+
+```bash title="Import a virtual cluster with certificate validation"
+vcluster platform add vcluster <VCLUSTER_NAME> \
+--namespace=<VCLUSTER_NAMESPACE> \
+--project=<PROJECT_NAME> \
+--ca-data <BASE64_CA_VALUE>
+```
+
+The imported virtual cluster restarts and reports `Ready` once it establishes a secure connection to the platform.
+
+## Work with the platform agent {#the-platform-agent}
+
+### Understand what the platform agent does {#what-is-the-platform-agent}
+
+The platform agent is a component that runs in each connected Kubernetes cluster. It handles:
+- Cluster resource management
+- Communication with the platform
+- Reconciliation of cluster-scoped resources
+
+:::important
+Every cluster connected to the platform, including the cluster where the platform itself runs, must have the platform agent installed.
+:::
+
+### Use default agent deployment {#default-agent-deployment}
+
+By default, the platform automatically installs the agent in:
+1. The cluster where the platform is deployed
+2. Any new clusters connected to the platform
+
+### Disable automatic agent deployment {#disabling-automatic-agent-deployment}
+
+In some environments, particularly those using GitOps tools, you might want to manage agent deployment manually. There are two ways to disable automatic agent deployment:
+
+1. **Platform-wide** - Disable for all clusters:
+
+```yaml title="Disable automatic agent deployment platform-wide"
+# Not inside config: section - this is a top-level setting
+env:
+  DISABLE_AGENT: true
+```
+
+2. **Per-cluster** - Disable for specific clusters by setting the `loft.sh/cluster-ignore-agent` annotation to `true` on the Cluster resource.
+
+:::warning Agent required
+Even if you disable automatic deployment, the platform agent is still required in every connected cluster. You must deploy it manually or through GitOps tools.
+:::
+
+### Install the agent manually {#manual-agent-installation}
+
+To manually install the platform agent:
+
+```bash title="Manual agent installation"
+RELEASE_NAME=vcluster-platform
+RELEASE_NAMESPACE=vcluster-platform
+PLATFORM_VERSION='' # Set this to a specific version or leave empty for latest
+
+helm upgrade $RELEASE_NAME vcluster-platform \
+  --install \
+  --repo https://charts.loft.sh/ \
+  --namespace $RELEASE_NAMESPACE \
+  --create-namespace \
+  --set agentOnly=true \
+  ${PLATFORM_VERSION:+--version $PLATFORM_VERSION}
+```
+
+## Configure the agent {#agent-configuration}
+
+### Understand agent values {#understanding-agent-values}
+
+The platform agent uses its own set of configuration values, which you can specify in several ways:
+
+1. **Default behavior**: By default, the agent inherits values from the platform configuration.
+2. **Global agent values**: The `agentValues:` section in the platform `values.yaml` specifies default values for all agents.
+3. **Cluster-specific values**: The `loft.sh/agent-values` annotation on a Cluster resource overrides global values for that specific cluster.
+
+When the platform upgrades an agent, it uses the values from the `agentValues` section (or from the cluster annotation if present).
+
+### Retrieve agent values {#retrieve-agent-values}
+
+For a platform instance on host `nimbus.vcluster.cloud` with a connected cluster named `staging`, the following table shows how to retrieve agent values for each tier. Use these endpoints to determine current platform configuration or to layer values instead of overriding them.
+
+You can specify multiple values files:
+```bash
+--values=https://<platform-config-endpoint> --values=https://<cluster-annotation-endpoint>
+```
+An [access key](/platform/administer/users-permissions/access-keys#how-access-keys-work) is required for authentication.
+<br></br>
+
+<!-- vale off -->
+| Host                    | Cluster Name | Source            | Request                                                                                     | Response                                            |
+|-------------------------|-----------|----------------------|---------------------------------------------------------------------------------------------|-----------------------------------------------------|
+| `nimbus.vcluster.cloud` | `staging` | none                 | `https://nimbus.vcluster.cloud/clusters/staging?token=access-key`                           | Current agent values                                |
+| `nimbus.vcluster.cloud` | `staging` | `platform-config`    | `https://nimbus.vcluster.cloud/clusters/staging?token=access-key&source=platform-config`    | Content of `agentValues` section in platform config |
+| `nimbus.vcluster.cloud` | `staging` | `cluster-annotation` | `https://nimbus.vcluster.cloud/clusters/staging?token=access-key&source=cluster-annotation` | Value of the `loft.sh/agent-values` annotation on the `Cluster Object` |
+<!-- vale on -->
+
+### Configure the agent through the platform {#configuring-the-agent-through-the-platform}
+
+To customize the agent configuration when deployed by the platform, use the `agentValues` section in your platform configuration:
+
+```yaml title="Customizing agent configuration"
+# Agent-specific configuration - top-level setting, not in config: section
+agentValues:
+  # Configure container-level security context for the agent
+  securityContext:
+    allowPrivilegeEscalation: false
+    runAsNonRoot: true
+    runAsUser: 1001
+    capabilities:
+      drop:
+      - ALL
+  
+  # Configure pod-level security context for the agent
+  podSecurityContext:
+    fsGroup: 2001
+    runAsGroup: 3001
+
+  # Set resource limits for the agent
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+```
+
+:::info Security Context Precedence
+When multiple security contexts are configured, the agent uses this precedence order (highest to lowest):
+1. Cluster-specific `agentValues` (via `loft.sh/agent-values` annotation)
+2. Platform-wide `agentValues` (in platform values.yaml)
+3. Platform default `securityContext` and `podSecurityContext`
+
+For detailed information about security context configuration and examples, see [Configure the Agent - Security Context Configuration](/platform/administer/clusters/advanced/agent-config#security-context-configuration).
+:::
+
+### Configure cluster-specific agents {#cluster-specific-agent-configuration}
+
+To apply different configuration to the agent in specific clusters, set the `loft.sh/agent-values` annotation on the Cluster resource. These values override any settings from the platform's `agentValues`.
+
+## Review configuration reference {#configuration-reference}
+
+For a complete reference of all platform configuration options under the `config:` section, see below:
+
+<VClusterProConfig />

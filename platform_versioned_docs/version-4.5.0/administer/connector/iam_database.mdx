@@ -1,0 +1,272 @@
+---
+title: IAM Database Connector
+sidebar_label: IAM Database
+sidebar_position: 1
+description: Learn how to use IAM based Database Connectors with the platform to manage backing stores for multiple virtual clusters.
+---
+
+import BasePrerequisites from "../../_partials/install/base-prerequisites.mdx";
+import InstallNextSteps from "../../_partials/install/install-next-steps.mdx";
+import VersionBadge from "@site/src/components/VersionBadge";
+import Tabs from "@theme/Tabs";
+import TabItem from "@theme/TabItem";
+
+<VersionBadge platformVersion="v4.5.0" vclusterVersion="v0.30.0" />
+
+The IAM Database Connector feature allows virtual clusters to use a shared database server as their backing store and authenticate to the it using workload identity.
+
+This page describes how to set up a shared database connector for cloud providers, for general instructions on using database connectors, see the [Database Connectors](./database.mdx) page.
+
+## AWS
+
+### Prerequisites
+
+- A RDS instance running MySQL or PostgreSQL
+- An EKS cluster with the EKS Pod Identity Agent Add-On
+- Pods in the EKS cluster must be able to connect to the RDS instance. This may require configuring VPC, Security Groups, and Subnets
+
+### Setup and prepare RDS database
+
+Create an RDS Database and ensure it supports **Password and IAM based Authentication**.
+Once the RDS Instance is available, you need to grant an admin user permissions to connect via RDS IAM authentication. This is done by connecting to the database via the initial password and running the following commands according to whether it's a MySQL or PostgreSQL database.
+
+<Tabs
+    defaultValue="postgres"
+    values={[
+      {label: 'PostgreSQL', value: 'postgres'},
+      {label: 'MySQL', value: 'mysql'},
+    ]}>
+  <TabItem value="postgres">
+  The default user for PostgreSQL RDS instances is `postgres`, adjust accordingly if a different admin user is used.
+
+```sql title="Grant IAM authentication permissions for PostgreSQL"
+GRANT rds_iam TO postgres
+```
+
+  </TabItem>
+  <TabItem value="mysql">
+  The default user for MySQL RDS instances is `admin`, adjust accordingly if a different admin user is used.
+
+```sql title="Grant IAM authentication permissions for MySQL"
+ALTER USER IF EXISTS admin IDENTIFIED WITH AWSAuthenticationPlugin AS 'RDS'
+```
+
+  </TabItem>
+</Tabs>
+
+:::info
+In both cases, once the user has been modified, you will not be able to connect via password any longer. In order to connect to the database via password, you will either need another user that's not configured for IAM authentication, or you will need to generate a connect token via `aws rds generate-db-auth-token` as you connect to the RDS instance.
+:::
+
+### Create IAM policies and role
+
+Next up, you need to allow the vCluster Platform to connect to the RDS instance using IAM authentication. This is done by creating an IAM Policy and attaching it to the IAM Role used by the vCluster Platform pods.
+It also needs permissions to manage IAM Roles, Policies, and EKS Pod Identity Associations for the virtual clusters.
+
+:::info
+A policy for each DB Connector / RDS Instance that the platform manages is required. The vCluster Platform must be restarted for newly attached policies to take effect.
+:::
+
+ <!-- vale off -->
+
+#### RDS DB Connect Policy
+
+ <!-- vale on -->
+
+This policy is required to allow the vCluster Platform to connect as a database user. This user must be able to create and delete users and databases (AKA superuser). For convenience, the default admin user can be used. Consult the respective database documentation for the permissions required when not using the admin user.
+
+A sample policy is shown below, where `REGION`, `ACCOUNT`, and `DB_RESOURCE_ID` are values specific to the RDS instance. `DB_USER` must match the admin user that the platform deployment will connect as.
+
+The `DB_RESOURCE_ID` can be retrieved by running `aws rds describe-db-instances --output json` and looking for the `DbiResourceId` or `DbClusterResourceId` field in the output, depending on your RDS instance type.
+For RDS Proxy, use the `aws rds describe-db-proxies --output json` command instead and look for the last part of the `DbProxyArn` field after the final colon (`:`).
+For example, if the `DbProxyArn` is `arn:aws:rds:us-east-1:123456789012:db-proxy:prx-0123a01b12345c0a`, the `DB_RESOURCE_ID` is `prx-0123a01b12345c0a`.
+
+```json title="RDS DB Connect Policy"
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": "rds-db:connect",
+      "Resource": "arn:aws:rds-db:${REGION}:${ACCOUNT}:dbuser:${DB_RESOURCE_ID}/${DB_USER}"
+    }
+  ]
+}
+```
+
+<!-- vale off -->
+
+#### IAM Management Policy
+
+<!-- vale on -->
+
+This policy allows the vCluster Platform to manage policies that allow virtual clusters to connect to newly created virtual cluster databases. The vCluster Platform utilizes inline policies to avoid the need to manage many to one relationships between policies and roles.
+
+```json title="IAM Management Policy"
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "iam:GetRole",
+        "iam:UpdateAssumeRolePolicy",
+        "iam:PassRole",
+        "iam:DeleteRolePolicy",
+        "iam:CreateRole",
+        "iam:DeleteRole",
+        "iam:UpdateRole",
+        "iam:PutRolePolicy",
+        "iam:GetRolePolicy"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
+```
+
+<!-- vale off -->
+
+#### RDS Resource ID Lookup Policy
+
+<!-- vale on -->
+
+This read only policy allows the vCluster Platform to look up the DB_RESOURCE_ID for each DB Connector.
+
+```json title="RDS Resource ID Lookup Policy"
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": ["rds:DescribeDBInstances", "rds:DescribeDBProxies"],
+      "Resource": "*"
+    }
+  ]
+}
+```
+
+<!-- vale off -->
+
+#### EKS Pod Identity Association Policy
+
+<!-- vale on -->
+
+Manages EKS Pod Identity Associations for virtual clusters to allow them to assume the IAM Roles created for database access.
+
+```json title="EKS Pod Identity Association Policy"
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "eks:DescribePodIdentityAssociation",
+        "eks:ListPodIdentityAssociations",
+        "eks:CreatePodIdentityAssociation",
+        "eks:TagResource",
+        "eks:DeletePodIdentityAssociation",
+        "eks:UpdatePodIdentityAssociation"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
+```
+
+#### Assemble policies into role
+
+Now that the required policies have been created, they need to be attached to an IAM Role used by the vCluster Platform pods.
+Create a new IAM Role that **includes the four policies above** and set up a trust policy that allows the EKS Pod Identity Agent to assume the role.
+
+```json title="IAM Role Example"
+{
+  "RoleName": "vcluster-platform-iam-database-role",
+  "AssumeRolePolicyDocument": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Principal": {
+          "Service": "pods.eks.amazonaws.com"
+        },
+        "Action": ["sts:AssumeRole", "sts:TagSession"]
+      }
+    ]
+  },
+  "Description": "Allows vCluster Platform running in Amazon EKS cluster to access RDS and IAM Resources."
+}
+```
+
+<!-- vale off -->
+
+### Create Pod Identity Association
+
+<!-- vale on -->
+
+Now that the database user and roles are configured, it"s time to assign the role to the vCluster platform pods by running the following command. Replace the placeholders `EKS_CLUSTER_NAME` and `IAM_ROLE_ARN` with your own values.
+
+```bash title="Create Pod Identity Association"
+aws eks create-pod-identity-association \
+    --cluster-name $EKS_CLUSTER_NAME \
+    --role-arn $IAM_ROLE_ARN \
+    --namespace vcluster-platform \
+    --service-account loft
+```
+
+:::warning
+After the association is created, restart the vCluster Platform pods to pick up the new role.
+:::
+
+### Create connector secret
+
+A connector secret is a secret that can be used with a platform feature or integration.
+
+For the platform to start using a database server, a secret must be created that contains admin credentials for the server. The secret must:
+
+- Contain the `loft.sh/connector-type` label with the `shared-database` value
+- Reside in the same namespace as the platform
+- Contain the fields:
+  - endpoint
+  - port
+  - user
+  - identityProvider (only for IAM based authentication)
+
+To create a database connector secret in the UI, navigate to the sidebar and select **Databases** -> **Connect Database Secrets**. Then, select the **AWS IAM** authentication method and fill in the required fields.
+
+<!-- vale off -->
+
+Alternatively, a Secret YAML manifest can be applied to the platform's host cluster.
+
+<!-- vale on -->
+
+```yaml title="Shared database secret template"
+apiVersion: v1
+kind: Secret
+metadata:
+  name: <name> # this is a normal metadata name. A descriptive name is recommended. This will be used in a tenent vCluster's config to reference the connector secret
+  namespace: <vcluster-platform-namespace> # this is the namespace that vCluster Platform is installed in. "vcluster-platform" and "loft" are common values.
+  labels:
+    loft.sh/connector-type: "shared-database"
+stringData:
+  endpoint: <endpoint> # this could be a service endoint or an external hostname endpoint
+  port: <port> # 3306 is a common port for database servers
+  user: <user>
+  type: <type> # mysql or postgres
+  identityProvider: "aws"
+```
+
+Use the following `kubectl` command to create the secret:
+
+```bash title="Create a shared database connector secret"
+kubectl create secret generic default-secret-name \
+  --namespace=vcluster-platform \
+  --from-literal=endpoint="your-database-endpoint" \
+  --from-literal=identityProvider="aws" \
+  --from-literal=port="3306" \
+  --from-literal=type="your-database-type" \
+  --from-literal=user="your-database-user" \
+  -o yaml --dry-run=client > secret.yaml
+```
+
+To use the secret in a virtual cluster, refer to the [Database Connectors](./database#use-virtual-cluster-with-shared-database) documentation.
