@@ -1,0 +1,135 @@
+---
+title: Manage Private Nodes
+sidebar_label: Manage
+sidebar_position: 3
+sidebar_class_name: private-nodes
+---
+
+import TenancySupport from '../../../_fragments/tenancy-support.mdx';
+
+<TenancySupport privateNodes="true" standalone="true" />
+
+## Upgrade vCluster
+
+### Upgrade vCluster control plane
+
+:::warning Kubernetes Version Skew Policy applies
+Do not upgrade multiple minor versions at the same time for the control plane as outlined in the [Kubernetes Version Skew Policy](https://kubernetes.io/releases/version-skew-policy/). Instead always upgrade a single minor version, wait until the cluster becomes healthy and then upgrade to the next minor version. For example: `v1.26` -> `v1.27` -> `v1.28`.
+:::
+
+To upgrade the vCluster control plane, update the Kubernetes `init` container version in your `vcluster.yaml` file.
+After the change, vCluster upgrades the control plane automatically. If automatic worker node upgrades are configured, those nodes are also upgraded.
+
+To change the Kubernetes version, add the following to your `vcluster.yaml`:
+
+```yaml title="Upgrade control plane Kubernetes version"
+...
+controlPlane:
+  statefulSet:
+    image:
+      tag: v1.31.1 # Or any other Kubernetes version
+...
+```
+
+### Upgrade vCluster workers
+
+:::warning Kubernetes version skew policy apply
+Use the [Kubernetes Version Skew Policy](https://kubernetes.io/releases/version-skew-policy/) for worker upgrades.
+:::
+
+There are two modes of how worker upgrades can be done:
+- (_Recommended_) Automatically by vCluster when the control-plane was updated
+- Manually using vCluster CLI or kubeadm
+
+#### Use automatic upgrades
+
+Automatic worker node upgrades are enabled by default. vCluster upgrades each node when it detects a version mismatch between the control plane and the worker node. By default, one node is upgraded at a time.
+Upgrade starts 2 minutes after the control plane is upgraded. There is also a grace period for newly added worker nodes (upgrade is not going to start if node was created less than 2 minutes ago).
+
+:::tip
+You can exclude a node from automatic upgrade by labeling it with `vcluster.loft.sh/skip-auto-upgrade: true`
+:::
+
+The upgrade Pod runs directly on the node and completes the following steps:
+1. Downloads the Kubernetes binary bundle from the vCluster control plane.
+2. Replaces the `kubeadm` binary.
+3. Runs `kubeadm upgrade node`.
+4. Cordons the node.
+5. Replaces other binaries such as `containerd`, `kubelet`, etc.
+6. Restarts `containerd` and `kubelet` if necessary.
+7. Uncordons the node.
+
+:::warning
+Node upgrades typically do not restart pods. However, depending on the Kubernetes version change, restarts might occur in some cases.
+:::
+
+#### Perform manual upgrades
+
+You can either upgrade a node using the vCluster CLI by running the following command:
+
+```bash title="Upgrade a specific node manually"
+vcluster node upgrade my-node
+```
+
+Alternatively, you can manually upgrade by following the [official Kubeadm Kubernetes guide](https://kubernetes.io/docs/tasks/administer-cluster/kubeadm/upgrading-linux-nodes/).
+
+
+## Reuse a node
+
+A node can be re-used for another virtual cluster by using the `--force-join` flag. Before joining the node to a new vCluster, it
+should be deleted from the original vCluster.
+
+
+```bash title="Reuse a node"
+# Delete the node from vCluster
+vcluster node delete my-node
+
+# Create a new token from the vCluster you want to join
+vcluster token create
+
+# Then on the node itself run this to join it
+curl ... | sh -s -- --force-join
+```
+
+:::warning Rejoining the same cluster
+If you are re-oining the original vCluster, then the `kube-flannel` and `kube-proxy` pods are restarted. All workloads will be restarted.
+:::
+
+
+## Remove vCluster
+
+When deleting a vCluster with private nodes, it's recommended that each node is removed from the vCluster before deleting the vCluster itself.
+
+### Remove worker node
+
+To remove a node from the cluster, follow standard procedures as with any other Kubernetes distro. First cordon a node, then drain it, which can be done using `kubectl` commands. We supply a vCluster CLI command to delete worker nodes from the cluster.
+
+```shell title="Cordon and drain the node"
+vcluster node delete <node-name>
+```
+
+:::tip Force Delete a Node
+If you shut down, delete or otherwise make the node instance unreachable before running `vcluster node delete`, it will
+prevent draining.  To proceed, add `--drain=false` to the delete command.
+:::
+
+## Clean up orphaned node
+
+There may be cases where the vCluster is deleted before all worker nodes were removed.
+In these scenarios, the `kubelet`, `kube-proxy` and other components running on the node are still trying to connect to the now deleted vCluster control plane.
+
+The node can be cleaned up by using any join script with the `--reset-only` flag.
+
+Cleaning up control-plane node can be done by running `/var/lib/vcluster/node/join.sh --reset-only`
+
+## Load Docker images to a node
+
+There may be instances where you want to load an image directly to the private node.
+
+Before loading any images to the node, the node has to be in a `Ready` state and part of a virtual cluster. The command pulls the image locally
+onto the machine that is running the command and saves it as a `.tar` archive. It creates a pod on the private node and copies the image using `kubectl cp` to the pod. The pod imports the image onto the node.
+
+```bash title="Load Docker image into specific node"
+vcluster node load-image my-node --image nginx:latest
+```
+

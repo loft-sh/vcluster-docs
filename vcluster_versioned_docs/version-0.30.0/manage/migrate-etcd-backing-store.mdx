@@ -1,0 +1,342 @@
+---
+title: Migrate etcd backing store
+sidebar_label: Migrate etcd backing store
+sidebar_position: 7
+description: Migrate your vCluster from deployed etcd to embedded etcd without data loss.
+---
+
+import ProAdmonition from '../_partials/admonitions/pro-admonition.mdx'
+import BasePrerequisites from '@site/docs/_partials/base-prerequisites.mdx';
+import InstallCli from '../_partials/deploy/install-cli.mdx';
+import Flow, { Step } from '@site/src/components/Flow';
+import InterpolatedCodeBlock from "@site/src/components/InterpolatedCodeBlock";
+
+<ProAdmonition/>
+
+This guide explains how to migrate your <GlossaryTerm term="vcluster">vCluster</GlossaryTerm> from [deployed (external) etcd](/vcluster/configure/vcluster-yaml/control-plane/components/backing-store/etcd/deploy) to [embedded etcd](/vcluster/configure/vcluster-yaml/control-plane/components/backing-store/etcd/embedded) without data loss. 
+
+:::info Why migrate?
+If you're currently using deployed <GlossaryTerm term="etcd">etcd</GlossaryTerm> and want to simplify your deployment, reduce resource consumption, or streamline operations, migrating to embedded etcd is a straightforward process that preserves all your data.
+:::
+
+## Overview
+
+The migration from deployed to embedded etcd is a seamless process that:
+- Preserves all your vCluster data and workloads
+- Requires minimal downtime (only during the upgrade process)
+- Automatically handles the data transfer between etcd instances
+- Cleans up the deployed etcd resources after successful migration
+
+:::warning Critical requirement
+The `migrateFromDeployedEtcd` flag is essential for preserving data. Without this flag, your vCluster state will be wiped during the transition.
+:::
+
+## Prerequisites
+
+<BasePrerequisites />
+- **vCluster CLI** - Required for migration commands
+  <InstallCli />
+- **vCluster version 0.24.2 or later** - Earlier versions don't support this migration
+- **Existing vCluster with deployed etcd** - This guide assumes you have a vCluster currently using deployed (external) etcd
+- **Backup your vCluster data** - Create a snapshot before migration (see [backup guide](/vcluster/manage/backup-restore/backup))
+- **Storage requirements**:
+  - Storage class available for the embedded etcd PVC (default: 5Gi)
+  - Sufficient storage capacity for your etcd data
+- **RBAC permissions** - You need permissions to:
+  - Modify StatefulSets and Deployments in the vCluster namespace
+  - Create and delete PVCs
+  - View pod logs for verification
+
+## Migration process
+
+<Flow id="migrate-to-embedded-etcd">
+
+<Step>
+
+**Verify current backing store**
+
+Check that you're using deployed etcd:
+
+<!-- vale off -->
+<InterpolatedCodeBlock 
+  code={`kubectl get statefulset -n [[VAR:NAMESPACE:vcluster-my-team]] [[VAR:VCLUSTER NAME:my-vcluster]]-etcd`}
+  language="bash"
+/>
+<!-- vale on -->
+
+You should see the deployed etcd StatefulSet running.
+
+</Step>
+
+<Step>
+
+**Create migration configuration**
+
+Create a new values file that enables embedded etcd with the migration flag. Since embedded etcd runs inside the vCluster StatefulSet pod, storage is configured under `controlPlane.statefulSet.persistence` (not under the `backingStore` section like deployed etcd).
+
+The `migrateFromDeployedEtcd: true` flag tells vCluster to copy data from the deployed etcd before switching to embedded mode. During migration, both etcd instances temporarily coexist, with the deployed etcd remaining available as a fallback.
+
+```yaml title="migrate-to-embedded.yaml"
+controlPlane:
+  backingStore:
+    etcd:
+      embedded:
+        enabled: true
+        migrateFromDeployedEtcd: true
+        # Optional: Configure embedded etcd settings
+        extraArgs:
+          - '--auto-compaction-mode=periodic'
+          - '--auto-compaction-retention=30m'
+          - '--quota-backend-bytes=8589934592'
+  statefulSet:
+    persistence:
+      volumeClaim:
+        size: 10Gi
+        # storageClassName: "your-storage-class"  # Optional
+```
+
+:::warning Admission controllers
+If your cluster uses admission controllers (Kyverno, OPA Gatekeeper, etc.), ensure they allow StatefulSet spec modifications and volume claim changes. You may need to add temporary exceptions for the vCluster namespace during migration.
+:::
+
+</Step>
+
+<Step>
+
+**Apply the migration configuration**
+
+Upgrade your vCluster with the migration configuration. Note that you should not use `--reuse-values` for the migration, as it will cause a conflict between the deployed and embedded etcd configurations. Instead, include all necessary values in your migration configuration file.
+
+<!-- vale off -->
+<InterpolatedCodeBlock
+  code={`helm upgrade [[VAR:VCLUSTER NAME:my-vcluster]] vcluster \\
+  --repo https://charts.loft.sh \\
+  --namespace [[VAR:NAMESPACE:vcluster-my-team]] \\
+  --version [[VAR:VCLUSTER VERSION:0.27.0]] \\
+  -f migrate-to-embedded.yaml \\
+  --wait`}
+  language="bash"
+/>
+<!-- vale on -->
+
+:::note Migration duration
+The migration typically completes within 1-5 minutes, depending on:
+- The size of your etcd database
+- Network latency between pods
+- Storage performance
+:::
+
+</Step>
+
+<Step>
+
+**Verify successful migration**
+
+Check the vCluster logs for the success message:
+
+<!-- vale off -->
+<InterpolatedCodeBlock 
+  code={`kubectl logs -n [[VAR:NAMESPACE:vcluster-my-team]] [[VAR:VCLUSTER POD:my-vcluster-0]] | grep -i "migrated"`}
+  language="bash"
+/>
+<!-- vale on -->
+
+You should see: `Successfully migrated etcd database to embedded etcd`
+
+</Step>
+
+<Step>
+
+**Remove deployed etcd resources**
+
+After confirming successful migration, remove the migration flag to clean up deployed etcd:
+
+```yaml title="final-embedded.yaml"
+controlPlane:
+  backingStore:
+    etcd:
+      embedded:
+        enabled: true
+        # Optional: Configure embedded etcd settings
+        extraArgs:
+          - '--auto-compaction-mode=periodic'
+          - '--auto-compaction-retention=30m'
+          - '--quota-backend-bytes=8589934592'
+  statefulSet:
+    persistence:
+      volumeClaim:
+        size: 10Gi
+        # storageClassName: "your-storage-class"  # Optional
+```
+
+Apply the final configuration:
+
+<!-- vale off -->
+<InterpolatedCodeBlock
+  code={`helm upgrade [[VAR:VCLUSTER NAME:my-vcluster]] vcluster \\
+  --repo https://charts.loft.sh \\
+  --namespace [[VAR:NAMESPACE:vcluster-my-team]] \\
+  --version [[VAR:VCLUSTER VERSION:0.27.0]] \\
+  -f final-embedded.yaml \\
+  --wait`}
+  language="bash"
+/>
+<!-- vale on -->
+
+This removes:
+- The deployed etcd StatefulSet
+- Associated etcd Services
+- The deployed etcd pods (they are terminated gracefully)
+
+:::warning About PVCs
+The deployed etcd PVCs are NOT automatically deleted to prevent accidental data loss. You can manually delete them after verifying the migration:
+
+<!-- vale off -->
+<InterpolatedCodeBlock 
+  code={`kubectl delete pvc -n [[VAR:NAMESPACE:vcluster-my-team]] data-[[VAR:VCLUSTER NAME:my-vcluster]]-etcd-0`}
+  language="bash"
+/>
+<!-- vale on -->
+:::
+
+</Step>
+
+</Flow>
+
+## Pod deletion behavior
+
+During the migration process, pod management follows this sequence:
+
+1. **During initial upgrade** (with `migrateFromDeployedEtcd: true`):
+   - vCluster deployment is replaced with a StatefulSet
+   - Embedded etcd starts within the vCluster pod
+   - Deployed etcd pods remain running for data migration
+   - Data is copied from deployed to embedded etcd
+   - No vCluster workload pods are affected
+
+2. **After migration completion**:
+   - The embedded etcd becomes the primary backing store
+   - Deployed etcd pods continue running but are no longer used
+   - vCluster workloads continue uninterrupted
+
+3. **After removing migration flag**:
+   - Deployed etcd StatefulSet is deleted
+   - Deployed etcd pods are terminated gracefully
+   - PVCs remain for manual cleanup
+   - vCluster workloads are not affected
+
+## Storage considerations
+
+### Storage sizing
+
+Embedded etcd creates a new PVC for storage. The default size is 5Gi, but you can customize it:
+
+```yaml
+controlPlane:
+  statefulSet:
+    persistence:
+      volumeClaim:
+        size: 10Gi
+```
+
+### Storage migration
+
+The data migration process:
+- Creates a new PVC for embedded etcd
+- Copies all data from deployed etcd to embedded etcd
+- Verifies data integrity before switching over
+- Maintains the deployed etcd as a fallback until explicitly removed
+
+## Certificate and path differences
+
+When migrating, be aware of these differences between deployed and embedded etcd:
+
+| Aspect | Deployed etcd | Embedded etcd |
+|--------|--------------|---------------|
+| Certificate location | `/run/config/pki/` | `/data/pki/etcd/` |
+| Data directory | Separate PVC | `/data` in vCluster PVC |
+| Service endpoint | `<vcluster>-etcd:2379` | `127.0.0.1:2379` (localhost) |
+| Management | Separate StatefulSet | Part of vCluster pod |
+
+## Resolve common issues
+
+### Migration doesn't start
+
+If you don't see the migration message in logs:
+
+1. Verify the deployed etcd is accessible:
+   <!-- vale off -->
+   <InterpolatedCodeBlock 
+     code={`kubectl exec -n [[VAR:NAMESPACE:vcluster-my-team]] [[VAR:VCLUSTER POD:my-vcluster-0]] -- curl -k https://[[VAR:VCLUSTER NAME:my-vcluster]]-etcd:2379/health`}
+     language="bash"
+   />
+   <!-- vale on -->
+
+2. Check for Helm upgrade issues:
+   <!-- vale off -->
+   <InterpolatedCodeBlock 
+     code={`helm status [[VAR:VCLUSTER NAME:my-vcluster]] -n [[VAR:NAMESPACE:vcluster-my-team]]`}
+     language="bash"
+   />
+   <!-- vale on -->
+
+3. Ensure the configuration is correct:
+   <!-- vale off -->
+   <InterpolatedCodeBlock 
+     code={`helm get values [[VAR:VCLUSTER NAME:my-vcluster]] -n [[VAR:NAMESPACE:vcluster-my-team]] | grep -A5 etcd`}
+     language="bash"
+   />
+   <!-- vale on -->
+
+### Data appears to be missing
+
+If resources seem missing after migration:
+
+1. Verify you used `migrateFromDeployedEtcd: true`
+2. Check the migration completed successfully in logs
+3. Ensure you're connected to the correct vCluster context
+4. Review the vCluster pod logs for any errors
+
+### StatefulSet immutability errors
+
+During migration, you might encounter errors about forbidden StatefulSet spec updates:
+
+```
+error when patching: StatefulSet.apps "vcluster-name" is invalid:
+spec: Forbidden: updates to statefulset spec for fields other than
+'replicas', 'ordinals', 'template', 'updateStrategy',
+'persistentVolumeClaimRetentionPolicy' and 'minReadySeconds' are forbidden
+```
+
+This happens because:
+- The migration converts a Deployment to a StatefulSet (for embedded etcd)
+- Kubernetes StatefulSets have strict immutability rules for certain fields
+- Some fields like `volumeClaimTemplates` cannot be modified after creation
+
+**Solution:**
+
+1. Delete the StatefulSet with `--cascade=orphan` to keep pods running:
+   <!-- vale off -->
+   <InterpolatedCodeBlock
+     code={`kubectl delete statefulset [[VAR:VCLUSTER NAME:my-vcluster]] -n [[VAR:NAMESPACE:vcluster-my-team]] --cascade=orphan`}
+     language="bash"
+   />
+   <!-- vale on -->
+
+2. Then retry the Helm upgrade - it will recreate the StatefulSet with correct configuration
+
+:::info Why cascade=orphan?
+Using `--cascade=orphan` removes the StatefulSet object but leaves pods running, minimizing downtime during the migration process.
+:::
+
+## Next steps
+
+After successfully migrating to embedded etcd, you can further customize your configuration:
+
+- **[Configure embedded etcd settings](/vcluster/configure/vcluster-yaml/control-plane/components/backing-store/etcd/embedded)** - Tune performance, set resource limits, and configure advanced options
+- **[Review deployed etcd configuration](/vcluster/configure/vcluster-yaml/control-plane/components/backing-store/etcd/deploy)** - Understand the configuration you migrated from
+
+## Related topics
+
+- [Backup and restore](/vcluster/manage/backup-restore/backup) - Create snapshots before and after migration
+- [High availability setup](/vcluster/deploy/control-plane/container/high-availability) - Scale your embedded etcd for HA
