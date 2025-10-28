@@ -1,0 +1,130 @@
+---
+title: Kube-vip
+sidebar_label: kubeVip
+sidebar_position: 4
+description: Configure embedded kube-vip for virtual cluster control plane.
+sidebar_class_name: private-nodes
+---
+
+[//]: # (import KubeVipConfig from '../../../../../_partials/config/controlPlane/advanced/kubeVip.mdx')
+
+import TenancySupport from '../../../../../_fragments/tenancy-support.mdx';
+
+<TenancySupport privateNodes="true" />
+
+<!-- vale off -->
+
+# Kube-vip
+
+Kube-vip announces the virtual cluster's control plane endpoint IP address on a specified network interface using ARP (layer 2).
+This makes the endpoint available to private nodes on the same layer 2 network, allowing them to connect to the control plane using a stable IP address.
+
+Kube-vip is intended to be used with high-availability (HA) deployments.
+When the control plane has multiple replicas and the active pod is terminated, kube-vip automatically sends proactive updates about the new VIP location to neighbors using gratuitous ARP, ensuring continuity without manual intervention.
+
+## How it works
+
+When kube-vip is enabled:
+
+1. A virtual IP address (VIP) is configured for the vCluster control plane through the `controlPlane.endpoint` field
+2. Kube-vip uses leader election within the virtual cluster to determine which control plane replica manages the VIP
+3. The leader adds the VIP on the specified network interface
+4. Worker nodes on the same layer 2 network discover the active control plane instance through ARP
+5. If the control plane pod is rescheduled, the new leader sends gratuitous ARP packets to update peers about the new VIP location
+
+## Enable kube-vip
+
+Configure kube-vip in your `vcluster.yaml`:
+
+```yaml
+# kube-vip is only compatible with private node virtual clusters
+privateNodes:
+  enabled: true
+
+controlPlane:
+  # the endpoint must be specified with the VIP
+  endpoint: 10.100.0.100:8443
+  advanced:
+    kubeVip:
+      # enable kube-vip
+      enabled: true
+      interface: eth0
+      gateway: 10.100.0.1/24
+```
+
+### Configuration options
+
+- **`interface`** - The network interface on which the VIP is announced (e.g., `eth0`, `ens192`). When using in conjunction with Multus, this is normally `net1`.
+- **`gateway`** - The gateway address in CIDR notation (e.g., `10.100.0.1/24`). This is used to configure policy-based routing for the VIP and must include the subnet prefix.
+
+## Example
+
+Here's a complete example of a vCluster configuration with kube-vip using [Multus](https://github.com/k8snetworkplumbingwg/multus-cni).
+Kube-vip is especially useful in scenarios where the normal vCluster service endpoint is not reachable from private nodes.
+Multus is a meta CNI plugin that can attach Pods to additional networks.
+It is a good alternative, especially in bare metal deployments, where a load balancer may not be available or be considerable effort to set up.
+
+This example assumes:
+- Multus is installed in the host cluster
+- A bridge named `br-private` exists on the host nodes
+- The bridge is connected to an isolated network where the private nodes are also being deployed
+
+First, create a NetworkAttachmentDefinition for the bridge network:
+
+```yaml
+apiVersion: k8s.cni.cncf.io/v1
+kind: NetworkAttachmentDefinition
+metadata:
+  name: private-vcluster
+  namespace: vcluster-platform
+spec:
+  config: |
+    {
+      "cniVersion": "0.3.1",
+      "type": "bridge",
+      "bridge": "br-private"
+    }
+```
+
+Then configure your vCluster:
+
+```yaml
+privateNodes:
+  enabled: true
+
+controlPlane:
+  endpoint: 10.100.0.100:8443
+  statefulSet:
+    annotations:
+      k8s.v1.cni.cncf.io/networks: vcluster-platform/private-vcluster
+  advanced:
+    kubeVip:
+      enabled: true
+      interface: net1
+      gateway: 10.100.0.1/24
+
+networking:
+  podCIDR: 10.64.0.0/16
+  serviceCIDR: 10.128.0.0/16
+```
+
+## Limitations
+
+- The network interface specified must exist on the vCluster control plane instances (e.g. through Multus)
+- The VIP must be routable from the worker nodes (layer 3), e.g. through the specified gateway
+- Embedded Kube-vip currently only supports ARP mode. Other features such as BGP are not supported or configurable.
+
+## Security considerations
+
+When kube-vip is enabled, the control plane pods are automatically granted `NET_ADMIN` (to manage the IP on the interface) and `NET_RAW` capabilities (to send gratuitous ARP packets).
+These capabilities are required for kube-vip to function and do not need to be configured manually.
+
+## Config reference
+
+[//]: # (<KubeVipConfig/>)
+
+## Additional resources
+
+- [Deploy with private nodes](../../../../../deploy/worker-nodes/private-nodes/README.mdx)
+- [kube-vip reference](https://kube-vip.io/)
+- [Multus reference](https://github.com/k8snetworkplumbingwg/multus-cni)
