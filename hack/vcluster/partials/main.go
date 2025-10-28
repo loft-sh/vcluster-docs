@@ -83,6 +83,7 @@ var paths = []string{
 	"controlPlane/advanced/headlessService",
 	"controlPlane/advanced/globalMetadata",
 	"controlPlane/advanced/defaultImageRegistry",
+	"controlPlane/advanced/kubeVip",
 	"controlPlane/advanced",
 	"controlPlane/statefulSet",
 	"controlPlane/service",
