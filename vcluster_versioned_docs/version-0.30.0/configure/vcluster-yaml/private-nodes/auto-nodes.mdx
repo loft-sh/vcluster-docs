@@ -1,0 +1,225 @@
+---
+title: Auto Nodes
+sidebar_label: autoNodes
+sidebar_position: 1
+---
+
+import AutoNodes from '../../../_fragments/deploy/auto-nodes.mdx';
+import AutoNodesScheduling from '../../../_fragments/deploy/auto-nodes-scheduling.mdx';
+import PrivateNodesAutoNodes from '../../../_partials/config/privateNodes/autoNodes.mdx';
+
+<AutoNodes />
+
+### How does it work?
+
+<AutoNodesScheduling />
+
+### Prerequisites
+
+- vCluster control plane has to be running and in `Ready` state and connected to vCluster Platform
+- A [node provider](/platform/next/administer/node-providers/overview) is configured in vCluster Platform.
+
+### Node pools
+
+There are two types of node pools, that can be figured independently or combined with each other. 
+
+* **static**: Defines a fixed quantity of each node to provision. When the number of nodes is changed, the built-in [Karpenter](https://karpenter.sh/) automatically scales up/down the number of nodes.
+* **dynamic**: No quantity of nodes is defined. The built-in [Karpenter](https://karpenter.sh/) automatically decides how many nodes are needed. You can define a limit of nodes to provision.
+
+Deciding how to limit which node types to provision is based on the requirements defined in each node pool. 
+
+```yaml title="Example with both static and dynamic node pools"
+privateNodes:
+  enabled: true
+  autoNodes:
+  - provider: my-node-provider
+    # Fixed size node pool of 2
+    static:
+    - name: my-static-node-pool
+      quantity: 2
+    # Dynamic node pool
+    dynamic:
+    - name: my-dynamic-node-pool
+      limits:
+        nodes: 3
+```
+
+:::info No vCluster restart required
+Changing fields within `privateNodes.autoNodes` will not restart the vCluster even on a `helm upgrade`
+:::
+
+It's also possible to mix different providers within the same vCluster. You can specify the provider via the `provider` field that should reference a node provider created in the platform.
+:::warning
+Once the node pool is created using the configured provider in vCluster, you can not edit the provider later.
+:::
+
+### Node type selector
+
+Node type selector on a node pool can be used to include or exclude certain node types.
+ These allow you to select properties on node types via [Kubernetes set-based requirements](https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/#set-based-requirement). 
+
+```yaml title="Examples of how to set node type selector"
+privateNodes:
+  enabled: true
+  autoNodes:
+  - provider: my-node-provider
+    dynamic:
+    - name: my-node-pool
+      nodeTypeSelector:
+      # Exact match
+      - property: my-property
+        value: my-value
+      # One of
+      - property: my-property
+        operator: In
+        values: ["value-1", "value-2", "value-3"]
+      # Not in
+      - property: my-property
+        operator: NotIn
+        values: ["value-1", "value-2", "value-3"]
+      # Exists
+      - property: my-property
+        operator: Exists
+      # NotExists
+      - property: my-property
+        operator: NotExists
+```
+
+The following operators are available and supported:
+* `In` (default): Matches one or multiple values on the node type
+* `NotIn`: Matches if the given values aren't part of the properties
+* `Exists`: Matches if the property is defined on the node type
+* `NotExists`: Matches if the property is not defined on the node type
+
+When an invalid property is updated to a valid value, or a valid property is changed to an invalid one, the nodes are automatically rolled out and updated to comply with the new configuration.
+:::warning
+Changing the node region is not supported. If the node region property is modified, the nodes will not roll out to the new region, and the nodes in the previous region will not be cleaned up automatically.
+:::
+
+#### Built-in node type properties
+
+Each node type automatically has the following properties available. You can also add custom properties to node types. 
+
+| Property | Value | Use Case | 
+|---|---|---|
+| `vcluster.com/node-type` | The name of the node type to use. |  Map vCluster node pools to only use a specific node type. Since node type names are globally unique, they also always map to a single node provider. | 
+| `node.kubernetes.io/instance-type` | Same as `vcluster.com/node-type`, but just the official Kubernetes label. |  Map vCluster node pools to only use a specific node type. Since node type names are globally unique, they also always map to a single node provider. | 
+|  `topology.kubernetes.io/zone` |  Maps to the `spec.zone` field of the node type. If unspecified, will be `global`. | Map vCluster node pools to only use specific regions of node types. |
+|  `karpenter.sh/capacity-type` |  Fixed to `on-demand`. | Only on-demand nodes are supported. |  
+|  `kubernetes.io/os` |  Fixed to `linux`. | Only Linux nodes are supported. |
+
+### Dynamic node pools
+
+Dynamic node pools are powered by Karpenter, and for each dynamic node pool a [Karpenter node pool](https://karpenter.sh/docs/concepts/nodepools/) is created.
+
+```yaml title="Example of only using nodes from the a specific node provider"
+privateNodes:
+  # Private nodes need to be enabled for this feature to work
+  enabled: true 
+  autoNodes:
+  - provider: my-node-provider
+    dynamic:
+    - name: my-dynamic-node-pool
+```
+
+#### Disruption
+
+Disruption configures how Karpenter should disrupt nodes and the config corresponds to the [Karpenter disruption config](https://karpenter.sh/docs/concepts/disruption/).
+By default, Karpenter will disrupt nodes if they are empty or underutilized after 30 seconds of inactivity.
+
+You can define more advanced ways of disruptions via schedules or budgets according to the [Karpenter config](https://karpenter.sh/docs/concepts/disruption/#nodepool-disruption-budgets).
+
+```yaml title="Example of creating advanced disruption configuration"
+privateNodes:
+  enabled: true
+  autoNodes:
+  - provider: my-provider
+    dynamic:
+    - name: my-dynamic-node-pool
+      disruption:
+        consolidationPolicy: WhenEmptyOrUnderutilized
+        consolidateAfter: 10s
+        budgets:
+        - nodes: "20%"
+          reasons:
+          - "Empty"
+          - "Drifted"
+        - nodes: "5"
+        - nodes: "0"
+          schedule: "@daily"
+          duration: 10m
+          reasons:
+          - "Underutilized"
+```
+
+#### Limits
+
+Limits can be used as an upper limit for scheduling. These limits correspond to [Karpenter limits](https://karpenter.sh/docs/concepts/nodepools/#speclimits). Besides what Karpenter offers, it is also possible to specify `nodes` as a limit itself.
+The number of nodes specified in limits can be modified after the nodes are provisioned. If the new node limit is lower than the number of currently provisioned nodes, the Available Nodes count in the vCluster platform may appear as a negative value.
+
+
+```yaml title="Example of limiting 10 nodes or 100 cpus total"
+privateNodes:
+  enabled: true 
+  autoNodes:
+  - provider: my-provider
+    dynamic:
+    - name: my-dynamic-node-pool
+      limits:
+        cpu: 100  # either combined amount of cpus across all nodes in this node pool
+        nodes: 10 # or maximum amount of nodes
+```
+
+:::warning Too small limits
+When limits are too low (e.g. CPU is 1 and the smallest node type has CPU of 2) **nodes will not provision**. Make sure to use appropriate limits. When using `limits.nodes` consider that this might be the biggest nodes, so its usually a good idea to use a combination of `limits.cpu` and `limits.nodes`.
+:::
+
+### Static node pools
+
+Static node pools are always created independent regardless of how many nodes are needed. 
+They always require a quantity and a set of requirements to select which node types to deploy. When
+creating static node pools, they are also Karpenter [NodeClaims](https://karpenter.sh/docs/concepts/nodeclaims/), which allows Karpenter to take these static nodes into account when a dynamic node pool is also configured.
+
+```yaml title="Example of a static node pool of 2 nodes from a specific node provider"
+privateNodes:
+  # Private nodes need to be enabled for this feature to work
+  enabled: true 
+  autoNodes:
+  - provider: my-provider
+    static:
+    - name: my-static-node-pool
+      quantity: 2
+```
+
+You can change the quantity of static node pools without restarting vCluster and vCluster will scale these nodes up or down based on the changing quantity.
+
+### Taints and node labels
+
+You can define taints and node labels for each node pool via the `taints` and `nodeLabels` fields which are useful to control scheduling on these nodes.
+
+```yaml title="Example of node pools with taints and node labels"
+privateNodes:
+  enabled: true
+  autoNodes:
+  - provider: my-provider
+    static:
+    - name: my-static-pool
+      quantity: 1
+      nodeLabels:
+        my-label: my-value
+      taints:
+      - key: my-taint
+        effect: NoSchedule
+    dynamic:
+    - name: my-dynamic-pool
+      nodeLabels:
+        my-label: my-value
+      taints:
+      - key: my-taint
+        effect: NoSchedule
+```
+
+
+## Config reference
+
+<PrivateNodesAutoNodes />

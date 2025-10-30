@@ -78,7 +78,7 @@ const config = {
           lastVersion: "current",
           versions: {
             current: {
-              label: "v0.29",
+              label: "v0.30",
               banner: "none",
               badge: false,
             },
@@ -105,9 +105,9 @@ const config = {
                 return { ...item, priority: 1.0, changefreq: 'daily' };
               }
 
-              // Latest stable versions get highest priority (0.29.0 for vCluster, 4.4.0 for platform)
-              if (item.url.match(/\/vcluster\/0\.29\.0\//) ||
-                  item.url.match(/\/platform\/4\.4\.0\//)) {
+              // Latest stable versions get highest priority (0.30.0 for vCluster, 4.5.0 for platform)
+              if (item.url.match(/\/vcluster\/0\.30\.0\//) ||
+                  item.url.match(/\/platform\/4\.5\.0\//)) {
                 return { ...item, priority: 1.0, changefreq: 'daily' };
               }
 
@@ -117,7 +117,7 @@ const config = {
                 return { ...item, priority: 0.8, changefreq: 'weekly' };
               }
 
-              // ALL other versioned docs get very low priority (0.19-0.28 for vCluster, older platform versions)
+              // ALL other versioned docs get very low priority (0.19-0.29 for vCluster, older platform versions)
               if (item.url.match(/\/vcluster\/\d+\.\d+\.\d+\//) ||
                   item.url.match(/\/platform\/\d+\.\d+\.\d+\//)) {
                 return { ...item, priority: 0.1, changefreq: 'yearly' };
@@ -189,14 +189,19 @@ const config = {
         editUrl: ({ versionDocsDirPath, docPath }) =>
           `https://github.com/loft-sh/vcluster-docs/edit/main/${versionDocsDirPath}/${docPath}`,
         editCurrentVersion: true,
-        lastVersion: "0.29.0",
-        onlyIncludeVersions: ["current", "0.29.0", "0.28.0", "0.27.0", "0.26.0", "0.25.0"],
+        lastVersion: "0.30.0",
+        onlyIncludeVersions: ["current", "0.30.0", "0.29.0", "0.28.0", "0.27.0", "0.26.0"],
         versions: {
           current: {
             label: "main 🚧",
           },
+          "0.30.0": {
+            label: "v0.30 Stable",
+            banner: "none",
+            badge: true,
+          },
           "0.29.0": {
-            label: "v0.29 Stable",
+            label: "v0.29",
             banner: "none",
             badge: true,
           },
@@ -233,24 +238,25 @@ const config = {
         editUrl: ({ versionDocsDirPath, docPath }) =>
           `https://github.com/loft-sh/vcluster-docs/edit/main/${versionDocsDirPath}/${docPath}`,
         editCurrentVersion: true,
-        lastVersion: "4.4.0",
+        lastVersion: "4.5.0",
+        onlyIncludeVersions: ["current", "4.5.0", "4.4.0", "4.3.0"],
         versions: {
           current: {
             label: "main 🚧",
           },
+          "4.5.0": {
+            label: "v4.5 Stable",
+            banner: "none",
+            badge: true,
+          },
           "4.4.0": {
-            label: "v4.4 Stable",
+            label: "v4.4",
             banner: "none",
             badge: true,
           },
           "4.3.0": {
             label: "v4.3",
             banner: "none",
-            badge: true,
-          },
-          "4.2.0": {
-            label: "v4.2 (EOL)",
-            banner: "unmaintained",
             badge: true,
           },
         },
@@ -392,9 +398,9 @@ const config = {
         additionalLanguages: ["bash", "hcl"],
       },
       announcementBar: {
-        id: "platform-4-4-release",
+        id: "platform-4-5-release",
         content:
-          '🚀 <strong>New releases: <a href="https://www.vcluster.com/releases/en/changelog?hideLogo=true&hideMenu=true&theme=dark&embed=true&c=vCluster" target="_blank">vCluster Platform 4.4 and vCluster 0.29</a></strong>',
+          '🚀 <strong>New releases: <a href="https://www.vcluster.com/releases/en/changelog?hideLogo=true&hideMenu=true&theme=dark&embed=true&c=vCluster" target="_blank">vCluster Platform 4.5 and vCluster 0.30</a></strong>',
         backgroundColor: "#4a90e2",
         textColor: "#ffffff",
         isCloseable: true,

@@ -14,7 +14,7 @@ const VersionBadge = ({ platformVersion, vclusterVersion }) => {
     <Admonition type="info">
       {platformVersion && (
         <>
-          <span>This feature is available from the <strong>platform</strong> version </span>
+          <span>This feature is available from the <strong>Platform</strong> version </span>
           <span className={styles.versionBadge}>{platformVersion}</span>
         </>
       )}
