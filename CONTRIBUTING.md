@@ -200,6 +200,23 @@ Notes:
 - Can be placed anywhere on the page (doesn't have to be at the top)
 - Multiple `PageVariables` components will merge together
 
+**Adding titles to code blocks** (optional):
+
+The `InterpolatedCodeBlock` component supports an optional `title`
+attribute to display a descriptive title above the code block:
+
+```mdx
+<InterpolatedCodeBlock
+  code={`export CLUSTER_NAME=[[VAR:CLUSTER_NAME:vcluster-demo]]
+export REGION=[[VAR:REGION:eu-central-1]]`}
+  language="bash"
+  title="Set environment variables"
+/>
+```
+
+The `title` attribute is completely optional and backwards compatible.
+Existing code blocks without a title will continue to work as before.
+
 #### Formatting and variables
 
 To make code blocks easier to work with, consider adding variables and use

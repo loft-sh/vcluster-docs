@@ -42,8 +42,9 @@ import { usePageVariables } from '../PageVariables/PageVariablesContext';
  *
  * @param {string} code - The code block content with variables in [[VAR:NAME:default]] or [[GLOBAL:NAME]] format
  * @param {string} language - Language for syntax highlighting (default: "bash")
+ * @param {string} title - Optional title for the code block
  */
-const InterpolatedCodeBlock = ({ code = '', language = 'bash' }) => {
+const InterpolatedCodeBlock = ({ code = '', language = 'bash', title }) => {
   // Get global variables from page store
   const globalVariables = usePageVariables();
 
@@ -84,7 +85,7 @@ const InterpolatedCodeBlock = ({ code = '', language = 'bash' }) => {
   // Skip rendering the interactive UI if no local variables found
   // (global variables don't need inputs since they're defined at page level)
   if (Object.keys(initialVariables).length === 0) {
-    return <CodeBlock language={language}>{processedCode}</CodeBlock>;
+    return <CodeBlock language={language} title={title}>{processedCode}</CodeBlock>;
   }
 
   // Simple wrapper with light grey background
@@ -161,7 +162,7 @@ const InterpolatedCodeBlock = ({ code = '', language = 'bash' }) => {
       
       {/* Code Block Container */}
       <div>
-        <CodeBlock language={language}>
+        <CodeBlock language={language} title={title}>
           {processedCode}
         </CodeBlock>
       </div>
