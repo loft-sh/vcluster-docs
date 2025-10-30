@@ -42,7 +42,11 @@ const (
 
 	VirtualClusterProDistroPrivateNodes FeatureName = "vcp-distro-private-nodes" // Private Nodes
 
+	ExternalDatabaseRdsIam FeatureName = "external-database-rds-iam" // External Database RDS IAM Authentication
+
 	ConnectorExternalDatabase FeatureName = "connector-external-database" // Database Connector
+
+	ConnectorExternalDatabaseEksPodIdentity FeatureName = "connector-external-database-eks-pod-identity" // EKS Pod Identity for External Database Connections
 
 	VirtualClusterProDistroSleepMode FeatureName = "vcp-distro-sleep-mode" // SleepMode
 
@@ -104,11 +108,17 @@ const (
 
 	SyncNamespacesTohost FeatureName = "sync-namespaces-tohost" // Sync Namespaces toHost
 
-	ScheduledSnapshots FeatureName = "scheduled-snapshots" // Schedule Virtual Clusters Snapshots
+	ScheduledSnapshots FeatureName = "scheduled-snapshots" // Auto Snapshots
 
 	PrivateNodesVpn FeatureName = "private-nodes-vpn" // Private Nodes VPN
 
 	PrivateNodesAutoNodes FeatureName = "private-nodes-auto-nodes" // Private Nodes Auto Nodes
+
+	DisablePlatformDB FeatureName = "disable-platform-db" // Disable Platform Database
+
+	Standalone FeatureName = "standalone" // Standalone
+
+	Netris FeatureName = "netris" // Netris
 
 )
 
@@ -133,7 +143,9 @@ func GetFeatures() []FeatureName {
 		VirtualClusterProDistroFips,
 		VirtualClusterProDistroExternalDatabase,
 		VirtualClusterProDistroPrivateNodes,
+		ExternalDatabaseRdsIam,
 		ConnectorExternalDatabase,
+		ConnectorExternalDatabaseEksPodIdentity,
 		VirtualClusterProDistroSleepMode,
 		Devpod,
 		Namespaces,
@@ -167,5 +179,8 @@ func GetFeatures() []FeatureName {
 		ScheduledSnapshots,
 		PrivateNodesVpn,
 		PrivateNodesAutoNodes,
+		DisablePlatformDB,
+		Standalone,
+		Netris,
 	}
 }
