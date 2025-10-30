@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -12,11 +13,11 @@ import (
 
 func TestResolveChain(t *testing.T) {
 	tests := []struct {
-		name      string
-		graph     map[string]string
-		start     string
+		name       string
+		graph      map[string]string
+		start      string
 		wantTarget string
-		wantCycle bool
+		wantCycle  bool
 	}{
 		{
 			name: "simple chain",
@@ -64,11 +65,11 @@ func TestResolveChain(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			r := &Resolver{}
 			target, hasCycle := r.ResolveChain(tt.start, tt.graph)
-			
+
 			if hasCycle != tt.wantCycle {
 				t.Errorf("ResolveChain() hasCycle = %v, want %v", hasCycle, tt.wantCycle)
 			}
-			
+
 			if target != tt.wantTarget {
 				t.Errorf("ResolveChain() target = %v, want %v", target, tt.wantTarget)
 			}
@@ -142,10 +143,10 @@ func TestDetectConflicts(t *testing.T) {
 
 func TestGenerateRedirects(t *testing.T) {
 	tempFile := filepath.Join(t.TempDir(), "netlify.toml")
-	
+
 	// Create initial file
 	os.WriteFile(tempFile, []byte("# Initial content\n"), 0644)
-	
+
 	r := &Resolver{
 		outputFile: tempFile,
 	}
@@ -165,7 +166,7 @@ func TestGenerateRedirects(t *testing.T) {
 	}
 
 	contentStr := string(content)
-	
+
 	// Check for expected redirect patterns
 	expectedPatterns := []string{
 		`from = "/docs/vcluster/api/v1"`,
@@ -222,7 +223,7 @@ func TestImportChanges(t *testing.T) {
 	for i, expected := range changes.Changes {
 		actual := r.history.Movements[i]
 		if actual.From != expected.Old || actual.To != expected.New {
-			t.Errorf("ImportChanges() movement[%d] = %s->%s, want %s->%s", 
+			t.Errorf("ImportChanges() movement[%d] = %s->%s, want %s->%s",
 				i, actual.From, actual.To, expected.Old, expected.New)
 		}
 	}
@@ -230,9 +231,9 @@ func TestImportChanges(t *testing.T) {
 
 func TestAudit(t *testing.T) {
 	tests := []struct {
-		name         string
-		movements    []Movement
-		wantCycles   bool
+		name          string
+		movements     []Movement
+		wantCycles    bool
 		wantConflicts bool
 	}{
 		{
@@ -241,7 +242,7 @@ func TestAudit(t *testing.T) {
 				{From: "a", To: "b"},
 				{From: "c", To: "d"},
 			},
-			wantCycles:   false,
+			wantCycles:    false,
 			wantConflicts: false,
 		},
 		{
@@ -251,7 +252,7 @@ func TestAudit(t *testing.T) {
 				{From: "b", To: "c"},
 				{From: "c", To: "a"},
 			},
-			wantCycles:   true,
+			wantCycles:    true,
 			wantConflicts: false,
 		},
 		{
@@ -260,7 +261,7 @@ func TestAudit(t *testing.T) {
 				{From: "page", To: "loc1"},
 				{From: "page", To: "loc2"},
 			},
-			wantCycles:   false,
+			wantCycles:    false,
 			wantConflicts: true,
 		},
 	}
@@ -280,7 +281,7 @@ func TestAudit(t *testing.T) {
 			if tt.wantCycles && !strings.Contains(output, "Cycles detected") {
 				t.Error("Audit() did not detect expected cycles")
 			}
-			
+
 			if !tt.wantCycles && strings.Contains(output, "Cycles detected") {
 				t.Error("Audit() incorrectly detected cycles")
 			}
@@ -288,7 +289,7 @@ func TestAudit(t *testing.T) {
 			if tt.wantConflicts && !strings.Contains(output, "Conflicting redirects") {
 				t.Error("Audit() did not detect expected conflicts")
 			}
-			
+
 			if !tt.wantConflicts && strings.Contains(output, "Conflicting redirects") {
 				t.Error("Audit() incorrectly detected conflicts")
 			}
@@ -298,7 +299,7 @@ func TestAudit(t *testing.T) {
 
 func TestLoadSaveHistory(t *testing.T) {
 	tempFile := filepath.Join(t.TempDir(), "test-history.json")
-	
+
 	r := &Resolver{
 		historyFile: tempFile,
 	}
@@ -363,207 +364,382 @@ func TestTransitiveResolution(t *testing.T) {
 	}
 }
 
-func TestDetectPathChangesSkipsUnderscoreDirs(t *testing.T) {
-	// Create temporary directory structure
+// Helper functions for git-based tests
+
+// createTestGitRepo creates a temporary git repository for testing
+func createTestGitRepo(t *testing.T) (string, func()) {
+	t.Helper()
+
+	repoPath := t.TempDir()
+
+	// Initialize git repo
+	runGitCmd(t, repoPath, "init")
+	runGitCmd(t, repoPath, "config", "user.email", "test@example.com")
+	runGitCmd(t, repoPath, "config", "user.name", "Test User")
+
+	return repoPath, func() {
+		// Cleanup handled by t.TempDir()
+	}
+}
+
+// runGitCmd runs a git command in the specified directory
+func runGitCmd(t *testing.T, dir string, args ...string) {
+	t.Helper()
+
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v failed: %v\nOutput: %s", args, err, output)
+	}
+}
+
+// createFile creates a file with given content in the repo
+func createFile(t *testing.T, repoPath, filePath, content string) {
+	t.Helper()
+
+	fullPath := filepath.Join(repoPath, filePath)
+	dir := filepath.Dir(fullPath)
+
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatalf("Failed to create directory %s: %v", dir, err)
+	}
+
+	if err := os.WriteFile(fullPath, []byte(content), 0644); err != nil {
+		t.Fatalf("Failed to write file %s: %v", fullPath, err)
+	}
+}
+
+// Git-based move detection tests
+
+// TestDetectFileMoves_FileCopy_NotDetectedAsMove verifies that file copies are not detected as moves
+func TestDetectFileMoves_FileCopy_NotDetectedAsMove(t *testing.T) {
+	repoPath, cleanup := createTestGitRepo(t)
+	defer cleanup()
+
+	// Commit 1: Create file at control-plane location
+	createFile(t, repoPath, "vcluster/deploy/control-plane/container/security/air-gapped.mdx", "# Air-gapped setup\nContent here")
+	runGitCmd(t, repoPath, "add", ".")
+	runGitCmd(t, repoPath, "commit", "-m", "Add air-gapped doc at control-plane location")
+	runGitCmd(t, repoPath, "tag", "v0.20.0")
+
+	// Commit 2: COPY file to private-nodes location (both paths now exist)
+	createFile(t, repoPath, "vcluster/deploy/worker-nodes/private-nodes/security/air-gapped.mdx", "# Air-gapped setup\nContent here")
+	runGitCmd(t, repoPath, "add", ".")
+	runGitCmd(t, repoPath, "commit", "-m", "Copy air-gapped doc to private-nodes location")
+	runGitCmd(t, repoPath, "tag", "v0.21.0")
+
+	// Detect moves between v0.20.0 and v0.21.0
+	moves, err := DetectFileMoves(repoPath, "v0.20.0", "v0.21.0")
+	if err != nil {
+		t.Fatalf("DetectFileMoves() error = %v", err)
+	}
+
+	// Should NOT detect any moves (file was copied, not moved)
+	if len(moves) > 0 {
+		t.Errorf("DetectFileMoves() detected %d moves for a file COPY operation", len(moves))
+		for _, move := range moves {
+			t.Errorf("  Incorrectly detected: %s -> %s", move.OldPath, move.NewPath)
+		}
+		t.Fatal("File copies must NOT be detected as moves")
+	}
+}
+
+// TestDetectFileMoves_MultipleBasename_DetectsOnlyActualMove verifies correct move detection with multiple files sharing the same basename
+func TestDetectFileMoves_MultipleBasename_DetectsOnlyActualMove(t *testing.T) {
+	repoPath, cleanup := createTestGitRepo(t)
+	defer cleanup()
+
+	// Commit 1: Create two files with same name in different directories
+	createFile(t, repoPath, "vcluster/docs/feature-a/config.mdx", "# Feature A Config\nConfig for A")
+	createFile(t, repoPath, "vcluster/docs/feature-b/config.mdx", "# Feature B Config\nConfig for B")
+	runGitCmd(t, repoPath, "add", ".")
+	runGitCmd(t, repoPath, "commit", "-m", "Add two config.mdx files")
+	runGitCmd(t, repoPath, "tag", "v1.0.0")
+
+	// Commit 2: Move ONLY feature-a/config.mdx to feature-c/config.mdx
+	// feature-b/config.mdx stays in place
+	// Create target directory first
+	targetDir := filepath.Join(repoPath, "vcluster/docs/feature-c")
+	if err := os.MkdirAll(targetDir, 0755); err != nil {
+		t.Fatalf("Failed to create target directory: %v", err)
+	}
+	runGitCmd(t, repoPath, "mv", "vcluster/docs/feature-a/config.mdx", "vcluster/docs/feature-c/config.mdx")
+	runGitCmd(t, repoPath, "commit", "-m", "Move feature-a config to feature-c")
+	runGitCmd(t, repoPath, "tag", "v1.1.0")
+
+	// Detect moves
+	moves, err := DetectFileMoves(repoPath, "v1.0.0", "v1.1.0")
+	if err != nil {
+		t.Fatalf("DetectFileMoves() error = %v", err)
+	}
+
+	// Should detect EXACTLY ONE move (feature-a -> feature-c)
+	if len(moves) != 1 {
+		t.Errorf("DetectFileMoves() detected %d moves, want 1", len(moves))
+		for _, move := range moves {
+			t.Logf("  Detected: %s -> %s", move.OldPath, move.NewPath)
+		}
+		t.Fatal("Basename collision: detected wrong number of moves")
+	}
+
+	// Verify the correct move was detected
+	move := moves[0]
+	expectedOld := "vcluster/docs/feature-a/config.mdx"
+	expectedNew := "vcluster/docs/feature-c/config.mdx"
+
+	if move.OldPath != expectedOld || move.NewPath != expectedNew {
+		t.Errorf("DetectFileMoves() detected wrong move:\n  Got: %s -> %s\n  Want: %s -> %s",
+			move.OldPath, move.NewPath, expectedOld, expectedNew)
+	}
+
+	// Verify feature-b/config.mdx was NOT detected as moved
+	for _, move := range moves {
+		if strings.Contains(move.OldPath, "feature-b") || strings.Contains(move.NewPath, "feature-b") {
+			t.Errorf("feature-b/config.mdx incorrectly detected as moved: %s -> %s",
+				move.OldPath, move.NewPath)
+		}
+	}
+}
+
+// TestDetectFileMoves_SimpleMove validates basic move detection works
+func TestDetectFileMoves_SimpleMove(t *testing.T) {
+	repoPath, cleanup := createTestGitRepo(t)
+	defer cleanup()
+
+	// Commit 1: Create file at old location
+	createFile(t, repoPath, "vcluster/docs/old-location/example.mdx", "# Example\nContent")
+	runGitCmd(t, repoPath, "add", ".")
+	runGitCmd(t, repoPath, "commit", "-m", "Add example at old location")
+	runGitCmd(t, repoPath, "tag", "v1.0.0")
+
+	// Commit 2: Move file to new location
+	// Create target directory first
+	targetDir := filepath.Join(repoPath, "vcluster/docs/new-location")
+	if err := os.MkdirAll(targetDir, 0755); err != nil {
+		t.Fatalf("Failed to create target directory: %v", err)
+	}
+	runGitCmd(t, repoPath, "mv", "vcluster/docs/old-location/example.mdx", "vcluster/docs/new-location/example.mdx")
+	runGitCmd(t, repoPath, "commit", "-m", "Move example to new location")
+	runGitCmd(t, repoPath, "tag", "v1.1.0")
+
+	// Detect moves
+	moves, err := DetectFileMoves(repoPath, "v1.0.0", "v1.1.0")
+	if err != nil {
+		t.Fatalf("DetectFileMoves() error = %v", err)
+	}
+
+	// Should detect exactly one move
+	if len(moves) != 1 {
+		t.Fatalf("DetectFileMoves() detected %d moves, want 1", len(moves))
+	}
+
+	move := moves[0]
+	expectedOld := "vcluster/docs/old-location/example.mdx"
+	expectedNew := "vcluster/docs/new-location/example.mdx"
+
+	if move.OldPath != expectedOld || move.NewPath != expectedNew {
+		t.Errorf("DetectFileMoves() = %s -> %s, want %s -> %s",
+			move.OldPath, move.NewPath, expectedOld, expectedNew)
+	}
+
+	if move.Similarity != "100" {
+		t.Errorf("DetectFileMoves() similarity = %s, want 100 (identical content)",
+			move.Similarity)
+	}
+}
+
+// TestDetectFileMoves_NonGitRepo validates error handling for non-git repositories
+func TestDetectFileMoves_NonGitRepo(t *testing.T) {
 	tempDir := t.TempDir()
-	
-	// Create test structure
-	vclusterDir := filepath.Join(tempDir, "vcluster")
-	versionedDir := filepath.Join(tempDir, "vcluster_versioned_docs", "version-0.20.0")
-	
-	// Create directories
-	os.MkdirAll(filepath.Join(vclusterDir, "_fragments"), 0755)
-	os.MkdirAll(filepath.Join(vclusterDir, "deploy"), 0755)
-	os.MkdirAll(filepath.Join(versionedDir, "_fragments"), 0755)
-	os.MkdirAll(filepath.Join(versionedDir, "configure"), 0755)
-	
-	// Create files in _fragments (should be ignored)
-	os.WriteFile(filepath.Join(vclusterDir, "_fragments", "test.mdx"), []byte("content"), 0644)
-	os.WriteFile(filepath.Join(versionedDir, "_fragments", "test.mdx"), []byte("content"), 0644)
-	
-	// Create files in normal directories (should be detected)
-	os.WriteFile(filepath.Join(vclusterDir, "deploy", "guide.mdx"), []byte("content"), 0644)
-	os.WriteFile(filepath.Join(versionedDir, "configure", "guide.mdx"), []byte("old content"), 0644)
-	
-	// Run detectPathChanges
-	changes, err := detectPathChanges(tempDir)
+
+	// Don't initialize git repo
+	moves, err := DetectFileMoves(tempDir, "v1.0.0", "v2.0.0")
+
+	if err == nil {
+		t.Error("DetectFileMoves() expected error for non-git repo, got nil")
+	}
+
+	if !strings.Contains(err.Error(), "not a git repository") {
+		t.Errorf("DetectFileMoves() error = %v, want error containing 'not a git repository'", err)
+	}
+
+	if len(moves) != 0 {
+		t.Errorf("DetectFileMoves() returned %d moves for non-git repo, want 0", len(moves))
+	}
+}
+
+// TestDetectFileMoves_InvalidRefs validates error handling for invalid git refs
+func TestDetectFileMoves_InvalidRefs(t *testing.T) {
+	repoPath, cleanup := createTestGitRepo(t)
+	defer cleanup()
+
+	// Create initial commit
+	createFile(t, repoPath, "vcluster/test.mdx", "test")
+	runGitCmd(t, repoPath, "add", ".")
+	runGitCmd(t, repoPath, "commit", "-m", "Initial commit")
+
+	// Try with invalid refs
+	moves, err := DetectFileMoves(repoPath, "v99.99.99", "v88.88.88")
+
+	// Should return empty array, not error (graceful handling)
+	if err != nil {
+		t.Logf("DetectFileMoves() with invalid refs returned error: %v (gracefully handled)", err)
+	}
+
+	if len(moves) != 0 {
+		t.Errorf("DetectFileMoves() with invalid refs returned %d moves, want 0", len(moves))
+	}
+}
+
+// TestExtractDocPath validates the path extraction helper function
+func TestExtractDocPath(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "vcluster path",
+			input:    "vcluster/deploy/security/air-gapped.mdx",
+			expected: "deploy/security/air-gapped.mdx",
+		},
+		{
+			name:     "versioned docs path",
+			input:    "vcluster_versioned_docs/version-0.27.0/configure/README.mdx",
+			expected: "configure/README.mdx",
+		},
+		{
+			name:     "non-vcluster path",
+			input:    "some/other/path/file.mdx",
+			expected: "",
+		},
+		{
+			name:     "root level vcluster file",
+			input:    "vcluster/README.mdx",
+			expected: "README.mdx",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := extractDocPath(tt.input)
+			if result != tt.expected {
+				t.Errorf("extractDocPath(%q) = %q, want %q", tt.input, result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestDetectPathChanges_NoVersionTags verifies fallback to origin/main when no version tags exist
+func TestDetectPathChanges_NoVersionTags(t *testing.T) {
+	repoPath, cleanup := createTestGitRepo(t)
+	defer cleanup()
+
+	// Create initial commit on main
+	createFile(t, repoPath, "vcluster/old.mdx", "# Old content")
+	runGitCmd(t, repoPath, "add", ".")
+	runGitCmd(t, repoPath, "commit", "-m", "Initial commit")
+
+	// Create remote tracking branch
+	runGitCmd(t, repoPath, "checkout", "-b", "origin/main")
+	runGitCmd(t, repoPath, "checkout", "-b", "feature-branch")
+
+	// Move file
+	targetDir := filepath.Join(repoPath, "vcluster/new-dir")
+	if err := os.MkdirAll(targetDir, 0755); err != nil {
+		t.Fatalf("Failed to create target directory: %v", err)
+	}
+	runGitCmd(t, repoPath, "mv", "vcluster/old.mdx", "vcluster/new-dir/new.mdx")
+	runGitCmd(t, repoPath, "commit", "-m", "Move file")
+
+	// No version tags exist - should fall back to origin/main
+	changes, err := detectPathChanges(repoPath)
 	if err != nil {
 		t.Fatalf("detectPathChanges() error = %v", err)
 	}
-	
-	// Verify that _fragments files are NOT in the changes
-	for _, change := range changes.Changes {
-		if strings.Contains(change.Old, "_fragments") || strings.Contains(change.New, "_fragments") {
-			t.Errorf("detectPathChanges() included _fragments path: %s -> %s", change.Old, change.New)
-		}
+
+	// Should use "latest" as version
+	if changes.Version != "latest" {
+		t.Errorf("detectPathChanges() version = %s, want 'latest'", changes.Version)
 	}
-	
-	// Verify that the normal file change was detected (guide.mdx moved from configure to deploy)
-	foundGuide := false
-	for _, change := range changes.Changes {
-		if change.Old == "configure/guide" && change.New == "deploy/guide" {
-			foundGuide = true
-			break
-		}
+
+	// Should detect the move
+	if len(changes.Changes) != 1 {
+		t.Errorf("detectPathChanges() found %d changes, want 1", len(changes.Changes))
 	}
-	
-	if !foundGuide {
-		t.Error("detectPathChanges() did not detect the guide.mdx movement from configure to deploy")
+}
+
+// TestDetectPathChanges_WithVersionTags verifies normal behavior when version tags exist
+func TestDetectPathChanges_WithVersionTags(t *testing.T) {
+	repoPath, cleanup := createTestGitRepo(t)
+	defer cleanup()
+
+	// Create initial commit with tag
+	createFile(t, repoPath, "vcluster/old.mdx", "# Old content")
+	runGitCmd(t, repoPath, "add", ".")
+	runGitCmd(t, repoPath, "commit", "-m", "Initial commit")
+	runGitCmd(t, repoPath, "tag", "v0.27.0")
+
+	// Move file
+	targetDir := filepath.Join(repoPath, "vcluster/new-dir")
+	if err := os.MkdirAll(targetDir, 0755); err != nil {
+		t.Fatalf("Failed to create target directory: %v", err)
+	}
+	runGitCmd(t, repoPath, "mv", "vcluster/old.mdx", "vcluster/new-dir/new.mdx")
+	runGitCmd(t, repoPath, "commit", "-m", "Move file")
+
+	// Should use version from tag
+	changes, err := detectPathChanges(repoPath)
+	if err != nil {
+		t.Fatalf("detectPathChanges() error = %v", err)
+	}
+
+	// Should extract version from tag
+	if changes.Version != "0.27.0" {
+		t.Errorf("detectPathChanges() version = %s, want '0.27.0'", changes.Version)
+	}
+
+	// Should detect the move
+	if len(changes.Changes) != 1 {
+		t.Errorf("detectPathChanges() found %d changes, want 1", len(changes.Changes))
 	}
 }
 
 func TestGenerateRedirectsSkipsUnderscorePaths(t *testing.T) {
 	tempFile := filepath.Join(t.TempDir(), "netlify.toml")
-	
+
 	// Create initial netlify.toml
 	os.WriteFile(tempFile, []byte("# Test netlify config\n"), 0644)
-	
+
 	r := &Resolver{
 		outputFile: tempFile,
 	}
-	
+
 	// Include both normal and underscore paths
 	resolved := map[string]string{
-		"old/path": "new/path",
-		"_fragments/test": "_fragments/new-test",  // Should NOT appear in output
+		"old/path":        "new/path",
+		"_fragments/test": "_fragments/new-test", // Should NOT appear in output
 	}
-	
+
 	if err := r.GenerateRedirects(resolved); err != nil {
 		t.Fatalf("GenerateRedirects() error = %v", err)
 	}
-	
+
 	content, err := os.ReadFile(tempFile)
 	if err != nil {
 		t.Fatalf("Failed to read generated file: %v", err)
 	}
-	
+
 	contentStr := string(content)
-	
+
 	// Verify normal path is included
 	if !strings.Contains(contentStr, "/docs/vcluster/old/path") {
 		t.Error("GenerateRedirects() did not include normal path redirect")
 	}
-	
+
 	// Verify underscore path is NOT included
 	if strings.Contains(contentStr, "_fragments") {
 		t.Error("GenerateRedirects() incorrectly included _fragments path in redirects")
-	}
-}
-
-func TestDetectPathChangesIgnoresDeletedFiles(t *testing.T) {
-	// Create temporary directory structure
-	tempDir := t.TempDir()
-	
-	// Create test structure
-	vclusterDir := filepath.Join(tempDir, "vcluster")
-	versionedDir := filepath.Join(tempDir, "vcluster_versioned_docs", "version-0.20.0")
-	
-	// Create directories
-	os.MkdirAll(filepath.Join(vclusterDir, "deploy"), 0755)
-	os.MkdirAll(filepath.Join(vclusterDir, "configure"), 0755)
-	os.MkdirAll(filepath.Join(versionedDir, "deploy"), 0755)
-	os.MkdirAll(filepath.Join(versionedDir, "configure"), 0755)
-	os.MkdirAll(filepath.Join(versionedDir, "manage"), 0755)
-	
-	// Scenario 1: File moved from configure to deploy (should create redirect)
-	os.WriteFile(filepath.Join(vclusterDir, "deploy", "moved.mdx"), []byte("content"), 0644)
-	os.WriteFile(filepath.Join(versionedDir, "configure", "moved.mdx"), []byte("content"), 0644)
-	
-	// Scenario 2: File deleted entirely (should NOT create redirect)
-	// File exists in versioned docs but not in current docs
-	os.WriteFile(filepath.Join(versionedDir, "manage", "deleted.mdx"), []byte("content"), 0644)
-	// NOT creating the file in vclusterDir - simulating deletion
-	
-	// Scenario 3: File unchanged (should NOT create redirect)
-	os.WriteFile(filepath.Join(vclusterDir, "configure", "unchanged.mdx"), []byte("content"), 0644)
-	os.WriteFile(filepath.Join(versionedDir, "configure", "unchanged.mdx"), []byte("content"), 0644)
-	
-	// Run detectPathChanges
-	changes, err := detectPathChanges(tempDir)
-	if err != nil {
-		t.Fatalf("detectPathChanges() error = %v", err)
-	}
-	
-	// Verify that only the moved file is in changes
-	if len(changes.Changes) != 1 {
-		t.Errorf("detectPathChanges() found %d changes, want 1 (only moved file)", len(changes.Changes))
-		for _, change := range changes.Changes {
-			t.Logf("  Found change: %s -> %s", change.Old, change.New)
-		}
-	}
-	
-	// Verify the moved file is detected correctly
-	foundMoved := false
-	for _, change := range changes.Changes {
-		if change.Old == "configure/moved" && change.New == "deploy/moved" {
-			foundMoved = true
-		}
-		// Ensure deleted file is NOT in changes
-		if strings.Contains(change.Old, "deleted") || strings.Contains(change.New, "deleted") {
-			t.Errorf("detectPathChanges() incorrectly created redirect for deleted file: %s -> %s", change.Old, change.New)
-		}
-	}
-	
-	if !foundMoved {
-		t.Error("detectPathChanges() did not detect the moved.mdx file movement")
-	}
-}
-
-func TestDetectPathChangesHandlesMultipleScenarios(t *testing.T) {
-	// Create temporary directory structure
-	tempDir := t.TempDir()
-	
-	// Create test structure
-	vclusterDir := filepath.Join(tempDir, "vcluster")
-	versionedDir := filepath.Join(tempDir, "vcluster_versioned_docs", "version-0.27.0")
-	
-	// Create directories
-	os.MkdirAll(filepath.Join(vclusterDir, "deploy"), 0755)
-	os.MkdirAll(filepath.Join(vclusterDir, "configure"), 0755)
-	os.MkdirAll(filepath.Join(vclusterDir, "manage"), 0755)
-	os.MkdirAll(filepath.Join(versionedDir, "deploy"), 0755)
-	os.MkdirAll(filepath.Join(versionedDir, "configure"), 0755)
-	os.MkdirAll(filepath.Join(versionedDir, "manage", "backup-restore"), 0755)
-	
-	// Simulate the real scenario from the PR:
-	// backup-restore/README.mdx was deleted from both current and versioned docs
-	os.WriteFile(filepath.Join(versionedDir, "manage/backup-restore", "README.mdx"), []byte("backup content"), 0644)
-	// NOT creating in vclusterDir - it's been deleted
-	
-	// Add some legitimate moves
-	os.WriteFile(filepath.Join(vclusterDir, "deploy", "api.mdx"), []byte("api content"), 0644)
-	os.WriteFile(filepath.Join(versionedDir, "configure", "api.mdx"), []byte("api content"), 0644)
-	
-	// Run detectPathChanges
-	changes, err := detectPathChanges(tempDir)
-	if err != nil {
-		t.Fatalf("detectPathChanges() error = %v", err)
-	}
-	
-	// Should only have the moved file, not the deleted backup-restore
-	if len(changes.Changes) != 1 {
-		t.Errorf("detectPathChanges() found %d changes, want 1", len(changes.Changes))
-		for _, change := range changes.Changes {
-			t.Logf("  Found change: %s -> %s", change.Old, change.New)
-		}
-	}
-	
-	// Verify backup-restore is NOT in changes
-	for _, change := range changes.Changes {
-		if strings.Contains(change.Old, "backup-restore") || strings.Contains(change.New, "backup-restore") {
-			t.Errorf("detectPathChanges() incorrectly included deleted backup-restore: %s -> %s", change.Old, change.New)
-		}
-	}
-	
-	// Verify api.mdx move is detected
-	foundApi := false
-	for _, change := range changes.Changes {
-		if change.Old == "configure/api" && change.New == "deploy/api" {
-			foundApi = true
-		}
-	}
-	
-	if !foundApi {
-		t.Error("detectPathChanges() did not detect the api.mdx movement")
 	}
 }
