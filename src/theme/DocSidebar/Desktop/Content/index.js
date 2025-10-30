@@ -49,6 +49,10 @@ export default function ContentWrapper(props) {
       ]} />}
       {shouldShowPlatformVersioning && <VersionSelector docsPluginId={"platform"} dropdownItemsAfter={[
         {
+          to: "https://vcluster.com/docs/v4.2",
+          label: "v4.2 (EOS) ↗"
+        },
+        {
           to: "https://loft.sh/docs/getting-started/install", label: "v3.4 (EOL) ↗"
         }
       ]} />}
