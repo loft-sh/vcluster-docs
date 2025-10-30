@@ -1,0 +1,137 @@
+---
+title: Metrics And Monitoring
+sidebar_label: Metrics And Monitoring
+sidebar_position: 3
+---
+
+## Configure logging
+
+By default, vCluster Platform prints out structured logs to the console with a log level of `info`.
+
+These logs include constant log messages, a human-readable timestamp, log levels, the file and line number of the source caller, and with variables in the body:
+
+```text
+2023-07-11 09:20:56     INFO    controller-runtime.metrics      metrics/listener.go:44  Metrics server is starting to listen    {"component": "loft", "addr": "127.0.0.1:12000"}
+2023-07-11 09:20:56     INFO    initialize/context.go:68        Initialize...   {"component": "loft"}
+2023-07-11 09:20:56     INFO    initialize/context.go:72        Ensure certificates...  {"component": "loft"}
+2023-07-11 09:21:02     INFO    initialize/context.go:80        Ensure crds...  {"component": "loft"}
+```
+
+You can change the log level by setting the Helm value `logging.level` to one of the following values: `debug`, `info`, `error`, and upgrading your vCluster Platform release with the following command:
+
+```bash
+helm upgrade loft vcluster-platform --repo https://charts.loft.sh/ \
+  --namespace vcluster-platform \
+  --reuse-values \
+  --set logging.level=error # or debug or info
+```
+
+### Use JSON output encoding
+
+In addition to the console output, vCluster Platform also supports printing logs encoded in JSON format.
+
+This output format is helpful for structured logging, which allows you to search and filter logs easily.
+
+You can change the log output by setting the Helm value `logging.encoding` to one of the following values: `json`, and upgrading your vCluster Platform release with the following command:
+
+```bash
+helm upgrade loft vcluster-platform --repo https://charts.loft.sh/ \
+  --namespace vcluster-platform \
+  --reuse-values \
+  --set logging.encoding=json
+```
+
+These JSON-encoded logs include constant log messages with different variables in the body, like the default console output:
+
+```json
+{"level":"info","ts":1689067388.209614,"logger":"controller-runtime.metrics","caller":"metrics/listener.go:44","msg":"Metrics server is starting to listen","component":"loft","addr":"127.0.0.1:12000"}
+{"level":"info","ts":1689067388.2099726,"caller":"initialize/context.go:68","msg":"Initialize...","component":"loft"}
+{"level":"info","ts":1689067388.2100549,"caller":"initialize/context.go:72","msg":"Ensure certificates...","component":"loft"}
+{"level":"info","ts":1689067389.678155,"caller":"initialize/context.go:80","msg":"Ensure crds...","component":"loft"}
+```
+
+The JSON encoded logs contain at least the following fields:
+
+- `level`: The log level of the message
+- `ts`: The timestamp of the message (floating-point number of seconds since the Unix epoch)
+- `caller`: The file and line number of the message
+- `msg`: The message itself
+- `component`: The vCluster Platform component that emitted the message
+
+## Metrics
+
+vCluster Platform exposes several [Prometheus-conformant](https://prometheus.io/docs/practices/naming/) metrics that can be scraped.
+
+<!-- vale off -->
+### Create the Prometheus servicemonitor
+<!-- vale on -->
+
+The metrics can be scraped with the included `ServiceMonitor` in the vCluster Platform chart, which can be deployed with Helm. In order for this to work, make sure you have installed a [Prometheus Operator](https://github.com/prometheus-operator/prometheus-operator) into your cluster. You'll also need to upgrade your vCluster Platform release with the following command to create the `ServiceMonitor`:
+
+```bash
+# Make sure you change serviceMonitor.namespace if your Prometheus installation requires this.
+helm upgrade loft vcluster-platform --repo https://charts.loft.sh/ \
+  --namespace vcluster-platform \
+  --reuse-values \
+  --set serviceMonitor.enabled=true \
+  --set serviceMonitor.namespace=loft
+```
+
+:::note
+When `serviceMonitor.enabled=true`, the platform exposes metrics on port `8080`. If your environment has firewall rules or network policies, make sure that port `8080` is open for your Prometheus server to scrape metrics.
+:::
+
+### Access the metrics endpoint directly without a ServiceMonitor
+
+When collecting metrics directly without a ServiceMonitor, it's important to understand that vCluster Platform typically runs with multiple replicas for high availability. To get complete metrics coverage, you need to collect metrics from all platform pods rather than through a single endpoint.
+
+#### Collect metrics from all platform pods
+
+Each vCluster Platform pod exposes metrics on port `8080` at the `/metrics` endpoint. Your metrics collection tool should scrape metrics from all replicas to ensure complete coverage.
+
+The platform pods can be identified using the following Kubernetes labels:
+- `app=loft` - Identifies vCluster Platform pods
+- `component=loft` - Component label for the platform
+- `release=loft` - Helm release name (may vary based on your installation)
+
+By default, vCluster Platform requires an `Authorization` HTTP header field with a Kubernetes bearer token that has access to the non-resource 
+<!-- vale off -->
+URL `/metrics`
+<!-- vale on -->
+ in the Kubernetes cluster where vCluster Platform is installed.
+If the header is not provided, vCluster Platform denies the request.
+
+:::info Turn off metrics authentication
+If you wish to scrape metrics without authentication, you can turn it off via the environment variable `INSECURE_METRICS=true` in the vCluster Platform Helm chart.
+:::
+
+Example of accessing metrics from a specific pod using port-forward:
+
+```bash
+# Port-forward to a specific platform pod
+kubectl port-forward -n vcluster-platform loft-xxxx 8080:8080
+
+# Access metrics with authentication token
+curl http://localhost:8080/metrics -H "Authorization: Bearer eyJhbGci..."
+
+# HELP apiserver_audit_event_total [ALPHA] Counter of audit events generated and sent to the audit backend.
+# TYPE apiserver_audit_event_total counter
+apiserver_audit_event_total 0
+# HELP apiserver_audit_requests_rejected_total [ALPHA] Counter of apiserver requests rejected due to an error in audit logging backend.
+# TYPE apiserver_audit_requests_rejected_total counter
+apiserver_audit_requests_rejected_total 0
+...
+```
+
+### Which metrics are exposed?
+
+vCluster Platform collects metrics from its internal components and merges them together into a single metrics endpoint at `/metrics`. The following component metrics are merged together:
+
+- **API gateway metrics**: vCluster Platform exposes metrics for its internal api gateway such as the total amount of requests (`apigateway_ENDPOINT_request_total`), request latency (`apigateway_ENDPOINT_request_duration_seconds`) and request sizes (`apigateway_ENDPOINT_response_sizes`) for the different endpoints. The metrics have different labels depending on the endpoint. The following endpoints and metrics are available:
+  - **ui**: all requests that target vCluster Platform UI assets (metrics are `apigateway_ui_request_total`, `apigateway_ui_request_duration_seconds`, `apigateway_ui_response_sizes`)
+  - **auth**: all requests that target vCluster Platform authentication endpoints (such as login, token refresh etc.)
+  - **kubernetes**: all forwarded requests that target a kubernetes cluster. The targeted backend is provided by a label and can be either `management` (the integrated vCluster Platform kubernetes api server), `cluster` (a request forwarded to a connected cluster) or `vcluster` (a virtual kubernetes cluster deployed by vCluster Platform). Further labels are provided as well such as kubernetes resource, api version, api group, subresource etc.
+  - **oidc**: all requests that target the internal OIDC server
+- **Integrated Kubernetes API server metrics**: all internal kubernetes api server metrics are exposed. An incomplete list can be found in the [kubernetes repository](https://github.com/kubernetes/apiserver/blob/master/pkg/endpoints/metrics/metrics.go)
+- **Integrated Controller manager metrics**: all vCluster Platform management cluster controller metrics are exposed.
+- **Go runtime metrics**: some general metrics about the golang runtime and resource usage are exposed.

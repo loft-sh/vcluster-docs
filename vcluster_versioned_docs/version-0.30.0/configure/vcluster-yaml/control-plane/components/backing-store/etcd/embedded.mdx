@@ -1,0 +1,337 @@
+---
+title: Embedded etcd
+sidebar_label: embedded
+sidebar_position: 2
+sidebar_class_name: pro host-nodes private-nodes standalone
+description: Configure an embedded etcd instance as the virtual cluster's backing store.
+---
+
+import ConfigReference from '../../../../../../_partials/config/controlPlane/backingStore/etcd/embedded.mdx'
+import ProAdmonition from '../../../../../../_partials/admonitions/pro-admonition.mdx'
+import InterpolatedCodeBlock from "@site/src/components/InterpolatedCodeBlock";
+import Flow, { Step } from '@site/src/components/Flow';
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+import Admonition from '@theme/Admonition';
+import TenancySupport from '../../../../../../_fragments/tenancy-support.mdx';
+
+<TenancySupport hostNodes="true" privateNodes="true" standalone="true"/>
+
+<ProAdmonition/>
+
+:::warning Upgrade Notice
+
+An issue exists when upgrading etcd (from version 3.5.1 or later, but earlier than 3.5.20) to version 3.6. This upgrade path can lead to a failed upgrade and cause the virtual cluster to break. etcd version 3.5.20 includes a fix that migrates membership data to the v3 data store. This migration prevents the issue when upgrading to version 3.6.
+
+To avoid this issue, vCluster does not upgrade etcd to version 3.6 until vCluster version 0.29.0.
+
+Any vCluster running a version earlier than 0.24.2, must first be upgraded to a version between 0.24.2 and 0.28.x, before upgrading to version 0.29.0.
+
+For more information, see the [official etcd documentation](https://etcd.io/blog/2025/upgrade_from_3.5_to_3.6_issue/).
+:::
+
+When using this backing store option, etcd is deployed as part of the vCluster control plane pod to reduce the overall footprint.
+
+```yaml
+controlPlane:
+  backingStore:
+    etcd:
+      embedded:
+        enabled: true
+```
+
+## How embedded etcd works
+
+Embedded etcd starts the etcd binary with the Kubernetes control plane inside the vCluster pod. This enables vCluster to run in high availability (HA) scenarios without requiring a separate `StatefulSet` or `Deployment`.
+
+vCluster fully manages embedded etcd and provides these capabilities:
+
+- **Dynamic scaling**: Scales the etcd cluster up or down based on vCluster replica count.
+- **Automatic recovery**: Recovers etcd in failure scenarios such as corrupted members.
+- **Seamless migration**: Migrates from SQLite or [deployed etcd](../../../../../../manage/migrate-etcd-backing-store) to embedded etcd automatically.
+- **Simplified deployment**: Requires no additional `StatefulSets` or `Deployments`.
+
+<!-- vale off -->
+## Scaling behavior
+
+vCluster dynamically builds the etcd cluster based on the number of desired replicas. For example, when you scale vCluster from 1 to 3 replicas, vCluster automatically adds the new replicas as members to the existing single-member cluster. Similarly, vCluster removes etcd members when you scale down the cluster.
+
+When scaling down breaks quorum (such as scaling from 3 to 1 replicas), vCluster rebuilds the etcd cluster without data loss or interruption. This enables dynamic scaling up and down of vCluster.
+
+## Disaster recovery
+
+When embedded etcd encounters failures, vCluster provides both automatic and manual recovery options to restore cluster capabilities.
+
+### Automatic recovery
+
+vCluster recovers the etcd cluster automatically in most failure scenarios by removing and readding the failing member. Automatic recovery occurs in these cases:
+
+- **Unresponsive member**: Etcd member is unresponsive for more than 2 minutes.
+- **Detected issues**: Corruption or another alarm is detected on the etcd member.
+
+vCluster attempts to recover only a single replica at a time. If recovering an etcd member results in quorum loss, vCluster does not recover the member automatically.
+
+### Manual recovery
+
+#### Recover a single replica
+
+When a single etcd replica fails, vCluster can recover the replica automatically in most cases, including:
+
+- Replica database corruption
+- Replica database deletion
+- Replica `PersistentVolumeClaim` (PVC) deletion
+- Replica removal from etcd cluster using `etcdctl member remove ID`
+- Replica stuck as a learner
+
+If vCluster cannot recover the single replica automatically, wait at least 10 minutes before deleting the replica pod and PVC. This action causes vCluster to rejoin the etcd member.
+
+#### Recover the entire cluster
+
+In rare cases, the entire etcd cluster requires manual recovery. This occurs when the majority of etcd member replicas become corrupted or deleted simultaneously (such as 2 of 3, 3 of 5, or 4 of 7 replicas). In this scenario, etcd fails to start and vCluster cannot recover automatically.
+
+:::note
+Normal pod restarts or terminations do not require manual recovery. These events trigger automatic leader election within the etcd cluster.
+:::
+
+Recovery procedures depend on whether the first replica (the pod ending with `-0`) is among the failing replicas.
+
+Use the following procedures when some replicas are still functioning:
+<br />
+
+<Tabs>
+<TabItem value="first-replica-working" label="First replica is not failing">
+
+<Flow>
+<Step title="Scale down the vCluster StatefulSet to a single replica">
+Scale the StatefulSet to one replica:
+
+<InterpolatedCodeBlock 
+  code={`kubectl scale statefulset [[VAR:VCLUSTER NAME:my-vcluster]] --replicas=1 -n [[VAR:NAMESPACE:vcluster-my-team]]`}
+  language="bash"
+/>
+
+<br />
+
+Verify only one pod is running:
+
+<InterpolatedCodeBlock 
+  code={`kubectl get pods -l [[VAR:VCLUSTER LABEL:app=vcluster]] -n [[VAR:NAMESPACE:vcluster-my-team]]`}
+  language="bash"
+/>
+</Step>
+
+<Step title="Monitor the etcd cluster rebuild">
+Monitor the rebuild process:
+
+<InterpolatedCodeBlock 
+  code={`kubectl logs -f [[VAR:VCLUSTER NAME:my-vcluster]]-0 -n [[VAR:NAMESPACE:vcluster-my-team]]`}
+  language="bash"
+/>
+
+<br />
+
+Watch for log messages indicating etcd is ready and the cluster is in good condition.
+</Step>
+
+<Step title="Scale up to the desired number of replicas">
+Scale back up to your target replica count:
+
+<InterpolatedCodeBlock 
+  code={`kubectl scale statefulset [[VAR:VCLUSTER NAME:my-vcluster]] --replicas=[[VAR:DESIRED REPLICA COUNT:3]] -n [[VAR:NAMESPACE:vcluster-my-team]]`}
+  language="bash"
+/>
+
+<br />
+
+Verify all replicas are running:
+
+<InterpolatedCodeBlock 
+  code={`kubectl get pods -l [[VAR:VCLUSTER LABEL:app=vcluster]] -n [[VAR:NAMESPACE:vcluster-my-team]]
+kubectl logs [[VAR:VCLUSTER NAME:my-vcluster]]-0 -n [[VAR:NAMESPACE:vcluster-my-team]] | grep "cluster is ready"`}
+  language="bash"
+/>
+</Step>
+</Flow>
+
+</TabItem>
+
+<TabItem value="first-replica-failing" label="First replica is failing">
+
+<Flow>
+<Step title="Scale down vCluster to 0 replicas">
+Stop all vCluster instances:
+
+<InterpolatedCodeBlock 
+  code={`kubectl scale statefulset [[VAR:VCLUSTER NAME:my-vcluster]] --replicas=0 -n [[VAR:NAMESPACE:vcluster-my-team]]`}
+  language="bash"
+/>
+
+<br />
+
+Confirm all pods have terminated:
+
+<InterpolatedCodeBlock 
+  code={`kubectl get pods -l [[VAR:VCLUSTER LABEL:app=vcluster]] -n [[VAR:NAMESPACE:vcluster-my-team]]`}
+  language="bash"
+/>
+</Step>
+
+<Step title="Delete the corrupted PersistentVolumeClaim">
+Delete the corrupted PVC for the first replica:
+
+<InterpolatedCodeBlock 
+  code={`kubectl delete pvc [[VAR:PVC PREFIX:data]]-[[VAR:VCLUSTER NAME:my-vcluster]]-0 -n [[VAR:NAMESPACE:vcluster-my-team]]`}
+  language="bash"
+/>
+
+<br />
+
+Verify the PVC has been deleted:
+
+<InterpolatedCodeBlock 
+  code={`kubectl get pvc -l [[VAR:VCLUSTER LABEL:app=vcluster]] -n [[VAR:NAMESPACE:vcluster-my-team]]`}
+  language="bash"
+/>
+</Step>
+
+<Step title="Create new PVC from working replica">
+Create a new PVC by [copying from a working replica](https://kubernetes.io/docs/concepts/storage/persistent-volumes/#volume-cloning):
+
+<InterpolatedCodeBlock 
+  code={`apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: [[VAR:PVC PREFIX:data]]-[[VAR:VCLUSTER NAME:my-vcluster]]-0
+  namespace: [[VAR:NAMESPACE:vcluster-my-team]]
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: [[VAR:STORAGE SIZE:5Gi]]
+  dataSource:
+    name: [[VAR:PVC PREFIX:data]]-[[VAR:VCLUSTER NAME:my-vcluster]]-1
+    kind: PersistentVolumeClaim
+  storageClassName: [[VAR:STORAGE CLASS:gp2]]`}
+  language="yaml"
+  title="pvc-restore.yaml"
+/>
+
+<br />
+
+Apply the PVC:
+
+<InterpolatedCodeBlock 
+  code={`kubectl apply -f pvc-restore.yaml`}
+  language="bash"
+/>
+</Step>
+
+<Step title="Scale up vCluster to verify recovery">
+Start with one replica to verify the restored data:
+
+<InterpolatedCodeBlock 
+  code={`kubectl scale statefulset [[VAR:VCLUSTER NAME:my-vcluster]] --replicas=1 -n [[VAR:NAMESPACE:vcluster-my-team]]`}
+  language="bash"
+/>
+
+<br />
+
+Monitor the startup:
+
+<InterpolatedCodeBlock 
+  code={`kubectl logs -f [[VAR:VCLUSTER NAME:my-vcluster]]-0 -n [[VAR:NAMESPACE:vcluster-my-team]]`}
+  language="bash"
+/>
+
+<br />
+
+After it's stable, scale up to the desired number of replicas.
+</Step>
+</Flow>
+
+</TabItem>
+</Tabs>
+
+### Complete data loss recovery
+
+:::warning
+This recovery method results in data loss up to the last backup point. Only proceed if you have verified that all etcd replicas are corrupted and no working replicas remain.
+:::
+
+When the majority of etcd member replicas become corrupted or deleted simultaneously, the entire cluster requires recovery from backup.
+
+<Flow>
+<Step title="Assess the damage" danger>
+Verify all PVCs are corrupted or inaccessible:
+
+<InterpolatedCodeBlock
+  code={`kubectl get pvc -l [[VAR:VCLUSTER LABEL:app=vcluster]] -n [[VAR:NAMESPACE:vcluster-my-team]]`}
+  language="bash"
+/>
+
+<br />
+
+<InterpolatedCodeBlock
+  code={`kubectl describe pvc [[VAR:PVC PREFIX:data]]-[[VAR:VCLUSTER NAME:my-vcluster]]-0 [[VAR:PVC PREFIX:data]]-[[VAR:VCLUSTER NAME:my-vcluster]]-1 [[VAR:PVC PREFIX:data]]-[[VAR:VCLUSTER NAME:my-vcluster]]-2 -n [[VAR:NAMESPACE:vcluster-my-team]]`}
+  language="bash"
+/>
+</Step>
+
+<Step title="Scale down to zero replicas">
+Stop all vCluster instances before beginning recovery:
+
+<InterpolatedCodeBlock
+  code={`kubectl scale statefulset [[VAR:VCLUSTER NAME:my-vcluster]] --replicas=0 -n [[VAR:NAMESPACE:vcluster-my-team]]`}
+  language="bash"
+/>
+</Step>
+
+<Step title="Delete corrupted PVCs">
+Delete all corrupted PVCs:
+
+<InterpolatedCodeBlock
+  code={`kubectl delete pvc [[VAR:PVC PREFIX:data]]-[[VAR:VCLUSTER NAME:my-vcluster]]-0 [[VAR:PVC PREFIX:data]]-[[VAR:VCLUSTER NAME:my-vcluster]]-1 [[VAR:PVC PREFIX:data]]-[[VAR:VCLUSTER NAME:my-vcluster]]-2 -n [[VAR:NAMESPACE:vcluster-my-team]]`}
+  language="bash"
+/>
+</Step>
+
+<Step title="Restore from backup or snapshot">
+Follow a backup restoration procedure. This typically involves restoring PVCs from your backup solution (Velero, CSI snapshots, or similar tools).
+
+<br />
+
+Restore from snapshot:
+
+<InterpolatedCodeBlock
+  code={`kubectl apply -f [[VAR:RESTORE FILE:backup-restore.yaml]]`}
+  language="bash"
+/>
+</Step>
+
+<Step title="Start vCluster with restored data">
+Scale up to a single replica to verify the restoration:
+
+<InterpolatedCodeBlock
+  code={`kubectl scale statefulset [[VAR:VCLUSTER NAME:my-vcluster]] --replicas=1 -n [[VAR:NAMESPACE:vcluster-my-team]]`}
+  language="bash"
+/>
+
+<br />
+
+Monitor logs and verify the cluster starts successfully:
+
+<InterpolatedCodeBlock
+  code={`kubectl logs -f [[VAR:VCLUSTER NAME:my-vcluster]]-0 -n [[VAR:NAMESPACE:vcluster-my-team]]`}
+  language="bash"
+/>
+
+<br />
+
+After it's verified, scale to the desired number of replicas.
+</Step>
+</Flow>
+
+## Config reference
+
+<ConfigReference/>
