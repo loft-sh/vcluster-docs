@@ -5,6 +5,8 @@ on:
     paths:
       - 'vcluster/**'
       - 'vcluster_versioned_docs/**'
+      - 'platform/**'
+      - 'platform_versioned_docs/**'
       - 'netlify.toml'
       - 'hack/test-redirects.hurl'
 
@@ -23,20 +25,43 @@ jobs:
         with:
           go-version: '1.24'
 
-      - name: Check redirects
+      - name: Check for renames
         id: check
         run: |
-          go run hack/redirect-resolver/main.go -mode detect
-          
-          if [ -f "hack/path-changes.json" ] && [ "$(jq '.changes | length' hack/path-changes.json)" -gt 0 ]; then
-            go run hack/redirect-resolver/main.go -mode update
-            
-            if git diff --exit-code netlify.toml hack/redirect-history.json hack/test-redirects.hurl > /dev/null 2>&1; then
-              echo "result=ok" >> $GITHUB_OUTPUT
+          # Fetch base branch for comparison
+          git fetch origin ${{ github.base_ref }}
+
+          # Iterate through each commit and detect renames individually
+          RENAMES=""
+          for commit in $(git log --oneline origin/${{ github.base_ref }}..HEAD | awk '{print $1}' | tac); do
+            COMMIT_RENAMES=$(git diff --name-status -M --diff-filter=R $commit~1..$commit -- \
+              'vcluster/**/*.md' 'vcluster/**/*.mdx' \
+              'platform/**/*.md' 'platform/**/*.mdx' || true)
+            if [ -n "$COMMIT_RENAMES" ]; then
+              RENAMES="${RENAMES}${COMMIT_RENAMES}\n"
+            fi
+          done
+
+          if [ -n "$RENAMES" ]; then
+            echo "Detected file renames:"
+            echo -e "$RENAMES"
+
+            # Run the existing redirect resolver in detect mode
+            go run hack/redirect-resolver/main.go -mode detect
+
+            if [ -f "hack/path-changes.json" ] && [ "$(jq '.changes | length' hack/path-changes.json)" -gt 0 ]; then
+              go run hack/redirect-resolver/main.go -mode update
+
+              if git diff --exit-code netlify.toml hack/redirect-history.json hack/test-redirects.hurl > /dev/null 2>&1; then
+                echo "result=ok" >> $GITHUB_OUTPUT
+              else
+                echo "result=needs-update" >> $GITHUB_OUTPUT
+              fi
             else
-              echo "result=needs-update" >> $GITHUB_OUTPUT
+              echo "result=ok" >> $GITHUB_OUTPUT
             fi
           else
+            echo "No renames detected"
             echo "result=ok" >> $GITHUB_OUTPUT
           fi
 
@@ -80,7 +105,7 @@ jobs:
           else
             PREVIEW_URL="https://deploy-preview-${{ github.event.pull_request.number }}--vcluster-docs-site.netlify.app/docs/"
           fi
-          
+
           for i in {1..60}; do
             # Include 401 status - the 'next' branch preview is password protected but still "ready"
             if curl -s -o /dev/null -w "%{http_code}" "$PREVIEW_URL" | grep -q "200\|301\|302\|401"; then
@@ -100,11 +125,11 @@ jobs:
               PREVIEW_URL="https://deploy-preview-${{ github.event.pull_request.number }}--vcluster-docs-site.netlify.app"
               IS_NEXT_BRANCH=false
             fi
-            
-            
+
+
             # Check if preview is password protected
             HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$PREVIEW_URL/docs/")
-            
+
             if [[ "$HTTP_STATUS" == "401" ]] && [[ "$IS_NEXT_BRANCH" == "true" ]]; then
               # Check if we have the password secret
               if [[ -n "${{ secrets.NETLIFY_SITE_PASSWORD }}" ]]; then
@@ -113,7 +138,7 @@ jobs:
                   --variable BASE_URL="$PREVIEW_URL" \
                   --variable NETLIFY_PASSWORD='${{ secrets.NETLIFY_SITE_PASSWORD }}' \
                   hack/netlify-auth.hurl
-                
+
                 if [ $? -eq 0 ]; then
                   # Run tests with saved cookies
                   hurl --test --cookie /tmp/netlify-cookies.txt \
