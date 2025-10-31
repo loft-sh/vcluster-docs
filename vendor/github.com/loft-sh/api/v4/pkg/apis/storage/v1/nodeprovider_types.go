@@ -152,6 +152,9 @@ type TerraformTemplateSourceGit struct {
 	// Commit is the commit SHA to checkout
 	Commit string `json:"commit,omitempty"`
 
+	// Tag is the tag reference to checkout
+	Tag string `json:"tag,omitempty"`
+
 	// SubPath is the subpath in the repo to use
 	SubPath string `json:"subPath,omitempty"`
 
