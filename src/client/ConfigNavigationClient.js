@@ -58,97 +58,64 @@ const closeOtherDetails = function(keepOpenSet) {
 };
 
 const highlightActiveOnPageLink = function(hash) {
-  const hashToUse = hash || location.hash;
-  if (!hashToUse) {
+  // Use the passed hash parameter, not location.hash (which doesn't update with pushState)
+  if (!hash) {
     return;
   }
 
-  const activeHash = hashToUse.substring(1);
-  const allLinks = document.querySelectorAll('a');
+  const activeHash = hash.substring(1);
 
-  for (let i = 0; i < allLinks.length; i++) {
-    const link = allLinks[i];
-    link.classList.remove('active');
-
-    if (link.parentElement && link.parentElement.parentElement && link.parentElement.parentElement.tagName === 'UL') {
-      link.parentElement.parentElement.classList.remove('active');
+  const updateTOC = () => {
+    // Remove active class from all TOC links
+    const allLinks = document.querySelectorAll('.table-of-contents a');
+    for (let i = 0; i < allLinks.length; i++) {
+      allLinks[i].classList.remove('table-of-contents__link--active');
     }
-  }
 
-  const activeLinks = document.querySelectorAll("a[href='#" + activeHash + "']");
-  for (let i = 0; i < activeLinks.length; i++) {
-    activeLinks[i].classList.add('active');
-  }
+    // Add active class to matching TOC links
+    const activeLinks = document.querySelectorAll(".table-of-contents a[href='#" + activeHash + "']");
+    for (let i = 0; i < activeLinks.length; i++) {
+      activeLinks[i].classList.add('table-of-contents__link--active');
+    }
+  };
+
+  // Update immediately
+  updateTOC();
+
+  // Keep updating after scroll ends to override Docusaurus IntersectionObserver
+  let scrollEndTimer;
+  const handleScrollEnd = () => {
+    clearTimeout(scrollEndTimer);
+    scrollEndTimer = setTimeout(() => {
+      updateTOC();
+      window.removeEventListener('scroll', handleScrollEnd);
+    }, 50);
+  };
+
+  window.addEventListener('scroll', handleScrollEnd);
+  handleScrollEnd();
 };
 
 const highlightDetailsOnActiveHash = function(activeHash, doNotOpen) {
-  const activeAnchors = document.querySelectorAll(".anchor[id='" + activeHash + "']");
-  const detailsElements = document.querySelectorAll('details');
-  const activeSectionElements = document.querySelectorAll('.active-section');
+  // NOTE: This function ONLY manages details expansion, NOT highlighting
+  // Highlighting is managed by DetailsClicksClient to avoid race conditions
 
-  for (let i = 0; i < activeSectionElements.length; i++) {
-    activeSectionElements[i].classList.remove('active-section');
-  }
-
-  for (let i = 0; i < activeAnchors.length; i++) {
-    const headline = activeAnchors[i].parentElement;
-    const headlineRank = activeAnchors[i].parentElement.nodeName.substr(1);
-    let el = headline;
-
-    while (el) {
-      if (el.tagName !== 'BR' && el.tagName !== 'HR') {
-        el.classList.add('active-section');
-      }
-      el = el.nextElementSibling;
-
-      if (el) {
-        const elRank = el.nodeName.substr(1);
-        if (elRank > 0 && elRank <= headlineRank) {
-          break;
-        }
-      }
-    }
-  }
-
-  for (let i = 0; i < detailsElements.length; i++) {
-    detailsElements[i].classList.remove('active');
-  }
-
-  if (activeAnchors.length > 0) {
-    for (let i = 0; i < activeAnchors.length; i++) {
-      let element = activeAnchors[i];
-
-      for (; element && element !== document; element = element.parentElement) {
-        if (element.tagName === 'DETAILS') {
-          element.classList.add('active');
-
-          if (!doNotOpen) {
-            element.open = true;
-            element.setAttribute('data-collapsed', 'false');
-            const collapsibleContent = element.querySelector(':scope > div[style]');
-            if (collapsibleContent) {
-              collapsibleContent.style.display = 'block';
-              collapsibleContent.style.overflow = 'visible';
-              collapsibleContent.style.height = 'auto';
-            }
-          }
-        }
-      }
-    }
-  }
-
+  // Find the target element and handle its details
   const targetElement = activeHash ? document.getElementById(activeHash) : null;
   if (targetElement) {
     const parentDetails = getParentDetailsElements(targetElement);
     const keepOpenSet = new Set(parentDetails);
 
+    // Close other unrelated details
     if (!doNotOpen) {
       closeOtherDetails(keepOpenSet);
     }
 
+    // Open parent details - NO highlighting here!
     for (let i = 0; i < parentDetails.length; i++) {
       const element = parentDetails[i];
-      element.classList.add('active');
+
+      // Open all parent details
       if (!doNotOpen) {
         element.open = true;
         element.setAttribute('data-collapsed', 'false');
@@ -169,7 +136,7 @@ const handleHashNavigation = function(hash) {
 
   const targetId = hash.substring(1);
   highlightDetailsOnActiveHash(targetId);
-  highlightActiveOnPageLink();
+  highlightActiveOnPageLink(hash);
 };
 
 // Hash link clicks are handled by DetailsClicksClient to avoid race conditions
@@ -209,10 +176,10 @@ export function onRouteDidUpdate({ location, previousLocation }) {
           handleHashNavigation(location.hash);
 
           if (targetEl) {
-            setTimeout(() => {
-              const y = targetEl.getBoundingClientRect().top + window.scrollY - 280;
+            requestAnimationFrame(() => {
+              const y = targetEl.getBoundingClientRect().top + window.scrollY - 100;
               window.scrollTo({ top: y, behavior: 'smooth' });
-            }, 150);
+            });
           }
         }
       });
@@ -229,18 +196,19 @@ export function onRouteDidUpdate({ location, previousLocation }) {
       handleHashNavigation(hash);
 
       if (targetEl) {
-        setTimeout(() => {
-          const y = targetEl.getBoundingClientRect().top + window.scrollY - 280;
+        requestAnimationFrame(() => {
+          const y = targetEl.getBoundingClientRect().top + window.scrollY - 100;
           window.scrollTo({ top: y, behavior: 'smooth' });
-        }, 150);
+        });
       }
     });
 
     // NOTE: hashchange only handles highlighting, NOT scrolling (to avoid race condition)
     // Scrolling is handled by DetailsClicksClient's universal click handler
     window.addEventListener('hashchange', function(e) {
+      // Extract hash from newURL to handle pushState correctly
       const newHash = e.newURL ? e.newURL.split('#')[1] : '';
-      const hashToUse = newHash ? '#' + newHash : location.hash;
+      const hashToUse = newHash ? '#' + newHash : '';
 
       if (!hashToUse) {
         return;

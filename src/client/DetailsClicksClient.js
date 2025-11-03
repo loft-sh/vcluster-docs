@@ -580,7 +580,27 @@ const preserveExpansionStates = ExecutionEnvironment.canUseDOM ? function(skipEv
     }, 50);
   };
 
-  document.querySelectorAll('details, .tabs-container').forEach(function(el, index) {
+  // Remove all existing highlights before re-initializing
+  // This prevents stale highlights from previous navigation
+  document.querySelectorAll('.-contains-target-link').forEach(el => {
+    el.classList.remove('-contains-target-link');
+  });
+
+  // Sort elements by depth (deepest first) to process children before parents
+  // This prevents race condition where both parent and child get highlighted
+  const elements = Array.from(document.querySelectorAll('details, .tabs-container'));
+  const elementsWithDepth = elements.map(el => {
+    let depth = 0;
+    let current = el.parentElement;
+    while (current) {
+      if (current.tagName === 'DETAILS') depth++;
+      current = current.parentElement;
+    }
+    return { el, depth };
+  });
+  elementsWithDepth.sort((a, b) => b.depth - a.depth); // Deepest first
+
+  elementsWithDepth.forEach(function({ el, depth }, index) {
     const expansionKey = "x" + (el.id || index);
     const stateChangeElAll = el.querySelectorAll(':scope > summary, :scope > [role="tablist"] > *');
     const anchorLinks = el.querySelectorAll(':scope a[href="' + location.hash + '"]');
@@ -589,8 +609,17 @@ const preserveExpansionStates = ExecutionEnvironment.canUseDOM ? function(skipEv
     const targetEl = targetId ? document.getElementById(targetId) : null;
     const containsTarget = targetEl && (el.id === targetId || el.contains(targetEl));
 
+    // Check if this element's DIRECT summary (not nested) has a link to the target
+    const hasSummaryLink = el.querySelectorAll(':scope > summary a[href="' + location.hash + '"]').length > 0;
+
+    // Only highlight if no child details element already has the highlight class
+    // (children are processed first due to depth sorting)
+    const childDetailsHighlighted = Array.from(el.querySelectorAll('details')).some(
+      child => child.classList.contains('-contains-target-link')
+    );
+
     if (anchorLinks.length > 0 || containsTarget) {
-      if (el.querySelectorAll(':scope > summary a[href="' + location.hash + '"]').length > 0) {
+      if (hasSummaryLink && !childDetailsHighlighted) {
         el.classList.add("-contains-target-link");
       }
       state.set(expansionKey, 1);
@@ -600,7 +629,6 @@ const preserveExpansionStates = ExecutionEnvironment.canUseDOM ? function(skipEv
         // NOTE: Initial page load scrolling is handled by ConfigNavigationClient
       }
     } else {
-      el.classList.remove("-contains-target-link");
       state.delete(expansionKey);
     }
 
@@ -610,14 +638,14 @@ const preserveExpansionStates = ExecutionEnvironment.canUseDOM ? function(skipEv
         const state = new URLSearchParams(window.location.search.substring(1));
         if ((el.open && el.getAttribute("data-expandable") != "false") || el.classList.contains("tabs-container")) {
           if (anchorLinks.length == 1) {
-            if (anchorLinks[0].getAttribute("href") == location.hash) {
-              el.classList.add("-contains-target-link");
-            }
+            // NOTE: Highlighting is managed by initializeDetailsElement (initial load)
+            // and universal click handler (user clicks). Do NOT manage highlights here
+            // to avoid race conditions and double highlighting.
           } else {
             state.set(expansionKey, i);
           }
         } else {
-          el.classList.remove("-contains-target-link");
+          // NOTE: Do NOT remove highlight class here - only click handler manages highlights
           state.delete(expansionKey);
         }
 
@@ -650,6 +678,7 @@ const preserveExpansionStates = ExecutionEnvironment.canUseDOM ? function(skipEv
           const newHash = anchorLink.getAttribute("href");
           const targetId = newHash.substring(1);
 
+          // Remove highlight from elements that don't link to the new hash
           document.querySelectorAll(".-contains-target-link").forEach(function(el) {
             if (el.querySelectorAll(':scope > summary a[href="' + newHash + '"]').length == 0) {
               el.classList.remove("-contains-target-link");
@@ -670,17 +699,18 @@ const preserveExpansionStates = ExecutionEnvironment.canUseDOM ? function(skipEv
             closeOtherDetails(keepOpenSet);
             parentDetails.forEach(openDetailsElement);
 
+            // Add orange border ONLY to the innermost/direct details element
+            if (parentDetails.length > 0) {
+              const directTargetDetails = parentDetails[0]; // First element is innermost
+              directTargetDetails.classList.add("-contains-target-link");
+            }
+
             // replaceState doesn't trigger hashchange, so we must scroll here
-            setTimeout(() => {
+            requestAnimationFrame(() => {
               const targetRect = targetEl.getBoundingClientRect();
-              if (targetRect.top !== 0 || targetRect.left !== 0) {
-                window.scroll({
-                  behavior: 'smooth',
-                  left: 0,
-                  top: window.scrollY + targetRect.top - 280
-                });
-              }
-            }, 150);
+              const y = window.scrollY + targetRect.top - 100;
+              window.scrollTo({ top: y, behavior: 'smooth' });
+            });
           } else if (!el.hasAttribute("open")) {
             anchorLink.parentElement.click();
           }
@@ -729,6 +759,8 @@ const preserveExpansionStates = ExecutionEnvironment.canUseDOM ? function(skipEv
 // Universal hash link handler (including TOC sidebar)
 // Fixes Docusaurus's buggy hash navigation and enables CSS :target highlighting
 if (ExecutionEnvironment.canUseDOM) {
+  let scrollTimeout = null;
+
   document.addEventListener('click', function(e) {
     let target = e.target;
     let anchor = null;
@@ -756,26 +788,43 @@ if (ExecutionEnvironment.canUseDOM) {
         closeOtherDetails(keepOpenSet);
         parentDetails.forEach(openDetailsElement);
 
-        setTimeout(() => {
-          const currentScrollY = window.scrollY;
+        // Remove all existing highlights first
+        document.querySelectorAll('.-contains-target-link').forEach(el => {
+          el.classList.remove('-contains-target-link');
+        });
 
-          // Setting location.hash triggers :target CSS for highlighting
-          if (window.location.hash !== hash) {
-            window.location.hash = hash;
-          }
+        // Add highlight to the innermost parent details element
+        if (parentDetails.length > 0) {
+          parentDetails[0].classList.add('-contains-target-link');
+        }
 
-          // Cancel browser's automatic scroll
-          window.scrollTo(0, currentScrollY);
+        // Update URL hash for history/bookmarking
+        const oldURL = window.location.href;
+        window.history.pushState(null, '', hash);
+        const newURL = window.location.href;
 
-          // Do our own controlled scroll
-          setTimeout(() => {
-            const rect = targetEl.getBoundingClientRect();
-            if (rect.top !== 0 || rect.left !== 0) {
-              const y = window.scrollY + rect.top - 280;
-              window.scrollTo({ top: y, behavior: 'smooth' });
-            }
-          }, 50);
-        }, 150);
+        // Trigger hashchange event manually for other listeners (including sidebar highlighting)
+        window.dispatchEvent(new HashChangeEvent('hashchange', {
+          oldURL: oldURL,
+          newURL: newURL
+        }));
+
+        // Cancel any pending scroll
+        if (scrollTimeout) {
+          clearTimeout(scrollTimeout);
+        }
+
+        // Smooth scroll to target with proper offset
+        scrollTimeout = requestAnimationFrame(() => {
+          const rect = targetEl.getBoundingClientRect();
+          const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
+          const targetY = scrollTop + rect.top - 100;
+
+          window.scrollTo({
+            top: targetY,
+            behavior: 'smooth'
+          });
+        });
       }
     }
   }, true); // Capture phase
