@@ -1,0 +1,121 @@
+---
+title: Volume snapshots
+sidebar_label: Volume snapshots
+sidebar_position: 3
+sidebar_class_name: host-nodes private-nodes
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+import TenancySupport from '../../../_fragments/tenancy-support.mdx';
+
+<TenancySupport hostNodes="true" privateNodes="true" />
+
+:::warning
+This feature is currently in Beta.
+See vCluster [Lifecycle Policy](../../../deploy/upgrade/supported_versions#feature-versioning) for more information.
+:::
+
+vCluster snapshots enable you to create volume snapshots for PersistentVolumeClaims that are provisioned by CSI drivers. This allows you to protect not only your virtual cluster resources and config, but also your application data.
+
+See [how volume snapshots are created](../../../understand/volume-snapshots) if you would like to learn more about volume snapshots and how vCluster creates them.
+
+For an example guide demonstrating volume snapshots in action, see this [walkthrough using AWS EBS volumes](./aws-ebs-guide).
+
+:::important
+Volume snapshots can be created only for PVCs that are provisioned by CSI drivers with [Volume Snapshots](https://kubernetes.io/docs/concepts/storage/volume-snapshots/) support.
+:::
+
+## Setup
+
+In order to create volume snapshots, several installation and configuration steps have to be done in your host or virtual cluster.
+
+### Host nodes
+
+The following setup has to be done in the host cluster:
+1. Install the [Kubernetes CSI snapshotter](https://github.com/kubernetes-csi/external-snapshotter) and VolumeSnapshot, VolumeSnapshotContent, and VolumeSnapshotClass CRDs. You can find further instructions in the upstream repo.
+2. Install a CSI driver that supports volume snapshots, and storage classes for that CSI driver.
+3. Configure the default VolumeSnapshotClass for each CSI driver in the host cluster. See [Kubernetes Volume Snapshot Classes docs](https://kubernetes.io/docs/concepts/storage/volume-snapshot-classes/) for more details.
+
+### Private nodes
+
+Create virtual cluster with `deploy.volumeSnapshotController.enabled` config set to `true`. With this config, vCluster installs the common snapshot-controller, and VolumeSnapshot, VolumeSnapshotContent and VolumeSnapshotClass CRDs in your virtual cluster.
+
+The following setup has to be done in the virtual cluster:
+1. Install a CSI driver that supports volume snapshots, and storage classes for that CSI driver.
+2. Configure the default VolumeSnapshotClass for each CSI driver in the host cluster. See [Kubernetes Volume Snapshot Classes docs](https://kubernetes.io/docs/concepts/storage/volume-snapshot-classes/) for more details.
+
+<!-- vale off -->
+### Use non-default VolumeSnapshotClasses
+<!-- vale on -->
+
+There can be scenarios where you need to use different VolumeSnapshotClasses for different PersistentVolumeClaims that have been provisioned by the same CSI driver. In cases like this, you cannot use the default VolumeSnapshotClass for all PersistentVolumeClaims. For example, this can happen when you use multiple StorageClasses from the same CSI driver, so you might be required to use multiple VolumeSnapshotClasses as well.
+
+To use a non-default VolumeSnapshotClass for some PersistentVolumeClaim, label that PersistentVolumeClaim with `vcluster.loft.sh/csi-volumesnapshot-class` label, where the label value is the name of the VolumeSnapshotClass that you want to use. For example:
+
+```yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: my-pvc
+  labels:
+    vcluster.loft.sh/csi-volumesnapshot-class: my-special-snap-class
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+```
+
+## Create snapshot with volumes
+
+You can create a vCluster snapshot, with volume snapshots included, by using the `--include-volumes` param. vCluster CLI creates a snapshot request in the host cluster, which is then processed in the background by the vCluster snapshot controller, which will create volume snapshots.
+
+Here is an example:
+
+```
+vcluster snapshot create myvcluster "container:///data/my-snapshot.tar.gz" --include-volumes
+13:52:09 info Beginning snapshot creation... You can check the snapshot creation progress with the following command: vcluster snapshot get myvcluster "container:///data/my-snapshot.tar.gz"'
+```
+
+You can check the snapshot creation progress with the following command:
+
+```bash
+vcluster snapshot get myvcluster "container:///data/my-snapshot.tar.gz"
+
+                  SNAPSHOT               |         STATUS          | AGE
+  ---------------------------------------+-------------------------+------
+    container:///data/my-snapshot.tar.gz | CreatingVolumeSnapshots | 28s
+
+```
+
+## Limitations
+
+When taking volume snapshots, there are limitations:
+- Volume snapshots cannot be created for PVCs that are not provisioned by CSI drivers with [Volume Snapshots](https://kubernetes.io/docs/concepts/storage/volume-snapshots/) support.
+- Volume snapshots cannot be created for PVCs that are provisioned by CSI drivers that don't support [Volume Snapshots](https://kubernetes.io/docs/concepts/storage/volume-snapshots/).
+- When using host nodes:
+  - Currently volume snapshots are created only for PersistentVolumeClaims that are synced to the vCluster host namespace. This means that, when the [Namespace sync](../../../configure/vcluster-yaml/sync/to-host/advanced/namespaces) is enabled, volume snapshots are not created for the PersistentVolumeClaims that are synced to namespaces different than the vCluster host namespace.
+- When using private nodes:
+  - vCluster has to be deployed with `deploy.volumeSnapshotController.enabled` config set to `true`.
+  - CSI driver that supports volume snapshots has to be installed in the virtual cluster.
+  - The default VolumeSnapshotClass has to be configured for each CSI driver in the virtual cluster. See [Kubernetes Volume Snapshot Classes docs](https://kubernetes.io/docs/concepts/storage/volume-snapshot-classes/) for more details.
+- Volume snapshots are currently not supported for [vCluster standalone](../../../deploy/control-plane/binary/).
+
+
+## Troubleshoot issues
+
+If not all your Volumes are able to be backed up or restored, there are several different outcomes that can happen during restore, depending on the reason. These states are likely to change over coming releases.
+
+| Case                                                                    | PVC Exists | PVC State     | Restored by         |
+|-------------------------------------------------------------------------|------------|---------------|---------------------|
+| Volume provisioner is valid CSI driver that supports snapshots          | Yes        | Bound         | Snapshot Controller |
+| Volume provisioner is valid CSI driver that does not support snapshots  | No         | N/A           | Snapshot Controller |
+| Volume provisioner is not valid CSI driver                              | Yes        | Varying (a)   | ETCD                |
+| Volume has other error, such as missing VolumeSnapshot or Storage Class | No         | N/A           | Snapshot Controller |
+| Volume and provisioner are valid, but PVC already exists in cluster     | Untouched  | Untouched (b) | Skipped             |
+
+a) This depends on the provisioner. In some cases it will end up pending, in others it may be restored. For example if everything needed exists locally.
+
+b) If a PVC already exists in the cluster, the snapshot feature will not overwrite it. You will need to delete it and run the restore again.
