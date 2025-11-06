@@ -586,9 +586,14 @@ const preserveExpansionStates = ExecutionEnvironment.canUseDOM ? function(skipEv
     el.classList.remove('-contains-target-link');
   });
 
-  // Sort elements by depth (deepest first) to process children before parents
-  // This prevents race condition where both parent and child get highlighted
-  const elements = Array.from(document.querySelectorAll('details, .tabs-container'));
+  // Sort elements by depth (deepest first) to process children before parents.
+  // This prevents race condition where both parent and child get highlighted.
+  // We select only details.config-field elements here because the config reference pages
+  // use this class to identify configuration fields that need special expansion behavior.
+  // Using the class selector instead of selecting all details elements prevents this
+  // functionality from interfering with other details elements on the page, such as
+  // the collapsible sections in the sidebar navigation menu.
+  const elements = Array.from(document.querySelectorAll('details.config-field, .tabs-container'));
   const elementsWithDepth = elements.map(el => {
     let depth = 0;
     let current = el.parentElement;
@@ -756,10 +761,21 @@ const preserveExpansionStates = ExecutionEnvironment.canUseDOM ? function(skipEv
 // Docusaurus Lifecycle Hooks
 // ============================================================================
 
-// Universal hash link handler (including TOC sidebar)
-// Fixes Docusaurus's buggy hash navigation and enables CSS :target highlighting
+// This click handler improves hash navigation on config reference pages by automatically
+// expanding parent details elements when clicking hash links, and ensuring proper scrolling
+// and CSS :target highlighting. The handler runs in capture phase to intercept clicks before
+// Docusaurus's default hash navigation.
+//
+// To prevent this handler from interfering with navigation on other pages, we check if the
+// current page contains details.config-field elements. If no config fields are present, we
+// exit early and let Docusaurus handle the click normally. This ensures that sidebar navigation
+// and other hash links throughout the documentation work as expected, while config reference
+// pages get the enhanced behavior of auto-expanding nested configuration sections.
+let scrollTimeout = null;
+let configFieldsCache = null;
+let cacheTimestamp = 0;
+
 if (ExecutionEnvironment.canUseDOM) {
-  let scrollTimeout = null;
 
   document.addEventListener('click', function(e) {
     let target = e.target;
@@ -774,6 +790,38 @@ if (ExecutionEnvironment.canUseDOM) {
     }
 
     if (anchor && anchor.getAttribute('href')?.startsWith('#')) {
+      // First, always check if the click originated from within the sidebar navigation.
+      // We should never intercept sidebar clicks regardless of page type. This check
+      // is done first because it's the most reliable - sidebar elements are stable and
+      // don't depend on page content transitions during React re-renders.
+      let checkElement = anchor;
+      let isInSidebar = false;
+      while (checkElement && checkElement !== document.body) {
+        if (checkElement.classList?.contains('theme-doc-sidebar-container') ||
+            checkElement.classList?.contains('menu__list') ||
+            checkElement.classList?.contains('theme-doc-sidebar-menu')) {
+          isInSidebar = true;
+          break;
+        }
+        checkElement = checkElement.parentElement;
+      }
+
+      if (isInSidebar) {
+        return;
+      }
+
+      // Check if this page has config reference fields with basic caching to avoid
+      // excessive DOM queries. The cache expires after 500ms to handle route transitions.
+      const now = Date.now();
+      if (!configFieldsCache || (now - cacheTimestamp) > 500) {
+        configFieldsCache = document.querySelectorAll('details.config-field').length > 0;
+        cacheTimestamp = now;
+      }
+
+      if (!configFieldsCache) {
+        return;
+      }
+
       const hash = anchor.getAttribute('href');
       const targetId = hash.substring(1);
 
@@ -839,6 +887,12 @@ let isInitialized = false;
 export function onRouteDidUpdate({ location }) {
   if (!ExecutionEnvironment.canUseDOM) {
     return;
+  }
+
+  // Invalidate config fields cache on route change to ensure fresh detection
+  if (typeof configFieldsCache !== 'undefined') {
+    configFieldsCache = null;
+    cacheTimestamp = 0;
   }
 
   requestAnimationFrame(() => {
