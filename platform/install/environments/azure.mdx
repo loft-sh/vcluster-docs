@@ -270,11 +270,141 @@ For more information on how to configure a custom domain, see the [Configure ext
 </Step>
 </Flow>
 
+## Control pod scheduling on AKS node pools {#control-pod-scheduling}
+
+Azure Kubernetes Service (AKS) uses two types of node pools with different purposes:
+
+- **System node pools**: Host critical infrastructure pods such as CoreDNS and metrics-server. These pools use the label `kubernetes.azure.com/mode: system`.
+- **User node pools**: Run application workloads and can scale to zero when not needed.
+
+By default, the platform pods can be scheduled on any available node. For production environments, you may want to ensure platform pods run on user node pools to keep system node pools reserved for critical infrastructure.
+
+### Available scheduling options {#scheduling-options}
+
+You can control where platform pods are scheduled using Helm values during installation or upgrade. Three main approaches are available:
+
+- **nodeSelector**: Simplest approach using node labels
+- **Node affinity**: More flexible with soft and hard scheduling rules
+- **Tolerations**: Works with node taints to allow pods on specific nodes
+
+### Use nodeSelector for basic scheduling {#use-nodeselector}
+
+The `nodeSelector` field is the simplest way to constrain platform pods to specific nodes using labels.
+
+<InterpolatedCodeBlock
+  code={`# Deploy platform pods only on nodes with this label
+nodeSelector:
+  kubernetes.azure.com/mode: [[VAR:NODE_POOL_TYPE:user]]`}
+  language="yaml"
+  title="values.yaml - Using nodeSelector to target user node pools"
+/>
+
+Apply this configuration during platform installation:
+
+<InterpolatedCodeBlock
+  code={`helm upgrade vcluster-platform vcluster-platform \\
+  --install \\
+  --repo https://charts.loft.sh/ \\
+  --namespace vcluster-platform \\
+  --create-namespace \\
+  --values values.yaml`}
+  language="bash"
+  title="Install platform with nodeSelector"
+/>
+
+:::info
+The `nodeSelector` requires nodes to have the exact label specified. If no matching nodes exist, pods will remain in a pending state.
+:::
+
+### Use node affinity for flexible scheduling {#use-node-affinity}
+
+Node affinity provides more control than `nodeSelector`, allowing you to specify both required and preferred scheduling rules.
+
+<InterpolatedCodeBlock
+  code={`affinity:
+  nodeAffinity:
+    # Hard requirement: pods must be scheduled on nodes matching this rule
+    requiredDuringSchedulingIgnoredDuringExecution:
+      nodeSelectorTerms:
+      - matchExpressions:
+        - key: kubernetes.azure.com/mode
+          operator: In
+          values:
+          - [[VAR:NODE_POOL_TYPE:user]]
+    # Soft preference: prefer nodes that are not spot instances
+    preferredDuringSchedulingIgnoredDuringExecution:
+    - weight: 100
+      preference:
+        matchExpressions:
+        - key: kubernetes.azure.com/scalesetpriority
+          operator: NotIn
+          values:
+          - spot`}
+  language="yaml"
+  title="values.yaml - Using node affinity with preference rules"
+/>
+
+The example above:
+1. Requires pods to be scheduled only on user node pools
+2. Prefers non-spot instances when available
+
+:::tip
+Use `preferredDuringSchedulingIgnoredDuringExecution` for soft preferences that won't block pod scheduling if the preference can't be satisfied.
+:::
+
+### Use tolerations with tainted system pools {#use-tolerations}
+
+Microsoft recommends applying the `CriticalAddonsOnly=true:NoSchedule` taint to system node pools. This prevents application pods from being scheduled there unless they have a matching toleration. If your system node pools use this taint, configure platform pods to run on user node pools without requiring tolerations.
+
+:::note
+By default, platform pods don't include the `CriticalAddonsOnly` toleration, so they won't be scheduled on tainted system node pools. You only need to configure tolerations if you want platform pods to run on tainted nodes.
+:::
+
+If your user node pools also have custom taints, add the appropriate tolerations:
+
+<InterpolatedCodeBlock
+  code={`tolerations:
+  # Allow scheduling on user node pools with custom taints
+  - key: [[VAR:TAINT_KEY:workload-type]]
+    operator: Equal
+    value: [[VAR:TAINT_VALUE:platform]]
+    effect: NoSchedule`}
+  language="yaml"
+  title="values.yaml - Using tolerations for custom tainted nodes"
+/>
+
+### Combine scheduling mechanisms {#combine-scheduling}
+
+For precise control, combine multiple scheduling mechanisms:
+
+<InterpolatedCodeBlock
+  code={`# Target specific node pool by label
+nodeSelector:
+  [[VAR:LABEL_KEY:workload-type]]: [[VAR:LABEL_VALUE:platform]]
+
+# Allow scheduling on nodes with this taint
+tolerations:
+  - key: [[VAR:TAINT_KEY:workload-type]]
+    operator: Equal
+    value: [[VAR:TAINT_VALUE:platform]]
+    effect: NoSchedule`}
+  language="yaml"
+  title="values.yaml - Combining nodeSelector and tolerations"
+/>
+
+This configuration:
+1. Selects only nodes labeled with `workload-type: platform`
+2. Tolerates the matching taint on those nodes
+
+:::info
+For more information about platform configuration options, see [platform configuration](../../configure/config.mdx).
+:::
+
 ## Next steps {#post-install-steps}
 
 <InstallNextSteps />
 
-You can also use Google as an identity provider and [configure SSO](/platform/configure/single-sign-on/providers/google) to enable user authentication to the platform.
+You can also use Google as an identity provider and [configure SSO](../../configure/single-sign-on/providers/google.mdx) to enable user authentication to the platform.
 
 ## Clean up resources
 
