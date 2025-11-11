@@ -9,10 +9,14 @@ description: Configure an embedded etcd instance as the virtual cluster's backin
 import ConfigReference from '../../../../../../_partials/config/controlPlane/backingStore/etcd/embedded.mdx'
 import ProAdmonition from '../../../../../../_partials/admonitions/pro-admonition.mdx'
 import InterpolatedCodeBlock from "@site/src/components/InterpolatedCodeBlock";
+import PageVariables from "@site/src/components/PageVariables";
 import Flow, { Step } from '@site/src/components/Flow';
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 import Admonition from '@theme/Admonition';
+import TenancySupport from '../../../../../../_fragments/tenancy-support.mdx';
+
+<TenancySupport hostNodes="true" privateNodes="true" standalone="true"/>
 
 <ProAdmonition/>
 
@@ -92,6 +96,26 @@ Normal pod restarts or terminations do not require manual recovery. These events
 
 Recovery procedures depend on whether the first replica (the pod ending with `-0`) is among the failing replicas.
 
+:::note
+The recovery procedure for the first replica also depends on your StatefulSet's `podManagementPolicy` configuration (`Parallel` or `OrderedReady`). See the [first replica recovery section](#migrate-to-parallel) for details on migrating between policies if needed.
+:::
+
+:::info Find your vCluster namespace
+If using VirtualClusterInstance (platform), the vCluster StatefulSet runs in a different namespace than the VirtualClusterInstance itself. Find the StatefulSet namespace with:
+```bash
+kubectl get virtualclusterinstance <instance-name> -n <vci-namespace> -o jsonpath='{.spec.clusterRef.namespace}'
+```
+For example, if your VirtualClusterInstance is named `my-vcluster` in the `p-default` namespace, the StatefulSet might be in `vcluster-my-vcluster-p-default`.
+
+If using Helm, the namespace is what you specified during installation (e.g., `vcluster-my-team`).
+:::
+
+<PageVariables
+  VCLUSTER_NAME="my-vcluster"
+  NAMESPACE="vcluster-my-team"
+  VCLUSTER_LABEL="app=vcluster"
+/>
+
 Use the following procedures when some replicas are still functioning:
 <br />
 
@@ -103,7 +127,7 @@ Use the following procedures when some replicas are still functioning:
 Scale the StatefulSet to one replica:
 
 <InterpolatedCodeBlock 
-  code={`kubectl scale statefulset [[VAR:VCLUSTER NAME:my-vcluster]] --replicas=1 -n [[VAR:NAMESPACE:vcluster-my-team]]`}
+  code={`kubectl scale statefulset [[GLOBAL:VCLUSTER_NAME]] --replicas=1 -n [[GLOBAL:NAMESPACE]]`}
   language="bash"
 />
 
@@ -112,7 +136,7 @@ Scale the StatefulSet to one replica:
 Verify only one pod is running:
 
 <InterpolatedCodeBlock 
-  code={`kubectl get pods -l [[VAR:VCLUSTER LABEL:app=vcluster]] -n [[VAR:NAMESPACE:vcluster-my-team]]`}
+  code={`kubectl get pods -l [[GLOBAL:VCLUSTER_LABEL]] -n [[GLOBAL:NAMESPACE]]`}
   language="bash"
 />
 </Step>
@@ -121,7 +145,7 @@ Verify only one pod is running:
 Monitor the rebuild process:
 
 <InterpolatedCodeBlock 
-  code={`kubectl logs -f [[VAR:VCLUSTER NAME:my-vcluster]]-0 -n [[VAR:NAMESPACE:vcluster-my-team]]`}
+  code={`kubectl logs -f [[GLOBAL:VCLUSTER_NAME]]-0 -n [[GLOBAL:NAMESPACE]]`}
   language="bash"
 />
 
@@ -134,7 +158,7 @@ Watch for log messages indicating etcd is ready and the cluster is in good condi
 Scale back up to your target replica count:
 
 <InterpolatedCodeBlock 
-  code={`kubectl scale statefulset [[VAR:VCLUSTER NAME:my-vcluster]] --replicas=[[VAR:DESIRED REPLICA COUNT:3]] -n [[VAR:NAMESPACE:vcluster-my-team]]`}
+  code={`kubectl scale statefulset [[GLOBAL:VCLUSTER_NAME]] --replicas=[[VAR:REPLICA COUNT:3]] -n [[GLOBAL:NAMESPACE]]`}
   language="bash"
 />
 
@@ -143,8 +167,8 @@ Scale back up to your target replica count:
 Verify all replicas are running:
 
 <InterpolatedCodeBlock 
-  code={`kubectl get pods -l [[VAR:VCLUSTER LABEL:app=vcluster]] -n [[VAR:NAMESPACE:vcluster-my-team]]
-kubectl logs [[VAR:VCLUSTER NAME:my-vcluster]]-0 -n [[VAR:NAMESPACE:vcluster-my-team]] | grep "cluster is ready"`}
+  code={`kubectl get pods -l [[GLOBAL:VCLUSTER_LABEL]] -n [[GLOBAL:NAMESPACE]]
+kubectl logs [[GLOBAL:VCLUSTER_NAME]]-0 -n [[GLOBAL:NAMESPACE]] | grep "cluster is ready"`}
   language="bash"
 />
 </Step>
@@ -154,98 +178,193 @@ kubectl logs [[VAR:VCLUSTER NAME:my-vcluster]]-0 -n [[VAR:NAMESPACE:vcluster-my-
 
 <TabItem value="first-replica-failing" label="First replica is failing">
 
+:::warning
+Before attempting any recovery procedure, [create a backup](../../../../../../manage/backup-restore/backup.mdx) of your virtual cluster using `vcluster snapshot create --include-volumes`. This ensures both the virtual cluster's etcd data and persistent volumes are backed up.
+
+If the virtual cluster's etcd is in a bad state and the snapshot command fails, you can still back up from the host cluster (which has its own functioning etcd). Use your preferred backup solution (e.g., Velero, Kasten, or cloud-native backup tools) to back up the host cluster namespace containing the vCluster resources. Ensure the backup includes:
+- All Kubernetes resources in the vCluster namespace (StatefulSet, Services, etc.)
+- PersistentVolumeClaims and their associated volume data (contains the virtual cluster's etcd data)
+- Secrets and ConfigMaps
+
+When restored, the vCluster pods will restart and the virtual cluster will be recreated from the backed-up etcd data.
+
+If using namespace syncing, back up all synced namespaces on the host cluster as well.
+:::
+
+The recovery procedure depends on your StatefulSet `podManagementPolicy` configuration. vCluster version 0.20 and later use `Parallel` by default. Earlier versions used `OrderedReady`.
+
+:::info
+If more than one pod is down with `podManagementPolicy: OrderedReady`, you must first [migrate to `Parallel`](#migrate-to-parallel) before attempting recovery.
+:::
+
+Check your configuration:
+
+<InterpolatedCodeBlock
+  code={`kubectl get statefulset [[GLOBAL:VCLUSTER_NAME]] -n [[GLOBAL:NAMESPACE]] -o jsonpath='{.spec.podManagementPolicy}'`}
+  language="bash"
+/>
+
+<Tabs groupId="pod-management-policy">
+<TabItem value="parallel" label="Parallel (default)">
+
 <Flow>
-<Step title="Scale down vCluster to 0 replicas">
-Stop all vCluster instances:
+<Step title="Delete the failed pod and PVC">
+First, identify the PVC for replica-0:
 
-<InterpolatedCodeBlock 
-  code={`kubectl scale statefulset [[VAR:VCLUSTER NAME:my-vcluster]] --replicas=0 -n [[VAR:NAMESPACE:vcluster-my-team]]`}
+<InterpolatedCodeBlock
+  code={`kubectl get pvc -l [[GLOBAL:VCLUSTER_LABEL]] -n [[GLOBAL:NAMESPACE]]`}
   language="bash"
 />
 
 <br />
 
-Confirm all pods have terminated:
+The PVC name typically follows the pattern `data-<vcluster-name>-0` but may vary if customized in your configuration. Note the exact name from the output above, then delete the corrupted pod and its PVC:
 
-<InterpolatedCodeBlock 
-  code={`kubectl get pods -l [[VAR:VCLUSTER LABEL:app=vcluster]] -n [[VAR:NAMESPACE:vcluster-my-team]]`}
+<InterpolatedCodeBlock
+  code={`kubectl delete pod [[GLOBAL:VCLUSTER_NAME]]-0 -n [[GLOBAL:NAMESPACE]]
+kubectl delete pvc [[VAR:PVC PREFIX:data]]-[[GLOBAL:VCLUSTER_NAME]]-0 -n [[GLOBAL:NAMESPACE]]`}
   language="bash"
 />
+
+<br />
+
+The pod restarts with a new empty PVC. The initial attempts fail because the new member tries to join the existing etcd cluster but lacks the required data. After 1-3 pod restarts, vCluster's automatic recovery detects the empty member and properly adds it as a new learner, allowing it to sync data from healthy members and join the cluster.
 </Step>
 
-<Step title="Delete the corrupted PersistentVolumeClaim">
-Delete the corrupted PVC for the first replica:
+<Step title="Monitor recovery">
+Monitor the recovery process:
 
-<InterpolatedCodeBlock 
-  code={`kubectl delete pvc [[VAR:PVC PREFIX:data]]-[[VAR:VCLUSTER NAME:my-vcluster]]-0 -n [[VAR:NAMESPACE:vcluster-my-team]]`}
+<InterpolatedCodeBlock
+  code={`kubectl get pods -l [[GLOBAL:VCLUSTER_LABEL]] -n [[GLOBAL:NAMESPACE]] -w`}
   language="bash"
 />
 
 <br />
 
-Verify the PVC has been deleted:
+Check the logs to verify the pod rejoins successfully:
 
-<InterpolatedCodeBlock 
-  code={`kubectl get pvc -l [[VAR:VCLUSTER LABEL:app=vcluster]] -n [[VAR:NAMESPACE:vcluster-my-team]]`}
+<InterpolatedCodeBlock
+  code={`kubectl logs -f [[GLOBAL:VCLUSTER_NAME]]-0 -n [[GLOBAL:NAMESPACE]]`}
   language="bash"
 />
-</Step>
-
-<Step title="Create new PVC from working replica">
-Create a new PVC by [copying from a working replica](https://kubernetes.io/docs/concepts/storage/persistent-volumes/#volume-cloning):
-
-<InterpolatedCodeBlock 
-  code={`apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: [[VAR:PVC PREFIX:data]]-[[VAR:VCLUSTER NAME:my-vcluster]]-0
-  namespace: [[VAR:NAMESPACE:vcluster-my-team]]
-spec:
-  accessModes:
-    - ReadWriteOnce
-  resources:
-    requests:
-      storage: [[VAR:STORAGE SIZE:5Gi]]
-  dataSource:
-    name: [[VAR:PVC PREFIX:data]]-[[VAR:VCLUSTER NAME:my-vcluster]]-1
-    kind: PersistentVolumeClaim
-  storageClassName: [[VAR:STORAGE CLASS:gp2]]`}
-  language="yaml"
-  title="pvc-restore.yaml"
-/>
-
-<br />
-
-Apply the PVC:
-
-<InterpolatedCodeBlock 
-  code={`kubectl apply -f pvc-restore.yaml`}
-  language="bash"
-/>
-</Step>
-
-<Step title="Scale up vCluster to verify recovery">
-Start with one replica to verify the restored data:
-
-<InterpolatedCodeBlock 
-  code={`kubectl scale statefulset [[VAR:VCLUSTER NAME:my-vcluster]] --replicas=1 -n [[VAR:NAMESPACE:vcluster-my-team]]`}
-  language="bash"
-/>
-
-<br />
-
-Monitor the startup:
-
-<InterpolatedCodeBlock 
-  code={`kubectl logs -f [[VAR:VCLUSTER NAME:my-vcluster]]-0 -n [[VAR:NAMESPACE:vcluster-my-team]]`}
-  language="bash"
-/>
-
-<br />
-
-After it's stable, scale up to the desired number of replicas.
 </Step>
 </Flow>
+
+</TabItem>
+
+<TabItem value="ordered-ready" label="OrderedReady (legacy)">
+
+:::caution
+If more than one pod is down with `podManagementPolicy: OrderedReady`, migrate to `Parallel` first before attempting recovery.
+:::
+
+<Flow>
+<Step title="Verify PVC retention policy">
+Check that the StatefulSet retains PVCs on deletion:
+
+<InterpolatedCodeBlock
+  code={`kubectl get statefulset [[GLOBAL:VCLUSTER_NAME]] -n [[GLOBAL:NAMESPACE]] -o jsonpath='{.spec.persistentVolumeClaimRetentionPolicy}'`}
+  language="bash"
+/>
+
+<br />
+
+The policy should be `Retain`. This is the default but can be overridden by `controlPlane.statefulSet.persistence.volumeClaim.retentionPolicy` in your configuration.
+</Step>
+
+<Step title="Delete the StatefulSet">
+Delete the StatefulSet without deleting the pods:
+
+<InterpolatedCodeBlock
+  code={`kubectl delete statefulset [[GLOBAL:VCLUSTER_NAME]] -n [[GLOBAL:NAMESPACE]] --cascade=orphan`}
+  language="bash"
+/>
+</Step>
+
+<Step title="Update configuration to Parallel">
+<a id="migrate-to-parallel"></a>
+
+Update your virtual cluster configuration to use `Parallel` pod management policy.
+
+If using a VirtualClusterInstance, edit the instance and update the `podManagementPolicy`:
+
+<InterpolatedCodeBlock
+  code={`kubectl edit virtualclusterinstance [[GLOBAL:VCLUSTER_NAME]] -n [[GLOBAL:NAMESPACE]]`}
+  language="bash"
+/>
+
+Then add or update this section in the spec:
+
+```yaml
+spec:
+  template:
+    helmRelease:
+      values: |
+        controlPlane:
+          statefulSet:
+            scheduling:
+              podManagementPolicy: Parallel
+```
+
+<br />
+
+If using Helm, update your `values.yaml` to set the pod management policy:
+
+```yaml title="values.yaml"
+controlPlane:
+  statefulSet:
+    scheduling:
+      podManagementPolicy: Parallel
+```
+
+Then apply the update:
+
+<InterpolatedCodeBlock
+  code={`helm upgrade [[GLOBAL:VCLUSTER_NAME]] vcluster \
+  --repo https://charts.loft.sh \
+  --namespace [[GLOBAL:NAMESPACE]] \
+  --reuse-values \
+  -f values.yaml`}
+  language="bash"
+/>
+
+<br />
+
+The StatefulSet is recreated with `Parallel` policy and pods pick up the existing PVCs.
+</Step>
+
+<Step title="Delete the failed pod and PVC">
+Now follow the same procedure as for `Parallel` mode.
+
+First, identify the PVC for replica-0:
+
+<InterpolatedCodeBlock
+  code={`kubectl get pvc -l [[GLOBAL:VCLUSTER_LABEL]] -n [[GLOBAL:NAMESPACE]]`}
+  language="bash"
+/>
+
+<br />
+
+The PVC name typically follows the pattern `data-<vcluster-name>-0` but may vary if customized in your configuration. Note the exact name from the output above, then delete the corrupted pod and its PVC:
+
+<InterpolatedCodeBlock
+  code={`kubectl delete pod [[GLOBAL:VCLUSTER_NAME]]-0 -n [[GLOBAL:NAMESPACE]]
+kubectl delete pvc [[VAR:PVC PREFIX:data]]-[[GLOBAL:VCLUSTER_NAME]]-0 -n [[GLOBAL:NAMESPACE]]`}
+  language="bash"
+/>
+
+<br />
+
+The pod restarts with a new empty PVC. The initial attempts fail because the new member tries to join the existing etcd cluster but lacks the required data. After 1-3 pod restarts, vCluster's automatic recovery detects the empty member and properly adds it as a new learner, allowing it to sync data from healthy members and join the cluster.
+</Step>
+</Flow>
+
+</TabItem>
+</Tabs>
+
+:::warning
+Never clone PVCs from other replicas. Cloning PVCs causes etcd member ID conflicts and results in data loss.
+:::
 
 </TabItem>
 </Tabs>
@@ -258,19 +377,28 @@ This recovery method results in data loss up to the last backup point. Only proc
 
 When the majority of etcd member replicas become corrupted or deleted simultaneously, the entire cluster requires recovery from backup.
 
+:::info Prerequisites
+Before starting recovery, ensure you have:
+- Created a snapshot using `vcluster snapshot create <vcluster-name> --include-volumes <storage-location>`
+- The snapshot location URL (for example, `s3://my-bucket/backup` or `oci://registry/repo:tag`)
+- Access to the host cluster namespace where the vCluster is deployed
+
+For detailed snapshot creation instructions, see [Create snapshots](../../../../../../manage/backup-restore/backup).
+:::
+
 <Flow>
 <Step title="Assess the damage" danger>
 Verify all PVCs are corrupted or inaccessible:
 
 <InterpolatedCodeBlock
-  code={`kubectl get pvc -l [[VAR:VCLUSTER LABEL:app=vcluster]] -n [[VAR:NAMESPACE:vcluster-my-team]]`}
+  code={`kubectl get pvc -l [[GLOBAL:VCLUSTER_LABEL]] -n [[GLOBAL:NAMESPACE]]`}
   language="bash"
 />
 
 <br />
 
 <InterpolatedCodeBlock
-  code={`kubectl describe pvc [[VAR:PVC PREFIX:data]]-[[VAR:VCLUSTER NAME:my-vcluster]]-0 [[VAR:PVC PREFIX:data]]-[[VAR:VCLUSTER NAME:my-vcluster]]-1 [[VAR:PVC PREFIX:data]]-[[VAR:VCLUSTER NAME:my-vcluster]]-2 -n [[VAR:NAMESPACE:vcluster-my-team]]`}
+  code={`kubectl describe pvc [[VAR:PVC PREFIX:data]]-[[GLOBAL:VCLUSTER_NAME]]-0 [[VAR:PVC PREFIX:data]]-[[GLOBAL:VCLUSTER_NAME]]-1 [[VAR:PVC PREFIX:data]]-[[GLOBAL:VCLUSTER_NAME]]-2 -n [[GLOBAL:NAMESPACE]]`}
   language="bash"
 />
 </Step>
@@ -279,53 +407,141 @@ Verify all PVCs are corrupted or inaccessible:
 Stop all vCluster instances before beginning recovery:
 
 <InterpolatedCodeBlock
-  code={`kubectl scale statefulset [[VAR:VCLUSTER NAME:my-vcluster]] --replicas=0 -n [[VAR:NAMESPACE:vcluster-my-team]]`}
+  code={`kubectl scale statefulset [[GLOBAL:VCLUSTER_NAME]] --replicas=0 -n [[GLOBAL:NAMESPACE]]`}
+  language="bash"
+/>
+
+<br />
+
+Verify all pods have terminated:
+
+<InterpolatedCodeBlock
+  code={`kubectl get pods -l [[GLOBAL:VCLUSTER_LABEL]] -n [[GLOBAL:NAMESPACE]]`}
   language="bash"
 />
 </Step>
 
 <Step title="Delete corrupted PVCs">
+
+:::warning PVC deletion timing
+After scaling down, wait a few seconds to ensure pods have fully terminated before deleting PVCs. If a pod restarts immediately after PVC deletion, the PVC may get stuck in a "Terminating" state. If this happens, delete the pod again to allow the PVC deletion to complete.
+:::
+
 Delete all corrupted PVCs:
 
 <InterpolatedCodeBlock
-  code={`kubectl delete pvc [[VAR:PVC PREFIX:data]]-[[VAR:VCLUSTER NAME:my-vcluster]]-0 [[VAR:PVC PREFIX:data]]-[[VAR:VCLUSTER NAME:my-vcluster]]-1 [[VAR:PVC PREFIX:data]]-[[VAR:VCLUSTER NAME:my-vcluster]]-2 -n [[VAR:NAMESPACE:vcluster-my-team]]`}
+  code={`kubectl delete pvc [[VAR:PVC PREFIX:data]]-[[GLOBAL:VCLUSTER_NAME]]-0 [[VAR:PVC PREFIX:data]]-[[GLOBAL:VCLUSTER_NAME]]-1 [[VAR:PVC PREFIX:data]]-[[GLOBAL:VCLUSTER_NAME]]-2 -n [[GLOBAL:NAMESPACE]]`}
   language="bash"
 />
+
+<br />
+
+Verify PVCs are deleted:
+
+<InterpolatedCodeBlock
+  code={`kubectl get pvc -l [[GLOBAL:VCLUSTER_LABEL]] -n [[GLOBAL:NAMESPACE]]`}
+  language="bash"
+/>
+
+Expected output: `No resources found`
 </Step>
 
-<Step title="Restore from backup or snapshot">
-Follow a backup restoration procedure. This typically involves restoring PVCs from your backup solution (Velero, CSI snapshots, or similar tools).
+<Step title="Scale up to create empty vCluster">
+
+:::info Why scale up before restore?
+The vCluster CLI requires an accessible vCluster instance to execute the restore command. Scaling up creates a new, empty vCluster that the CLI can connect to. The `vcluster restore` command will then scale it back down automatically, restore the etcd data from the snapshot, and restart the vCluster with restored data.
+:::
+
+Scale up to the desired number of replicas:
+
+<InterpolatedCodeBlock
+  code={`kubectl scale statefulset [[GLOBAL:VCLUSTER_NAME]] --replicas=[[VAR:DESIRED REPLICA COUNT:3]] -n [[GLOBAL:NAMESPACE]]`}
+  language="bash"
+/>
 
 <br />
 
-Restore from snapshot:
+Wait for pods to be running:
 
 <InterpolatedCodeBlock
-  code={`kubectl apply -f [[VAR:RESTORE FILE:backup-restore.yaml]]`}
+  code={`kubectl get pods -l [[GLOBAL:VCLUSTER_LABEL]] -n [[GLOBAL:NAMESPACE]]`}
   language="bash"
 />
+
+<br />
+
+Expected output showing all replicas running:
+```
+NAME            READY   STATUS    RESTARTS   AGE
+my-vcluster-0   1/1     Running   0          45s
+my-vcluster-1   1/1     Running   0          43s
+my-vcluster-2   1/1     Running   0          41s
+```
 </Step>
 
-<Step title="Start vCluster with restored data">
-Scale up to a single replica to verify the restoration:
+<Step title="Restore from snapshot">
+Use the vCluster CLI to restore from your snapshot. The restore process will:
+1. Pause the vCluster (scale down to 0)
+2. Delete the current PVCs
+3. Start a snapshot pod to restore etcd data
+4. Restore PVCs from volume snapshots
+5. Resume the vCluster (scale back up)
 
 <InterpolatedCodeBlock
-  code={`kubectl scale statefulset [[VAR:VCLUSTER NAME:my-vcluster]] --replicas=1 -n [[VAR:NAMESPACE:vcluster-my-team]]`}
+  code={`vcluster restore [[GLOBAL:VCLUSTER_NAME]] [[VAR:SNAPSHOT LOCATION:s3://my-bucket/backup]] -n [[GLOBAL:NAMESPACE]]`}
   language="bash"
 />
 
 <br />
 
-Monitor logs and verify the cluster starts successfully:
+Expected output:
+```
+16:16:38 info Pausing vCluster my-vcluster
+16:16:38 info Scale down statefulSet vcluster-my-team/my-vcluster...
+16:16:39 info Deleting vCluster pvc vcluster-my-team/data-my-vcluster-0
+16:16:39 info Deleting vCluster pvc vcluster-my-team/data-my-vcluster-1
+16:16:39 info Deleting vCluster pvc vcluster-my-team/data-my-vcluster-2
+16:16:39 info Starting snapshot pod for vCluster vcluster-my-team/my-vcluster...
+...
+Successfully restored snapshot
+16:16:42 info Resuming vCluster my-vcluster
+```
+
+:::note Authentication for remote storage
+If using S3 or OCI registry, ensure you have the appropriate credentials configured:
+- **S3**: Use AWS CLI credentials or pass credentials in the URL
+- **OCI**: Use Docker login or pass credentials in the URL
+
+See [Create snapshots](../../../../../../manage/backup-restore/backup) for authentication details.
+:::
+</Step>
+
+<Step title="Verify the restoration">
+Connect to the vCluster and verify your workloads are restored:
 
 <InterpolatedCodeBlock
-  code={`kubectl logs -f [[VAR:VCLUSTER NAME:my-vcluster]]-0 -n [[VAR:NAMESPACE:vcluster-my-team]]`}
+  code={`vcluster connect [[GLOBAL:VCLUSTER_NAME]] -n [[GLOBAL:NAMESPACE]]`}
   language="bash"
 />
 
 <br />
 
-After it's verified, scale to the desired number of replicas.
+Check that your resources are present:
+
+<InterpolatedCodeBlock
+  code={`kubectl get pods -A
+kubectl get pvc -A`}
+  language="bash"
+/>
+
+<br />
+
+If everything looks correct, disconnect:
+
+<InterpolatedCodeBlock
+  code={`vcluster disconnect`}
+  language="bash"
+/>
 </Step>
 </Flow>
 

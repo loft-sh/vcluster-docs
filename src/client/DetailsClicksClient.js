@@ -71,19 +71,16 @@ copyButton.style.cssText = `
   color: var(--ifm-color-content);
   transition: all 0.2s;
   opacity: 0;
-  margin: 0 4px 0 8px;  /* Increased left margin to 8px */
+  margin: 0 4px 0 8px;
   vertical-align: middle;
 `;
 
       const summary = el.querySelector('summary');
       if (summary) {
-        // Find the hash link
         const hashLink = summary.querySelector('a.hash-link');
         if (hashLink) {
-          // Insert the button right after the hash link
           hashLink.insertAdjacentElement('afterend', copyButton);
 
-          // Show button on summary hover
           summary.addEventListener('mouseenter', () => {
             copyButton.style.opacity = '1';
           });
@@ -93,7 +90,6 @@ copyButton.style.cssText = `
         }
       }
 
-      // Rest of the click handler code remains the same
       copyButton.addEventListener('click', async function(e) {
         e.preventDefault();
         e.stopPropagation();
@@ -186,11 +182,9 @@ const generateMapYaml = function(parsed, indent = 2) {
     yaml += `${' '.repeat(indent)}${key}:`;
 
     if (value.startsWith('map[')) {
-      // Handle nested map
       const nestedParsed = parseMapValue(value);
       if (nestedParsed) {
         yaml += generateMapYaml(nestedParsed, indent + 2);
-        // Only add newline if this isn't the last entry
         if (index < array.length - 1) {
           yaml += '\n';
         }
@@ -199,7 +193,6 @@ const generateMapYaml = function(parsed, indent = 2) {
       }
     } else {
       yaml += ` ${value}`;
-      // Only add newline if this isn't the last entry
       if (index < array.length - 1) {
         yaml += '\n';
       }
@@ -270,7 +263,6 @@ const generateYaml = function (element, processedElements = new Set()) {
       yaml += nestedYamls.join('\n');
     }
   } else {
-    // Function to decode HTML entities
     const decodeHTMLEntities = function (text) {
       const txt = document.createElement('textarea');
       txt.innerHTML = text;
@@ -291,10 +283,9 @@ const generateYaml = function (element, processedElements = new Set()) {
         .querySelector('summary .config-field-type')
         ?.textContent?.trim() || '';
 
-    // Helper function to format values appropriately
+    // Quote strings that could be misinterpreted in YAML
     const formatValue = function (value) {
       if (typeof value === 'string') {
-        // Quote the string if it could be misinterpreted in YAML
         if (
           value === 'true' ||
           value === 'false' ||
@@ -315,13 +306,12 @@ const generateYaml = function (element, processedElements = new Set()) {
       }
     };
 
-    // Updated parseMapString function
     const parseMapString = function (str) {
       function parse() {
         let i = 0;
 
         function parseValue() {
-          if (str.substr(i, 4) === 'map[') {
+          if (str.substring(i, i + 4) === 'map[') {
             i += 4; // skip 'map['
             const obj = {};
             while (str[i] !== ']' && i < str.length) {
@@ -358,7 +348,7 @@ const generateYaml = function (element, processedElements = new Set()) {
             return arr;
           } else {
             // Parse until space, ':', ']', or ','
-            let start = i;
+            const start = i;
             while (
               i < str.length &&
               ![' ', ':', ']', ',', '\n'].includes(str[i])
@@ -371,7 +361,7 @@ const generateYaml = function (element, processedElements = new Set()) {
 
         function parseKey() {
           // Parse until ':', space, or ']'
-          let start = i;
+          const start = i;
           while (
             i < str.length &&
             ![':', ' ', ']'].includes(str[i])
@@ -391,8 +381,8 @@ const generateYaml = function (element, processedElements = new Set()) {
     const generateYamlFromObject = function (obj, indentLevel = 1) {
       const indent = '  '.repeat(indentLevel);
       let lines = [];
-      for (let k in obj) {
-        let v = obj[k];
+      for (const k in obj) {
+        const v = obj[k];
         if (Array.isArray(v)) {
           if (v.length === 0) {
             lines.push(`${indent}${k}: []`);
@@ -439,12 +429,10 @@ const generateYaml = function (element, processedElements = new Set()) {
     };
 
     if (defaultValue.startsWith('map[')) {
-      // Map handling
       const obj = parseMapString(defaultValue);
       const yamlString = generateYamlFromObject(obj, 1);
       yaml += '\n' + yamlString;
     } else if (defaultValue.startsWith('[')) {
-      // Array handling
       const trimmedValue = defaultValue.trim();
       if (
         trimmedValue === '[]' ||
@@ -463,8 +451,8 @@ const generateYaml = function (element, processedElements = new Set()) {
           let depth = 0;
           let currentItem = '';
           for (let i = 0; i < arrayContent.length; i++) {
-            let char = arrayContent[i];
-            if (arrayContent.substr(i, 4) === 'map[') {
+            const char = arrayContent[i];
+            if (arrayContent.substring(i, i + 4) === 'map[') {
               depth++;
               currentItem += 'map[';
               i += 3;
@@ -512,6 +500,47 @@ const generateYaml = function (element, processedElements = new Set()) {
   return yaml;
 };
 
+const openDetailsElement = function(detailsEl) {
+  if (detailsEl && detailsEl.tagName === 'DETAILS' && !detailsEl.open) {
+    detailsEl.open = true;
+    detailsEl.setAttribute('data-collapsed', 'false');
+    // Expand collapsible content by removing inline styles
+    const collapsibleContent = detailsEl.querySelector(':scope > div[style]');
+    if (collapsibleContent) {
+      collapsibleContent.style.display = 'block';
+      collapsibleContent.style.overflow = 'visible';
+      collapsibleContent.style.height = 'auto';
+    }
+  }
+};
+
+const closeDetailsElement = function(detailsEl) {
+  if (detailsEl && detailsEl.tagName === 'DETAILS' && detailsEl.open) {
+    detailsEl.open = false;
+    detailsEl.setAttribute('data-collapsed', 'true');
+  }
+};
+
+const getParentDetailsElements = function(element) {
+  const parents = [];
+  let current = element;
+  while (current && current !== document.documentElement) {
+    if (current.tagName === 'DETAILS') {
+      parents.push(current);
+    }
+    current = current.parentElement;
+  }
+  return parents;
+};
+
+const closeOtherDetails = function(keepOpenSet) {
+  document.querySelectorAll('details.config-field[open]').forEach(function(el) {
+    if (!keepOpenSet.has(el)) {
+      closeDetailsElement(el);
+    }
+  });
+};
+
 const preserveExpansionStates = ExecutionEnvironment.canUseDOM ? function(skipEventListener) {
   const state = new URLSearchParams(window.location.search.substring(1));
 
@@ -519,21 +548,92 @@ const preserveExpansionStates = ExecutionEnvironment.canUseDOM ? function(skipEv
     return setTimeout(preserveExpansionStates, 100);
   }
 
-  // Add copy buttons to config fields
+  // Wait for React hydration before manipulating DOM on initial page load with hash
+  if (!skipEventListener && location.hash && !window.__hydrationComplete) {
+    const rootElement = document.getElementById('__docusaurus');
+    const isHydrated = rootElement && (rootElement._reactRootContainer || rootElement._reactRootContainer === null || Object.keys(rootElement).some(key => key.startsWith('__react')));
+
+    if (!isHydrated) {
+      return setTimeout(preserveExpansionStates, 100);
+    }
+
+    window.__hydrationComplete = true;
+    return setTimeout(preserveExpansionStates, 50);
+  }
+
   addCopyButtons();
 
-  document.querySelectorAll('details, .tabs-container').forEach(function(el, index) {
+  const isInitialCallWithHash = !skipEventListener && location.hash;
+
+  // Debounce to prevent "too many calls" errors with History API
+  let historyUpdateTimer = null;
+  const debouncedHistoryUpdate = function(url) {
+    if (historyUpdateTimer) {
+      clearTimeout(historyUpdateTimer);
+    }
+    historyUpdateTimer = setTimeout(() => {
+      try {
+        window.history.replaceState(null, '', url);
+      } catch (e) {
+        console.warn('History replaceState failed:', e.message);
+      }
+    }, 50);
+  };
+
+  // Remove all existing highlights before re-initializing
+  // This prevents stale highlights from previous navigation
+  document.querySelectorAll('.-contains-target-link').forEach(el => {
+    el.classList.remove('-contains-target-link');
+  });
+
+  // Sort elements by depth (deepest first) to process children before parents.
+  // This prevents race condition where both parent and child get highlighted.
+  // We select only details.config-field elements here because the config reference pages
+  // use this class to identify configuration fields that need special expansion behavior.
+  // Using the class selector instead of selecting all details elements prevents this
+  // functionality from interfering with other details elements on the page, such as
+  // the collapsible sections in the sidebar navigation menu.
+  const elements = Array.from(document.querySelectorAll('details.config-field, .tabs-container'));
+  const elementsWithDepth = elements.map(el => {
+    let depth = 0;
+    let current = el.parentElement;
+    while (current) {
+      if (current.tagName === 'DETAILS') depth++;
+      current = current.parentElement;
+    }
+    return { el, depth };
+  });
+  elementsWithDepth.sort((a, b) => b.depth - a.depth); // Deepest first
+
+  elementsWithDepth.forEach(function({ el, depth }, index) {
     const expansionKey = "x" + (el.id || index);
     const stateChangeElAll = el.querySelectorAll(':scope > summary, :scope > [role="tablist"] > *');
     const anchorLinks = el.querySelectorAll(':scope a[href="' + location.hash + '"]');
 
-    if (anchorLinks.length > 0) {
-      if (el.querySelectorAll(':scope > summary a[href="' + location.hash + '"]').length > 0) {
+    const targetId = location.hash.substring(1);
+    const targetEl = targetId ? document.getElementById(targetId) : null;
+    const containsTarget = targetEl && (el.id === targetId || el.contains(targetEl));
+
+    // Check if this element's DIRECT summary (not nested) has a link to the target
+    const hasSummaryLink = el.querySelectorAll(':scope > summary a[href="' + location.hash + '"]').length > 0;
+
+    // Only highlight if no child details element already has the highlight class
+    // (children are processed first due to depth sorting)
+    const childDetailsHighlighted = Array.from(el.querySelectorAll('details')).some(
+      child => child.classList.contains('-contains-target-link')
+    );
+
+    if (anchorLinks.length > 0 || containsTarget) {
+      if (hasSummaryLink && !childDetailsHighlighted) {
         el.classList.add("-contains-target-link");
       }
       state.set(expansionKey, 1);
+
+      if (containsTarget) {
+        openDetailsElement(el);
+        // NOTE: Initial page load scrolling is handled by ConfigNavigationClient
+      }
     } else {
-      el.classList.remove("-contains-target-link");
       state.delete(expansionKey);
     }
 
@@ -543,14 +643,14 @@ const preserveExpansionStates = ExecutionEnvironment.canUseDOM ? function(skipEv
         const state = new URLSearchParams(window.location.search.substring(1));
         if ((el.open && el.getAttribute("data-expandable") != "false") || el.classList.contains("tabs-container")) {
           if (anchorLinks.length == 1) {
-            if (anchorLinks[0].getAttribute("href") == location.hash) {
-              el.classList.add("-contains-target-link");
-            }
+            // NOTE: Highlighting is managed by initializeDetailsElement (initial load)
+            // and universal click handler (user clicks). Do NOT manage highlights here
+            // to avoid race conditions and double highlighting.
           } else {
             state.set(expansionKey, i);
           }
         } else {
-          el.classList.remove("-contains-target-link");
+          // NOTE: Do NOT remove highlight class here - only click handler manages highlights
           state.delete(expansionKey);
         }
 
@@ -559,7 +659,7 @@ const preserveExpansionStates = ExecutionEnvironment.canUseDOM ? function(skipEv
           query = '?' + query.replace(/^[?]/, "");
         }
 
-        window.history.replaceState(null, '', window.location.pathname + query + window.location.hash);
+        debouncedHistoryUpdate(window.location.pathname + query + window.location.hash);
       }
     };
 
@@ -571,14 +671,19 @@ const preserveExpansionStates = ExecutionEnvironment.canUseDOM ? function(skipEv
         stateChangeEl.addEventListener("click", persistState.bind(stateChangeEl, i + 1));
       });
 
-      el.querySelectorAll(':scope > summary a[href^="#"]').forEach(anchorLink => {
+      const anchorLinks = el.querySelectorAll(':scope > summary a[href^="#"]');
+      anchorLinks.forEach(anchorLink => {
+        anchorLink.setAttribute('data-has-handler', 'true');
+
         anchorLink.addEventListener("click", (e) => {
           e.stopImmediatePropagation();
           e.stopPropagation();
           e.preventDefault();
 
           const newHash = anchorLink.getAttribute("href");
+          const targetId = newHash.substring(1);
 
+          // Remove highlight from elements that don't link to the new hash
           document.querySelectorAll(".-contains-target-link").forEach(function(el) {
             if (el.querySelectorAll(':scope > summary a[href="' + newHash + '"]').length == 0) {
               el.classList.remove("-contains-target-link");
@@ -589,9 +694,29 @@ const preserveExpansionStates = ExecutionEnvironment.canUseDOM ? function(skipEv
           if (query) {
             query = '?' + query.replace(/^[?]/, "");
           }
-          window.history.replaceState(null, '', window.location.pathname + query + newHash);
+          debouncedHistoryUpdate(window.location.pathname + query + newHash);
 
-          if (!el.hasAttribute("open")) {
+          const targetEl = targetId ? document.getElementById(targetId) : null;
+          if (targetEl) {
+            const parentDetails = getParentDetailsElements(targetEl);
+            const keepOpenSet = new Set(parentDetails);
+
+            closeOtherDetails(keepOpenSet);
+            parentDetails.forEach(openDetailsElement);
+
+            // Add orange border ONLY to the innermost/direct details element
+            if (parentDetails.length > 0) {
+              const directTargetDetails = parentDetails[0]; // First element is innermost
+              directTargetDetails.classList.add("-contains-target-link");
+            }
+
+            // replaceState doesn't trigger hashchange, so we must scroll here
+            requestAnimationFrame(() => {
+              const targetRect = targetEl.getBoundingClientRect();
+              const y = window.scrollY + targetRect.top - 100;
+              window.scrollTo({ top: y, behavior: 'smooth' });
+            });
+          } else if (!el.hasAttribute("open")) {
             anchorLink.parentElement.click();
           }
         });
@@ -609,18 +734,12 @@ const preserveExpansionStates = ExecutionEnvironment.canUseDOM ? function(skipEv
   });
 
   if (!skipEventListener) {
-    window.addEventListener('hashchange', function() {
-      if (document.querySelectorAll('details.config-field').length > 0) {
-        setTimeout(addCopyButtons, 200);
-      }
-    });
-    
     document.addEventListener('visibilitychange', function() {
       if (!document.hidden && document.querySelectorAll('details.config-field').length > 0) {
         setTimeout(addCopyButtons, 100);
       }
     });
-    
+
     // Use interval check instead of MutationObserver to avoid React conflicts
     let checkCount = 0;
     const maxChecks = 10;
@@ -638,32 +757,154 @@ const preserveExpansionStates = ExecutionEnvironment.canUseDOM ? function(skipEv
   }
 } : () => {};
 
+// ============================================================================
+// Docusaurus Lifecycle Hooks
+// ============================================================================
+
+// This click handler improves hash navigation on config reference pages by automatically
+// expanding parent details elements when clicking hash links, and ensuring proper scrolling
+// and CSS :target highlighting. The handler runs in capture phase to intercept clicks before
+// Docusaurus's default hash navigation.
+//
+// To prevent this handler from interfering with navigation on other pages, we check if the
+// current page contains details.config-field elements. If no config fields are present, we
+// exit early and let Docusaurus handle the click normally. This ensures that sidebar navigation
+// and other hash links throughout the documentation work as expected, while config reference
+// pages get the enhanced behavior of auto-expanding nested configuration sections.
+let scrollTimeout = null;
+let configFieldsCache = null;
+let cacheTimestamp = 0;
+
 if (ExecutionEnvironment.canUseDOM) {
-  preserveExpansionStates();
-  
-  // Ensure copy buttons are added when DOM is fully loaded
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', function() {
-      setTimeout(addCopyButtons, 100);
-    });
-  } else {
-    setTimeout(addCopyButtons, 100);
-  }
 
-  if (location.hash) {
-    setTimeout(() => {
-      location.href = location.href;
+  document.addEventListener('click', function(e) {
+    let target = e.target;
+    let anchor = null;
 
-      const targetEl = document.querySelector('[id="' + location.hash.substr(1) + '"]');
+    while (target && target !== document) {
+      if (target.tagName === 'A') {
+        anchor = target;
+        break;
+      }
+      target = target.parentElement;
+    }
+
+    if (anchor && anchor.getAttribute('href')?.startsWith('#')) {
+      // First, always check if the click originated from within the sidebar navigation.
+      // We should never intercept sidebar clicks regardless of page type. This check
+      // is done first because it's the most reliable - sidebar elements are stable and
+      // don't depend on page content transitions during React re-renders.
+      let checkElement = anchor;
+      let isInSidebar = false;
+      while (checkElement && checkElement !== document.body) {
+        if (checkElement.classList?.contains('theme-doc-sidebar-container') ||
+            checkElement.classList?.contains('menu__list') ||
+            checkElement.classList?.contains('theme-doc-sidebar-menu')) {
+          isInSidebar = true;
+          break;
+        }
+        checkElement = checkElement.parentElement;
+      }
+
+      if (isInSidebar) {
+        return;
+      }
+
+      // Check if this page has config reference fields with basic caching to avoid
+      // excessive DOM queries. The cache expires after 500ms to handle route transitions.
+      const now = Date.now();
+      if (!configFieldsCache || (now - cacheTimestamp) > 500) {
+        configFieldsCache = document.querySelectorAll('details.config-field').length > 0;
+        cacheTimestamp = now;
+      }
+
+      if (!configFieldsCache) {
+        return;
+      }
+
+      const hash = anchor.getAttribute('href');
+      const targetId = hash.substring(1);
+
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+
+      const targetEl = targetId ? document.getElementById(targetId) : null;
       if (targetEl) {
-        window.scroll({
-          behavior: 'smooth',
-          left: 0,
-          top: targetEl.getBoundingClientRect().top + window.scrollY - 120
+        const parentDetails = getParentDetailsElements(targetEl);
+        const keepOpenSet = new Set(parentDetails);
+        closeOtherDetails(keepOpenSet);
+        parentDetails.forEach(openDetailsElement);
+
+        // Remove all existing highlights first
+        document.querySelectorAll('.-contains-target-link').forEach(el => {
+          el.classList.remove('-contains-target-link');
+        });
+
+        // Add highlight to the innermost parent details element
+        if (parentDetails.length > 0) {
+          parentDetails[0].classList.add('-contains-target-link');
+        }
+
+        // Update URL hash for history/bookmarking
+        const oldURL = window.location.href;
+        window.history.pushState(null, '', hash);
+        const newURL = window.location.href;
+
+        // Trigger hashchange event manually for other listeners (including sidebar highlighting)
+        window.dispatchEvent(new HashChangeEvent('hashchange', {
+          oldURL: oldURL,
+          newURL: newURL
+        }));
+
+        // Cancel any pending scroll
+        if (scrollTimeout) {
+          clearTimeout(scrollTimeout);
+        }
+
+        // Smooth scroll to target with proper offset
+        scrollTimeout = requestAnimationFrame(() => {
+          const rect = targetEl.getBoundingClientRect();
+          const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
+          const targetY = scrollTop + rect.top - 100;
+
+          window.scrollTo({
+            top: targetY,
+            behavior: 'smooth'
+          });
         });
       }
-    }, 1000);
-  }
+    }
+  }, true); // Capture phase
 }
 
-export default ExecutionEnvironment.canUseDOM ? preserveExpansionStates : () => {};
+let isInitialized = false;
+
+/**
+ * Docusaurus lifecycle hook - called after route updates and DOM is ready
+ * Ensures DOM manipulation happens AFTER React hydration
+ */
+export function onRouteDidUpdate({ location }) {
+  if (!ExecutionEnvironment.canUseDOM) {
+    return;
+  }
+
+  // Invalidate config fields cache on route change to ensure fresh detection
+  if (typeof configFieldsCache !== 'undefined') {
+    configFieldsCache = null;
+    cacheTimestamp = 0;
+  }
+
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      if (!isInitialized) {
+        isInitialized = true;
+        preserveExpansionStates();
+      } else {
+        preserveExpansionStates(true);
+      }
+
+      addCopyButtons();
+    });
+  });
+}

@@ -270,12 +270,11 @@ const config = {
         "https://cdnjs.cloudflare.com/ajax/libs/clipboard.js/2.0.0/clipboard.min.js",
       async: true,
     },
-    {
-      src: "/docs/js/custom.js",
-      async: true,
-    },
   ],
-  clientModules: resolveGlob.sync(["./src/js/**/*.js"]),
+  clientModules: [
+    './src/client/ConfigNavigationClient.js',
+    './src/client/DetailsClicksClient.js',
+  ],
 
   themeConfig: (
     /** @type {import('@docusaurus/preset-classic').ThemeConfig} */
