@@ -1,0 +1,335 @@
+---
+title: AWS-EBS guide
+sidebar_label: AWS-EBS guide
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+import TenancySupport from '../../../_fragments/tenancy-support.mdx';
+import Mark from "@site/src/components/Mark";
+import InstallCli from '../../../_partials/deploy/install-cli.mdx';
+import KubeconfigUpdate from '@site/docs/_partials/kubeconfig_update.mdx';
+
+Volume Snapshots are point-in-time copies of storage volumes that capture the complete state of a volume at a specific moment — including all data, files, and configurations. They provide an efficient way to preserve and restore data, offering key benefits for:
+- Backup and disaster recovery – quickly restore systems to a known good state.
+- Content sharing – duplicate or distribute consistent datasets without disruption.
+- Testing and development – create isolated environments for safe experimentation.
+
+This guide walks you through creating volume snapshots for a virtual cluster with persistent data and restoring that data from the snapshot. You'll deploy a sample application that writes data to a persistent volume, creates a snapshot, simulates data loss, and restores from the snapshot using AWS EBS as the storage provider.
+:::info Supported CSI Drivers
+vCluster officially supports volume snapshots with **AWS EBS CSI Driver** and **OpenEBS**. This walkthrough demonstrates the complete end-to-end process using AWS as an example. Similar steps can be adapted for other supported CSI drivers.
+:::
+
+## Prerequisites
+
+Before starting, ensure you have:
+
+- An existing Amazon EKS cluster with the EBS CSI Driver installed. Follow the [EKS deployment guide](../../../../deploy/control-plane/container/environment/eks) to set up your cluster
+- The vCluster CLI installed
+- Completed the [volume snapshots setup](./#setup) based on your chosen tenancy model
+- An OCI-compatible registry (such as GitHub Container Registry, Docker Hub, or AWS ECR) or an S3-compatible bucket (AWS S3 or MinIO) for storing snapshots
+
+:::note
+You can skip the CSI driver installation steps in the setup guide as the EBS CSI driver is already installed during EKS cluster creation.
+:::
+
+## Deploy vCluster
+
+Choose the deployment option based on your tenancy model. You can read more about private nodes and shared nodes tenancy model [here](../../../configure/tenancy-model).
+<Tabs
+  groupId="tenancy-model"
+  defaultValue="host-nodes"
+  values={[
+    { label: "vCluster with shared host cluster nodes", value: "host-nodes" },
+    { label: "vCluster with private nodes", value: "private-nodes" },
+  ]
+}>
+<TabItem value="host-nodes">
+
+Here, we define a virtual cluster using default settings. You can also create a virtual cluster from your custom configuration file by running `vcluster create myvcluster --values vcluster.yaml`.
+
+In this page, the `myvcluster` is the name of the virtual cluster. Replace it with your own name if necessary.
+
+```bash title="Create vCluster"
+vcluster create myvcluster
+```
+
+</TabItem>
+<TabItem value="private-nodes">
+
+For private nodes, you'll need to create an EC2 instance and join it to the virtual cluster. Follow the [private nodes documentation](../../../deploy/worker-nodes/private-nodes/join) to join the instance as a node in the virtual cluster.
+Create the virtual cluster with volume snapshot support enabled using the following `vcluster.yaml`. In this page, the `myvcluster` is the name of the virtual cluster. Replace it with your own name if necessary.
+
+```bash title="Create a virtual cluster with private nodes"
+vcluster create myvcluster --values vcluster.yaml
+```
+
+```yaml title="vcluster.yaml"
+pro: true
+privateNodes:
+  enabled: true
+  autoUpgrade:
+    imagePullPolicy: Never
+controlPlane:
+  service:
+    spec:
+      type: LoadBalancer
+networking:
+  podCIDR: 10.64.0.0/16
+  serviceCIDR: 10.128.0.0/16
+deploy:
+  volumeSnapshotController:
+    enabled: true
+```
+
+</TabItem>
+</Tabs>
+
+## Deploy a demo application
+
+Deploy a sample application in the vCluster. This application writes the current date and time in five-second intervals to a file called `out.txt` on a persistent volume.
+
+```bash title="Deploy application with persistent storage"
+cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ebs-claim
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 4Gi
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: app
+spec:
+  containers:
+  - name: app
+    image: public.ecr.aws/amazonlinux/amazonlinux
+    command: ["/bin/sh"]
+    args: ["-c", "while true; do date -u >> /data/out.txt; sleep 5; done"]
+    volumeMounts:
+    - name: persistent-storage
+      mountPath: /data
+  volumes:
+  - name: persistent-storage
+    persistentVolumeClaim:
+      claimName: ebs-claim
+EOF
+```
+
+### Verify the application
+
+Then we wait until the pod is running and the PVC is in `Bound` state. Use the following command in the vCluster to check the status of the pod and the PVC.
+
+```bash title="Check pod status"
+kubectl get pods
+```
+
+Expected output:
+```
+NAME   READY   STATUS    RESTARTS   AGE
+app    1/1     Running   0          37s
+```
+
+```bash title="Check PVC status"
+kubectl get pvc
+```
+
+Expected output:
+```
+NAME        STATUS   VOLUME                                     CAPACITY   ACCESS MODES   STORAGECLASS   VOLUMEATTRIBUTESCLASS   AGE
+ebs-claim   Bound    pvc-4062a395-e84e-4efd-91c4-8e09cb12d3a8   4Gi        RWO                           <unset>                 42s
+```
+
+We can also verify that data is being written to the persistent volume:
+
+```bash title="View application data"
+kubectl exec -it app -- cat /data/out.txt | tail -n 3
+```
+
+Expected output:
+```
+Tue Oct 28 13:38:41 UTC 2025
+Tue Oct 28 13:38:46 UTC 2025
+Tue Oct 28 13:38:51 UTC 2025
+```
+
+
+## Create snapshot with volumes
+
+Now create a vCluster snapshot with volume snapshots included by using the `--include-volumes` parameter. The vCluster CLI creates a snapshot request in the host cluster, which is then processed in the background by the vCluster snapshot controller.
+First, disconnect from the virtual cluster:
+
+```bash title="Disconnect from myvcluster"
+vcluster disconnect
+```
+
+Then, create the snapshot:
+
+```bash title="Create snapshot with volumes"
+vcluster snapshot create myvcluster "oci://ghcr.io/my-user/my-repo:my-tag" --include-volumes
+```
+
+The expected output would be:
+```
+18:01:13 info Beginning snapshot creation... Check the snapshot status by running `vcluster snapshot get myvcluster oci://ghcr.io/my-user/my-repo:my-tag`
+```
+
+:::note
+Replace `oci://ghcr.io/my-user/my-repo:my-tag` with your own OCI registry or other storage location. Ensure you have the necessary authentication configured for it.
+:::
+
+### Check snapshot status
+
+We can monitor the snapshot creation progress by running:
+
+```bash title="Check snapshot status"
+vcluster snapshot get myvcluster "oci://ghcr.io/my-user/my-repo:my-tag"
+```
+
+A sample output would be:
+```
+                   SNAPSHOT                | VOLUMES | SAVED |  STATUS   |  AGE
+  -----------------------------------------+---------+-------+-----------+--------
+      oci://ghcr.io/my-user/my-repo:my-tag | 1/1     | Yes   | Completed | 2m51s
+```
+
+Wait until the status shows `Completed` and `SAVED` shows `Yes` before proceeding to the restore step.
+
+## Simulate data loss
+
+To demonstrate the restore capability of the created volume snapshot just now, we first delete the application and its data from the virtual cluster. 
+
+First, connect to the virtual cluster:
+```bash title="Connect to vCluster"
+vcluster connect myvcluster
+```
+
+Then delete the application and PVC:
+
+```bash title="Delete application and PVC"
+cat <<EOF | kubectl delete -f -
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ebs-claim
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 4Gi
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: app
+spec:
+  containers:
+  - name: app
+    image: public.ecr.aws/amazonlinux/amazonlinux
+    command: ["/bin/sh"]
+    args: ["-c", "while true; do date -u >> /data/out.txt; sleep 5; done"]
+    volumeMounts:
+    - name: persistent-storage
+      mountPath: /data
+  volumes:
+  - name: persistent-storage
+    persistentVolumeClaim:
+      claimName: ebs-claim
+EOF
+```
+
+## Restore from snapshot
+
+After the PVC is deleted, we now restore the virtual cluster from the snapshot,  including the volume data. 
+
+First, disconnect from `myvcluster`:
+```bash title="Disconnect from myvcluster"
+vcluster disconnect
+```
+
+Then run the restore command with the `--restore-volumes` parameter. This creates a restore request which is processed by the restore controller, orchestrating the restoration of the PVC from the snapshots:
+```bash title="Restore myvcluster with the volume snapshot"
+vcluster restore myvcluster "oci://ghcr.io/my-user/my-repo:my-tag" --restore-volumes
+```
+
+The expected output would be:
+```
+17:39:14 info Pausing vCluster myvcluster
+17:39:15 info Scale down statefulSet vcluster-myvcluster/myvcluster...
+17:39:17 info Starting snapshot pod for vCluster vcluster-myvcluster/myvcluster...
+...
+2025-10-27 12:09:35	INFO	snapshot/restoreclient.go:260	Successfully restored snapshot from oci://ghcr.io/my-user/my-repo:my-tag	{"component": "vcluster"}
+17:39:37 info Resuming vCluster myvcluster after it was paused
+```
+
+### Verify the restore
+
+Once the virtual cluster is running again, connect to it and verify that the pod and PVC have been restored.
+
+First, connect to `myvcluster`:
+```bash title="Connect to myvcluster"
+vcluster connect myvcluster
+```
+
+Then, check that the pod is running:
+
+```bash title="Check pod status"
+kubectl get pods
+```
+
+The expected output would be:
+```
+NAME   READY   STATUS    RESTARTS   AGE
+app    1/1     Running   0          12m
+```
+
+Then check that the PVC is bound:
+```bash title="Check PVC status"
+kubectl get pvc
+```
+
+The expected output would be:
+```
+NAME        STATUS   VOLUME                                     CAPACITY   ACCESS MODES   STORAGECLASS   VOLUMEATTRIBUTESCLASS   AGE
+ebs-claim   Bound    pvc-c6ebf439-9fe5-4413-9f86-89916c1e4e49   4Gi        RWO                           <unset>                 12m
+```
+
+At last, verify that the data was successfully restored by checking the log file:
+
+```bash title="Verify restored data"
+kubectl exec -it app -- cat /data/out.txt
+```
+
+The output should include both the old timestamp (13:39 here) before the PVC is deleted and the new timestamp (13:46 here) after the PVC is restored:
+```
+...
+Tue Oct 28 13:39:21 UTC 2025
+Tue Oct 28 13:39:26 UTC 2025
+Tue Oct 28 13:39:31 UTC 2025
+Tue Oct 28 13:46:10 UTC 2025
+Tue Oct 28 13:46:15 UTC 2025
+Tue Oct 28 13:46:20 UTC 2025
+```
+
+This confirms that the data was successfully recovered from the snapshot, and the application resumed writing new entries.
+## Cleanup
+
+You can now free up the created resources in this tutorial.
+First, delete the created virtual cluster:
+
+```bash title="Delete myvcluster"
+vcluster delete myvcluster
+```
+
+Then, if you created an EKS cluster specifically for this tutorial, you can delete it to avoid ongoing charges:
+
+```bash title="Delete EKS cluster"
+eksctl delete cluster -f cluster.yaml --disable-nodegroup-eviction
+```
