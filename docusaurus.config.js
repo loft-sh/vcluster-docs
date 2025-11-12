@@ -291,7 +291,7 @@ const config = {
         theme: { light: "default", dark: "dark" },
         options: {
           flowchart: {
-            htmlLabels: true,
+            htmlLabels: false,
             curve: 'basis'
           },
           fontSize: 14
