@@ -1,4 +1,4 @@
-const { webkit } = require('playwright');
+const { webkit, chromium, firefox } = require('playwright');
 const cp = require('child_process');
 const fs = require('fs');
 const path = require('path');
@@ -16,14 +16,16 @@ const BROWSERSTACK_USERNAME = process.env.BROWSERSTACK_USERNAME || process.env.B
 const BROWSERSTACK_ACCESS_KEY = process.env.BROWSERSTACK_ACCESS_KEY || process.env.BROWSER_STACK_API_KEY;
 const RUN_LOCAL = process.env.PLAYWRIGHT_LOCAL === 'true';
 
-// Safari test configurations for BrowserStack
-const SAFARI_CONFIGS = [
+// Browser test configurations for BrowserStack
+const BROWSER_CONFIGS = [
+  // Safari
   {
     name: 'Safari 17.3 on macOS Sonoma',
     os: 'osx',
     os_version: 'Sonoma',
     browser: 'playwright-webkit',
     browser_version: 'latest',
+    browserType: webkit,
   },
   {
     name: 'Safari 15.6 on macOS Monterey',
@@ -31,6 +33,7 @@ const SAFARI_CONFIGS = [
     os_version: 'Monterey',
     browser: 'playwright-webkit',
     browser_version: 'latest',
+    browserType: webkit,
   },
   {
     name: 'Safari 16.5 on macOS Ventura',
@@ -38,6 +41,41 @@ const SAFARI_CONFIGS = [
     os_version: 'Ventura',
     browser: 'playwright-webkit',
     browser_version: 'latest',
+    browserType: webkit,
+  },
+  // Chrome
+  {
+    name: 'Chrome 131 on macOS Sonoma',
+    os: 'osx',
+    os_version: 'Sonoma',
+    browser: 'playwright-chromium',
+    browser_version: 'latest',
+    browserType: chromium,
+  },
+  {
+    name: 'Chrome 131 on Windows 11',
+    os: 'Windows',
+    os_version: '11',
+    browser: 'playwright-chromium',
+    browser_version: 'latest',
+    browserType: chromium,
+  },
+  // Firefox
+  {
+    name: 'Firefox 133 on macOS Sonoma',
+    os: 'osx',
+    os_version: 'Sonoma',
+    browser: 'playwright-firefox',
+    browser_version: 'latest',
+    browserType: firefox,
+  },
+  {
+    name: 'Firefox 133 on Windows 11',
+    os: 'Windows',
+    os_version: '11',
+    browser: 'playwright-firefox',
+    browser_version: 'latest',
+    browserType: firefox,
   },
 ];
 
@@ -68,7 +106,7 @@ async function runTest(config) {
     // Connect to BrowserStack
     const wsEndpoint = `wss://cdp.browserstack.com/playwright?caps=${encodeURIComponent(JSON.stringify(caps))}`;
     console.log('Connecting to BrowserStack...');
-    browser = await webkit.connect(wsEndpoint);
+    browser = await config.browserType.connect(wsEndpoint);
 
     // Create new page
     page = await browser.newPage();
@@ -192,7 +230,7 @@ async function main() {
   const results = [];
 
   // Run tests sequentially to avoid overwhelming BrowserStack
-  for (const config of SAFARI_CONFIGS) {
+  for (const config of BROWSER_CONFIGS) {
     const result = await runTest(config);
     results.push(result);
 
