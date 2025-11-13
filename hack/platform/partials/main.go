@@ -144,84 +144,6 @@ isolation:
 		Delete:   true,
 	})
 
-	// DevPodInstance
-	util.GenerateObjectOverview(&util.ObjectInformation{
-		Title:       "DevPod Workspace Instance",
-		Name:        "DevPodWorkspaceInstance",
-		Resource:    "devpodworkspaceinstances",
-		Description: "A DevPod workspace.",
-		File:        path.Join(util.BaseResourcesPath, "devpodworkspaceinstance/devpodworkspaceinstance.mdx"),
-		Object: &managementv1.DevPodWorkspaceInstance{
-			TypeMeta: metav1.TypeMeta{
-				Kind:       "DevPodWorkspaceInstance",
-				APIVersion: managementv1.SchemeGroupVersion.String(),
-			},
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "my-devpod-workspace",
-				Namespace: "loft-p-my-project",
-			},
-			Spec: managementv1.DevPodWorkspaceInstanceSpec{
-				DevPodWorkspaceInstanceSpec: storagev1.DevPodWorkspaceInstanceSpec{
-					DisplayName: "my-display-name",
-					Owner: &storagev1.UserOrTeam{
-						User: "my-user",
-					},
-					Parameters: "my-parameter: my-value",
-					TemplateRef: &storagev1.TemplateRef{
-						Name: "my-devpod-workspace-template",
-					},
-				},
-			},
-		},
-		Project:  true,
-		Create:   true,
-		Retrieve: true,
-		Update:   true,
-		Delete:   true,
-	})
-
-	// DevPodTemplate
-	util.GenerateObjectOverview(&util.ObjectInformation{
-		Title:       "DevPod Workspace Template",
-		Name:        "DevPodWorkspaceTemplate",
-		Resource:    "devpodworkspacetemplates",
-		Description: "A DevPod workspace template.",
-		File:        path.Join(util.BaseResourcesPath, "devpodworkspacetemplate.mdx"),
-		Object: &managementv1.DevPodWorkspaceTemplate{
-			TypeMeta: metav1.TypeMeta{
-				Kind:       "DevPodWorkspaceTemplate",
-				APIVersion: managementv1.SchemeGroupVersion.String(),
-			},
-			ObjectMeta: metav1.ObjectMeta{
-				Name: "my-devpod-workspace-template",
-			},
-			Spec: managementv1.DevPodWorkspaceTemplateSpec{
-				DevPodWorkspaceTemplateSpec: storagev1.DevPodWorkspaceTemplateSpec{
-					DisplayName: "my-display-name",
-					Parameters: []storagev1.AppParameter{
-						{
-							Variable: "myVar",
-						},
-					},
-					Template: storagev1.DevPodWorkspaceTemplateDefinition{
-						Provider: &storagev1.DevPodWorkspaceProvider{
-							Name: "kubernetes",
-							Options: map[string]storagev1.DevPodProviderOption{
-								"KUBERNETES_NAMESPACE": {
-									Value: "{{ .Values.loft.name }}",
-								},
-							},
-						},
-					},
-				},
-			},
-		},
-		Create:   true,
-		Retrieve: true,
-		Update:   true,
-		Delete:   true,
-	})
-
 	// Runner - NOTE: Runner types don't exist in API v4.3.4 but runner documentation was preserved from main branch
 	// util.GenerateObjectOverview(&util.ObjectInformation{
 	// 	Title:       "Runner",
@@ -982,42 +904,42 @@ spec:
 								NamedNodeTypeSpec: storagev1.NamedNodeTypeSpec{
 									Name: "medium",
 									NodeTypeSpec: storagev1.NodeTypeSpec{
-									Resources: corev1.ResourceList{
-										corev1.ResourceCPU:    resource.MustParse("2"),
-										corev1.ResourceMemory: resource.MustParse("4Gi"),
+										Resources: corev1.ResourceList{
+											corev1.ResourceCPU:    resource.MustParse("2"),
+											corev1.ResourceMemory: resource.MustParse("4Gi"),
+										},
+										Properties: map[string]string{
+											"instance-type": "t3.medium",
+										},
 									},
-									Properties: map[string]string{
-										"instance-type": "t3.medium",
-									},
-								},
 								},
 							},
 							{
 								NamedNodeTypeSpec: storagev1.NamedNodeTypeSpec{
 									Name: "large",
 									NodeTypeSpec: storagev1.NodeTypeSpec{
-									Resources: corev1.ResourceList{
-										corev1.ResourceCPU:    resource.MustParse("2"),
-										corev1.ResourceMemory: resource.MustParse("8Gi"),
+										Resources: corev1.ResourceList{
+											corev1.ResourceCPU:    resource.MustParse("2"),
+											corev1.ResourceMemory: resource.MustParse("8Gi"),
+										},
+										Properties: map[string]string{
+											"instance-type": "t3.large",
+										},
 									},
-									Properties: map[string]string{
-										"instance-type": "t3.large",
-									},
-								},
 								},
 							},
 							{
 								NamedNodeTypeSpec: storagev1.NamedNodeTypeSpec{
 									Name: "xlarge",
 									NodeTypeSpec: storagev1.NodeTypeSpec{
-									Resources: corev1.ResourceList{
-										corev1.ResourceCPU:    resource.MustParse("4"),
-										corev1.ResourceMemory: resource.MustParse("8Gi"),
+										Resources: corev1.ResourceList{
+											corev1.ResourceCPU:    resource.MustParse("4"),
+											corev1.ResourceMemory: resource.MustParse("8Gi"),
+										},
+										Properties: map[string]string{
+											"instance-type": "c5.xlarge",
+										},
 									},
-									Properties: map[string]string{
-										"instance-type": "c5.xlarge",
-									},
-								},
 								},
 							},
 						},
