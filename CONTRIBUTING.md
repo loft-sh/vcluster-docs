@@ -316,18 +316,6 @@ The command line interface name is `vcluster`.
 - [CoreDNS](https://coredns.io/)
 - [etcd](https://etcd.io/)
 
-## FeatureTable component
-
-Use the `FeatureTable` component to display vCluster features with OSS/Enterprise availability:
-
-```mdx
-import FeatureTable from '@site/src/components/FeatureTable';
-
-<FeatureTable names="high-availability,embedded-etcd,sleep-mode" />
-```
-
-**Adding features**: Edit `src/data/features.yaml` and `src/data/products.yaml`. URLs must include the `/docs/` prefix.
-
 ## Style guide automation {#style-guide-automation}
 
 To maintain quality and consistency in our technical documentation, we use
