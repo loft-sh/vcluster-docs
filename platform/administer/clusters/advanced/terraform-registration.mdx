@@ -1,0 +1,604 @@
+---
+title: Register clusters with Terraform
+sidebar_label: Terraform registration
+sidebar_position: 10
+---
+
+import Flow, { Step } from "@site/src/components/Flow";
+import NavStep from "@site/src/components/NavStep";
+import Button from "@site/src/components/Button";
+import Label from "@site/src/components/Label";
+import InterpolatedCodeBlock from "@site/src/components/InterpolatedCodeBlock";
+import PageVariables from "@site/src/components/PageVariables";
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+Automate host cluster registration to vCluster Platform using Terraform. This guide shows you how to programmatically register clusters during infrastructure provisioning, eliminating manual registration steps.
+
+## Overview
+
+When provisioning infrastructure with Terraform, you can automate the complete cluster registration workflow. This approach registers the cluster in vCluster Platform and installs the agent, making the cluster immediately available for virtual cluster deployment.
+
+:::info Terraform provider deprecation
+The vCluster Platform Terraform provider is deprecated. This guide provides an alternative approach using the Kubernetes provider and vCluster Platform API to achieve the same automation goals.
+:::
+
+## Why automate cluster registration
+
+Manual cluster registration requires running `vcluster platform add cluster` after each cluster deployment. This creates friction in automated workflows and requires manual intervention. By automating registration through Terraform, you can:
+
+- Provision and register clusters in a single Terraform apply
+- Maintain infrastructure as code for the complete cluster lifecycle
+- Eliminate manual steps in CI/CD pipelines
+- Ensure consistent cluster configuration across environments
+
+## Prerequisites
+
+Before you begin, ensure you have:
+
+- **Terraform installed**: Version 1.0 or higher
+- **vCluster Platform instance**: Running and accessible
+- **admin access key**: Required to create cluster-specific access keys
+- **kubectl access**: To the vCluster Platform management cluster
+- **Target cluster**: The cluster you want to register (or Terraform configuration to create it)
+
+### admin access key
+
+The automation requires an admin-level access key to create cluster-specific access keys through the API. You can create an access key through the [vCluster Platform UI](../../users-permissions/access-keys.mdx#create-an-access-key) or CLI.
+
+:::warning Secure credential storage
+Store the admin access key securely using a secrets management solution. Never commit access keys to version control. Consider using:
+- [HashiCorp Vault](../../../integrations/hashicorp-vault.mdx) for centralized secret management
+- Kubernetes Secrets with encryption at rest
+- Provider secret managers (AWS Secrets Manager, Azure Key Vault, GCP Secret Manager)
+- Environment variables in CI/CD systems with secret masking
+:::
+
+## How it works
+
+The registration process follows three steps:
+
+1. **Create cluster resource**: Register the cluster in vCluster Platform's management cluster
+2. **Retrieve cluster-specific access key**: Get the unique key for this cluster via API
+3. **Install platform agent**: Deploy the agent using the cluster-specific key
+
+The cluster-specific access key authenticates the agent to vCluster Platform with the correct cluster identity. Using an admin key for the agent fails because the agent expects a cluster-scoped credential.
+
+## Step-by-step guide
+
+:::info Platform hostname format
+The `PLATFORM_HOST` variable should contain only the hostname without the `https://` protocol prefix. For example: `platform.example.com` not `https://platform.example.com`. The Terraform configuration adds the protocol automatically.
+:::
+
+<PageVariables
+  PLATFORM_HOST="platform.example.com"
+  ADMIN_ACCESS_KEY="your-admin-key"
+  PLATFORM_CONTEXT="platform-context"
+  TARGET_CLUSTER_CONTEXT="target-cluster-context"
+  CLUSTER_NAME="prod-cluster-1"
+  CLUSTER_DISPLAY_NAME="Production Cluster 1"
+/>
+
+<Flow id="terraform-cluster-registration">
+
+<Step>
+
+Set your environment variables using the interactive form at the top of this page:
+
+<InterpolatedCodeBlock
+  code={
+`# Set variables
+export TF_VAR_platform_host="[[GLOBAL:PLATFORM_HOST]]"
+export TF_VAR_admin_access_key="[[GLOBAL:ADMIN_ACCESS_KEY]]"
+export TF_VAR_platform_context="[[GLOBAL:PLATFORM_CONTEXT]]"
+export TF_VAR_target_cluster_context="[[GLOBAL:TARGET_CLUSTER_CONTEXT]]"
+export TF_VAR_cluster_name="[[GLOBAL:CLUSTER_NAME]]"
+export TF_VAR_cluster_display_name="[[GLOBAL:CLUSTER_DISPLAY_NAME]]"`
+  }
+  language="bash"
+  title="Set environment variables"
+/>
+
+</Step>
+
+<Step>
+
+Create the Cluster resource configuration.
+
+This registers the cluster with Platform and prepares it for agent connection.
+
+<!-- vale off -->
+```hcl title="cluster-registration.tf"
+# Configure Kubernetes provider for vCluster Platform management cluster
+provider "kubernetes" {
+  alias          = "platform"
+  config_path    = "~/.kube/config"
+  config_context = var.platform_context
+}
+
+# Variables
+variable "platform_context" {
+  description = "kubectl context for the vCluster Platform management cluster"
+  type        = string
+}
+
+# Create the cluster resource
+resource "kubernetes_manifest" "platform_cluster" {
+  provider = kubernetes.platform
+
+  manifest = {
+    apiVersion = "management.loft.sh/v1"
+    kind       = "Cluster"
+    metadata = {
+      name = var.cluster_name
+    }
+    spec = {
+      displayName        = var.cluster_display_name
+      networkPeer        = true
+      managementNamespace = "vcluster-platform"
+    }
+  }
+}
+
+# Variables
+variable "cluster_name" {
+  description = "Internal cluster identifier"
+  type        = string
+}
+
+variable "cluster_display_name" {
+  description = "Display name shown in vCluster Platform UI"
+  type        = string
+}
+```
+<!-- vale on -->
+
+**Configuration options**:
+- `name`: Internal identifier for the cluster (must be DNS-compatible)
+- `displayName`: Human-readable name shown in the UI
+- `networkPeer`: Enable network peering between clusters
+- `managementNamespace`: Namespace where the agent will be installed
+
+</Step>
+
+<Step>
+
+Configure the HTTP data source to retrieve the cluster-specific access key.
+
+After creating the cluster resource, retrieve the cluster-specific access key using the vCluster Platform API.
+
+<!-- vale off -->
+```hcl title="cluster-access-key.tf"
+# Data source to retrieve cluster access key
+data "http" "cluster_access_key" {
+  url = "https://${var.platform_host}/kubernetes/management/apis/management.loft.sh/v1/clusters/${var.cluster_name}/accesskey"
+
+  request_headers = {
+    Authorization = "bearer ${var.admin_access_key}"
+  }
+
+  depends_on = [kubernetes_manifest.platform_cluster]
+}
+
+# Parse the response
+locals {
+  access_key_response = jsondecode(data.http.cluster_access_key.response_body)
+  cluster_access_key  = local.access_key_response.accessKey
+  loft_host          = local.access_key_response.loftHost
+}
+
+# Variables
+variable "platform_host" {
+  description = "vCluster Platform hostname without protocol (e.g., 'platform.example.com' not 'https://platform.example.com')"
+  type        = string
+}
+
+variable "admin_access_key" {
+  description = "Admin access key for API authentication"
+  type        = string
+  sensitive   = true
+}
+```
+<!-- vale on -->
+
+The API endpoint returns a JSON response containing:
+- `accessKey`: Cluster-specific token for agent authentication
+- `loftHost`: vCluster Platform host URL
+
+</Step>
+
+<Step>
+
+Configure the Helm release to install the Platform agent.
+
+Install the vCluster Platform agent on your target cluster using the cluster-specific access key.
+
+<!-- vale off -->
+```hcl title="agent-installation.tf"
+# Configure Kubernetes provider for target cluster
+provider "kubernetes" {
+  alias          = "target"
+  config_path    = "~/.kube/config"
+  config_context = var.target_cluster_context
+}
+
+provider "helm" {
+  alias = "target"
+  kubernetes {
+    config_path    = "~/.kube/config"
+    config_context = var.target_cluster_context
+  }
+}
+
+# Get platform version for agent
+data "http" "platform_version" {
+  url = "https://${var.platform_host}/version"
+}
+
+locals {
+  platform_version = jsondecode(data.http.platform_version.response_body).version
+}
+
+# Install vCluster Platform agent
+resource "helm_release" "platform_agent" {
+  provider   = helm.target
+  name       = "vcluster-platform"
+  repository = "https://charts.loft.sh/"
+  chart      = "vcluster-platform"
+  version    = local.platform_version
+  namespace  = "vcluster-platform"
+  create_namespace = true
+
+  set {
+    name  = "agentOnly"
+    value = "true"
+  }
+
+  set {
+    name  = "url"
+    value = "https://${var.platform_host}"
+  }
+
+  set {
+    name  = "token"
+    value = local.cluster_access_key
+  }
+
+  depends_on = [data.http.cluster_access_key]
+}
+
+# Variables
+variable "target_cluster_context" {
+  description = "kubectl context for the target cluster"
+  type        = string
+}
+```
+<!-- vale on -->
+
+**What happens**: the agent installs in the `vcluster-platform` namespace, connects to the platform using the cluster-specific key, and establishes a secure tunnel. The cluster becomes available in the vCluster Platform UI within moments.
+
+</Step>
+
+<Step>
+
+Initialize Terraform.
+
+<InterpolatedCodeBlock
+  code={
+'terraform init'
+  }
+  language="bash"
+  title="Initialize Terraform"
+/>
+
+This downloads the required provider plugins (Kubernetes, Helm, HTTP).
+
+</Step>
+
+<Step>
+
+Review the execution plan.
+
+<InterpolatedCodeBlock
+  code={
+'terraform plan'
+  }
+  language="bash"
+  title="Preview changes"
+/>
+
+Verify that Terraform will:
+- Create the Cluster resource in Platform
+- Retrieve the cluster-specific access key via API
+- Install the Platform agent via Helm
+
+</Step>
+
+<Step>
+
+Apply the configuration.
+
+<InterpolatedCodeBlock
+  code={
+'terraform apply'
+  }
+  language="bash"
+  title="Apply configuration"
+/>
+
+Type `yes` when prompted. This executes all three steps: creating the cluster resource, retrieving the access key, and installing the agent.
+
+</Step>
+
+<Step>
+
+Verify the cluster in Platform UI.
+
+Navigate to <NavStep>Clusters</NavStep> in the Platform interface. Your cluster should appear with "Connected" status within moments.
+
+</Step>
+
+</Flow>
+
+### Configuration files reference
+
+The following sections show the detailed Terraform configuration for each component.
+
+<details>
+<summary>Quick reference - Complete Terraform configuration</summary>
+
+Copy and paste this complete configuration with your customized values:
+
+<InterpolatedCodeBlock
+  code={
+'terraform {\n' +
+'  required_providers {\n' +
+'    kubernetes = {\n' +
+'      source  = "hashicorp/kubernetes"\n' +
+'      version = "~> 2.23"\n' +
+'    }\n' +
+'    helm = {\n' +
+'      source  = "hashicorp/helm"\n' +
+'      version = "~> 2.11"\n' +
+'    }\n' +
+'    http = {\n' +
+'      source  = "hashicorp/http"\n' +
+'      version = "~> 3.4"\n' +
+'    }\n' +
+'  }\n' +
+'}\n' +
+'\n' +
+'# Provider for vCluster Platform management cluster\n' +
+'provider "kubernetes" {\n' +
+'  alias          = "platform"\n' +
+'  config_path    = "~/.kube/config"\n' +
+'  config_context = "[[GLOBAL:PLATFORM_CONTEXT]]"\n' +
+'}\n' +
+'\n' +
+'# Provider for target cluster\n' +
+'provider "kubernetes" {\n' +
+'  alias          = "target"\n' +
+'  config_path    = "~/.kube/config"\n' +
+'  config_context = "[[GLOBAL:TARGET_CLUSTER_CONTEXT]]"\n' +
+'}\n' +
+'\n' +
+'provider "helm" {\n' +
+'  alias = "target"\n' +
+'  kubernetes {\n' +
+'    config_path    = "~/.kube/config"\n' +
+'    config_context = "[[GLOBAL:TARGET_CLUSTER_CONTEXT]]"\n' +
+'  }\n' +
+'}\n' +
+'\n' +
+'# Step 1: Create cluster resource\n' +
+'resource "kubernetes_manifest" "cluster" {\n' +
+'  provider = kubernetes.platform\n' +
+'\n' +
+'  manifest = {\n' +
+'    apiVersion = "management.loft.sh/v1"\n' +
+'    kind       = "Cluster"\n' +
+'    metadata = {\n' +
+'      name = "[[GLOBAL:CLUSTER_NAME]]"\n' +
+'    }\n' +
+'    spec = {\n' +
+'      displayName         = "[[GLOBAL:CLUSTER_DISPLAY_NAME]]"\n' +
+'      networkPeer         = true\n' +
+'      managementNamespace = "vcluster-platform"\n' +
+'    }\n' +
+'  }\n' +
+'}\n' +
+'\n' +
+'# Step 2: Get cluster access key\n' +
+'data "http" "cluster_key" {\n' +
+'  url = "https://[[GLOBAL:PLATFORM_HOST]]/kubernetes/management/apis/management.loft.sh/v1/clusters/[[GLOBAL:CLUSTER_NAME]]/accesskey"\n' +
+'\n' +
+'  request_headers = {\n' +
+'    Authorization = "bearer [[GLOBAL:ADMIN_ACCESS_KEY]]"\n' +
+'  }\n' +
+'\n' +
+'  depends_on = [kubernetes_manifest.cluster]\n' +
+'}\n' +
+'\n' +
+'locals {\n' +
+'  key_response = jsondecode(data.http.cluster_key.response_body)\n' +
+'}\n' +
+'\n' +
+'# Get platform version\n' +
+'data "http" "version" {\n' +
+'  url = "https://[[GLOBAL:PLATFORM_HOST]]/version"\n' +
+'}\n' +
+'\n' +
+'locals {\n' +
+'  version = jsondecode(data.http.version.response_body).version\n' +
+'}\n' +
+'\n' +
+'# Step 3: Install agent\n' +
+'resource "helm_release" "agent" {\n' +
+'  provider         = helm.target\n' +
+'  name             = "vcluster-platform"\n' +
+'  repository       = "https://charts.loft.sh/"\n' +
+'  chart            = "vcluster-platform"\n' +
+'  version          = local.version\n' +
+'  namespace        = "vcluster-platform"\n' +
+'  create_namespace = true\n' +
+'\n' +
+'  set {\n' +
+'    name  = "agentOnly"\n' +
+'    value = "true"\n' +
+'  }\n' +
+'\n' +
+'  set {\n' +
+'    name  = "url"\n' +
+'    value = "https://[[GLOBAL:PLATFORM_HOST]]"\n' +
+'  }\n' +
+'\n' +
+'  set {\n' +
+'    name  = "token"\n' +
+'    value = local.key_response.accessKey\n' +
+'  }\n' +
+'\n' +
+'  depends_on = [data.http.cluster_key]\n' +
+'}\n' +
+'\n' +
+'# Variables\n' +
+'variable "platform_host" {\n' +
+'  description = "vCluster Platform hostname without protocol (e.g., platform.example.com)"\n' +
+'  type        = string\n' +
+'}\n' +
+'\n' +
+'variable "platform_context" {\n' +
+'  description = "kubectl context for platform management cluster"\n' +
+'  type        = string\n' +
+'}\n' +
+'\n' +
+'variable "target_cluster_context" {\n' +
+'  description = "kubectl context for target cluster"\n' +
+'  type        = string\n' +
+'}\n' +
+'\n' +
+'variable "cluster_name" {\n' +
+'  description = "Cluster identifier"\n' +
+'  type        = string\n' +
+'}\n' +
+'\n' +
+'variable "cluster_display_name" {\n' +
+'  description = "Display name in UI"\n' +
+'  type        = string\n' +
+'}\n' +
+'\n' +
+'variable "admin_access_key" {\n' +
+'  description = "Admin access key"\n' +
+'  type        = string\n' +
+'  sensitive   = true\n' +
+'}\n' +
+'\n' +
+'# Outputs\n' +
+'output "cluster_registered" {\n' +
+'  value = "Cluster [[GLOBAL:CLUSTER_NAME]] registered successfully"\n' +
+'}'
+  }
+  language="hcl"
+  title="main.tf"
+/>
+
+</details>
+
+## Security considerations
+
+### Access key management
+
+The admin access key provides full platform access. Protect it using these practices:
+
+**Store in secrets management**: use a dedicated secrets solution rather than environment variables or files:
+- [HashiCorp Vault](../../../integrations/hashicorp-vault.mdx) with dynamic credentials
+- Provider secret managers with automatic rotation
+- Kubernetes Secrets with encryption at rest and RBAC controls
+
+**Use scoped keys when possible** - While this workflow requires an admin key for the initial setup, consider using [scoped access keys](../../users-permissions/access-keys.mdx#scoped-access-keys) for other automation tasks.
+
+**Rotate regularly** - Establish a rotation schedule for access keys:
+- Set expiration dates on keys
+- Automate rotation through your secrets management system
+- Revoke keys immediately when team members leave
+
+**Audit access** - Monitor access key usage:
+- Enable audit logging for API calls
+- Review access key usage patterns
+- Alert on unusual activity
+
+### Network security
+
+The agent establishes an outbound connection to vCluster Platform. Ensure:
+- Platform endpoint uses TLS (never set `insecure = true` in production)
+- Network policies allow outbound HTTPS from the agent namespace
+- Firewall rules permit the agent to reach the platform endpoint
+
+## Known limitations
+
+### Bootstrap credential requirement
+
+This automation requires an admin access key to bootstrap the process. This creates a "chicken and egg" problem: you need credentials to create cluster-specific credentials.
+
+**Solutions**:
+
+1. **Pre-provision keys**: Create the admin access key manually before running Terraform:
+   ```bash
+   # Create key through UI or CLI
+   vcluster platform create accesskey bootstrap-key
+   # Store in secrets management
+   ```
+
+2. **Use secrets management**: Store the bootstrap key in your secrets management system:
+   - HashiCorp Vault: use the [Vault provider](https://registry.terraform.io/providers/hashicorp/vault/latest/docs) to retrieve keys
+   - Provider platforms: use native Terraform data sources for secret managers
+   - External Secrets Operator: sync keys from external systems to Kubernetes
+
+3. **Manual initial registration**: For the very first cluster or platform instance, register it manually, then use this automation for subsequent clusters.
+
+### Provider contexts
+
+The configuration requires two kubernetes provider contexts: one for the platform management cluster and one for the target cluster. Ensure both contexts are configured in your kubeconfig before running Terraform.
+
+## Troubleshoot common issues
+
+### Agent fails to connect
+
+**Symptom**: agent pod shows authentication errors in logs.
+
+**Cause**: using admin access key instead of cluster-specific key.
+
+**Solution**: verify you're using the key from the API endpoint (`/clusters/<name>/accesskey`), not a user access key.
+
+### Cluster resource creation fails
+
+**Symptom**: `kubernetes_manifest` resource fails with permission denied.
+
+**Cause**: kubectl context doesn't have permissions to create Cluster resources.
+
+**Solution**: ensure your platform context has admin permissions or appropriate RBAC for Cluster resources.
+
+### Cannot retrieve access key
+
+**Symptom**: http data source fails with 401 or 403 status code.
+
+**Cause**: admin access key invalid or lacks permissions.
+
+**Solution**: verify the access key works with curl:
+
+<InterpolatedCodeBlock
+  code={
+`curl -s "https://[[GLOBAL:PLATFORM_HOST]]/kubernetes/management/apis/management.loft.sh/v1/clusters/[[GLOBAL:CLUSTER_NAME]]/accesskey" \\
+  -H "Authorization: bearer [[GLOBAL:ADMIN_ACCESS_KEY]]"`
+  }
+  language="bash"
+  title="Verify access key with curl"
+/>
+
+## Next steps
+
+After registering your cluster, you can:
+
+- [Create virtual clusters](../../../use-platform/virtual-clusters/add-virtual-clusters.mdx) on the registered host cluster
+- [Configure agent settings](./agent-config.mdx) for advanced networking or security requirements
+- [Set up monitoring](./monitoring.mdx) for the agent and connected resources
+- [Implement policies](./policies.mdx) to control resource usage across clusters
