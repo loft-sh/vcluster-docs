@@ -24,28 +24,16 @@ const glossaryData = yaml.load(fs.readFileSync(glossaryPath, 'utf8'));
 const glossaryTermPattern = /<GlossaryTerm\s+term=["']([^"']+)["']/g;
 
 // Get all MDX files
-// Handle both glob v7 and v10 formats
-let mdxFiles = [];
-try {
-  // For glob v7
-  mdxFiles = glob.sync('**/*.mdx', {
-    ignore: [
-      'node_modules/**',
-      'build/**',
-      '.docusaurus/**',
-      '.vscode/**'
-    ]
-  });
-} catch (error) {
-  // For newer versions, fall back to the directory-specific approach
-  mdxFiles = [
-    ...glob.sync('docs/**/*.mdx'),
-    ...glob.sync('vcluster/**/*.mdx'),
-    ...glob.sync('platform/**/*.mdx'),
-    ...glob.sync('platform_versioned_docs/**/*.mdx'),
-    ...glob.sync('vcluster_versioned_docs/**/*.mdx'),
-  ];
-}
+// Use **/dir/** pattern to ignore directories at any depth
+const mdxFiles = glob.sync('**/*.mdx', {
+  ignore: [
+    '**/node_modules/**',
+    '**/build/**',
+    '**/.docusaurus/**',
+    '**/.vscode/**',
+    'staging/**'
+  ]
+});
 
 let hasErrors = false;
 
