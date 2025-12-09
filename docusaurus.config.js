@@ -272,6 +272,7 @@ const config = {
     },
   ],
   clientModules: [
+    './src/client/MermaidPolyfillsClient.js',
     './src/client/ConfigNavigationClient.js',
     './src/client/DetailsClicksClient.js',
   ],

@@ -1,7 +1,7 @@
 const { defineConfig, devices } = require('@playwright/test');
 
 module.exports = defineConfig({
-  testDir: '.',
+  testDir: './specs',
   testMatch: '**/*.spec.js',
 
   // Timeout settings
