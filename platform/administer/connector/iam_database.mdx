@@ -13,7 +13,7 @@ import TabItem from "@theme/TabItem";
 
 <VersionBadge platformVersion="v4.5.0" vclusterVersion="v0.30.0" />
 
-The IAM Database Connector feature allows virtual clusters to use a shared database server as their backing store and authenticate to the it using workload identity.
+The IAM Database Connector feature allows virtual clusters to use a shared database server as their backing store and authenticate using workload identity.
 
 This page describes how to set up a shared database connector for cloud providers, for general instructions on using database connectors, see the [Database Connectors](./database.mdx) page.
 
@@ -21,14 +21,85 @@ This page describes how to set up a shared database connector for cloud provider
 
 ### Prerequisites
 
-- A RDS instance running MySQL or PostgreSQL
-- An EKS cluster with the EKS Pod Identity Agent Add-On
-- Pods in the EKS cluster must be able to connect to the RDS instance. This may require configuring VPC, Security Groups, and Subnets
+<!-- vale off -->
+
+#### RDS database requirements
+
+<!-- vale on -->
+
+- RDS instance running MySQL or PostgreSQL with IAM Database Authentication enabled
+  - PostgreSQL: version 9.6.9+, 10.4+, or 11+
+  - MySQL: version 5.6.34+, 5.7.16+, or 8.0+
+- A database admin user with `CREATE DATABASE`, `CREATE ROLE`, and `GRANT` privileges
+
+#### EKS requirements
+
+- EKS cluster with the **EKS Pod Identity Agent** add-on installed
+- **EBS CSI Driver** add-on with IAM permissions (required for platform persistent storage)
+
+To verify Pod Identity Agent is installed:
+
+```bash
+aws eks describe-addon --cluster-name YOUR_CLUSTER --addon-name eks-pod-identity-agent --query 'addon.status'
+```
+
+Expected output: `"ACTIVE"`
+
+### Network requirements
+
+Pods in the EKS cluster must be able to connect to the RDS instance. For clusters using private subnets, the following VPC endpoints are required:
+
+| Endpoint | Service | Purpose |
+|----------|---------|---------|
+| `com.amazonaws.<region>.rds` | RDS API | RDS service access |
+| `com.amazonaws.<region>.sts` | STS | IAM token generation |
+| `com.amazonaws.<region>.eks` | EKS API | Pod Identity (if private cluster) |
+| `com.amazonaws.<region>.ec2` | EC2 API | ENI management |
+
+#### Configure security groups
+
+The RDS security group must allow inbound connections from EKS pods. A common mistake is only allowing traffic from the EKS cluster security group, which may not cover pod traffic.
+
+```bash title="Allow PostgreSQL from entire VPC CIDR"
+aws ec2 authorize-security-group-ingress \
+  --group-id YOUR_RDS_SG \
+  --protocol tcp \
+  --port 5432 \
+  --cidr 10.0.0.0/16  # Replace with your VPC CIDR
+```
+
+:::warning
+If you see `no pg_hba.conf entry for host "10.0.x.x"` errors, this typically indicates a security group or network connectivity issue, not a PostgreSQL configuration problem.
+:::
 
 ### Setup and prepare RDS database
 
 Create an RDS Database and ensure it supports **Password and IAM based Authentication**.
-Once the RDS Instance is available, you need to grant an admin user permissions to connect via RDS IAM authentication. This is done by connecting to the database via the initial password and running the following commands according to whether it's a MySQL or PostgreSQL database.
+
+#### Verify connectivity from EKS
+
+Before configuring IAM authentication, verify that pods can connect to RDS:
+
+```bash title="Test connectivity from a pod"
+kubectl run psql-test --rm -i --restart=Never --image=postgres:15 -- bash -c '
+export PGPASSWORD="your-password"
+export PGSSLMODE=require
+psql -h YOUR_RDS_ENDPOINT -U postgres -c "SELECT version();"
+'
+```
+
+<!-- vale off -->
+Expected output: PostgreSQL version string (e.g., `PostgreSQL 15.x on x86_64-pc-linux-gnu...`)
+<!-- vale on -->
+
+If the connection fails:
+- **Timeout**: Check security groups and VPC routing
+- **SSL error** (`no pg_hba.conf entry... no encryption`): RDS requires SSL. Ensure `PGSSLMODE=require` is set
+- **Authentication failed**: Verify password. Use environment variables for passwords with special characters
+
+#### Grant IAM authentication permissions
+
+Once connectivity is verified, grant the admin user permissions to connect via RDS IAM authentication.
 
 <Tabs
     defaultValue="postgres"
@@ -43,7 +114,16 @@ Once the RDS Instance is available, you need to grant an admin user permissions 
 GRANT rds_iam TO postgres
 ```
 
-  </TabItem>
+<!-- vale off -->
+Expected output: `GRANT ROLE`
+<!-- vale on -->
+
+If you see:
+
+- `ERROR: role "rds_iam" does not exist` - IAM Database Authentication is not enabled on the RDS instance. Enable it in the RDS console or via AWS CLI.
+- `ERROR: permission denied` - The connected user lacks GRANT privileges.
+
+</TabItem>
   <TabItem value="mysql">
   The default user for MySQL RDS instances is `admin`, adjust accordingly if a different admin user is used.
 
@@ -51,11 +131,20 @@ GRANT rds_iam TO postgres
 ALTER USER IF EXISTS admin IDENTIFIED WITH AWSAuthenticationPlugin AS 'RDS'
 ```
 
-  </TabItem>
+Expected output: `Query OK, 0 rows affected`
+
+If you see:
+
+- `ERROR 1524: Plugin 'AWSAuthenticationPlugin' is not loaded` - IAM Database Authentication is not enabled on the RDS instance.
+- `ERROR 1227: Access denied` - The connected user lacks ALTER privileges.
+
+</TabItem>
 </Tabs>
 
-:::info
-In both cases, once the user has been modified, you will not be able to connect via password any longer. In order to connect to the database via password, you will either need another user that's not configured for IAM authentication, or you will need to generate a connect token via `aws rds generate-db-auth-token` as you connect to the RDS instance.
+:::warning Important: plan for the authentication change
+Once IAM authentication is granted to a user, password-based login for that user stops working. Before proceeding:
+1. Create a separate admin user for password-based access if needed for maintenance
+2. Or be prepared to use `aws rds generate-db-auth-token` for all future connections
 :::
 
 ### Create IAM policies and role
@@ -177,7 +266,7 @@ Manages EKS Pod Identity Associations for virtual clusters to allow them to assu
 #### Assemble policies into role
 
 Now that the required policies have been created, they need to be attached to an IAM Role used by the vCluster Platform pods.
-Create a new IAM Role that **includes the four policies above** and set up a trust policy that allows the EKS Pod Identity Agent to assume the role.
+Create a new IAM role that **includes the four preceding policies** and set up a trust policy that allows the EKS Pod Identity Agent to assume the role.
 
 ```json title="IAM Role Example"
 {
@@ -244,29 +333,113 @@ Alternatively, a Secret YAML manifest can be applied to the platform's host clus
 apiVersion: v1
 kind: Secret
 metadata:
-  name: <name> # this is a normal metadata name. A descriptive name is recommended. This will be used in a tenent vCluster's config to reference the connector secret
-  namespace: <vcluster-platform-namespace> # this is the namespace that vCluster Platform is installed in. "vcluster-platform" and "loft" are common values.
+  name: <name> # Descriptive name, used to reference this connector in vCluster configs
+  namespace: <vcluster-platform-namespace> # Namespace where vCluster Platform is installed
   labels:
     loft.sh/connector-type: "shared-database"
 stringData:
-  endpoint: <endpoint> # this could be a service endoint or an external hostname endpoint
-  port: <port> # 3306 is a common port for database servers
-  user: <user>
-  type: <type> # mysql or postgres
+  endpoint: <endpoint> # RDS endpoint (e.g., mydb.abc123.us-east-1.rds.amazonaws.com)
+  port: <port> # 5432 for PostgreSQL, 3306 for MySQL
+  user: <user> # Database user with rds_iam granted
+  type: <type> # "mysql" or "postgres"
   identityProvider: "aws"
 ```
 
 Use the following `kubectl` command to create the secret:
 
-```bash title="Create a shared database connector secret"
-kubectl create secret generic default-secret-name \
+<Tabs
+    defaultValue="postgres"
+    values={[
+      {label: 'PostgreSQL', value: 'postgres'},
+      {label: 'MySQL', value: 'mysql'},
+    ]}>
+  <TabItem value="postgres">
+
+```bash title="Create PostgreSQL connector secret"
+kubectl create secret generic my-rds-connector \
   --namespace=vcluster-platform \
-  --from-literal=endpoint="your-database-endpoint" \
+  --from-literal=endpoint="your-rds-endpoint.region.rds.amazonaws.com" \
+  --from-literal=identityProvider="aws" \
+  --from-literal=port="5432" \
+  --from-literal=type="postgres" \
+  --from-literal=user="postgres"
+
+kubectl label secret my-rds-connector \
+  --namespace=vcluster-platform \
+  loft.sh/connector-type=shared-database
+```
+
+  </TabItem>
+  <TabItem value="mysql">
+
+```bash title="Create MySQL connector secret"
+kubectl create secret generic my-rds-connector \
+  --namespace=vcluster-platform \
+  --from-literal=endpoint="your-rds-endpoint.region.rds.amazonaws.com" \
   --from-literal=identityProvider="aws" \
   --from-literal=port="3306" \
-  --from-literal=type="your-database-type" \
-  --from-literal=user="your-database-user" \
-  -o yaml --dry-run=client > secret.yaml
+  --from-literal=type="mysql" \
+  --from-literal=user="admin"
+
+kubectl label secret my-rds-connector \
+  --namespace=vcluster-platform \
+  loft.sh/connector-type=shared-database
+```
+
+  </TabItem>
+</Tabs>
+
+Verify the secret was created with the correct label:
+
+```bash
+kubectl get secrets -n vcluster-platform -l loft.sh/connector-type=shared-database
 ```
 
 To use the secret in a virtual cluster, refer to the [Database Connectors](./database#use-virtual-cluster-with-shared-database) documentation.
+
+### Troubleshoot common issues
+
+#### Connection errors
+
+<!-- vale off -->
+
+| Error | Cause | Solution |
+|-------|-------|----------|
+| `FATAL: PAM authentication failed` | IAM role not configured correctly | Verify Pod Identity Association exists and platform pods were restarted |
+| Connection timeout | Network issue | Check VPC endpoints (for private subnets) and security groups |
+| `no pg_hba.conf entry for host` | Security group blocking OR SSL required | Allow VPC CIDR in RDS security group; ensure SSL is used |
+| `permission denied for database` | DB user lacks privileges | Grant CREATE DATABASE, CREATE ROLE privileges to the user |
+
+<!-- vale on -->
+
+#### IAM issues
+
+Test IAM authentication manually:
+
+```bash title="Generate IAM auth token"
+aws rds generate-db-auth-token \
+  --hostname YOUR_RDS_ENDPOINT \
+  --port 5432 \
+  --username postgres \
+  --region YOUR_REGION
+```
+
+If this fails with access denied, check:
+1. The IAM role has the `rds-db:connect` permission
+2. The resource ARN in the policy matches your RDS instance's resource ID
+3. The database user matches the policy
+
+#### Pod Identity issues
+
+Verify Pod Identity is working:
+
+```bash
+kubectl exec -it -n vcluster-platform deployment/loft -- env | grep AWS
+```
+
+Expected: `AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE` and `AWS_CONTAINER_CREDENTIALS_FULL_URI` should be set.
+
+If not set:
+1. Verify Pod Identity Agent addon is installed: `aws eks describe-addon --cluster-name CLUSTER --addon-name eks-pod-identity-agent`
+2. Verify association exists: `aws eks list-pod-identity-associations --cluster-name CLUSTER`
+3. Restart the platform pods after creating the association
