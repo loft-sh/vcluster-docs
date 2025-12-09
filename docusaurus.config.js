@@ -272,6 +272,7 @@ const config = {
     },
   ],
   clientModules: [
+    './src/client/MermaidPolyfillsClient.js',
     './src/client/ConfigNavigationClient.js',
     './src/client/DetailsClicksClient.js',
   ],
@@ -291,7 +292,7 @@ const config = {
         theme: { light: "default", dark: "dark" },
         options: {
           flowchart: {
-            htmlLabels: true,
+            htmlLabels: false,
             curve: 'basis'
           },
           fontSize: 14
