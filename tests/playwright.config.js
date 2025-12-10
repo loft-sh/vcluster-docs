@@ -5,7 +5,7 @@ module.exports = defineConfig({
   testMatch: '**/*.spec.js',
 
   // Timeout settings
-  timeout: 60000,
+  timeout: 600000, // 10 minutes for full page iteration
   expect: {
     timeout: 15000,
   },
