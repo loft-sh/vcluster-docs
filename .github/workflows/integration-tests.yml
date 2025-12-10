@@ -23,6 +23,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -38,36 +40,25 @@ jobs:
       - name: Wait for Netlify Deploy Preview
         if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.test_url == '')
         run: |
-          # Build preview URL from PR number
-          PREVIEW_URL="https://deploy-preview-${{ github.event.pull_request.number }}--vcluster-docs-site.netlify.app/docs/vcluster/deploy/worker-nodes/private-nodes/vpn"
-
-          echo "Waiting for Netlify preview: $PREVIEW_URL"
-
-          # Poll for up to 10 minutes
+          PREVIEW_URL="https://deploy-preview-${{ github.event.pull_request.number }}--vcluster-docs-site.netlify.app"
           for i in {1..60}; do
-            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "$PREVIEW_URL")
+            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "$PREVIEW_URL/docs/vcluster")
             if [[ "$HTTP_CODE" =~ ^(200|301|302)$ ]]; then
-              echo "Preview is ready! (HTTP $HTTP_CODE)"
-              echo "TEST_URL=$PREVIEW_URL" >> $GITHUB_ENV
+              echo "TEST_BASE_URL=$PREVIEW_URL" >> $GITHUB_ENV
               exit 0
             fi
-            echo "Attempt $i/60: HTTP $HTTP_CODE - waiting 10s..."
             sleep 10
           done
-
-          echo "::warning::Netlify preview not ready after 10 minutes, falling back to production"
-          echo "TEST_URL=https://www.vcluster.com/docs/vcluster/deploy/worker-nodes/private-nodes/vpn" >> $GITHUB_ENV
+          echo "TEST_BASE_URL=https://www.vcluster.com" >> $GITHUB_ENV
 
       - name: Set test URL for manual runs
         if: github.event_name == 'workflow_dispatch' && inputs.test_url != ''
-        run: |
-          echo "TEST_URL=${{ inputs.test_url }}" >> $GITHUB_ENV
+        run: echo "TEST_URL=${{ inputs.test_url }}" >> $GITHUB_ENV
 
       - name: Validate BrowserStack credentials
         run: |
           if [ -z "${{ secrets.BROWSERSTACK_USERNAME }}" ] || [ -z "${{ secrets.BROWSERSTACK_ACCESS_KEY }}" ]; then
             echo "Error: BrowserStack credentials not configured"
-            echo "Please set BROWSERSTACK_USERNAME and BROWSERSTACK_ACCESS_KEY secrets"
             exit 1
           fi
 
@@ -76,7 +67,10 @@ jobs:
         env:
           BROWSERSTACK_USERNAME: ${{ secrets.BROWSERSTACK_USERNAME }}
           BROWSERSTACK_ACCESS_KEY: ${{ secrets.BROWSERSTACK_ACCESS_KEY }}
+          TEST_BASE_URL: ${{ env.TEST_BASE_URL }}
           TEST_URL: ${{ env.TEST_URL }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: npm run test:browserstack
 
       - name: Upload test screenshots
