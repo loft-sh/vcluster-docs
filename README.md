@@ -16,17 +16,6 @@
 
 Contributions from all users are encouraged.
 
-### Quick start for contributing using DevPod
-
-The quickest way to start contributing:
-
-1. [Install DevPod](https://devpod.sh/docs/getting-started/install)
-2. Open this repository in DevPod:
-
-[![Open in DevPod](https://devpod.sh/assets/open-in-devpod.svg)](https://devpod.sh/open#https://github.com/loft-sh/vcluster-docs)
-
-This sets up a complete development environment with all dependencies.
-
 ### Develop locally
 
 1. Run `npm install`
