@@ -380,13 +380,6 @@ const config = {
                     Create New Doc
                   </a>
                 `
-              },
-              {
-                html: `
-                  <a href="https://devpod.sh/open#https://github.com/loft-sh/vcluster-docs" target="_blank" class="footer-devpod-link" aria-label="Open in DevPod">
-                    Open in DevPod
-                  </a>
-                `
               }
             ]
           },
