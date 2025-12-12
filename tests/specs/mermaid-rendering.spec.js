@@ -41,26 +41,14 @@ if (urlsToTest.length > 0 && urlsToTest.length <= 5) {
 const IS_BROWSERSTACK = !!process.env.BROWSERSTACK_CONFIG_FILE;
 const IS_BROWSERSTACK_MOBILE = process.env.BROWSERSTACK_CONFIG_FILE?.includes('mobile');
 
-// Limit pages on BrowserStack to avoid timeout (test 3 pages max, not all 16)
-const pagesToTest = IS_BROWSERSTACK && !IS_BROWSERSTACK_MOBILE
+// Limit pages on BrowserStack to avoid timeout (test 3 pages max)
+const pagesToTest = IS_BROWSERSTACK
   ? urlsToTest.slice(0, 3)
   : urlsToTest;
 
 test.describe('Mermaid Diagram Rendering', () => {
-  // Skip on real iOS - BrowserStack iOS doesn't support required Playwright commands
-  test.skip(() => IS_BROWSERSTACK_MOBILE, 'iOS lacks required Playwright commands');
-
   // Skip entire suite if no pages to test
   test.skip(pagesToTest.length === 0, 'No mermaid-related changes detected');
-
-  // BrowserStack fix: explicitly close page to prevent "socket idle" errors during cleanup
-  test.afterEach(async ({ page }) => {
-    try {
-      await page.close();
-    } catch (e) {
-      // Ignore close errors - page may already be closed
-    }
-  });
 
   // Single test that iterates through pages sequentially
   test('diagrams render correctly on all affected pages', async ({ page }) => {
@@ -91,9 +79,10 @@ test.describe('Mermaid Diagram Rendering', () => {
           continue;
         }
 
-        // Get diagram info using page.$$eval - runs in browser, avoids iOS queryCount limitation
-        const diagramInfo = await page.$$eval(mermaidSelector, (elements) => {
-          return elements.map((el, i) => {
+        // Query DOM and collect info entirely in browser context (iOS compatible)
+        const diagramInfo = await page.evaluate((selector) => {
+          const elements = document.querySelectorAll(selector);
+          return Array.from(elements).map((el, i) => {
             const rect = el.getBoundingClientRect();
             return {
               index: i,
@@ -102,7 +91,7 @@ test.describe('Mermaid Diagram Rendering', () => {
               height: rect.height
             };
           });
-        });
+        }, mermaidSelector);
         const diagramCount = diagramInfo.length;
 
         console.log(`  [INFO] Found ${diagramCount} mermaid diagram(s)`);
@@ -131,16 +120,18 @@ test.describe('Mermaid Diagram Rendering', () => {
           diagramCount
         });
 
-        // Full page screenshot (skip if page too large)
-        const safePagePath = urlPath.replace(/\//g, '_').replace(/^_/, '');
-        try {
-          await page.screenshot({
-            path: path.join(SCREENSHOTS_DIR, `${safePagePath}-full.png`),
-            fullPage: true
-          });
-        } catch (screenshotError) {
-          // Page may be too large for fullPage screenshot (>32767px)
-          console.log(`  [WARN] Screenshot failed: ${screenshotError.message.split('\n')[0]}`);
+        // Screenshot (skip fullPage on mobile - causes socket idle)
+        if (!IS_BROWSERSTACK_MOBILE) {
+          const safePagePath = urlPath.replace(/\//g, '_').replace(/^_/, '');
+          try {
+            await page.screenshot({
+              path: path.join(SCREENSHOTS_DIR, `${safePagePath}-full.png`),
+              fullPage: true
+            });
+          } catch (screenshotError) {
+            // Page may be too large for fullPage screenshot (>32767px)
+            console.log(`  [WARN] Screenshot failed: ${screenshotError.message.split('\n')[0]}`);
+          }
         }
 
       } catch (error) {

@@ -33,15 +33,6 @@ const SCREENSHOTS_DIR = path.join(__dirname, '..', 'screenshots');
 const IS_REAL_MOBILE_DEVICE = process.env.BROWSERSTACK_CONFIG_FILE?.includes('mobile');
 
 test.describe('Version Selector', () => {
-  // BrowserStack fix: explicitly close page to prevent "socket idle" errors during cleanup
-  test.afterEach(async ({ page }) => {
-    try {
-      await page.close();
-    } catch (e) {
-      // Ignore close errors - page may already be closed
-    }
-  });
-
   test.describe('Desktop', () => {
     // Skip desktop tests on real mobile devices - viewport can't be changed
     test.skip(() => IS_REAL_MOBILE_DEVICE, 'Skipping desktop tests on real mobile device');
