@@ -92,28 +92,6 @@ function filePathToUrl(filePath) {
   return `/docs/${relativePath}`;
 }
 
-/**
- * Get list of changed files from git (for PR context)
- * Uses PR_BASE_SHA/PR_HEAD_SHA in CI, or compares against main locally
- */
-function getChangedFiles() {
-  try {
-    let cmd;
-    if (process.env.PR_BASE_SHA && process.env.PR_HEAD_SHA) {
-      // CI: use exact PR commit range
-      cmd = `git diff --name-only ${process.env.PR_BASE_SHA}...${process.env.PR_HEAD_SHA}`;
-    } else {
-      // Local: compare against main
-      cmd = 'git diff --name-only origin/main...HEAD 2>/dev/null || git diff --name-only HEAD~1';
-    }
-
-    const result = execSync(cmd, { encoding: 'utf-8', cwd: REPO_ROOT });
-    return result.trim().split('\n').filter(Boolean);
-  } catch (e) {
-    console.warn('[mermaid-pages] Could not get changed files from git, will test all pages');
-    return null;
-  }
-}
 
 /**
  * Build complete mapping of mermaid files to testable URLs
@@ -151,66 +129,12 @@ function buildMermaidPageMap() {
 }
 
 /**
- * Detect if running in CI environment
+ * Get all URLs with mermaid diagrams to test
  */
-function isCI() {
-  return !!(process.env.CI || process.env.PR_BASE_SHA || process.env.GITHUB_ACTIONS);
-}
-
-/**
- * Get URLs to test based on changed files
- * Returns all URLs if: local run, no changes detected, or FULL_MERMAID_TEST=true
- */
-function getUrlsToTest(options = {}) {
-  const { fullRun = false } = options;
+function getUrlsToTest() {
   const pageMap = buildMermaidPageMap();
-
-  // Local runs always test all pages
-  if (!isCI()) {
-    console.log(`[mermaid-pages] Local run, testing all ${pageMap.size} pages`);
-    return Array.from(pageMap.keys());
-  }
-
-  if (fullRun || process.env.FULL_MERMAID_TEST === 'true') {
-    console.log(`[mermaid-pages] Full run requested, testing all ${pageMap.size} pages`);
-    return Array.from(pageMap.keys());
-  }
-
-  const changedFiles = getChangedFiles();
-
-  if (!changedFiles) {
-    console.log('[mermaid-pages] Could not determine changed files, testing all pages');
-    return Array.from(pageMap.keys());
-  }
-
-  // Normalize changed file paths to absolute
-  const changedAbsolute = changedFiles.map(f =>
-    path.isAbsolute(f) ? f : path.join(REPO_ROOT, f)
-  );
-
-  // Find URLs affected by changed files
-  const affectedUrls = new Set();
-
-  for (const [url, sourceFiles] of pageMap.entries()) {
-    for (const sourceFile of sourceFiles) {
-      if (changedAbsolute.some(changed =>
-        changed === sourceFile ||
-        sourceFile.endsWith(changed) ||
-        changed.endsWith(sourceFile.replace(REPO_ROOT + '/', ''))
-      )) {
-        affectedUrls.add(url);
-        break;
-      }
-    }
-  }
-
-  if (affectedUrls.size === 0) {
-    console.log('[mermaid-pages] No mermaid-related changes detected');
-    return [];
-  }
-
-  console.log(`[mermaid-pages] Found ${affectedUrls.size} pages affected by changes`);
-  return Array.from(affectedUrls);
+  console.log(`[mermaid-pages] Testing all ${pageMap.size} pages with mermaid diagrams`);
+  return Array.from(pageMap.keys());
 }
 
 /**
@@ -232,7 +156,6 @@ module.exports = {
   isUnderscoreFile,
   findHostPages,
   filePathToUrl,
-  getChangedFiles,
   buildMermaidPageMap,
   getUrlsToTest,
   getAllMermaidSourceFiles,
@@ -266,9 +189,6 @@ if (require.main === module) {
     console.log('Usage:');
     console.log('  --list-all      List all pages with mermaid diagrams and their sources');
     console.log('  --list-files    List all source files containing mermaid (for CI)');
-    console.log('  --urls-to-test  List URLs to test based on changed files');
-    console.log('\nEnvironment variables:');
-    console.log('  CHANGED_FILES      Newline-separated list of changed files');
-    console.log('  FULL_MERMAID_TEST  Set to "true" to test all pages');
+    console.log('  --urls-to-test  List URLs to test');
   }
 }
