@@ -70,44 +70,38 @@ test.describe('Mermaid Diagram Rendering', () => {
           continue;
         }
 
-        // Get all mermaid diagrams
-        const diagrams = page.locator(mermaidSelector);
-        const diagramCount = await diagrams.count();
+        // Get diagram info using page.$$eval - runs in browser, avoids iOS queryCount limitation
+        const diagramInfo = await page.$$eval(mermaidSelector, (elements) => {
+          return elements.map((el, i) => {
+            const rect = el.getBoundingClientRect();
+            return {
+              index: i,
+              visible: rect.width > 0 && rect.height > 0,
+              width: rect.width,
+              height: rect.height
+            };
+          });
+        });
+        const diagramCount = diagramInfo.length;
 
         console.log(`  [INFO] Found ${diagramCount} mermaid diagram(s)`);
 
-        // Test each diagram
+        // Test each diagram using the pre-collected info
         let allPassed = true;
-        for (let i = 0; i < diagramCount; i++) {
-          const diagram = diagrams.nth(i);
-
-          // Scroll into view
-          await diagram.scrollIntoViewIfNeeded();
-          await page.waitForTimeout(500);
-
-          // Verify visibility
-          const isVisible = await diagram.isVisible();
-          if (!isVisible) {
-            console.log(`  [FAIL] Diagram ${i + 1} not visible`);
+        for (const info of diagramInfo) {
+          if (!info.visible) {
+            console.log(`  [FAIL] Diagram ${info.index + 1} not visible`);
             allPassed = false;
             continue;
           }
 
-          // Verify dimensions (diagram rendered, not collapsed)
-          const bbox = await diagram.boundingBox();
-          if (!bbox || bbox.width < 50 || bbox.height < 30) {
-            console.log(`  [FAIL] Diagram ${i + 1} has invalid dimensions: ${JSON.stringify(bbox)}`);
+          if (info.width < 50 || info.height < 30) {
+            console.log(`  [FAIL] Diagram ${info.index + 1} has invalid dimensions: ${info.width}x${info.height}`);
             allPassed = false;
             continue;
           }
 
-          // Screenshot each diagram
-          const safePath = urlPath.replace(/\//g, '_').replace(/^_/, '');
-          await diagram.screenshot({
-            path: path.join(SCREENSHOTS_DIR, `${safePath}-diagram-${i + 1}.png`)
-          });
-
-          console.log(`  [PASS] Diagram ${i + 1}: ${bbox.width}x${bbox.height}`);
+          console.log(`  [PASS] Diagram ${info.index + 1}: ${info.width}x${info.height}`);
         }
 
         results.push({

@@ -85,9 +85,8 @@ test.describe('Version Selector', () => {
       const dropdownMenu = page.locator('[class*="dropdown__menu"]');
       await expect(dropdownMenu).toBeVisible({ timeout: 5000 });
 
-      // Verify dropdown contains multiple version options
-      const versionOptions = dropdownMenu.locator('a, li');
-      const optionCount = await versionOptions.count();
+      // Count options using $$eval - runs in browser, avoids iOS queryCount limitation
+      const optionCount = await page.$$eval('[class*="dropdown__menu"] a, [class*="dropdown__menu"] li', els => els.length);
       console.log(`  [INFO] Found ${optionCount} version options in dropdown`);
 
       expect(optionCount).toBeGreaterThan(1);
@@ -157,8 +156,8 @@ test.describe('Version Selector', () => {
         const collapsibleContent = versionSelector.locator('[class*="tocCollapsibleContent"]');
         await expect(collapsibleContent).toBeVisible({ timeout: 5000 });
 
-        const versionOptions = collapsibleContent.locator('a');
-        const optionCount = await versionOptions.count();
+        // Count options using $$eval - runs in browser, avoids iOS queryCount limitation
+        const optionCount = await page.$$eval('[class*="tocCollapsibleContent"] a', els => els.length);
         console.log(`  [INFO] Found ${optionCount} version options in collapsible`);
 
         expect(optionCount).toBeGreaterThan(1);
@@ -188,11 +187,13 @@ test.describe('Version Selector', () => {
       await versionButton.click();
       await page.waitForTimeout(500);
 
-      // Find and click on a different version (e.g., v0.29)
-      const collapsibleContent = versionSelector.locator('[class*="tocCollapsibleContent"]');
-      const v029Option = collapsibleContent.locator('a').filter({ hasText: /v0\.29/i }).first();
+      // Find and click on a different version (e.g., v0.29) using $$eval to check existence
+      const hasV029 = await page.$$eval('[class*="tocCollapsibleContent"] a', els =>
+        els.some(el => /v0\.29/i.test(el.textContent))
+      );
 
-      if (await v029Option.count() > 0) {
+      if (hasV029) {
+        const v029Option = page.locator('[class*="tocCollapsibleContent"] a').filter({ hasText: /v0\.29/i }).first();
         await v029Option.click();
         await page.waitForTimeout(2000);
 
