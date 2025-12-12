@@ -24,9 +24,10 @@ module.exports = defineConfig({
   ],
 
   // Screenshots on failure
+  // Note: trace disabled - BrowserStack doesn't support tracingStartChunk on iOS/some platforms
   use: {
     screenshot: 'only-on-failure',
-    trace: 'retain-on-failure',
+    trace: 'off',
   },
 
   // Local testing project (for development without BrowserStack)
