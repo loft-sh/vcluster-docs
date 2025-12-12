@@ -52,7 +52,8 @@ test.describe('Mermaid Diagram Rendering', () => {
 
       try {
         // Navigate to page
-        await page.goto(fullUrl, { waitUntil: 'networkidle', timeout: 30000 });
+        // Use 'load' instead of 'networkidle' - BrowserStack mobile doesn't support networkidle
+        await page.goto(fullUrl, { waitUntil: 'load', timeout: 30000 });
 
         // Wait for page to stabilize
         await page.waitForTimeout(2000);
