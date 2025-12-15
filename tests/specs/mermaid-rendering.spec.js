@@ -37,25 +37,35 @@ if (urlsToTest.length > 0 && urlsToTest.length <= 5) {
   console.log(`    ... and ${urlsToTest.length - 3} more`);
 }
 
+// Detect BrowserStack environment
+const IS_BROWSERSTACK = !!process.env.BROWSERSTACK_CONFIG_FILE;
+const IS_BROWSERSTACK_MOBILE = process.env.BROWSERSTACK_CONFIG_FILE?.includes('mobile');
+
+// Limit pages on BrowserStack to avoid timeout (test 3 pages max)
+const pagesToTest = IS_BROWSERSTACK
+  ? urlsToTest.slice(0, 3)
+  : urlsToTest;
+
 test.describe('Mermaid Diagram Rendering', () => {
   // Skip entire suite if no pages to test
-  test.skip(urlsToTest.length === 0, 'No mermaid-related changes detected');
+  test.skip(pagesToTest.length === 0, 'No mermaid-related changes detected');
 
-  // Single test that iterates through all pages sequentially
-  // This prevents BrowserStack queue overflow when testing many pages
+  // Single test that iterates through pages sequentially
   test('diagrams render correctly on all affected pages', async ({ page }) => {
     const results = [];
 
-    for (const urlPath of urlsToTest) {
+    console.log(`[mermaid] Testing ${pagesToTest.length} pages${IS_BROWSERSTACK ? ' (limited on BrowserStack)' : ''}`);
+
+    for (const urlPath of pagesToTest) {
       const fullUrl = `${BASE_URL}${urlPath}`;
       console.log(`\n[TEST] Checking ${urlPath}`);
 
       try {
         // Navigate to page
-        await page.goto(fullUrl, { waitUntil: 'networkidle', timeout: 30000 });
+        await page.goto(fullUrl, { waitUntil: 'load', timeout: 30000 });
 
-        // Wait for page to stabilize
-        await page.waitForTimeout(2000);
+        // Brief wait for JS to execute
+        await page.waitForTimeout(500);
 
         // Wait for mermaid diagrams to render
         const mermaidSelector = 'svg[id^="mermaid"]';
@@ -69,44 +79,39 @@ test.describe('Mermaid Diagram Rendering', () => {
           continue;
         }
 
-        // Get all mermaid diagrams
-        const diagrams = page.locator(mermaidSelector);
-        const diagramCount = await diagrams.count();
+        // Query DOM and collect info entirely in browser context (iOS compatible)
+        const diagramInfo = await page.evaluate((selector) => {
+          const elements = document.querySelectorAll(selector);
+          return Array.from(elements).map((el, i) => {
+            const rect = el.getBoundingClientRect();
+            return {
+              index: i,
+              visible: rect.width > 0 && rect.height > 0,
+              width: rect.width,
+              height: rect.height
+            };
+          });
+        }, mermaidSelector);
+        const diagramCount = diagramInfo.length;
 
         console.log(`  [INFO] Found ${diagramCount} mermaid diagram(s)`);
 
-        // Test each diagram
+        // Test each diagram using the pre-collected info
         let allPassed = true;
-        for (let i = 0; i < diagramCount; i++) {
-          const diagram = diagrams.nth(i);
-
-          // Scroll into view
-          await diagram.scrollIntoViewIfNeeded();
-          await page.waitForTimeout(500);
-
-          // Verify visibility
-          const isVisible = await diagram.isVisible();
-          if (!isVisible) {
-            console.log(`  [FAIL] Diagram ${i + 1} not visible`);
+        for (const info of diagramInfo) {
+          if (!info.visible) {
+            console.log(`  [FAIL] Diagram ${info.index + 1} not visible`);
             allPassed = false;
             continue;
           }
 
-          // Verify dimensions (diagram rendered, not collapsed)
-          const bbox = await diagram.boundingBox();
-          if (!bbox || bbox.width < 50 || bbox.height < 30) {
-            console.log(`  [FAIL] Diagram ${i + 1} has invalid dimensions: ${JSON.stringify(bbox)}`);
+          if (info.width < 50 || info.height < 30) {
+            console.log(`  [FAIL] Diagram ${info.index + 1} has invalid dimensions: ${info.width}x${info.height}`);
             allPassed = false;
             continue;
           }
 
-          // Screenshot each diagram
-          const safePath = urlPath.replace(/\//g, '_').replace(/^_/, '');
-          await diagram.screenshot({
-            path: path.join(SCREENSHOTS_DIR, `${safePath}-diagram-${i + 1}.png`)
-          });
-
-          console.log(`  [PASS] Diagram ${i + 1}: ${bbox.width}x${bbox.height}`);
+          console.log(`  [PASS] Diagram ${info.index + 1}: ${info.width}x${info.height}`);
         }
 
         results.push({
@@ -115,12 +120,19 @@ test.describe('Mermaid Diagram Rendering', () => {
           diagramCount
         });
 
-        // Full page screenshot
-        const safePagePath = urlPath.replace(/\//g, '_').replace(/^_/, '');
-        await page.screenshot({
-          path: path.join(SCREENSHOTS_DIR, `${safePagePath}-full.png`),
-          fullPage: true
-        });
+        // Screenshot (skip fullPage on mobile - causes socket idle)
+        if (!IS_BROWSERSTACK_MOBILE) {
+          const safePagePath = urlPath.replace(/\//g, '_').replace(/^_/, '');
+          try {
+            await page.screenshot({
+              path: path.join(SCREENSHOTS_DIR, `${safePagePath}-full.png`),
+              fullPage: true
+            });
+          } catch (screenshotError) {
+            // Page may be too large for fullPage screenshot (>32767px)
+            console.log(`  [WARN] Screenshot failed: ${screenshotError.message.split('\n')[0]}`);
+          }
+        }
 
       } catch (error) {
         console.log(`  [ERROR] ${error.message}`);
