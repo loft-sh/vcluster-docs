@@ -4,39 +4,39 @@ module.exports = defineConfig({
   testDir: './specs',
   testMatch: '**/*.spec.js',
 
-  // Legacy iOS uses global setup/teardown for BrowserStack Local
-  globalSetup: require.resolve('./global-setup'),
-  globalTeardown: require.resolve('./global-teardown'),
+  // Timeout settings
+  timeout: 600000, // 10 minutes for full page iteration
+  expect: {
+    timeout: 15000,
+  },
 
-  timeout: 600000,
-  expect: { timeout: 15000 },
-
+  // Run tests sequentially in CI for stability
   fullyParallel: false,
   workers: 1,
+
+  // Retry failed tests once
   retries: 1,
 
+  // Reporter configuration
   reporter: [
     ['list'],
     ['html', { outputFolder: 'playwright-report', open: 'never' }],
   ],
 
+  // Screenshots on failure
+  // Note: trace disabled - BrowserStack doesn't support tracingStartChunk on iOS/some platforms
   use: {
     screenshot: 'only-on-failure',
     trace: 'off',
-    actionTimeout: 15000,
-    navigationTimeout: 45000,
   },
 
+  // Local testing project (for development without BrowserStack)
   projects: [
     {
       name: 'local',
-      use: { ...devices['Desktop Safari'] },
-    },
-    {
-      // Legacy iOS - direct WebSocket, no SDK
-      // Format: browser@device:osVersion@browserstack-ios
-      name: 'safari@iPhone 15:17@browserstack-ios',
-      use: { browserName: 'webkit' },
+      use: {
+        ...devices['Desktop Safari'],
+      },
     },
   ],
 });
