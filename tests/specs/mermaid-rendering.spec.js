@@ -8,7 +8,7 @@
  * - Manual URL override via TEST_URL env var
  */
 
-const { test, expect } = require('@playwright/test');
+const { test, expect } = require('../fixture');
 const path = require('path');
 const { getUrlsToTest } = require('../lib/mermaid-pages');
 
@@ -37,9 +37,9 @@ if (urlsToTest.length > 0 && urlsToTest.length <= 5) {
   console.log(`    ... and ${urlsToTest.length - 3} more`);
 }
 
-// Detect BrowserStack environment
-const IS_BROWSERSTACK = !!process.env.BROWSERSTACK_CONFIG_FILE;
-const IS_BROWSERSTACK_MOBILE = process.env.BROWSERSTACK_CONFIG_FILE?.includes('mobile');
+// Detect BrowserStack environment (SDK uses CONFIG_FILE, legacy iOS uses BROWSERSTACK_LOCAL)
+const IS_BROWSERSTACK = !!process.env.BROWSERSTACK_CONFIG_FILE || !!process.env.BROWSERSTACK_LOCAL;
+const IS_BROWSERSTACK_MOBILE = process.env.BROWSERSTACK_CONFIG_FILE?.includes('mobile') || process.env.BROWSERSTACK_LOCAL === 'true';
 
 // Limit pages on BrowserStack to avoid timeout (test 3 pages max)
 const pagesToTest = IS_BROWSERSTACK

@@ -10,7 +10,7 @@
  * - Dropdown functionality works on both viewports
  */
 
-const { test, expect } = require('@playwright/test');
+const { test, expect } = require('../fixture');
 const path = require('path');
 
 // Base URL for testing (from CI or default to production)
@@ -29,8 +29,8 @@ const MOBILE_VIEWPORT = { width: 375, height: 812 };
 // Screenshots directory
 const SCREENSHOTS_DIR = path.join(__dirname, '..', 'screenshots');
 
-// Detect if running on real mobile device (BrowserStack mobile has device name in config)
-const IS_REAL_MOBILE_DEVICE = process.env.BROWSERSTACK_CONFIG_FILE?.includes('mobile');
+// Detect if running on real mobile device (BrowserStack mobile or legacy iOS)
+const IS_REAL_MOBILE_DEVICE = process.env.BROWSERSTACK_CONFIG_FILE?.includes('mobile') || process.env.BROWSERSTACK_LOCAL === 'true';
 
 test.describe('Version Selector', () => {
   test.describe('Desktop', () => {
