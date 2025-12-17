@@ -379,42 +379,19 @@ write them.
 
 ### Controlling Vale rules
 
-Disabling all rules
+Use these HTML-style comments to control Vale checking:
 
-- Use these HTML-style comments to control Vale checking:
+```
+<!-- vale off -->  // Stops all Vale checks
+<!-- vale on -->   // Resumes Vale checks
+```
 
-  ```
-  <!-- vale off -->  // Stops all Vale checks
-  <!-- vale on -->   // Resumes Vale checks
-  ```
-
-- Example usage:
-  ```
-  <!-- vale off -->
-  <!-- this section ignores all Vale rules -->
-  This content won't be checked by Vale.
-  <!-- vale on -->
-  ```
-
-Disabling specific rules
-
-- Target individual rules with this syntax:
-  ```
-  <!-- vale RuleName = NO -->  // Disables one rule
-  <!-- vale RuleName = YES --> // Re-enables that rule
-  ```
-
-Important formatting requirements:
-
-- Use capital "YES" and "NO"
-- Include spaces around the equals sign
-- Specify the full rule name
-
-- Example usage:
-  ```
-  <!-- vale Google.Contractions = NO -->
-  This section ignores only the contractions rule
-  <!-- vale Google.Contractions = YES -->
-  ```
+Example usage:
+```
+<!-- vale off -->
+<!-- this section ignores all Vale rules -->
+This content won't be checked by Vale.
+<!-- vale on -->
+```
 
 <!-- vale on -->
