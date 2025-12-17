@@ -381,13 +381,14 @@ write them.
 
 Use these HTML-style comments to control Vale checking:
 
-```
+```text
 <!-- vale off -->  // Stops all Vale checks
 <!-- vale on -->   // Resumes Vale checks
 ```
 
 Example usage:
-```
+
+```text
 <!-- vale off -->
 <!-- this section ignores all Vale rules -->
 This content won't be checked by Vale.
