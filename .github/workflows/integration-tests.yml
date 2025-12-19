@@ -1,0 +1,153 @@
+name: Integration Tests
+
+on:
+  pull_request:
+    types:
+      - labeled
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'PR number for deploy preview URL'
+        required: true
+        type: string
+      test_url:
+        description: 'URL to test (overrides deploy preview)'
+        required: false
+        type: string
+
+concurrency:
+  group: integration-tests-${{ inputs.pr_number || github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  # Setup job - wait for Netlify and output the test URL
+  setup:
+    name: Wait for Deploy Preview
+    runs-on: ubuntu-latest
+    if: ${{ (github.event_name == 'workflow_dispatch') || (github.event_name == 'pull_request' && github.event.label.name == 'run-e2e') }}
+    outputs:
+      test_base_url: ${{ steps.get-url.outputs.url }}
+      test_url: ${{ inputs.test_url }}
+    steps:
+      - name: Wait for Netlify Deploy Preview
+        id: get-url
+        if: inputs.test_url == ''
+        run: |
+          PR_NUM="${{ github.event.pull_request.number || inputs.pr_number }}"
+          PREVIEW_URL="https://deploy-preview-${PR_NUM}--vcluster-docs-site.netlify.app"
+          echo "Waiting for Netlify preview: $PREVIEW_URL"
+          for i in {1..60}; do
+            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "$PREVIEW_URL/docs/vcluster")
+            echo "Attempt $i: HTTP $HTTP_CODE"
+            if [[ "$HTTP_CODE" =~ ^(200|301|302)$ ]]; then
+              echo "url=$PREVIEW_URL" >> $GITHUB_OUTPUT
+              echo "Preview ready at $PREVIEW_URL"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::Netlify preview not ready after 10 minutes."
+          exit 1
+
+      - name: Set manual test URL
+        if: inputs.test_url != ''
+        run: echo "url=${{ inputs.test_url }}" >> $GITHUB_OUTPUT
+
+  # Mobile batch - WebdriverIO (Playwright has iOS teardown issues)
+  test-mobile:
+    name: Mobile Safari (iPhone)
+    runs-on: ubuntu-latest
+    needs: setup
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        working-directory: tests/wdio
+        run: npm install
+
+      - name: Run Mobile tests
+        working-directory: tests/wdio
+        env:
+          BROWSERSTACK_USERNAME: ${{ secrets.BROWSERSTACK_USERNAME }}
+          BROWSERSTACK_ACCESS_KEY: ${{ secrets.BROWSERSTACK_ACCESS_KEY }}
+          TEST_BASE_URL: ${{ needs.setup.outputs.test_base_url }}
+          BROWSERSTACK_BUILD_NAME: "Mobile - [${{ github.head_ref || github.ref_name }}] PR ${{ github.event.pull_request.number || inputs.pr_number }}: ${{ github.event.pull_request.title || 'Manual run' }}"
+        run: npm run test:mobile
+
+  # Safari batch - runs after Mobile
+  test-safari:
+    name: Safari (macOS)
+    runs-on: ubuntu-latest
+    needs: [setup, test-mobile]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: BrowserStack Env Setup
+        uses: browserstack/github-actions/setup-env@master
+        with:
+          username: ${{ secrets.BROWSERSTACK_USERNAME }}
+          access-key: ${{ secrets.BROWSERSTACK_ACCESS_KEY }}
+          build-name: 'Safari - BUILD_INFO'
+          project-name: 'vCluster Docs'
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        working-directory: tests
+        run: |
+          npm install
+          npx playwright install webkit
+
+      - name: Run Safari tests
+        working-directory: tests
+        env:
+          BROWSERSTACK_CONFIG_FILE: browserstack-safari.yml
+          TEST_BASE_URL: ${{ needs.setup.outputs.test_base_url }}
+          TEST_URL: ${{ needs.setup.outputs.test_url }}
+        run: npx browserstack-node-sdk playwright test
+
+  # Chrome batch - runs after Safari
+  test-chrome:
+    name: Chrome (Windows)
+    runs-on: ubuntu-latest
+    needs: [setup, test-safari]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: BrowserStack Env Setup
+        uses: browserstack/github-actions/setup-env@master
+        with:
+          username: ${{ secrets.BROWSERSTACK_USERNAME }}
+          access-key: ${{ secrets.BROWSERSTACK_ACCESS_KEY }}
+          build-name: 'Chrome - BUILD_INFO'
+          project-name: 'vCluster Docs'
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        working-directory: tests
+        run: |
+          npm install
+          npx playwright install chromium
+
+      - name: Run Chrome tests
+        working-directory: tests
+        env:
+          BROWSERSTACK_CONFIG_FILE: browserstack-chrome.yml
+          TEST_BASE_URL: ${{ needs.setup.outputs.test_base_url }}
+          TEST_URL: ${{ needs.setup.outputs.test_url }}
+        run: npx browserstack-node-sdk playwright test

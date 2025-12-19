@@ -272,6 +272,7 @@ const config = {
     },
   ],
   clientModules: [
+    './src/client/MermaidPolyfillsClient.js',
     './src/client/ConfigNavigationClient.js',
     './src/client/DetailsClicksClient.js',
   ],
@@ -291,7 +292,7 @@ const config = {
         theme: { light: "default", dark: "dark" },
         options: {
           flowchart: {
-            htmlLabels: true,
+            htmlLabels: false,
             curve: 'basis'
           },
           fontSize: 14
@@ -377,13 +378,6 @@ const config = {
                 html: `
                   <a href="https://github.com/loft-sh/vcluster-docs/new/main/staging?filename=your-doc-name.mdx&value=${encodeURIComponent(newDocTemplate)}" target="_blank" class="footer-create-link" aria-label="Create New Doc">
                     Create New Doc
-                  </a>
-                `
-              },
-              {
-                html: `
-                  <a href="https://devpod.sh/open#https://github.com/loft-sh/vcluster-docs" target="_blank" class="footer-devpod-link" aria-label="Open in DevPod">
-                    Open in DevPod
                   </a>
                 `
               }

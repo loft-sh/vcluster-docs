@@ -3,26 +3,7 @@
 This docs website is built using [Docusaurus](https://docusaurus.io/) v3, a
 modern static website generator.
 
-## Quick start with DevPod
-
-Use DevPod to quickly set up a complete development environment and start
-contributing.
-
-1. [Install DevPod](https://devpod.sh/docs/getting-started/install) for your
-   operating system.
-2. Once installed, click the following to open this repository in DevPod:
-
-[![Open in DevPod](https://devpod.sh/assets/open-in-devpod.svg)](https://devpod.sh/open#https://github.com/loft-sh/vcluster-docs)
-
-This will automatically set up all dependencies and configurations needed for
-working on the documentation, including:
-
-- Node.js and npm for running the development server
-- The Vale linter for checking documentation style and grammar
-- VS Code extensions for Vale and ESLint
-- Pre-configured settings for the documentation workflow
-
-## Manual deployment
+## Getting started
 
 Fork the [vCluster docs repository](https://github.com/loft-sh/vcluster-docs) and clone your fork locally
 
@@ -67,6 +48,17 @@ npm run serve
 
 Before making a pull request, it's recommended to run this command to
 fix any broken links that may have been introduced.
+
+## AI-assisted PR review
+
+Pull requests automatically receive an AI-generated summary and review from Claude. The review:
+
+- Checks documentation style adherence
+- Validates vCluster YAML configurations
+- Identifies broken links or incorrect paths
+- Adds a summary to the PR description between `<!-- CLAUDE_SUMMARY -->` markers
+
+The AI review is meant to assist, not replace, human review.
 
 ## Style guide
 
@@ -360,10 +352,6 @@ process.
 VSCode and Neovim have `vale` plugins that can be installed to lint files as you
 write them.
 
-> [!NOTE]
-> If you're using DevPod with the "Open in DevPod" link above, Vale and the VS
-> Code extension are automatically installed and configured for you!
-
 - VS Code [Vale plugin](https://github.com/errata-ai/vale-vscode).
 - Neovim setup:
   - Install [mason.nvim](https://github.com/williamboman/mason.nvim) and add
@@ -391,42 +379,20 @@ write them.
 
 ### Controlling Vale rules
 
-Disabling all rules
+Use these HTML-style comments to control Vale checking:
 
-- Use these HTML-style comments to control Vale checking:
+```text
+<!-- vale off -->  // Stops all Vale checks
+<!-- vale on -->   // Resumes Vale checks
+```
 
-  ```
-  <!-- vale off -->  // Stops all Vale checks
-  <!-- vale on -->   // Resumes Vale checks
-  ```
+Example usage:
 
-- Example usage:
-  ```
-  <!-- vale off -->
-  <!-- this section ignores all Vale rules -->
-  This content won't be checked by Vale.
-  <!-- vale on -->
-  ```
-
-Disabling specific rules
-
-- Target individual rules with this syntax:
-  ```
-  <!-- vale RuleName = NO -->  // Disables one rule
-  <!-- vale RuleName = YES --> // Re-enables that rule
-  ```
-
-Important formatting requirements:
-
-- Use capital "YES" and "NO"
-- Include spaces around the equals sign
-- Specify the full rule name
-
-- Example usage:
-  ```
-  <!-- vale Google.Contractions = NO -->
-  This section ignores only the contractions rule
-  <!-- vale Google.Contractions = YES -->
-  ```
+```text
+<!-- vale off -->
+<!-- this section ignores all Vale rules -->
+This content won't be checked by Vale.
+<!-- vale on -->
+```
 
 <!-- vale on -->
