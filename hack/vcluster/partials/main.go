@@ -75,6 +75,7 @@ var paths = []string{
 	"experimental/genericSync",
 	"experimental/deploy",
 	"experimental/denyProxyRequests",
+	"experimental/proxy",
 	"experimental",
 	"sleepMode",
 	"controlPlane/advanced/workloadServiceAccount",
