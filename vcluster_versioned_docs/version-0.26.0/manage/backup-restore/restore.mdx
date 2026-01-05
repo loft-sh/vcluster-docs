@@ -1,0 +1,171 @@
+---
+title: Restore snapshots
+sidebar_label: Restore Snapshots
+sidebar_position: 3
+sidebar_class_name: host-nodes
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+import TenancySupport from '../../_fragments/tenancy-support.mdx';
+
+<TenancySupport hostNodes="true" privateNodes="true" />
+
+There are multiple ways to back up and restore a virtual cluster. vCluster provides a built-in method to create and restore snapshots using its CLI.
+
+:::warning
+If you use an external database, such as MySQL or PostgreSQL, that does **not** run in the same namespace as vCluster, you must restore based on the relevant database documentation.  
+:::
+
+A vCluster snapshot includes:
+
+- Backing store data (for example, etcd or SQLite)
+- vCluster Helm release information
+- vCluster configuration (for example, `vcluster.yaml`)
+
+:::info Extra Steps for Private Nodes 
+For virtual clusters with private nodes, [additional steps](#using-snapshots-with-private-nodes) may be required. 
+:::
+
+## Restore existing virtual cluster from a snapshot
+
+Restoring from a snapshot pauses the vCluster, scales down all workload pods to 0, and launches a temporary restore pod. Once the restore completes, the vCluster resumes, and all workload pods are scaled back up. This process results in temporary downtime while the restore is in progress.
+
+:::warning Failed Restore 
+If the restore fails while using `vcluster restore` commands, the process stops. You must retry the restore to avoid leaving the virtual cluster in an inconsistent or broken state.
+:::
+
+Restore a vCluster using the following commands. You can use any snapshot option and set the snapshot URL with different credentials.
+
+```bash title="Restore virtual clusters from OCI, S3, or container snapshots"
+# Restore from an OCI snapshot using local credentials.
+vcluster restore my-vcluster "oci://ghcr.io/my-user/my-repo:my-tag"
+
+# Restore from an OCI snapshot while passing in credentials in the snapshot URL
+export OCI_USERNAME=my-username
+export OCI_PASSWORD=$(echo -n "my-password" | base64)
+vcluster restore my-vcluster "oci://ghcr.io/my-user/my-repo:my-tag?username=$OCI_USERNAME&password=$OCI_PASSWORD&skip-client-credentials=true"
+
+# Restore from an s3 snapshot using local credentials.
+vcluster restore my-vcluster "s3://my-s3-bucket/my-snapshot-key"
+
+# Restore from a local pvc snapshot (if using embedded storage).
+vcluster restore my-vcluster "container:///data/my-snapshot.tar.gz"
+```
+
+## Clone a virtual cluster to a new virtual cluster
+
+You can use snapshots to clone an existing virtual cluster and create a new virtual cluster from that snapshot. When creating a new virtual cluster from a snapshot, it also restores all workloads in the virtual cluster.
+
+:::warning Restore Failures
+If the restore failes while using `vcluster create`, the new virtual cluster is automatically deleted.
+:::
+
+```bash title="Create a new virtual cluster from an OCI snapshot"
+# Create a new virtual cluster from an OCI snapshot (uses local credentials).
+vcluster create my-vcluster --restore oci://ghcr.io/my-user/my-repo:my-tag
+```
+
+:::info New name or namespace updates certificates
+vCluster certificates change when you create the virtual cluster with a new name or in a new namespace, which is expected as virtual clusters shouldn't share the same certificates.
+:::
+
+## Migrate and override vCluster configuration options to create a new vCluster 
+
+When upgrading virtual clusters, there are a couple of configuration options that are not supported to change on an existing virtual cluster. For example, backing store and distro cannot be changed. In order to change these configuration options, you can migrate the virtual cluster by creating a new virtual cluster from a snapshot and applying new configuration options.
+
+When creating a new virtual cluster from a snapshot, it also restores all workloads in the virtual cluster. 
+
+:::warning Restore failures
+If the restore fails while using `vcluster create`, the new virtual cluster is automatically deleted.
+:::
+
+```bash title="Migrate a virtual cluster by restoring from a snapshot"
+# Upgrade an existing vCluster by restoring from a snapshot and applying a new vcluster.yaml.
+# Configuration options in the vcluster.yaml override the options from the snapshot.
+vcluster create my-vcluster --upgrade -f vcluster.yaml --restore oci://ghcr.io/my-user/my-repo:my-tag
+```
+
+:::info New name or namespace updates certificates
+vCluster certificates change when you create a virtual cluster with a new name or in a different namespace. This behavior is expected, as virtual clusters should not share the same certificates.
+:::
+
+### Supported migration options
+
+vCluster supports migration paths based on your setup. The following are the available migration options for Kubernetes distributions and backing stores.
+
+#### Distros
+
+Migrate between Kubernetes distributions based on your workload requirements. You can migrate betweeen the following distros:
+
+- k3s -> k8s
+- k8s -> k3s
+
+#### Backing store
+
+Change your data store to improve efficiency, scalability, and Kubernetes compatibility. You can migrate betweeen the following data stores:
+
+- Embedded database (SQLite) -> Embedded database (etcd)
+- Embedded database (SQLite) -> External database
+
+All other configuration options are overridden, similar to upgrading a virtual cluster and applying changes.
+
+### Limitations
+
+When taking snapshots and restoring virtual clusters, there are limitations: 
+
+**Virtual clusters with PVs or PVCs**
+- Snapshots do not include persistent volumes (PVs) or persistent volume claims (PVCs).
+
+**Sleeping virtual clusters**
+- Snapshots require a running vCluster control plane and do not work with sleeping virtual clusters.
+
+**Virtual clusters using the k0s distro**
+- Use the `--pod-exec` flag to take a snapshot of a k0s virtual cluster.
+- k0s virtual clusters do not support restore or clone operations. Migrate them to k8s instead.
+
+**Virtual clusters using an external database**
+- Virtual clusters with an external database handle backup and restore outside of vCluster. A database administrator must back up or restore the external database according to the database documentation. Avoid using the vCluster CLI backup and restore commands for clusters with an external database.
+
+## Use snapshots with private nodes
+
+Node resources are also included in the etcd snapshot. If you are restoring to a virtual cluster with 
+a different set of nodes, manual intervention is required for virtual clusters using [private nodes](../../deploy/worker-nodes/private-nodes). When using snapshots with [host nodes](../../deploy/worker-nodes/host-nodes),
+if the nodes change between the snapshot and restore, vCluster is able to automatically
+update information about the nodes. 
+
+### Nodes removed between snapshot and restore
+
+When nodes exist in the snapshot, but don't exist in the current virtual cluster, you need to manually delete the node(s) from the restored virtual cluster. 
+
+The node shows up in `kubectl get nodes`, but the node does not physically exist in the virtual cluster.
+
+For each node that no longer exists, you need to run `kubectl delete node [name]` to delete the node resource from the virtual cluster. 
+
+```bash title="Manually delete nodes that no longer exist"
+export NODE_NAME=my-node
+kubectl delete node $NODE_NAME
+```
+
+### Nodes added between snapshot and restore
+
+When nodes were added after the snapshot was taken, the node resource does not exist in the restored virtual cluster. If you run
+`kubectl get nodes`, then those node(s) are missing.
+
+You need to re-join each private node with the `--force-join` flag. 
+
+```bash title="Create a token for worker nodes"
+export VCLUSTER_NAME=my-vcluster
+
+# Connect to your vcluster
+vcluster connect $VCLUSTER_NAME
+
+# Create a token
+vcluster token create --expires=1h
+```
+
+The output provides a command to run on your worker node, and you need to append the `--force-join` flag.
+
+```bash title="Example output from creating a token with --force-join"
+curl -sfLk https://<vcluster-endpoint>/node/join?token=<token> | sh - -- --force-join
+```
