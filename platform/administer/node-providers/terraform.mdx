@@ -246,6 +246,106 @@ Besides the user-defined credentials specified below, the platform passes a `var
 * `var.vcluster.instance`: Full virtual cluster instance object
 * `var.vcluster.nodeEnvironment`: Full node environment object
 
+## Kubernetes template
+
+The Kubernetes template applies Kubernetes manifests directly to the vCluster using Terraform. This runs after the node environment is created but before nodes are provisioned, allowing you to configure cluster-wide resources that must exist before workloads run.
+
+Use cases include:
+* RuntimeClasses for specialized container runtimes
+* DaemonSets that must be present when nodes join
+* Custom storage classes
+* CNI configuration or patches
+* Any cluster resources needed before node provisioning
+
+### Execution order
+
+The Kubernetes template executes at a specific point in the provisioning lifecycle:
+
+1. Node environment template runs (creates VPC, security groups, etc.)
+2. Kubernetes template runs (applies manifests to the vCluster)
+3. Node template runs (provisions actual nodes)
+4. Nodes join the vCluster and workloads can be scheduled
+
+### Configuration
+
+Configure the Kubernetes template under `spec.terraform.nodeEnvironmentTemplate.kubernetes`. Like other templates, it supports both inline and git-based sources.
+
+```yaml
+apiVersion: management.loft.sh/v1
+kind: NodeProvider
+metadata:
+  name: my-provider
+spec:
+  terraform:
+    nodeEnvironmentTemplate:
+      kubernetes:
+        git:
+          repository: https://github.com/my-org/my-repo.git
+          subPath: kubernetes
+```
+
+### Available terraform vCluster variables
+
+The platform passes a `var.vcluster` object to the Kubernetes template:
+
+* `var.vcluster.kubeConfig`: Path to the vCluster kubeconfig file. Use this to configure the Kubernetes Terraform provider.
+* `var.vcluster.name`: Name of the vCluster
+* `var.vcluster.namespace`: Project namespace of the vCluster
+* `var.vcluster.requirements`: A key-value map of the specified and resolved requirements
+* `var.vcluster.instance`: Full virtual cluster instance object
+* `var.vcluster.nodeEnvironment`: Full node environment object
+
+### Example
+
+The following example creates a custom RuntimeClass in the vCluster before nodes are provisioned.
+
+```hcl title="kubernetes/main.tf"
+terraform {
+  required_providers {
+    kubernetes = {
+      source  = "hashicorp/kubernetes"
+      version = ">= 2.30"
+    }
+  }
+}
+
+# Configure provider with vCluster kubeconfig
+provider "kubernetes" {
+  config_path = var.vcluster.kubeConfig
+}
+
+variable "vcluster" {
+  description = "vCluster variables passed by the platform"
+  type = object({
+    kubeConfig      = string
+    name            = string
+    namespace       = string
+    requirements    = map(string)
+    instance        = any
+    nodeEnvironment = any
+  })
+}
+
+# Create a RuntimeClass in the vCluster
+resource "kubernetes_manifest" "custom_runtime_class" {
+  manifest = {
+    apiVersion = "node.k8s.io/v1"
+    kind       = "RuntimeClass"
+    metadata = {
+      name = "custom-runtime"
+    }
+    handler = "custom-handler"
+  }
+}
+```
+
+The `kubernetes_manifest` resource provides idempotent application of Kubernetes resources. When the vCluster is created, the platform:
+
+1. Creates the node environment infrastructure
+2. Runs this Terraform to apply the RuntimeClass to the vCluster
+3. Provisions nodes that join the vCluster
+4. Workloads can use the RuntimeClass immediately
+
 ## Credentials
 
 Credentials to the Terraform scripts can be defined via Kubernetes secrets. The key and values of these secrets can then be passed as either environment variables or regular variables to the Terraform commands.
