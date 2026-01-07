@@ -1,5 +1,5 @@
 # Auto-generated redirect tests
-# Generated: 2025-11-12 16:16:05 UTC
+# Generated: 2026-01-07 09:39:21 UTC
 # Usage: hurl --test --variable BASE_URL=https://www.vcluster.com test-redirects.hurl
 
 # Test: deploy/control-plane/container/flux -> third-party-integrations/git-operations/flux
@@ -15,6 +15,21 @@ header "Location" contains "/docs/vcluster/next/third-party-integrations/git-ope
 
 # Verify destination exists
 GET {{BASE_URL}}/docs/vcluster/third-party-integrations/git-operations/flux/
+HTTP 200
+
+# Test: manage/backup-restore -> manage/backup-restore/backup
+GET {{BASE_URL}}/docs/vcluster/manage/backup-restore/
+HTTP 301
+[Asserts]
+header "Location" contains "/docs/vcluster/manage/backup-restore/backup"
+
+GET {{BASE_URL}}/docs/vcluster/next/manage/backup-restore/
+HTTP 301
+[Asserts]
+header "Location" contains "/docs/vcluster/next/manage/backup-restore/backup"
+
+# Verify destination exists
+GET {{BASE_URL}}/docs/vcluster/manage/backup-restore/backup/
 HTTP 200
 
 # Test: manage/backup-restore/volume-snapshots -> manage/backup-restore/volume-snapshots/setup
