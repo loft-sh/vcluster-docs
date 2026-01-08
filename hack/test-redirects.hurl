@@ -1,9 +1,15 @@
 # Auto-generated redirect tests
-# Generated: 2026-01-09 19:42:41 UTC
+# Generated: 2026-01-13 08:00:33 UTC
 # Usage: hurl --test --variable BASE_URL=https://www.vcluster.com hack/test-redirects.hurl
 #
 # Tests use fake version (99.0.0) to avoid versioned docs serving content.
 # Redirects are fallbacks - they only fire when no content exists at source path.
+
+# Test: configure/vcluster-yaml/sleep-mode -> configure/vcluster-yaml/sleep
+GET {{BASE_URL}}/docs/vcluster/99.0.0/configure/vcluster-yaml/sleep-mode/
+HTTP 301
+[Asserts]
+header "Location" contains "/docs/vcluster/99.0.0/configure/vcluster-yaml/sleep"
 
 # Test: deploy/control-plane/container/flux -> third-party-integrations/git-operations/flux
 GET {{BASE_URL}}/docs/vcluster/99.0.0/deploy/control-plane/container/flux/
@@ -136,4 +142,16 @@ GET {{BASE_URL}}/docs/platform/99.0.0/configure/single-sign-on/providers/saml/
 HTTP 301
 [Asserts]
 header "Location" contains "/docs/platform/99.0.0/configure/platform-configs/single-sign-on"
+
+# Test: platform/use-platform/virtual-clusters/key-features/sleep-mode -> platform/use-platform/virtual-clusters/key-features/sleep
+GET {{BASE_URL}}/docs/platform/99.0.0/use-platform/virtual-clusters/key-features/sleep-mode/
+HTTP 301
+[Asserts]
+header "Location" contains "/docs/platform/99.0.0/use-platform/virtual-clusters/key-features/sleep"
+
+# Test: platform/use-platform/virtual-clusters/key-features/snapshots -> configure/vcluster-yaml/snapshots
+GET {{BASE_URL}}/docs/platform/99.0.0/use-platform/virtual-clusters/key-features/snapshots/
+HTTP 301
+[Asserts]
+header "Location" contains "/docs/platform/99.0.0/configure/vcluster-yaml/snapshots"
 
