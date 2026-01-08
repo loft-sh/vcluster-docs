@@ -80,7 +80,7 @@ const FeatureTable = ({ names, tenancy }) => {
   const sortedFeatures = [...filteredFeatures].sort((a, b) => a.name.localeCompare(b.name));
 
   // Get list of products from products.yaml (order matters for display)
-  const productOrder = ['oss', 'free', 'dev', 'prod', 'scale', 'enterprise'];
+  const productOrder = ['oss', 'free', 'enterprise'];
   const products = productOrder
     .map(key => {
       const product = productsData.products?.[key];
@@ -88,35 +88,14 @@ const FeatureTable = ({ names, tenancy }) => {
     })
     .filter(p => p !== null);
 
-  // Check which products include each feature
+  // Check which products include each feature (based on products.yaml)
   const checkProductAvailability = (featureId) => {
     const availability = {};
 
-    // Check each product
+    // Check each product - products.yaml is the source of truth
     products.forEach(product => {
-      if (product.features?.includes(featureId)) {
-        availability[product.key] = true;
-      } else {
-        availability[product.key] = false;
-      }
+      availability[product.key] = product.features?.includes(featureId) || false;
     });
-
-    // Fallback: use enterprise_only flag from feature definition
-    const feature = featuresData.features?.[featureId];
-    if (feature) {
-      if (feature.enterprise_only === false) {
-        // Available in all products
-        products.forEach(product => {
-          availability[product.key] = true;
-        });
-      } else if (feature.enterprise_only === true) {
-        // Only available in enterprise/paid products
-        availability.oss = false;
-        if (!availability.free && !availability.dev && !availability.prod && !availability.scale && !availability.enterprise) {
-          availability.enterprise = true;
-        }
-      }
-    }
 
     return availability;
   };
@@ -133,7 +112,7 @@ const FeatureTable = ({ names, tenancy }) => {
 
     return badgeText ? (
       <span className={styles.featureType}>
-        [{badgeText}]
+        ({badgeText})
       </span>
     ) : null;
   };
@@ -147,14 +126,14 @@ const FeatureTable = ({ names, tenancy }) => {
         'standalone': 'Standalone'
       };
       const tenancyName = tenancyNames[tenancy] || tenancy;
-      return `Features available for ${tenancyName}`;
+      return `Features available for ${tenancyName}:`;
     }
-    return 'Feature availability';
+    return 'Feature availability:';
   };
 
   return (
     <>
-      <h2>{getHeading()}</h2>
+      <p className={styles.featureTableHeading}>{getHeading()}</p>
       <div className={styles.featureTableWrapper}>
         <table className={styles.featureTable}>
         <thead>
@@ -213,9 +192,17 @@ const FeatureTable = ({ names, tenancy }) => {
                 {products.map(product => (
                   <td key={product.key} className={styles.centerAlign}>
                     {availability[product.key] ? (
-                      <span className={styles.checkmark} title={`Available in ${product.name}`}>✓</span>
+                      <span className={styles.checkmark} title={`Available in ${product.name}`}>
+                        <svg xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960" width="24px" fill="currentColor">
+                          <path d="m424-296 282-282-56-56-226 226-114-114-56 56 170 170Zm56 216q-83 0-156-31.5T197-197q-54-54-85.5-127T80-480q0-83 31.5-156T197-763q54-54 127-85.5T480-880q83 0 156 31.5T763-763q54 54 85.5 127T880-480q0 83-31.5 156T763-197q-54 54-127 85.5T480-80Z"/>
+                        </svg>
+                      </span>
                     ) : (
-                      <span className={styles.cross} title={`Not available in ${product.name}`}>✗</span>
+                      <span className={styles.cross} title={`Not available in ${product.name}`}>
+                        <svg xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960" width="24px" fill="currentColor">
+                          <path d="m256-200-56-56 224-224-224-224 56-56 224 224 224-224 56 56-224 224 224 224-56 56-224-224-224 224Z"/>
+                        </svg>
+                      </span>
                     )}
                   </td>
                 ))}
