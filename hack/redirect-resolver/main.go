@@ -213,12 +213,6 @@ func (r *Resolver) GenerateHurlTests(resolved map[string]string) error {
 		tests.WriteString("[Asserts]\n")
 		tests.WriteString(fmt.Sprintf("header \"Location\" contains \"%s/%s\"\n\n", basePath, toURL))
 
-		// Test /next/ redirect
-		tests.WriteString(fmt.Sprintf("GET {{BASE_URL}}%s/next/%s/\n", basePath, fromURL))
-		tests.WriteString("HTTP 301\n")
-		tests.WriteString("[Asserts]\n")
-		tests.WriteString(fmt.Sprintf("header \"Location\" contains \"%s/next/%s\"\n\n", basePath, toURL))
-
 		// Verify destination exists
 		tests.WriteString(fmt.Sprintf("# Verify destination exists\n"))
 		tests.WriteString(fmt.Sprintf("GET {{BASE_URL}}%s/%s/\n", basePath, toURL))
@@ -277,19 +271,13 @@ func (r *Resolver) GenerateRedirects(resolved map[string]string) error {
 		fromURL := stripProductPrefix(from)
 		toURL := stripProductPrefix(to)
 
-		// Unversioned
+		// Unversioned redirect (for /docs/vcluster/path or /docs/platform/path)
 		redirects.WriteString("[[redirects]]\n")
 		redirects.WriteString(fmt.Sprintf("  from = \"%s/%s\"\n", basePath, fromURL))
 		redirects.WriteString(fmt.Sprintf("  to = \"%s/%s\"\n", basePath, toURL))
 		redirects.WriteString("  status = 301\n\n")
 
-		// Next version
-		redirects.WriteString("[[redirects]]\n")
-		redirects.WriteString(fmt.Sprintf("  from = \"%s/next/%s\"\n", basePath, fromURL))
-		redirects.WriteString(fmt.Sprintf("  to = \"%s/next/%s\"\n", basePath, toURL))
-		redirects.WriteString("  status = 301\n\n")
-
-		// Wildcard versions
+		// Versioned redirect with :splat (handles /docs/vcluster/0.30.0/path, /docs/platform/4.5.0/path, etc.)
 		redirects.WriteString("[[redirects]]\n")
 		redirects.WriteString(fmt.Sprintf("  from = \"%s/*/%s\"\n", basePath, fromURL))
 		redirects.WriteString(fmt.Sprintf("  to = \"%s/:splat/%s\"\n", basePath, toURL))
