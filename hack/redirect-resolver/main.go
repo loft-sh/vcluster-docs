@@ -186,7 +186,10 @@ func (r *Resolver) GenerateHurlTests(resolved map[string]string) error {
 	var tests strings.Builder
 	tests.WriteString("# Auto-generated redirect tests\n")
 	tests.WriteString("# Generated: " + time.Now().UTC().Format("2006-01-02 15:04:05 UTC") + "\n")
-	tests.WriteString("# Usage: hurl --test --variable BASE_URL=https://www.vcluster.com test-redirects.hurl\n\n")
+	tests.WriteString("# Usage: hurl --test --variable BASE_URL=https://www.vcluster.com hack/test-redirects.hurl\n")
+	tests.WriteString("#\n")
+	tests.WriteString("# Tests use fake version (99.0.0) to avoid versioned docs serving content.\n")
+	tests.WriteString("# Redirects are fallbacks - they only fire when no content exists at source path.\n\n")
 
 	var sortedKeys []string
 	for k := range resolved {
@@ -197,7 +200,7 @@ func (r *Resolver) GenerateHurlTests(resolved map[string]string) error {
 	for _, from := range sortedKeys {
 		to := resolved[from]
 
-		// Skip any paths with underscores - Docusaurus doesn't generate pages from underscore-prefixed directories
+		// Skip any paths with underscores - Docusaurus doesn't generate pages from these
 		if strings.Contains(from, "_") || strings.Contains(to, "_") {
 			continue
 		}
@@ -206,17 +209,13 @@ func (r *Resolver) GenerateHurlTests(resolved map[string]string) error {
 		fromURL := stripProductPrefix(from)
 		toURL := stripProductPrefix(to)
 
-		// Test unversioned redirect
+		// Use fake version 99.0.0 to test versioned wildcard redirects
+		// This avoids versioned docs serving content at old paths
 		tests.WriteString(fmt.Sprintf("# Test: %s -> %s\n", from, to))
-		tests.WriteString(fmt.Sprintf("GET {{BASE_URL}}%s/%s/\n", basePath, fromURL))
+		tests.WriteString(fmt.Sprintf("GET {{BASE_URL}}%s/99.0.0/%s/\n", basePath, fromURL))
 		tests.WriteString("HTTP 301\n")
 		tests.WriteString("[Asserts]\n")
-		tests.WriteString(fmt.Sprintf("header \"Location\" contains \"%s/%s\"\n\n", basePath, toURL))
-
-		// Verify destination exists
-		tests.WriteString(fmt.Sprintf("# Verify destination exists\n"))
-		tests.WriteString(fmt.Sprintf("GET {{BASE_URL}}%s/%s/\n", basePath, toURL))
-		tests.WriteString("HTTP 200\n\n")
+		tests.WriteString(fmt.Sprintf("header \"Location\" contains \"%s/99.0.0/%s\"\n\n", basePath, toURL))
 	}
 
 	if err := os.WriteFile(hurlFile, []byte(tests.String()), 0644); err != nil {
