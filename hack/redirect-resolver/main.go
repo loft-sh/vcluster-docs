@@ -188,8 +188,6 @@ func (r *Resolver) GenerateHurlTests(resolved map[string]string) error {
 	tests.WriteString("# Generated: " + time.Now().UTC().Format("2006-01-02 15:04:05 UTC") + "\n")
 	tests.WriteString("# Usage: hurl --test --variable BASE_URL=https://www.vcluster.com test-redirects.hurl\n\n")
 
-	basePath := "/docs/vcluster"
-
 	var sortedKeys []string
 	for k := range resolved {
 		sortedKeys = append(sortedKeys, k)
@@ -204,22 +202,26 @@ func (r *Resolver) GenerateHurlTests(resolved map[string]string) error {
 			continue
 		}
 
+		basePath := getBasePath(from)
+		fromURL := stripProductPrefix(from)
+		toURL := stripProductPrefix(to)
+
 		// Test unversioned redirect
 		tests.WriteString(fmt.Sprintf("# Test: %s -> %s\n", from, to))
-		tests.WriteString(fmt.Sprintf("GET {{BASE_URL}}%s/%s/\n", basePath, from))
+		tests.WriteString(fmt.Sprintf("GET {{BASE_URL}}%s/%s/\n", basePath, fromURL))
 		tests.WriteString("HTTP 301\n")
 		tests.WriteString("[Asserts]\n")
-		tests.WriteString(fmt.Sprintf("header \"Location\" contains \"%s/%s\"\n\n", basePath, to))
+		tests.WriteString(fmt.Sprintf("header \"Location\" contains \"%s/%s\"\n\n", basePath, toURL))
 
 		// Test /next/ redirect
-		tests.WriteString(fmt.Sprintf("GET {{BASE_URL}}%s/next/%s/\n", basePath, from))
+		tests.WriteString(fmt.Sprintf("GET {{BASE_URL}}%s/next/%s/\n", basePath, fromURL))
 		tests.WriteString("HTTP 301\n")
 		tests.WriteString("[Asserts]\n")
-		tests.WriteString(fmt.Sprintf("header \"Location\" contains \"%s/next/%s\"\n\n", basePath, to))
+		tests.WriteString(fmt.Sprintf("header \"Location\" contains \"%s/next/%s\"\n\n", basePath, toURL))
 
 		// Verify destination exists
 		tests.WriteString(fmt.Sprintf("# Verify destination exists\n"))
-		tests.WriteString(fmt.Sprintf("GET {{BASE_URL}}%s/%s/\n", basePath, to))
+		tests.WriteString(fmt.Sprintf("GET {{BASE_URL}}%s/%s/\n", basePath, toURL))
 		tests.WriteString("HTTP 200\n\n")
 	}
 
@@ -257,8 +259,6 @@ func (r *Resolver) GenerateRedirects(resolved map[string]string) error {
 	redirects.WriteString(fmt.Sprintf("# Generated: %s\n", time.Now().UTC().Format("2006-01-02 15:04:05 UTC")))
 	redirects.WriteString("# All redirects are transitively resolved to prevent redirect chains\n\n")
 
-	basePath := "/docs/vcluster"
-
 	var sortedKeys []string
 	for k := range resolved {
 		sortedKeys = append(sortedKeys, k)
@@ -273,22 +273,26 @@ func (r *Resolver) GenerateRedirects(resolved map[string]string) error {
 			continue
 		}
 
+		basePath := getBasePath(from)
+		fromURL := stripProductPrefix(from)
+		toURL := stripProductPrefix(to)
+
 		// Unversioned
 		redirects.WriteString("[[redirects]]\n")
-		redirects.WriteString(fmt.Sprintf("  from = \"%s/%s\"\n", basePath, from))
-		redirects.WriteString(fmt.Sprintf("  to = \"%s/%s\"\n", basePath, to))
+		redirects.WriteString(fmt.Sprintf("  from = \"%s/%s\"\n", basePath, fromURL))
+		redirects.WriteString(fmt.Sprintf("  to = \"%s/%s\"\n", basePath, toURL))
 		redirects.WriteString("  status = 301\n\n")
 
 		// Next version
 		redirects.WriteString("[[redirects]]\n")
-		redirects.WriteString(fmt.Sprintf("  from = \"%s/next/%s\"\n", basePath, from))
-		redirects.WriteString(fmt.Sprintf("  to = \"%s/next/%s\"\n", basePath, to))
+		redirects.WriteString(fmt.Sprintf("  from = \"%s/next/%s\"\n", basePath, fromURL))
+		redirects.WriteString(fmt.Sprintf("  to = \"%s/next/%s\"\n", basePath, toURL))
 		redirects.WriteString("  status = 301\n\n")
 
 		// Wildcard versions
 		redirects.WriteString("[[redirects]]\n")
-		redirects.WriteString(fmt.Sprintf("  from = \"%s/*/%s\"\n", basePath, from))
-		redirects.WriteString(fmt.Sprintf("  to = \"%s/:splat/%s\"\n", basePath, to))
+		redirects.WriteString(fmt.Sprintf("  from = \"%s/*/%s\"\n", basePath, fromURL))
+		redirects.WriteString(fmt.Sprintf("  to = \"%s/:splat/%s\"\n", basePath, toURL))
 		redirects.WriteString("  status = 301\n\n")
 	}
 
@@ -524,10 +528,13 @@ func detectPathChanges(baseDir string) (*PathChanges, error) {
 }
 
 // extractDocPath extracts the documentation path from a full file path
+// For platform paths, returns with "platform/" prefix to distinguish from vcluster
 // Examples:
 //
 //	vcluster/deploy/security/air-gapped.mdx -> deploy/security/air-gapped.mdx
 //	vcluster_versioned_docs/version-0.27.0/configure/README.mdx -> configure/README.mdx
+//	platform/configure/config.mdx -> platform/configure/config.mdx
+//	platform_versioned_docs/version-4.5.0/configure/config.mdx -> platform/configure/config.mdx
 func extractDocPath(fullPath string) string {
 	// Try vcluster/ prefix
 	if strings.HasPrefix(fullPath, "vcluster/") {
@@ -538,12 +545,37 @@ func extractDocPath(fullPath string) string {
 	if strings.HasPrefix(fullPath, "vcluster_versioned_docs/") {
 		parts := strings.SplitN(fullPath, "/", 3)
 		if len(parts) == 3 {
-			return parts[2] // Return path after version-X/
+			return parts[2]
 		}
 	}
 
-	// Not a vcluster docs path
+	// Try platform/ prefix - keep "platform/" in result to distinguish
+	if strings.HasPrefix(fullPath, "platform/") {
+		return fullPath
+	}
+
+	// Try platform_versioned_docs/version-X/ prefix
+	if strings.HasPrefix(fullPath, "platform_versioned_docs/") {
+		parts := strings.SplitN(fullPath, "/", 3)
+		if len(parts) == 3 {
+			return "platform/" + parts[2]
+		}
+	}
+
 	return ""
+}
+
+// getBasePath returns the docs base path for a given internal path
+func getBasePath(path string) string {
+	if strings.HasPrefix(path, "platform/") {
+		return "/docs/platform"
+	}
+	return "/docs/vcluster"
+}
+
+// stripProductPrefix removes platform/ prefix if present for URL generation
+func stripProductPrefix(path string) string {
+	return strings.TrimPrefix(path, "platform/")
 }
 
 func main() {
