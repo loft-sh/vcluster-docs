@@ -309,14 +309,27 @@ func (r *Resolver) ImportChanges(changesFile string) error {
 		return fmt.Errorf("parsing changes file: %w", err)
 	}
 
+	// Build set of existing movements for deduplication
+	existing := make(map[string]bool)
+	for _, m := range r.history.Movements {
+		key := m.From + " -> " + m.To
+		existing[key] = true
+	}
+
 	for _, change := range changes.Changes {
 		if change.Old != "" && change.New != "" {
+			key := change.Old + " -> " + change.New
+			if existing[key] {
+				fmt.Printf("Skipping duplicate: %s -> %s\n", change.Old, change.New)
+				continue
+			}
 			r.history.Movements = append(r.history.Movements, Movement{
 				From:      change.Old,
 				To:        change.New,
 				Version:   changes.Version,
 				Timestamp: time.Now().UTC(),
 			})
+			existing[key] = true
 			fmt.Printf("Added movement: %s -> %s (version: %s)\n", change.Old, change.New, changes.Version)
 		}
 	}
@@ -398,12 +411,13 @@ func DetectFileMoves(repoPath, oldRef, newRef string) ([]FileMove, error) {
 	}
 
 	// Execute git command to detect renames
-	// git log --name-status --diff-filter=R --find-renames <oldRef>..<newRef>
-	cmd := exec.Command("git", "log",
+	// Use git diff with three dots to compare merge-base with HEAD
+	// This shows NET changes, not per-commit changes (avoids intermediate state issues)
+	// -M50 sets rename detection threshold to 50%
+	cmd := exec.Command("git", "diff",
 		"--name-status",
-		"--diff-filter=R",
-		"--find-renames",
-		fmt.Sprintf("%s..%s", oldRef, newRef))
+		"-M50",
+		fmt.Sprintf("%s...%s", oldRef, newRef))
 	cmd.Dir = repoPath
 
 	output, err := cmd.Output()
@@ -504,6 +518,28 @@ func detectPathChanges(baseDir string) (*PathChanges, error) {
 		// Strip file extensions (.md, .mdx)
 		oldPath = strings.TrimSuffix(oldPath, filepath.Ext(oldPath))
 		newPath = strings.TrimSuffix(newPath, filepath.Ext(newPath))
+
+		// Validate destination file exists (handles consolidation where git similarity is wrong)
+		destExists := false
+		for _, ext := range []string{".md", ".mdx"} {
+			// Check in main docs folder (relative to baseDir)
+			checkPath := filepath.Join(baseDir, move.NewPath)
+			if _, err := os.Stat(checkPath); err == nil {
+				destExists = true
+				break
+			}
+			// Also check with different extension
+			base := strings.TrimSuffix(move.NewPath, filepath.Ext(move.NewPath))
+			if _, err := os.Stat(filepath.Join(baseDir, base+ext)); err == nil {
+				destExists = true
+				break
+			}
+		}
+
+		if !destExists {
+			fmt.Printf("Skipping: %s -> %s (destination doesn't exist - likely consolidation)\n", oldPath, newPath)
+			continue
+		}
 
 		changes.Changes = append(changes.Changes, Change{
 			Old: oldPath,

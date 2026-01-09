@@ -1,5 +1,5 @@
 # Auto-generated redirect tests
-# Generated: 2026-01-09 18:24:12 UTC
+# Generated: 2026-01-09 18:43:29 UTC
 # Usage: hurl --test --variable BASE_URL=https://www.vcluster.com test-redirects.hurl
 
 # Test: deploy/control-plane/container/flux -> third-party-integrations/git-operations/flux
@@ -40,6 +40,16 @@ header "Location" contains "/docs/platform/configure/platform-configs/audit"
 
 # Verify destination exists
 GET {{BASE_URL}}/docs/platform/configure/platform-configs/audit/
+HTTP 200
+
+# Test: platform/configure/agent-settings/troubleshotting -> platform/configure/agent-settings/troubleshooting
+GET {{BASE_URL}}/docs/platform/configure/agent-settings/troubleshotting/
+HTTP 301
+[Asserts]
+header "Location" contains "/docs/platform/configure/agent-settings/troubleshooting"
+
+# Verify destination exists
+GET {{BASE_URL}}/docs/platform/configure/agent-settings/troubleshooting/
 HTTP 200
 
 # Test: platform/configure/config -> platform/configure/introduction
