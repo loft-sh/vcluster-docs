@@ -13,16 +13,105 @@ import CodeBlock from '@theme/CodeBlock';
 import ProxyBasicConfig from '!!raw-loader!@site/vcluster/configure/vcluster-yaml/experimental/_code/proxy-basic-config.yaml'
 import ProxyMultiTargetConfig from '!!raw-loader!@site/vcluster/configure/vcluster-yaml/experimental/_code/proxy-multi-target-config.yaml'
 import ProxyAccessModesConfig from '!!raw-loader!@site/vcluster/configure/vcluster-yaml/experimental/_code/proxy-access-modes-config.yaml'
+import ProxyCrossProjectConfig from '!!raw-loader!@site/vcluster/configure/vcluster-yaml/experimental/_code/proxy-cross-project-config.yaml'
 
 <ProAdmonition/>
 
 :::note vCluster Platform required
-This feature requires [vCluster Platform][vcluster-platform]. Both the client and target virtual clusters must be managed as [VirtualClusterInstance][virtualclusterinstance-api] within the same project.
+This feature requires [vCluster Platform][vcluster-platform]. Both the client and target virtual clusters must be managed as [VirtualClusterInstance][virtualclusterinstance-api] within the platform.
 :::
 
 The Resource Proxy feature enables vCluster to proxy custom resource (CRD) requests to other virtual clusters. When enabled, the client virtual cluster transparently stores resources in and delegates management to a target virtual cluster. This enables cross-cluster communication patterns, centralized resource management, and multi-tenant architectures.
 
-Key capabilities:
+## How it works {#how-it-works}
+
+When you configure a client virtual cluster to proxy custom resources, vCluster intercepts API requests for those resources and forwards them to the target virtual cluster through vCluster Platform.
+
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {'edgeLabelBackground':'#F3E8FF','edgeLabelColor':'#111827'}, 'flowchart': {'curve': 'linear', 'htmlLabels': true}}}%%
+flowchart LR
+  subgraph platform["vCluster Platform"]
+    direction LR
+
+    subgraph client["client vCluster"]
+      direction LR
+      kubectl([kubectl])
+      workload([workload / controller])
+      api((API))
+      proxy([alpha.sh/v1 Proxy])
+
+      kubectl --> api
+      workload --> api
+      api --> proxy
+    end
+
+    subgraph target["target vCluster"]
+      direction LR
+      tapi((API))
+      crd([alpha.sh/v1<br/>Workflow CRD])
+      ctrl([workflows-controller])
+
+      tapi --> crd
+      ctrl --> crd
+    end
+  end
+
+  proxy --> tapi
+
+  classDef node fill:#FFF3D6,stroke:#E6C98A,stroke-width:1px,rx:0,ry:0;
+  class kubectl,workload,api,proxy,tapi,crd,ctrl node;
+
+  style platform fill:#F5F7FF,stroke:#C7D2FE,stroke-width:1px,rx:0,ry:0;
+  style client fill:#F5F7FF,stroke:#C7D2FE,stroke-width:1px,rx:0,ry:0;
+  style target fill:#F5F7FF,stroke:#C7D2FE,stroke-width:1px,rx:0,ry:0;
+```
+
+The proxy performs several key functions:
+
+1. **Request interception**: The client's Kubernetes API server intercepts requests for configured custom resources and routes them to the proxy.
+2. **Authentication**: The proxy authenticates to the target using the client's vCluster Platform identity (`loft:vcluster:<project>:<name>`).
+3. **Owner labeling**: On create and update operations, the proxy adds owner labels to track which client created each resource.
+4. **Visibility filtering**: When listing resources, the proxy filters results based on the configured access mode (`owned` or `all`).
+5. **Namespace synchronization**: If a namespace doesn't exist on the target, the proxy creates it automatically.
+
+### Multi-client isolation {#multi-client-isolation-overview}
+
+When multiple client virtual clusters proxy to the same target, each client only sees resources it created by default. The proxy achieves this through owner labels and label selector injection.
+
+```mermaid
+%%{init: {'theme': 'base', 'flowchart': {'curve': 'linear', 'htmlLabels': 'true'}}}%%
+flowchart LR
+  subgraph team_a_vc["team-a vCluster"]
+    direction LR
+    a_kubectl([kubectl]) --> a_api((API)) --> a_proxy([alpha.sh/v1 Proxy])
+  end
+
+  subgraph team_b_vc["team-b vCluster"]
+    direction LR
+    b_kubectl([kubectl]) --> b_api((API)) --> b_proxy([alpha.sh/v1 Proxy])
+  end
+
+  subgraph target_vc["target vCluster"]
+    direction LR
+    t_api((API)) --> t_crd([Workflow CRD])
+    t_crd --> wf_a["team-a-pipeline<br/>(owner: team-a)"]
+    t_crd --> wf_b["team-b-pipeline<br/>(owner: team-b)"]
+
+    %% vertical centering constraints (invisible)
+    wf_a ~~~ t_api
+    t_api ~~~ wf_b
+    wf_a ~~~ t_crd
+    t_crd ~~~ wf_b
+  end
+
+  a_proxy -->|proxy workflows| t_api
+  b_proxy -->|proxy workflows| t_api
+
+  a_proxy -.->|sees only| wf_a
+  b_proxy -.->|sees only| wf_b
+```
+
+## Key capabilities {#key-capabilities}
 
 - **Transparent access**: Users interact with custom resources as if they were local to their virtual cluster.
 - **Centralized storage**: A dedicated target virtual cluster stores all resources.
@@ -40,7 +129,9 @@ To enable resource proxying, configure the `experimental.proxy.customResources` 
 | Field | Type | Description |
 |-------|------|-------------|
 | `enabled` | boolean | Enable or disable the proxy for this resource. |
-| `targetVirtualCluster` | string | Name of the target [VirtualClusterInstance][virtualclusterinstance-api] to proxy requests to. Must be in the same vCluster Platform project. |
+| `targetVirtualCluster` | object | Reference to the target [VirtualClusterInstance][virtualclusterinstance-api] to proxy requests to. |
+| `targetVirtualCluster.name` | string | Name of the target virtual cluster. Required when enabled. |
+| `targetVirtualCluster.project` | string | Project of the target virtual cluster. Defaults to the same project as the client vCluster. |
 | `accessResources` | string | Resource visibility mode: `owned` (default) or `all`. See [Access modes](#access-modes). |
 
 ### Resource key format {#resource-key-format}
@@ -170,7 +261,8 @@ experimental:
     customResources:
       workflows.alpha.sh/v1:
         enabled: true
-        targetVirtualCluster: "target"
+        targetVirtualCluster:
+          name: "target"
 ```
 
 Deploy the client virtual cluster:
@@ -218,11 +310,95 @@ vcluster connect target -- kubectl get workflows
 
 A single virtual cluster can proxy different resources to different target virtual clusters based on API group and version.
 
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {'edgeLabelBackground':'#F3E8FF','edgeLabelColor':'#111827'}, 'flowchart': {'curve': 'linear', 'htmlLabels': true}}}%%
+flowchart LR
+  subgraph client["client vCluster"]
+    direction TB
+    p_alpha([alpha.sh/v1 Proxy])
+    p_beta([beta.sh/v2 Proxy])
+  end
+
+  subgraph target_a["target-a vCluster"]
+    direction LR
+    ta_api((API))
+    ta_wf([Workflow CRD])
+    ta_pipe([Pipeline CRD])
+    ta_api --> ta_wf
+    ta_api --> ta_pipe
+  end
+
+  subgraph target_b["target-b vCluster"]
+    direction LR
+    tb_api((API))
+    tb_exec([Execution CRD])
+    tb_task([Task CRD])
+    tb_api --> tb_exec
+    tb_api --> tb_task
+  end
+
+  p_alpha --> ta_api
+  p_beta --> tb_api
+
+  classDef node fill:#FFF3D6,stroke:#E6C98A,stroke-width:1px,rx:0,ry:0;
+  class p_alpha,p_beta,ta_api,ta_wf,ta_pipe,tb_api,tb_exec,tb_task node;
+
+  style client fill:#F5F7FF,stroke:#C7D2FE,stroke-width:1px,rx:0,ry:0;
+  style target_a fill:#F5F7FF,stroke:#C7D2FE,stroke-width:1px,rx:0,ry:0;
+  style target_b fill:#F5F7FF,stroke:#C7D2FE,stroke-width:1px,rx:0,ry:0;
+```
+
 <CodeBlock language="yaml" title="client-multi-target.yaml">{ProxyMultiTargetConfig}</CodeBlock>
 
 In this configuration:
 - `target-a` stores Workflow and Pipeline resources from `alpha.sh/v1`
 - `target-b` stores Execution and Task resources from `beta.sh/v2`
+
+## Example: Cross-project proxy {#cross-project}
+
+By default, the target virtual cluster is assumed to be in the same project as the client. You can proxy to a virtual cluster in a different project by specifying the `project` field. This works across different host clusters connected to the same vCluster Platform.
+
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {'edgeLabelBackground':'#F3E8FF','edgeLabelColor':'#111827'}, 'flowchart': {'curve': 'linear'}}}%%
+flowchart TB
+  subgraph platform["vCluster Platform"]
+    direction LR
+
+    subgraph project_a["project-a"]
+      direction TB
+      client_a([client vCluster])
+    end
+
+    subgraph project_b["project-b"]
+      direction TB
+      client_b([another-client vCluster])
+    end
+
+    subgraph other_project["other-project"]
+      direction TB
+      target(["target vCluster<br />(Workflow CRD)"])
+    end
+  end
+
+  client_a -->|proxy to other-project/target| target
+  client_b -->|proxy to other-project/target| target
+
+  classDef node fill:#FFF3D6,stroke:#E6C98A,stroke-width:1px,rx:0,ry:0;
+  class client_a,client_b,target node;
+
+  style platform fill:#F5F7FF,stroke:#C7D2FE,stroke-width:1px,rx:0,ry:0;
+  style project_a fill:#F5F7FF,stroke:#C7D2FE,stroke-width:1px,rx:0,ry:0;
+  style project_b fill:#F5F7FF,stroke:#C7D2FE,stroke-width:1px,rx:0,ry:0;
+  style other_project fill:#F5F7FF,stroke:#C7D2FE,stroke-width:1px,rx:0,ry:0;
+```
+
+<CodeBlock language="yaml" title="client-cross-project.yaml">{ProxyCrossProjectConfig}</CodeBlock>
+
+This is useful for scenarios where:
+- A shared resource storage cluster exists in a centralized project
+- Teams in different projects need to access common resources
+- Virtual clusters across different host clusters need to share CRDs
+- CI/CD environments need access to centralized workflow management
 
 ## Access modes {#access-modes}
 
@@ -262,7 +438,8 @@ experimental:
     customResources:
       workflows.alpha.sh/v1:
         enabled: true
-        targetVirtualCluster: "orchestrator"
+        targetVirtualCluster:
+          name: "orchestrator"
         # Uses default accessResources: owned
 ```
 
@@ -272,7 +449,8 @@ experimental:
     customResources:
       workflows.alpha.sh/v1:
         enabled: true
-        targetVirtualCluster: "orchestrator"
+        targetVirtualCluster:
+          name: "orchestrator"
         # Uses default accessResources: owned
 ```
 
@@ -380,7 +558,6 @@ vcluster connect orchestrator -- kubectl get workflows
 ## Limitations {#limitations}
 
 - All `CustomResources` within the same API `GroupVersion` must use the same target virtual cluster.
-- The target virtual cluster must be in the same vCluster Platform project as the client virtual cluster.
 - When configuring RBAC for status updates, include permissions for the status subresource.
 
 ## Troubleshoot {#troubleshoot}
@@ -431,8 +608,15 @@ Ensure the target virtual cluster is running and healthy. vCluster automatically
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `enabled` | `boolean` | `false` | Enable the proxy for this resource. |
-| `targetVirtualCluster` | `string` | `""` | Name of the target virtual cluster. Required when enabled. |
+| `targetVirtualCluster` | `VirtualClusterRef` | - | Reference to the target virtual cluster. Required when enabled. |
 | `accessResources` | `string` | `"owned"` | Resource visibility mode: `owned` or `all`. |
+
+### `VirtualClusterRef` {#virtual-cluster-ref}
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `name` | `string` | - | Name of the target virtual cluster. Required. |
+| `project` | `string` | Same as source | Project of the target virtual cluster. |
 
 {/* Links */}
 [vcluster-platform]: /platform/
