@@ -186,9 +186,10 @@ func (r *Resolver) GenerateHurlTests(resolved map[string]string) error {
 	var tests strings.Builder
 	tests.WriteString("# Auto-generated redirect tests\n")
 	tests.WriteString("# Generated: " + time.Now().UTC().Format("2006-01-02 15:04:05 UTC") + "\n")
-	tests.WriteString("# Usage: hurl --test --variable BASE_URL=https://www.vcluster.com test-redirects.hurl\n\n")
-
-	basePath := "/docs/vcluster"
+	tests.WriteString("# Usage: hurl --test --variable BASE_URL=https://www.vcluster.com hack/test-redirects.hurl\n")
+	tests.WriteString("#\n")
+	tests.WriteString("# Tests use fake version (99.0.0) to avoid versioned docs serving content.\n")
+	tests.WriteString("# Redirects are fallbacks - they only fire when no content exists at source path.\n\n")
 
 	var sortedKeys []string
 	for k := range resolved {
@@ -199,28 +200,22 @@ func (r *Resolver) GenerateHurlTests(resolved map[string]string) error {
 	for _, from := range sortedKeys {
 		to := resolved[from]
 
-		// Skip any paths with underscores - Docusaurus doesn't generate pages from underscore-prefixed directories
+		// Skip any paths with underscores - Docusaurus doesn't generate pages from these
 		if strings.Contains(from, "_") || strings.Contains(to, "_") {
 			continue
 		}
 
-		// Test unversioned redirect
+		basePath := getBasePath(from)
+		fromURL := stripProductPrefix(from)
+		toURL := stripProductPrefix(to)
+
+		// Use fake version 99.0.0 to test versioned wildcard redirects
+		// This avoids versioned docs serving content at old paths
 		tests.WriteString(fmt.Sprintf("# Test: %s -> %s\n", from, to))
-		tests.WriteString(fmt.Sprintf("GET {{BASE_URL}}%s/%s/\n", basePath, from))
+		tests.WriteString(fmt.Sprintf("GET {{BASE_URL}}%s/99.0.0/%s/\n", basePath, fromURL))
 		tests.WriteString("HTTP 301\n")
 		tests.WriteString("[Asserts]\n")
-		tests.WriteString(fmt.Sprintf("header \"Location\" contains \"%s/%s\"\n\n", basePath, to))
-
-		// Test /next/ redirect
-		tests.WriteString(fmt.Sprintf("GET {{BASE_URL}}%s/next/%s/\n", basePath, from))
-		tests.WriteString("HTTP 301\n")
-		tests.WriteString("[Asserts]\n")
-		tests.WriteString(fmt.Sprintf("header \"Location\" contains \"%s/next/%s\"\n\n", basePath, to))
-
-		// Verify destination exists
-		tests.WriteString(fmt.Sprintf("# Verify destination exists\n"))
-		tests.WriteString(fmt.Sprintf("GET {{BASE_URL}}%s/%s/\n", basePath, to))
-		tests.WriteString("HTTP 200\n\n")
+		tests.WriteString(fmt.Sprintf("header \"Location\" contains \"%s/99.0.0/%s\"\n\n", basePath, toURL))
 	}
 
 	if err := os.WriteFile(hurlFile, []byte(tests.String()), 0644); err != nil {
@@ -257,8 +252,6 @@ func (r *Resolver) GenerateRedirects(resolved map[string]string) error {
 	redirects.WriteString(fmt.Sprintf("# Generated: %s\n", time.Now().UTC().Format("2006-01-02 15:04:05 UTC")))
 	redirects.WriteString("# All redirects are transitively resolved to prevent redirect chains\n\n")
 
-	basePath := "/docs/vcluster"
-
 	var sortedKeys []string
 	for k := range resolved {
 		sortedKeys = append(sortedKeys, k)
@@ -273,22 +266,20 @@ func (r *Resolver) GenerateRedirects(resolved map[string]string) error {
 			continue
 		}
 
-		// Unversioned
+		basePath := getBasePath(from)
+		fromURL := stripProductPrefix(from)
+		toURL := stripProductPrefix(to)
+
+		// Unversioned redirect (for /docs/vcluster/path or /docs/platform/path)
 		redirects.WriteString("[[redirects]]\n")
-		redirects.WriteString(fmt.Sprintf("  from = \"%s/%s\"\n", basePath, from))
-		redirects.WriteString(fmt.Sprintf("  to = \"%s/%s\"\n", basePath, to))
+		redirects.WriteString(fmt.Sprintf("  from = \"%s/%s\"\n", basePath, fromURL))
+		redirects.WriteString(fmt.Sprintf("  to = \"%s/%s\"\n", basePath, toURL))
 		redirects.WriteString("  status = 301\n\n")
 
-		// Next version
+		// Versioned redirect with :splat (handles /docs/vcluster/0.30.0/path, /docs/platform/4.5.0/path, etc.)
 		redirects.WriteString("[[redirects]]\n")
-		redirects.WriteString(fmt.Sprintf("  from = \"%s/next/%s\"\n", basePath, from))
-		redirects.WriteString(fmt.Sprintf("  to = \"%s/next/%s\"\n", basePath, to))
-		redirects.WriteString("  status = 301\n\n")
-
-		// Wildcard versions
-		redirects.WriteString("[[redirects]]\n")
-		redirects.WriteString(fmt.Sprintf("  from = \"%s/*/%s\"\n", basePath, from))
-		redirects.WriteString(fmt.Sprintf("  to = \"%s/:splat/%s\"\n", basePath, to))
+		redirects.WriteString(fmt.Sprintf("  from = \"%s/*/%s\"\n", basePath, fromURL))
+		redirects.WriteString(fmt.Sprintf("  to = \"%s/:splat/%s\"\n", basePath, toURL))
 		redirects.WriteString("  status = 301\n\n")
 	}
 
@@ -317,14 +308,27 @@ func (r *Resolver) ImportChanges(changesFile string) error {
 		return fmt.Errorf("parsing changes file: %w", err)
 	}
 
+	// Build set of existing movements for deduplication
+	existing := make(map[string]bool)
+	for _, m := range r.history.Movements {
+		key := m.From + " -> " + m.To
+		existing[key] = true
+	}
+
 	for _, change := range changes.Changes {
 		if change.Old != "" && change.New != "" {
+			key := change.Old + " -> " + change.New
+			if existing[key] {
+				fmt.Printf("Skipping duplicate: %s -> %s\n", change.Old, change.New)
+				continue
+			}
 			r.history.Movements = append(r.history.Movements, Movement{
 				From:      change.Old,
 				To:        change.New,
 				Version:   changes.Version,
 				Timestamp: time.Now().UTC(),
 			})
+			existing[key] = true
 			fmt.Printf("Added movement: %s -> %s (version: %s)\n", change.Old, change.New, changes.Version)
 		}
 	}
@@ -406,12 +410,13 @@ func DetectFileMoves(repoPath, oldRef, newRef string) ([]FileMove, error) {
 	}
 
 	// Execute git command to detect renames
-	// git log --name-status --diff-filter=R --find-renames <oldRef>..<newRef>
-	cmd := exec.Command("git", "log",
+	// Use git diff with three dots to compare merge-base with HEAD
+	// This shows NET changes, not per-commit changes (avoids intermediate state issues)
+	// -M50 sets rename detection threshold to 50%
+	cmd := exec.Command("git", "diff",
 		"--name-status",
-		"--diff-filter=R",
-		"--find-renames",
-		fmt.Sprintf("%s..%s", oldRef, newRef))
+		"-M50",
+		fmt.Sprintf("%s...%s", oldRef, newRef))
 	cmd.Dir = repoPath
 
 	output, err := cmd.Output()
@@ -513,6 +518,28 @@ func detectPathChanges(baseDir string) (*PathChanges, error) {
 		oldPath = strings.TrimSuffix(oldPath, filepath.Ext(oldPath))
 		newPath = strings.TrimSuffix(newPath, filepath.Ext(newPath))
 
+		// Validate destination file exists (handles consolidation where git similarity is wrong)
+		destExists := false
+		for _, ext := range []string{".md", ".mdx"} {
+			// Check in main docs folder (relative to baseDir)
+			checkPath := filepath.Join(baseDir, move.NewPath)
+			if _, err := os.Stat(checkPath); err == nil {
+				destExists = true
+				break
+			}
+			// Also check with different extension
+			base := strings.TrimSuffix(move.NewPath, filepath.Ext(move.NewPath))
+			if _, err := os.Stat(filepath.Join(baseDir, base+ext)); err == nil {
+				destExists = true
+				break
+			}
+		}
+
+		if !destExists {
+			fmt.Printf("Skipping: %s -> %s (destination doesn't exist - likely consolidation)\n", oldPath, newPath)
+			continue
+		}
+
 		changes.Changes = append(changes.Changes, Change{
 			Old: oldPath,
 			New: newPath,
@@ -524,10 +551,13 @@ func detectPathChanges(baseDir string) (*PathChanges, error) {
 }
 
 // extractDocPath extracts the documentation path from a full file path
+// For platform paths, returns with "platform/" prefix to distinguish from vcluster
 // Examples:
 //
 //	vcluster/deploy/security/air-gapped.mdx -> deploy/security/air-gapped.mdx
 //	vcluster_versioned_docs/version-0.27.0/configure/README.mdx -> configure/README.mdx
+//	platform/configure/config.mdx -> platform/configure/config.mdx
+//	platform_versioned_docs/version-4.5.0/configure/config.mdx -> platform/configure/config.mdx
 func extractDocPath(fullPath string) string {
 	// Try vcluster/ prefix
 	if strings.HasPrefix(fullPath, "vcluster/") {
@@ -538,12 +568,37 @@ func extractDocPath(fullPath string) string {
 	if strings.HasPrefix(fullPath, "vcluster_versioned_docs/") {
 		parts := strings.SplitN(fullPath, "/", 3)
 		if len(parts) == 3 {
-			return parts[2] // Return path after version-X/
+			return parts[2]
 		}
 	}
 
-	// Not a vcluster docs path
+	// Try platform/ prefix - keep "platform/" in result to distinguish
+	if strings.HasPrefix(fullPath, "platform/") {
+		return fullPath
+	}
+
+	// Try platform_versioned_docs/version-X/ prefix
+	if strings.HasPrefix(fullPath, "platform_versioned_docs/") {
+		parts := strings.SplitN(fullPath, "/", 3)
+		if len(parts) == 3 {
+			return "platform/" + parts[2]
+		}
+	}
+
 	return ""
+}
+
+// getBasePath returns the docs base path for a given internal path
+func getBasePath(path string) string {
+	if strings.HasPrefix(path, "platform/") {
+		return "/docs/platform"
+	}
+	return "/docs/vcluster"
+}
+
+// stripProductPrefix removes platform/ prefix if present for URL generation
+func stripProductPrefix(path string) string {
+	return strings.TrimPrefix(path, "platform/")
 }
 
 func main() {
