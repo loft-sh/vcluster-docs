@@ -18,7 +18,7 @@ export const vclusterEOLVersions = [
 ];
 
 export const platformEOLVersions = [
-  { to: "https://vcluster.com/docs/v4.2", label: "v4.2 (EOS)" },
+  { to: "https://vcluster.com/docs/v4.2", label: "v4.2 (EOL)" },
   { to: "https://loft.sh/docs/getting-started/install", label: "v3.4 (EOL)" },
 ];
 
