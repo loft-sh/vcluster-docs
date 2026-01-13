@@ -9,6 +9,7 @@ import { themes as prismThemes } from "prism-react-renderer";
 const __webpack_public_path__ = "/docs/";
 
 import resolveGlob from "resolve-glob";
+import remarkVersionTokens from "./plugins/remark-version-tokens.js";
 
 const newDocTemplate = `---
 title: Your Document Title
@@ -75,6 +76,9 @@ const config = {
           sidebarPath: require.resolve("./sidebars.js"),
           editUrl: "https://github.com/loft-sh/vcluster-docs/edit/main/",
           editCurrentVersion: true,
+          beforeDefaultRemarkPlugins: [
+            [remarkVersionTokens, { siteDir: __dirname }],
+          ],
           lastVersion: "current",
           versions: {
             current: {
@@ -189,6 +193,9 @@ const config = {
         editUrl: ({ versionDocsDirPath, docPath }) =>
           `https://github.com/loft-sh/vcluster-docs/edit/main/${versionDocsDirPath}/${docPath}`,
         editCurrentVersion: true,
+        beforeDefaultRemarkPlugins: [
+          [remarkVersionTokens, { siteDir: __dirname }],
+        ],
         lastVersion: "0.30.0",
         onlyIncludeVersions: ["current", "0.30.0", "0.29.0", "0.28.0", "0.27.0", "0.26.0"],
         versions: {
@@ -238,6 +245,9 @@ const config = {
         editUrl: ({ versionDocsDirPath, docPath }) =>
           `https://github.com/loft-sh/vcluster-docs/edit/main/${versionDocsDirPath}/${docPath}`,
         editCurrentVersion: true,
+        beforeDefaultRemarkPlugins: [
+          [remarkVersionTokens, { siteDir: __dirname }],
+        ],
         lastVersion: "4.5.0",
         onlyIncludeVersions: ["current", "4.5.0", "4.4.0", "4.3.0"],
         versions: {
