@@ -56,7 +56,6 @@ type ConfigStatus struct {
 	// +optional
 	ProjectNamespacePrefix *string `json:"projectNamespacePrefix,omitempty"`
 
-	// DEPRECATED: DevPodSubDomain holds a subdomain in the following form *.workspace.my-domain.com
 	// DevPodSubDomain holds a subdomain in the following form *.workspace.my-domain.com
 	// +optional
 	DevPodSubDomain string `json:"devPodSubDomain,omitempty"`
@@ -713,11 +712,6 @@ type AuthenticationOIDC struct {
 	// Type of the OIDC to show in the UI. Only for displaying purposes
 	// +optional
 	Type string `json:"type,omitempty"`
-
-	// Resource, if specified, is the value that is set for the "resource" URL parameter when making a request to the /token endpoint of the
-	// OIDC provider.
-	// +optional
-	Resource string `json:"resource,omitempty"`
 }
 
 type Cloud struct {
