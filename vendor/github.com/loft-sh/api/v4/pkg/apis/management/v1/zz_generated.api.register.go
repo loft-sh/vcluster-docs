@@ -55,6 +55,8 @@ func addKnownTypes(scheme *runtime.Scheme) error {
 		&License{},
 		&LicenseList{},
 		&LicenseRequest{},
+		&LicenseToken{},
+		&LicenseTokenList{},
 		&LoftUpgrade{},
 		&LoftUpgradeList{},
 		&NodeClaim{},
@@ -228,6 +230,7 @@ var (
 			nil,
 			management.NewLicenseRequestREST,
 		),
+		management.ManagementLicenseTokenStorage,
 		management.ManagementLoftUpgradeStorage,
 		management.ManagementNodeClaimStorage,
 		builders.NewApiResourceWithStorage(
@@ -690,6 +693,14 @@ type LicenseRequestList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []LicenseRequest `json:"items"`
+}
+
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+
+type LicenseTokenList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata,omitempty"`
+	Items           []LicenseToken `json:"items"`
 }
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
