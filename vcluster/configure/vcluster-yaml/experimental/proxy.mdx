@@ -14,6 +14,7 @@ import ProxyBasicConfig from '!!raw-loader!@site/vcluster/configure/vcluster-yam
 import ProxyMultiTargetConfig from '!!raw-loader!@site/vcluster/configure/vcluster-yaml/experimental/_code/proxy-multi-target-config.yaml'
 import ProxyAccessModesConfig from '!!raw-loader!@site/vcluster/configure/vcluster-yaml/experimental/_code/proxy-access-modes-config.yaml'
 import ProxyCrossProjectConfig from '!!raw-loader!@site/vcluster/configure/vcluster-yaml/experimental/_code/proxy-cross-project-config.yaml'
+import ProxyPlatformRbac from '!!raw-loader!@site/vcluster/configure/vcluster-yaml/experimental/_code/proxy-platform-rbac.yaml'
 
 <ProAdmonition/>
 
@@ -118,6 +119,22 @@ flowchart LR
 - **Multi-tenant isolation**: Each client virtual cluster only sees its own resources by default.
 - **RBAC enforcement**: The target virtual cluster enforces its own RBAC policies on proxied requests.
 
+## Platform RBAC requirements {#platform-rbac}
+
+For the resource proxy to function, the client virtual cluster must be authorized to access the target virtual cluster through vCluster Platform. This requires RBAC configuration on the platform's management cluster.
+
+### Platform RBAC configuration {#platform-rbac-config}
+
+Create a Role and RoleBinding in the project namespace (`p-<project-name>`) on the platform's management cluster:
+
+<CodeBlock language="yaml" title="platform-proxy-rbac.yaml">{ProxyPlatformRbac}</CodeBlock>
+
+Apply this configuration to the platform's management cluster (not the virtual clusters):
+
+```bash title="Apply platform RBAC"
+kubectl apply -f platform-proxy-rbac.yaml --context <platform-context>
+```
+
 ## Configuration {#configuration}
 
 To enable resource proxying, configure the `experimental.proxy.customResources` section in your `vcluster.yaml`:
@@ -210,7 +227,7 @@ vcluster connect target -- kubectl apply -f myresource-crd.yaml
 
 Create RBAC rules to allow the client virtual cluster to access resources. The client virtual cluster authenticates using its vCluster Platform identity in the format `loft:vcluster:p-<project>:<name>`:
 
-```yaml title="proxy-rbac.yaml"
+```yaml title="target-rbac.yaml"
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -244,7 +261,23 @@ subjects:
 Apply RBAC to the target virtual cluster:
 
 ```bash title="Apply RBAC to target"
-vcluster connect target -- kubectl apply -f proxy-rbac.yaml
+vcluster connect target -- kubectl apply -f target-rbac.yaml
+```
+
+</Step>
+
+<Step>
+
+**Configure platform RBAC**.
+
+Grant the client virtual cluster permission to access the target through vCluster Platform. Apply this to the platform's management cluster:
+
+<CodeBlock language="yaml" title="platform-rbac.yaml">{ProxyPlatformRbac}</CodeBlock>
+
+Apply to the platform's management cluster:
+
+```bash title="Apply platform RBAC"
+kubectl apply -f platform-rbac.yaml --context <platform-context>
 ```
 
 </Step>
@@ -458,11 +491,11 @@ experimental:
 
 <Step>
 
-**Configure RBAC for multiple clients**.
+**Configure target RBAC for multiple clients**.
 
 Configure RBAC in the target for both clients:
 
-```yaml title="multi-client-rbac.yaml"
+```yaml title="multi-client-target-rbac.yaml"
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -505,6 +538,67 @@ subjects:
   - kind: User
     name: "loft:vcluster:p-default:team-b"
     apiGroup: rbac.authorization.k8s.io
+```
+
+Apply to the target virtual cluster:
+
+```bash title="Apply target RBAC"
+vcluster connect orchestrator -- kubectl apply -f multi-client-target-rbac.yaml
+```
+
+</Step>
+
+<Step>
+
+**Configure platform RBAC for multiple clients**.
+
+Grant both client virtual clusters permission to access the target through vCluster Platform:
+
+```yaml title="multi-client-platform-rbac.yaml"
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: vcluster-proxy-target-access
+  namespace: p-default
+rules:
+  - apiGroups: ["management.loft.sh"]
+    resources: ["virtualclusterinstances"]
+    resourceNames: ["orchestrator"]
+    verbs: ["use"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: team-a-vcluster-proxy-access
+  namespace: p-default
+subjects:
+  - kind: User
+    name: "loft:vcluster:p-default:team-a"
+    apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: Role
+  name: vcluster-proxy-target-access
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: team-b-vcluster-proxy-access
+  namespace: p-default
+subjects:
+  - kind: User
+    name: "loft:vcluster:p-default:team-b"
+    apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: Role
+  name: vcluster-proxy-target-access
+  apiGroup: rbac.authorization.k8s.io
+```
+
+Apply to the platform's management cluster:
+
+```bash title="Apply platform RBAC"
+kubectl apply -f multi-client-platform-rbac.yaml --context <platform-context>
 ```
 
 </Step>
@@ -582,11 +676,22 @@ kubectl logs -n vcluster-<name> -l app=vcluster --tail=100
 
 ### Permission denied errors {#permission-denied}
 
-1. **Verify the virtual cluster identity format**: The identity follows `loft:vcluster:p-<project>:<name>`.
+Permission errors can occur at two levels: the platform level and the target virtual cluster level.
 
-2. **Test RBAC directly**:
+1. **Check platform RBAC**: Ensure the client has "use" permission on the target VirtualClusterInstance:
 
-```bash title="Test RBAC permissions"
+```bash title="Check platform RBAC"
+kubectl auth can-i use virtualclusterinstances/target \
+  --as="loft:vcluster:p-default:client" \
+  -n p-default \
+  --context <platform-context>
+```
+
+2. **Verify the virtual cluster identity format**: The identity follows `loft:vcluster:p-<project>:<name>`.
+
+3. **Test target RBAC directly**:
+
+```bash title="Test target RBAC permissions"
 vcluster connect <target> -- kubectl auth can-i create myresources.example.com \
   --as="loft:vcluster:p-default:client"
 ```
