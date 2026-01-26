@@ -365,6 +365,7 @@ const config = {
         indexName: "vcluster",
         placeholder: "Search...",
         externalUrlRegex: "vcluster\\.com\/docs\/v0\\.19",
+        contextualSearch: true,
         algoliaOptions: {},
       },
       footer: {
