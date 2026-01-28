@@ -1,5 +1,5 @@
 # Auto-generated redirect tests
-# Generated: 2026-01-09 19:42:41 UTC
+# Generated: 2026-01-28 15:42:41 UTC
 # Usage: hurl --test --variable BASE_URL=https://www.vcluster.com hack/test-redirects.hurl
 #
 # Tests use fake version (99.0.0) to avoid versioned docs serving content.
@@ -136,4 +136,16 @@ GET {{BASE_URL}}/docs/platform/99.0.0/configure/single-sign-on/providers/saml/
 HTTP 301
 [Asserts]
 header "Location" contains "/docs/platform/99.0.0/configure/platform-configs/single-sign-on"
+
+# Test: platform/how-to/uninstall -> platform/install/uninstall
+GET {{BASE_URL}}/docs/platform/99.0.0/how-to/uninstall/
+HTTP 301
+[Asserts]
+header "Location" contains "/docs/platform/99.0.0/install/uninstall"
+
+# Test: platform/install/advanced/air-gapped -> platform/install/air-gapped
+GET {{BASE_URL}}/docs/platform/99.0.0/install/advanced/air-gapped/
+HTTP 301
+[Asserts]
+header "Location" contains "/docs/platform/99.0.0/install/air-gapped"
 
