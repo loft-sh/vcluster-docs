@@ -1,5 +1,5 @@
 # Auto-generated redirect tests
-# Generated: 2026-01-14 22:04:25 UTC
+# Generated: 2026-01-28 15:42:41 UTC
 # Usage: hurl --test --variable BASE_URL=https://www.vcluster.com hack/test-redirects.hurl
 #
 # Tests use fake version (99.0.0) to avoid versioned docs serving content.
@@ -148,22 +148,4 @@ GET {{BASE_URL}}/docs/platform/99.0.0/install/advanced/air-gapped/
 HTTP 301
 [Asserts]
 header "Location" contains "/docs/platform/99.0.0/install/air-gapped"
-
-# Test: platform/install/upgrade-migrate/lifecycle-policy -> platform/install
-GET {{BASE_URL}}/docs/platform/99.0.0/install/upgrade-migrate/lifecycle-policy/
-HTTP 301
-[Asserts]
-header "Location" contains "/docs/platform/99.0.0/install"
-
-# Test: platform/install/upgrade-migrate/migrate-to-hostcluster -> platform/install
-GET {{BASE_URL}}/docs/platform/99.0.0/install/upgrade-migrate/migrate-to-hostcluster/
-HTTP 301
-[Asserts]
-header "Location" contains "/docs/platform/99.0.0/install"
-
-# Test: platform/install/upgrade-migrate/upgrade -> platform/install
-GET {{BASE_URL}}/docs/platform/99.0.0/install/upgrade-migrate/upgrade/
-HTTP 301
-[Asserts]
-header "Location" contains "/docs/platform/99.0.0/install"
 
