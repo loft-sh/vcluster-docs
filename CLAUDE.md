@@ -21,11 +21,23 @@ requested.
 
 ## Link resolution
 
-Use relative file paths with `.mdx` extensions.
+**Within same section** (e.g., platform → platform): Prefer relative file paths with `.mdx`:
 
-**Wrong:** `[Link](/vcluster/integrations/pod-identity)`
+- **Preferred:** `[Link](../understand/what-are-projects.mdx)`
+- **Also works:** `[Link](/docs/platform/understand/what-are-projects)`
 
-**Correct:** `[Link](../pod-identity.mdx)`
+Relative paths are better: they work on GitHub, survive slug changes, and track moves.
+
+**Cross-section links** (e.g., platform → vcluster): Use `/docs/` absolute paths
+(different Docusaurus plugin instances, so file paths don't resolve):
+
+- **Correct:** `[vCluster docs](/docs/vcluster)`
+- **Correct:** `[Sleep mode](/docs/vcluster/configure/vcluster-yaml/sleep-mode)`
+
+**Imports** (components, partials): Use `@site/` prefix:
+
+- `import Flow from '@site/src/components/Flow'`
+- `import Partial from '@site/vcluster/_partials/example.mdx'`
 
 **Debugging broken links:**
 
