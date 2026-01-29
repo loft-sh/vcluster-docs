@@ -1,0 +1,394 @@
+---
+title: Kubernetes policies
+sidebar_label: Kubernetes Policies
+sidebar_position: 7
+description: Self assessment guide to validate Kubernetes policies
+sidebar_class_name: host-nodes 
+---
+
+import Flow, { Step } from '@site/src/components/Flow';
+import TenancySupport from '../../../../../../_fragments/tenancy-support.mdx';
+
+<TenancySupport hostNodes="true" />
+
+<!--vale off-->
+
+The following section covers specific security policies for Kubernetes elements. The assessment focuses on RBAC configuration and least privilege access, Pod Security Standards and security contexts, and network policies and CNI security.
+
+This section is directly applicable to vCluster environments. Verification involves ensuring proper RBAC configurations are in place, Pod Security Standards are enforced, and network policies are appropriately configured within the virtual cluster.
+
+:::note Control numbering
+The control numbers used throughout this guide (5.1.1, 5.2.1, etc.) correlate directly to the official CIS Kubernetes Benchmark control numbers. This allows you to cross-reference with the official CIS documentation and maintain consistency with standard security frameworks.
+:::
+
+## Validation using kube-bench
+
+While most CIS Kubernetes Benchmark checks are not directly verifiable via kube-bench due to vCluster's virtualized control plane architecture, the Policies section (Section 5) includes controls that are relevant and testable within the virtual cluster environment. These include namespace-level restrictions, pod security standards, and security contexts that can be enforced from within vCluster.
+
+To validate your vCluster's compliance with this section, you can run kube-bench with a customized kubeconfig pointing to the vCluster API server. The following steps outline the procedure to perform the compliance check:
+
+<Flow>
+<Step>
+
+Create the vCluster but don't connect to it yet:
+
+```bash
+vcluster create my-vcluster --connect=false
+```
+
+</Step>
+<Step>
+
+Wait for the vCluster to be ready, get the kubeconfig, then connect to it:
+
+```bash
+vcluster connect my-vcluster --server `kubectl get svc -n vcluster-my-vcluster my-vcluster -o jsonpath='{.spec.clusterIP}'` --print > kubeconfig.yaml && vcluster connect my-vcluster
+```
+
+</Step>
+<Step>
+
+Create a dedicated namespace for the kube-bench job:
+
+```bash
+kubectl create namespace kube-bench
+```
+
+</Step>
+<Step>
+
+Load the vCluster kubeconfig into a secret:
+
+```bash
+kubectl create secret generic my-kubeconfig-secret \
+  --from-file=kubeconfig=./kubeconfig.yaml \
+  -n kube-bench
+```
+
+</Step>
+<Step>
+
+Harden service accounts (_Recommended_):
+
+To maintain compliance with service account token mounting policies, disable automatic token mounting for all service accounts in the cluster:
+
+```bash
+for ns in $(kubectl get ns -o jsonpath='{.items[*].metadata.name}'); do
+  for sa in $(kubectl get sa -n $ns -o jsonpath='{.items[*].metadata.name}'); do
+    kubectl patch serviceaccount "$sa" \
+      -p '{"automountServiceAccountToken": false}' \
+      -n "$ns"
+  done
+done
+```
+
+This is aligned with CIS to ensure that default service accounts are not actively used and ensures that tokens are not unnecessarily exposed.
+
+</Step>
+<Step>
+
+Run the kube-bench job. Deploy a short-lived job to run kube-bench using the kubeconfig you mounted:
+
+```bash
+kubectl apply -f - <<EOF
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: kube-bench
+  namespace: kube-bench
+spec:
+  template:
+    metadata:
+      labels:
+        app: kube-bench
+    spec:
+      containers:
+        - command: ["/bin/sh", "-c"]
+          args: ["kube-bench run --targets policies --benchmark cis-1.10 --include-test-output"]
+          image: docker.io/aquasec/kube-bench:v0.10.6
+          name: kube-bench
+          volumeMounts:
+            - name: kubeconfig-volume
+              mountPath: /kube
+          env:
+            - name: KUBECONFIG
+              value: /kube/kubeconfig
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      volumes:
+      - name: kubeconfig-volume
+        secret:
+          secretName: my-kubeconfig-secret
+EOF
+```
+
+</Step>
+<Step>
+
+After the job completes, inspect the logs for a detailed compliance report:
+
+```bash
+kubectl logs job/kube-bench -n kube-bench
+```
+
+The status of the run would be displayed as below:
+
+```bash
+...
+== Summary total ==                                                                                                                                                                                                                            
+9 checks PASS
+2 checks FAIL
+24 checks WARN
+...
+```
+
+</Step>
+</Flow>
+
+:::info
+The two failing checks are expected. 
+
+**Control 5.1.1 – Ensure that the cluster-admin role is only used where required**: This check fails as the `cluster-admin` role is the default role used by the vCluster platform when creating the ClusterRoleBinding for the `loft:vcluster:main` group.
+
+To pass this control, create a custom role with only the necessary rules and change the configuration under "Permissions in Virtual Cluster" section in the vCluster Platform UI to use this new role.
+
+**Control 5.1.3 – Minimize wildcard use in Roles and ClusterRoles**: This check often fails because many default or commonly used roles such as `cluster-admin` include wildcards (*) in their verbs, resources, or apiGroups. These wildcards grant broad permissions and violate the principle of least privilege.
+
+To pass this control, audit and refactor roles to avoid using wildcards where possible. Be aware that some third-party components and tools might require elevated privileges, so a balance between capability and security is often needed.
+:::
+
+## 5.1 RBAC and Service Accounts
+
+### 5.1.1 Ensure that the cluster-admin role is only used where required
+
+**Result**: FAIL
+
+Identify all ClusterRoleBindings to the `cluster-admin` role. Check if they are used and if they need this role or if they could use a role with fewer privileges. The `cluster-admin` role provides unrestricted access to all cluster resources and should only be assigned when absolutely necessary. Where possible, first bind users to a lower privileged role and then remove the ClusterRoleBinding to the `cluster-admin` role:
+
+```bash
+kubectl delete clusterrolebinding [name]
+```
+
+### 5.1.2 Minimize access to secrets
+
+**Result:** PASS
+
+Where possible, remove `get`, `list` and `watch` access to Secret objects in the cluster. Secrets contain sensitive data such as passwords, tokens, and keys that should only be accessible to workloads and users that explicitly require them. Review all Role and ClusterRole definitions to ensure Secret access is granted only when necessary and follows the principle of least privilege.
+
+### 5.1.3 Minimize wildcard use in Roles and ClusterRoles
+
+**Result:** FAIL
+
+Where possible replace any use of wildcards in ClusterRoles and Roles with specific objects or actions. Wildcards (`*`) grant broad permissions that may exceed what is actually required. Review all RBAC configurations and replace wildcard permissions with explicit resource names, API groups, and verbs to implement proper access control.
+
+### 5.1.4 Minimize access to create pods
+
+**Result:** PASS
+
+Where possible, remove `create` access to `pod` objects in the cluster. Direct pod creation bypasses higher-level controllers like Deployments, which provide important features like replica management, rolling updates, and resource constraints. Users should typically interact with Deployments, ReplicaSets, or other controllers rather than creating pods directly.
+
+### 5.1.5 Ensure that default service accounts are not actively used
+
+**Result:** PASS
+
+Create explicit service accounts wherever a Kubernetes workload requires specific access to the Kubernetes API server. Default service accounts in each namespace should not be used for workloads as they represent a security risk and make it difficult to track and manage permissions. Modify the configuration of each default service account to include this value:
+
+```yaml
+automountServiceAccountToken: false
+```
+
+### 5.1.6 Ensure that Service Account Tokens are only mounted where necessary
+
+**Result:** PASS
+
+Modify the definition of pods and service accounts which do not need to mount service account tokens to disable it. Many workloads do not require access to the Kubernetes API and should not have service account tokens mounted. This reduces the attack surface and prevents potential token theft. Set `automountServiceAccountToken: false` on both service accounts and pod specifications where API access is not required.
+
+### 5.1.7 Avoid use of system:masters group
+
+**Result:** WARN
+
+Remove the `system:masters` group from all users in the cluster. The `system:masters` group has special significance in Kubernetes and provides cluster-admin privileges that bypass RBAC controls. Users should be granted permissions through explicit RBAC bindings rather than through membership in this privileged group.
+
+### 5.1.8 Limit use of the Bind, Impersonate and Escalate permissions in the Kubernetes cluster
+
+**Result:** WARN
+
+Where possible, remove the `impersonate`, `bind` and `escalate` rights from subjects. These permissions allow users to assume the identity of other users or service accounts, bind roles to subjects, and escalate their own privileges. These are powerful permissions that should only be granted to highly trusted administrative accounts and should be regularly audited.
+
+### 5.1.9 Minimize access to create persistent volumes
+
+**Result:** WARN
+
+Where possible, remove `create` access to PersistentVolume objects in the cluster. PersistentVolumes represent cluster-wide storage resources and their creation should be restricted to cluster administrators. Most users should work with PersistentVolumeClaims instead, which request storage from existing PersistentVolumes or trigger dynamic provisioning.
+
+### 5.1.10 Minimize access to the proxy sub-resource of nodes
+
+**Result:** WARN
+
+Where possible, remove access to the `proxy` sub-resource of `node` objects. The node proxy sub-resource allows direct access to services running on nodes, potentially bypassing network policies and other security controls. This access should be restricted to administrative users who specifically require it for cluster management tasks.
+
+### 5.1.11 Minimize access to the approval sub-resource of certificatesigningrequests objects
+
+**Result:** WARN
+
+Where possible, remove access to the `approval` sub-resource of `certificatesigningrequest` objects. Certificate signing request approval allows users to approve or deny certificate requests, which is a sensitive operation that should be restricted to certificate authority administrators or automated systems with proper validation.
+
+### 5.1.12 Minimize access to webhook configuration objects
+
+**Result:** WARN
+
+Where possible, remove access to the `validatingwebhookconfigurations` or `mutatingwebhookconfigurations` objects. These webhook configurations can intercept and modify or reject API requests, making them powerful security controls. Access to modify these configurations should be restricted to cluster administrators who understand the security implications.
+
+### 5.1.13 Minimize access to the service account token creation
+
+**Result:** WARN
+
+Where possible, remove access to the `token` sub-resource of `serviceaccount` objects. The ability to create service account tokens allows users to generate authentication credentials that could be used to access the cluster. This permission should be restricted to prevent unauthorized token generation and potential privilege escalation.
+
+## 5.2 Pod Security Standards
+
+### 5.2.1 Ensure that the cluster has at least one active policy control mechanism in place
+
+**Result:** WARN
+
+Ensure that either Pod Security Admission or an external policy control system is in place for every namespace which contains user workloads. Policy controls prevent the deployment of pods that violate security standards. Consider implementing Pod Security Standards, Open Policy Agent (OPA) Gatekeeper, or similar policy enforcement mechanisms to maintain cluster security.
+
+### 5.2.2 Minimize the admission of privileged containers
+
+**Result:** PASS
+
+Add policies to each namespace in the cluster which has user workloads to restrict the admission of privileged containers. Privileged containers have access to all Linux capabilities and can perform almost any action that the host can perform. This significantly increases the attack surface and should be avoided unless absolutely necessary for specific system-level operations.
+
+### 5.2.3 Minimize the admission of containers wishing to share the host process ID namespace
+
+**Result:** PASS
+
+Add policies to each namespace in the cluster which has user workloads to restrict the admission of `hostPID` containers. Sharing the host PID namespace allows containers to see and potentially interact with all processes on the host system, which poses a significant security risk and should be prevented except in very specific circumstances.
+
+### 5.2.4 Minimize the admission of containers wishing to share the host IPC namespace
+
+**Result:** PASS
+
+Add policies to each namespace in the cluster which has user workloads to restrict the admission of `hostIPC` containers. Sharing the host IPC namespace allows containers to access inter-process communication mechanisms on the host, which could be used to escape container isolation or access sensitive information from other processes.
+
+### 5.2.5 Minimize the admission of containers wishing to share the host network namespace
+
+**Result:** PASS
+
+Add policies to each namespace in the cluster which has user workloads to restrict the admission of `hostNetwork` containers. Sharing the host network namespace bypasses network isolation and allows containers direct access to the host's network interfaces, which can expose sensitive network services and bypass network policies.
+
+### 5.2.6 Minimize the admission of containers with allowPrivilegeEscalation
+
+**Result:** PASS
+
+Add policies to each namespace in the cluster which has user workloads to restrict the admission of containers with `.spec.allowPrivilegeEscalation` set to true. Privilege escalation allows a process to gain more privileges than it initially had, which can be exploited by attackers to gain elevated access within the container or potentially escape to the host.
+
+### 5.2.7 Minimize the admission of root containers
+
+**Result:** WARN
+
+Create a policy for each namespace in the cluster, ensuring that either `MustRunAsNonRoot` or `MustRunAs` with the range of UIDs not including 0, is set. Running containers as root increases the potential impact of container escape vulnerabilities and should be avoided. Configure containers to run as non-privileged users whenever possible.
+
+### 5.2.8 Minimize the admission of containers with the NET_RAW capability
+
+**Result:** WARN
+
+Add policies to each namespace in the cluster which has user workloads to restrict the admission of containers with the `NET_RAW` capability. The `NET_RAW` capability allows containers to create raw sockets, which can be used for network packet crafting and potentially malicious network activities. This capability should be dropped unless specifically required.
+
+### 5.2.9 Minimize the admission of containers with added capabilities
+
+**Result:** WARN
+
+Ensure that `allowedCapabilities` is not present in policies for the cluster unless it is set to an empty array. Linux capabilities should be dropped by default, and only the minimum required capabilities should be explicitly granted. Review all capability grants and ensure they are necessary for the container's intended function.
+
+### 5.2.10 Minimize the admission of containers with capabilities assigned
+
+**Result:** WARN
+
+Review the use of capabilities in applications running on your cluster. Where a namespace contains applications which do not require any Linux capabilities to operate consider adding a PSP which forbids the admission of containers which do not drop all capabilities. Most applications can run without any special capabilities, and dropping all capabilities reduces the potential attack surface.
+
+### 5.2.11 Minimize the admission of Windows HostProcess containers
+
+**Result:** WARN
+
+Add policies to each namespace in the cluster which has user workloads to restrict the admission of containers that have `.securityContext.windowsOptions.hostProcess` set to true. Windows HostProcess containers run with elevated privileges and have access to the host system, similar to privileged containers on Linux, and should be restricted unless absolutely necessary.
+
+### 5.2.12 Minimize the admission of HostPath volumes
+
+**Result:** WARN
+
+Add policies to each namespace in the cluster which has user workloads to restrict the admission of containers with `hostPath` volumes. HostPath volumes mount directories from the host filesystem into containers, which can be used to access sensitive host data or escape container isolation. Use more secure alternatives like ConfigMaps, Secrets, or persistent volumes.
+
+### 5.2.13 Minimize the admission of containers which use HostPorts
+
+**Result:** WARN
+
+Add policies to each namespace in the cluster which has user workloads to restrict the admission of containers which use `hostPort` sections. HostPorts bind directly to host network interfaces and can conflict with other services or create security vulnerabilities. Use Service objects and proper networking instead of direct host port binding.
+
+## 5.3 Network Policies and CNI
+
+### 5.3.1 Ensure that the CNI in use supports NetworkPolicies
+
+**Result:** WARN
+
+If the CNI plugin in use does not support network policies, consideration should be given to making use of a different plugin, or finding an alternate mechanism for restricting traffic in the Kubernetes cluster. Network policies provide essential microsegmentation capabilities that help prevent lateral movement in case of compromise. Popular CNI plugins that support NetworkPolicies include Calico, Cilium, and Weave Net.
+
+### 5.3.2 Ensure that all Namespaces have NetworkPolicies defined
+
+**Result:** WARN
+
+Follow the documentation and create `NetworkPolicy` objects as you need them. Network policies should be implemented to control ingress and egress traffic for pods within namespaces. Start with a default deny policy and then explicitly allow required traffic flows. This implements a zero-trust networking model within the cluster.
+
+## 5.4 Secrets Management
+
+### 5.4.1 Prefer using Secrets as files over Secrets as environment variables
+
+**Result:** WARN
+
+If possible, rewrite application code to read Secrets from mounted secret files, rather than from environment variables. Environment variables can be more easily exposed through process lists, logs, or error messages. Mounting secrets as files provides better security and allows for secret rotation without restarting containers.
+
+### 5.4.2 Consider external secret storage
+
+**Result:** WARN
+
+Refer to the Secrets management options offered by your cloud provider or a third-party secrets management solution. External secret management systems like HashiCorp Vault, AWS Secrets Manager, or Azure Key Vault provide better security, auditing, and rotation capabilities than storing secrets directly in Kubernetes. Consider using secret management operators to integrate with these systems.
+
+## 5.5 Extensible Admission Control
+
+### 5.5.1 Configure Image Provenance using ImagePolicyWebhook admission controller
+
+**Result:** WARN
+
+Follow the Kubernetes documentation and setup image provenance. Image provenance verification ensures that only approved and verified container images are deployed in the cluster. This helps prevent the deployment of malicious or vulnerable images and should be part of a comprehensive supply chain security strategy.
+
+## 5.7 General Policies
+
+### 5.7.1 Create administrative boundaries between resources using namespaces
+
+**Result:** WARN
+
+Follow the documentation and create namespaces for objects in your deployment as you need them. Namespaces provide logical isolation between different applications, teams, or environments within the same cluster. Use namespaces to implement proper resource organization, access control, and resource quotas.
+
+### 5.7.2 Ensure that the seccomp profile is set to docker/default in your Pod definitions
+
+**Result:** WARN
+
+Use securityContext to enable the docker/default seccomp profile in your pod definitions. Seccomp (secure computing mode) restricts the system calls that can be made by processes, reducing the attack surface. An example configuration:
+
+```yaml
+securityContext:
+  seccompProfile: 
+    type: RuntimeDefault
+```
+
+### 5.7.3 Apply SecurityContext to your Pods and Containers
+
+**Result:** WARN
+
+Follow the Kubernetes documentation and apply SecurityContexts to your Pods. SecurityContexts define privilege and access control settings for pods and containers. Configure settings such as running as non-root, dropping capabilities, setting read-only root filesystems, and defining seccomp profiles to enhance security. For a suggested list of SecurityContexts, you may refer to the CIS Security Benchmark for Docker Containers.
+
+### 5.7.4 The default namespace should not be used
+
+**Result:** WARN
+
+Ensure that namespaces are created to allow for appropriate segregation of Kubernetes resources and that all new resources are created in a specific namespace. The default namespace should remain empty and not be used for application workloads. Using specific namespaces helps with organization, security boundaries, and resource management.
