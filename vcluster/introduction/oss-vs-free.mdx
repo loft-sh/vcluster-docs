@@ -57,6 +57,8 @@ The Free tier includes all OSS features plus:
 - **[Namespace syncing](../configure/vcluster-yaml/sync/to-host/advanced/namespaces.mdx)**: Sync entire namespaces between clusters
 - **[Sync patches](../configure/vcluster-yaml/sync/README.mdx)**: Apply custom patches during sync
 - **[HostPath Mapper](../configure/vcluster-yaml/control-plane/components/host-path-mapper.mdx)**: Map virtual pod names for log collection
+- **[VPN mode](../configure/vcluster-yaml/networking/resolve-dns.mdx)**: Secure connectivity between virtual and host clusters
+- **[High availability](../deploy/control-plane/kubernetes-pod/high-availability.mdx)**: Run vCluster with multiple replicas (1 HA vCluster in Free tier)
 - **Custom DNS entries**: Define custom DNS configurations
 
 ### Free tier limits
@@ -76,15 +78,14 @@ sequenceDiagram
     participant API as License API
     participant Pod as vCluster Pod
 
-    User->>Platform: 1. Create account
-    Platform->>User: 2. Receive license key
-    User->>Platform: 3. Connect host cluster
-    Platform->>Pod: 4. Inject license during deployment
-    Pod->>API: 5. Validate license on startup
-    API->>Pod: 6. Return license status
+    User->>Platform: 1. Install Platform
+    Platform->>API: 2. Validate license
+    API->>Platform: 3. Return license status
+    User->>Platform: 4. Connect host cluster
+    Platform->>Pod: 5. Deploy vCluster with license
     loop Periodic validation
-        Pod->>API: 7. Check license validity
-        API->>Pod: 8. Confirm status
+        Platform->>API: 6. Check license validity
+        API->>Platform: 7. Confirm status
     end
 ```
 
@@ -125,29 +126,28 @@ data:
   license: <base64-encoded-license-key>
 ```
 
-#### 4. Startup validation
+#### 4. License validation
 
-On startup, the vCluster pod:
-1. Reads the license secret from the filesystem
-2. Contacts the License API (license.loft.sh) over HTTPS
-3. Sends the license key for validation
-4. Receives confirmation of tier, features, and validity period
-5. Enables features based on the validated tier
+The vCluster Platform (not the vCluster pod itself) handles license validation:
+1. Platform contacts the License API (license.loft.sh) over HTTPS
+2. Sends the license key for validation
+3. Receives confirmation of tier, features, and validity period
+4. Configures vCluster pods with the appropriate feature set
 
-If validation fails (network issues, invalid license), the vCluster:
-- Logs a warning but continues operating in grace period mode
+If validation fails (network issues, invalid license), the Platform:
+- Logs a warning but allows existing vClusters to continue operating
 - Retries validation on a backoff schedule
-- Disables paid features if grace period expires
+- Restricts new feature usage after grace period expires
 
 #### 5. Periodic license checks
 
-After startup, vCluster performs periodic validation:
+The Platform performs periodic validation:
 - **Check interval**: Every 24 hours by default
 - **Grace period**: 7 days if License API is unreachable
 - **Feature enforcement**: Paid features disabled after grace period expires
 
 :::info
-The License API endpoint is `https://license.loft.sh`. Ensure your cluster can reach this endpoint for license validation. For air-gapped environments, contact sales for offline licensing options.
+The License API endpoint is `https://license.loft.sh`. Ensure your Platform can reach this endpoint for license validation. For air-gapped environments, contact sales for offline licensing options.
 :::
 
 ### License validation behavior
@@ -174,21 +174,29 @@ Activate the vCluster Free tier using these steps:
 - kubectl installed and configured
 - The vCluster CLI installed
 
-### Step 1: Create a vCluster Platform account
+### Step 1: Install the vCluster Platform
 
-Visit [vCluster Platform](https://www.vcluster.com/platform) and create a free account. No credit card is required. Learn more about the Platform in the [Platform documentation](https://www.vcluster.com/docs/platform/).
+Install the vCluster Platform in your Kubernetes cluster. See the [Platform installation guide](/docs/platform/install/quick-start-guide) for detailed instructions. No credit card is required for the Free tier.
 
 ### Step 2: Connect your virtual cluster
 
-After creating your account, you'll receive instructions for connecting your virtual clusters to the Platform. This typically involves:
+After installing the Platform, connect existing virtual clusters or create new ones.
 
-1. Creating a Platform project for your organization
-2. Installing the Platform agent in your host cluster
-3. Deploying virtual clusters through the Platform UI or CLI
+**For existing vClusters:**
+
+```bash
+# Log in to the Platform
+vcluster platform login
+
+# Add an existing vCluster to the Platform
+vcluster platform add vcluster my-vcluster
+```
+
+**For new vClusters**, create them through the Platform UI or CLI - Free tier features are automatically enabled.
 
 ### Step 3: Deploy with Free tier features
 
-Once connected, you can deploy virtual clusters with Free tier features enabled:
+When creating virtual clusters through the Platform, Free tier features like embedded etcd are automatically available:
 
 ```yaml title="vcluster.yaml"
 # Use embedded etcd (Free tier feature)
@@ -197,11 +205,6 @@ controlPlane:
     etcd:
       embedded:
         enabled: true
-
-# Connect to Platform (required for Free tier)
-external:
-  platform:
-    enabled: true
 ```
 
 Deploy your virtual cluster:
@@ -212,17 +215,14 @@ vcluster create my-vcluster --values vcluster.yaml
 
 ### Step 4: Verify Free tier activation
 
-Check that your virtual cluster is connected and licensed:
+Check that your virtual cluster is connected and licensed in the Platform UI, or use the CLI:
 
 ```bash
-# Connect to your virtual cluster
-vcluster connect my-vcluster
-
-# Check the vCluster pod logs for license validation
-kubectl logs -n vcluster-my-vcluster deployment/my-vcluster | grep license
+# List vClusters managed by Platform
+vcluster platform list vclusters
 ```
 
-You should see log entries confirming successful license validation with the Free tier.
+You should see your virtual cluster listed with the Free tier license status.
 
 ## Comparison with Enterprise tier
 
@@ -235,8 +235,9 @@ Beyond the Free tier, vCluster offers an Enterprise tier for production and comp
 | Embedded etcd | - | ✓ | ✓ |
 | Private/Auto Nodes | - | ✓ | ✓ |
 | Advanced syncing | - | ✓ | ✓ |
+| VPN mode | - | ✓ | ✓ |
+| High availability | - | ✓ (1 vCluster) | ✓ |
 | Sleep mode | - | - | ✓ |
-| High availability | - | - | ✓ |
 | External databases | - | - | ✓ |
 | SSO/Audit logging | - | - | ✓ |
 | FIPS compliance | - | - | ✓ |
