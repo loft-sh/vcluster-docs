@@ -122,6 +122,8 @@ const (
 
 	KubeVip FeatureName = "kube-vip" // Kube-vip Integration
 
+	VirtualClusterProxyResources FeatureName = "vcluster-proxy-resources" // vCluster Proxy Resources
+
 )
 
 func GetFeatures() []FeatureName {
@@ -185,5 +187,6 @@ func GetFeatures() []FeatureName {
 		Standalone,
 		Netris,
 		KubeVip,
+		VirtualClusterProxyResources,
 	}
 }
