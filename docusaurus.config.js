@@ -238,14 +238,19 @@ const config = {
         editUrl: ({ versionDocsDirPath, docPath }) =>
           `https://github.com/loft-sh/vcluster-docs/edit/main/${versionDocsDirPath}/${docPath}`,
         editCurrentVersion: true,
-        lastVersion: "4.5.0",
-        onlyIncludeVersions: ["current", "4.5.0", "4.4.0", "4.3.0"],
+        lastVersion: "4.6.0",
+        onlyIncludeVersions: ["current", "4.6.0", "4.5.0", "4.4.0", "4.3.0"],
         versions: {
           current: {
             label: "main 🚧",
           },
+          "4.6.0": {
+            label: "v4.6 Stable",
+            banner: "none",
+            badge: true,
+          },
           "4.5.0": {
-            label: "v4.5 Stable",
+            label: "v4.5",
             banner: "none",
             badge: true,
           },
@@ -255,9 +260,10 @@ const config = {
             badge: true,
           },
           "4.3.0": {
-            label: "v4.3",
-            banner: "none",
+            label: "v4.3 (EOL)",
+            banner: "unmaintained",
             badge: true,
+            noIndex: true,
           },
         },
       },
@@ -391,9 +397,9 @@ const config = {
         additionalLanguages: ["bash", "hcl"],
       },
       announcementBar: {
-        id: "platform-4-5-release",
+        id: "platform-4-6-release",
         content:
-          '🚀 <strong>New releases: <a href="https://www.vcluster.com/releases/en/changelog?hideLogo=true&hideMenu=true&theme=dark&embed=true&c=vCluster" target="_blank">vCluster Platform 4.5 and vCluster 0.30</a></strong>',
+          '🚀 <strong>New release: <a href="https://www.vcluster.com/releases/en/changelog?hideLogo=true&hideMenu=true&theme=dark&embed=true&c=vCluster" target="_blank">vCluster Platform 4.6</a></strong>',
         backgroundColor: "#4a90e2",
         textColor: "#ffffff",
         isCloseable: true,
