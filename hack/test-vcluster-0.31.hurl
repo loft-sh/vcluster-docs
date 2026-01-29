@@ -22,7 +22,7 @@ header "Location" contains "https://www.vcluster.com/docs/vcluster/cli/vcluster_
 GET {{BASE_URL}}/docs/deploying-vclusters/basics
 HTTP 301
 [Asserts]
-header "Location" contains "https://www.vcluster.com/docs/vcluster/deploy/control-plane/container/basics/basics"
+header "Location" contains "https://www.vcluster.com/docs/vcluster/deploy/control-plane/kubernetes-pod/basics/basics"
 
 # Test 4: Get started redirect
 GET {{BASE_URL}}/docs/get-started
@@ -236,13 +236,13 @@ header "Location" contains "/docs/vcluster/0.26.0/learn-how-to/configure-custom-
 GET {{BASE_URL}}/docs/vcluster/learn-how-to/enable-debug-logging
 HTTP 301
 [Asserts]
-header "Location" contains "/docs/vcluster/learn-how-to/control-plane/container/enable-debug-logging"
+header "Location" contains "/docs/vcluster/learn-how-to/control-plane/kubernetes-pod/enable-debug-logging"
 
 # Test 37: Enable debug logging (next)
 GET {{BASE_URL}}/docs/vcluster/next/learn-how-to/enable-debug-logging
 HTTP 301
 [Asserts]
-header "Location" contains "/docs/vcluster/next/learn-how-to/control-plane/container/enable-debug-logging"
+header "Location" contains "/docs/vcluster/next/learn-how-to/control-plane/kubernetes-pod/enable-debug-logging"
 
 # Test 38: Override alpine sidecar (0.26.0 just adds trailing slash)
 GET {{BASE_URL}}/docs/vcluster/0.26.0/learn-how-to/override-alpine-sidecar
@@ -350,37 +350,37 @@ header "Location" contains "/docs/vcluster/0.26.0/third-party-integrations/overv
 GET {{BASE_URL}}/docs/vcluster/next/deploy/environment/eks
 HTTP 301
 [Asserts]
-header "Location" contains "/docs/vcluster/next/deploy/control-plane/container/environment/eks"
+header "Location" contains "/docs/vcluster/next/deploy/control-plane/kubernetes-pod/environment/eks"
 
 # Test 56: Deploy environment wildcard (current)
 GET {{BASE_URL}}/docs/vcluster/deploy/environment/gke
 HTTP 301
 [Asserts]
-header "Location" contains "/docs/vcluster/deploy/control-plane/container/environment/gke"
+header "Location" contains "/docs/vcluster/deploy/control-plane/kubernetes-pod/environment/gke"
 
 # Test 57: Deploy topologies wildcard (next)
 GET {{BASE_URL}}/docs/vcluster/next/deploy/topologies/multi-namespace-mode
 HTTP 301
 [Asserts]
-header "Location" contains "/docs/vcluster/next/deploy/control-plane/container/multi-namespace-mode"
+header "Location" contains "/docs/vcluster/next/deploy/control-plane/kubernetes-pod/multi-namespace-mode"
 
 # Test 58: Deploy topologies wildcard (current)
 GET {{BASE_URL}}/docs/vcluster/deploy/topologies/single-namespace-mode
 HTTP 301
 [Asserts]
-header "Location" contains "/docs/vcluster/deploy/control-plane/container/single-namespace-mode"
+header "Location" contains "/docs/vcluster/deploy/control-plane/kubernetes-pod/single-namespace-mode"
 
 # Test 59: Deploy basics (next)
 GET {{BASE_URL}}/docs/vcluster/next/deploy/basics
 HTTP 301
 [Asserts]
-header "Location" contains "/docs/vcluster/next/deploy/control-plane/container/basics"
+header "Location" contains "/docs/vcluster/next/deploy/control-plane/kubernetes-pod/basics"
 
 # Test 60: Deploy basics (current)
 GET {{BASE_URL}}/docs/vcluster/deploy/basics
 HTTP 301
 [Asserts]
-header "Location" contains "/docs/vcluster/deploy/control-plane/container/basics"
+header "Location" contains "/docs/vcluster/deploy/control-plane/kubernetes-pod/basics"
 
 # =====================================================
 # Verification tests - pages that should load
