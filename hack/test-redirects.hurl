@@ -5,6 +5,12 @@
 # Tests use fake version (99.0.0) to avoid versioned docs serving content.
 # Redirects are fallbacks - they only fire when no content exists at source path.
 
+# Test: deploy/control-plane/container/* -> deploy/control-plane/kubernetes-pod/*
+GET {{BASE_URL}}/docs/vcluster/99.0.0/deploy/control-plane/container/basics/
+HTTP 301
+[Asserts]
+header "Location" contains "/docs/vcluster/99.0.0/deploy/control-plane/kubernetes-pod/basics"
+
 # Test: deploy/control-plane/container/flux -> third-party-integrations/git-operations/flux
 GET {{BASE_URL}}/docs/vcluster/99.0.0/deploy/control-plane/container/flux/
 HTTP 301
