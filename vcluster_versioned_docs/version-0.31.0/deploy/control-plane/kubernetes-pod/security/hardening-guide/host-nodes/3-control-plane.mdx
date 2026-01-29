@@ -1,0 +1,165 @@
+---
+title: Control plane configuration
+sidebar_label: Control Plane
+sidebar_position: 5
+description: Self-assessment guide to validate control plane configuration
+sidebar_class_name: host-nodes 
+---
+
+import Flow, { Step } from '@site/src/components/Flow';
+import TenancySupport from '../../../../../../_fragments/tenancy-support.mdx';
+
+<TenancySupport hostNodes="true" />
+
+<!--vale off-->
+
+The following section covers cluster-wide security areas. The assessment focuses on authentication and authorization mechanisms and audit logging configuration.
+
+Assessment focus for vCluster involves verifying audit logging is enabled and alternative mechanisms such as OIDC are used. Key areas include ensuring that traditional authentication methods like client certificates, service account tokens, and bootstrap tokens are replaced with more secure alternatives for user authentication.
+
+:::note Control numbering
+The control numbers used throughout this guide (3.1.1, 3.2.1, etc.) correlate directly to the official CIS Kubernetes Benchmark control numbers. This allows you to cross-reference with the official CIS documentation and maintain consistency with standard security frameworks.
+:::
+
+## 3.1 Authentication and authorization
+
+### 3.1.1 Client certificate authentication should not be used for users
+
+**Result:** WARN
+
+Alternative mechanisms provided by Kubernetes such as the use of OIDC should be implemented in place of client certificates. Client certificate authentication, while functional, creates operational challenges around certificate lifecycle management and lacks the advanced features provided by modern authentication systems. OIDC integration allows for centralized identity management, multi-factor authentication, and easier user provisioning and deprovisioning.
+
+### 3.1.2 Service account token authentication should not be used for users
+
+**Result:** WARN
+
+Alternative mechanisms provided by Kubernetes such as the use of OIDC should be implemented in place of service account tokens. Service account tokens are designed for workload authentication rather than human users. Using service account tokens for user authentication bypasses important security controls and audit trails that are essential for compliance and security monitoring.
+
+### 3.1.3 Bootstrap token authentication should not be used for users
+
+**Result:** WARN
+
+Alternative mechanisms provided by Kubernetes such as the use of OIDC should be implemented in place of bootstrap tokens. Bootstrap tokens are intended for node bootstrapping and initial cluster setup, not for ongoing user authentication. Using bootstrap tokens for user access creates security risks and prevents proper user identity tracking and access control.
+
+## 3.2 Logging
+
+### 3.2.1 Ensure that a minimal audit policy is created
+
+**Result:** PASS
+
+<Flow>
+<Step>
+
+Follow the [Kubernetes documentation](https://kubernetes.io/docs/tasks/debug/debug-cluster/audit/) and create a config map with a minimal audit policy:
+
+```yaml title="audit-config-configmap.yaml"
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: audit-config
+  namespace: vcluster-my-vcluster
+data:
+  audit-policy.yaml: |
+    apiVersion: audit.k8s.io/v1
+    kind: Policy
+    rules:
+    - level: Metadata
+```
+
+</Step>
+<Step>
+
+Pass the following configuration as arguments to the API Server while creating the vCluster:
+
+```yaml title="vcluster.yaml"
+controlPlane:
+  distro:
+    k8s:
+      enabled: true
+      apiServer:
+        extraArgs: 
+        - --audit-policy-file=/etc/kubernetes/audit-policy.yaml
+  statefulSet:
+    persistence:
+      addVolumes:
+      - name: audit-policy
+        configMap:
+          name: audit-config
+      addVolumeMounts:
+      - name: audit-policy
+        mountPath: /etc/kubernetes
+```
+
+</Step>
+<Step>
+
+Create the vCluster using the above values file:
+
+```bash
+vcluster create my-vcluster -f vcluster.yaml --connect=false
+```
+
+</Step>
+<Step>
+
+Run the following command against the vCluster pod:
+
+```bash
+kubectl exec -n vcluster-my-vcluster my-vcluster-0 -c syncer -- ps -ef | grep kube-apiserver
+```
+
+Verify that the `--audit-policy-file` is set.
+
+</Step>
+</Flow>
+
+**Expected Result:**
+```
+'--audit-policy-file' is present
+```
+
+**Returned Value:**
+```bash
+26 root      0:08 /binaries/kube-apiserver --advertise-address=127.0.0.1 --service-cluster-ip-range=10.96.0.0/12 --bind-address=127.0.0.1 --allow-privileged=true --authorization-mode=RBAC --client-ca-file=/data/pki/client-ca.crt --enable-bootstrap-token-auth=true --etcd-servers=unix:///data/kine.sock --proxy-client-cert-file=/data/pki/front-proxy-client.crt --proxy-client-key-file=/data/pki/front-proxy-client.key --requestheader-allowed-names=front-proxy-client --requestheader-client-ca-file=/data/pki/front-proxy-ca.crt --requestheader-extra-headers-prefix=X-Remote-Extra- --requestheader-group-headers=X-Remote-Group --requestheader-username-headers=X-Remote-User --secure-port=6443 --service-account-issuer=https://kubernetes.default.svc.cluster.local --service-account-key-file=/data/pki/sa.pub --service-account-signing-key-file=/data/pki/sa.key --tls-cert-file=/data/pki/apiserver.crt --tls-private-key-file=/data/pki/apiserver.key --endpoint-reconciler-type=none --profiling=false --audit-policy-file=/etc/kubernetes/audit-policy.yaml
+```
+
+### 3.2.2 Ensure that the audit policy covers key security concerns
+
+**Result:** WARN
+
+Review the audit policy provided for the cluster and ensure that it covers key security areas. The audit policy should include access to Secrets managed by the cluster, taking care to only log Metadata for requests to Secrets, ConfigMaps, and TokenReviews to avoid the risk of logging sensitive data. Additionally, ensure coverage of modification of pod and deployment objects and use of `pods/exec`, `pods/portforward`, `pods/proxy` and `services/proxy`.
+
+For most requests, minimally logging at the Metadata level is recommended as the most basic level of logging. Consider modification of the audit policy in use on the cluster to include these items at a minimum. The following sample policy satisfies these criteria:
+
+```yaml title="audit-config-configmap.yaml"
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: audit-config
+  namespace: vcluster-my-vcluster
+data:
+  audit-policy.yaml: |
+    apiVersion: audit.k8s.io/v1
+    kind: Policy
+    rules:
+    - level: Metadata
+      resources:
+      - group: ""
+        resources: ["secrets", "configmaps"]
+      - group: "authentication.k8s.io"
+        resources: ["tokenreviews"]
+    - level: RequestResponse
+      resources:
+      - group: ""
+        resources: ["pods"]
+      - group: "apps"
+        resources: ["deployments", "replicasets"]
+      verbs: ["create", "update", "patch", "delete"]
+    - level: RequestResponse
+      resources:
+      - group: ""
+        resources: ["pods/exec", "pods/portforward", "pods/proxy", "services/proxy"]
+    - level: Metadata
+      omitStages:
+      - RequestReceived
+```
