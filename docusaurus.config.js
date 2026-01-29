@@ -239,7 +239,7 @@ const config = {
           `https://github.com/loft-sh/vcluster-docs/edit/main/${versionDocsDirPath}/${docPath}`,
         editCurrentVersion: true,
         lastVersion: "4.6.0",
-        onlyIncludeVersions: ["current", "4.6.0", "4.5.0", "4.4.0", "4.3.0"],
+        onlyIncludeVersions: ["current", "4.6.0", "4.5.0", "4.4.0"],
         versions: {
           current: {
             label: "main 🚧",
@@ -258,12 +258,6 @@ const config = {
             label: "v4.4",
             banner: "none",
             badge: true,
-          },
-          "4.3.0": {
-            label: "v4.3 (EOL)",
-            banner: "unmaintained",
-            badge: true,
-            noIndex: true,
           },
         },
       },
