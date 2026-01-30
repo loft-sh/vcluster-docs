@@ -116,14 +116,13 @@ const FeatureTable = ({ names, tenancy, showEnterpriseHeader = true }) => {
         'standalone': 'Standalone'
       };
       const tenancyName = tenancyNames[tenancy] || tenancy;
-      return `Features available for ${tenancyName}:`;
+      return `Available for ${tenancyName}`;
     }
-    return 'Feature availability:';
+    return 'Available in these plans';
   };
 
   return (
     <>
-      <p className={styles.featureTableHeading}>{getHeading()}</p>
       <div className={styles.featureTableWrapper}>
         <table className={styles.featureTable}>
           <thead>
@@ -139,10 +138,16 @@ const FeatureTable = ({ names, tenancy, showEnterpriseHeader = true }) => {
               </tr>
             )}
             <tr>
-              <th>Feature</th>
+              <th><span className={styles.headerLabel}>{getHeading()}</span></th>
               {products.map(product => (
                 <th key={product.key} className={styles.centerAlign}>
-                  {product.name}
+                  {product.docs_url ? (
+                    <a href={product.docs_url} className={styles.productLink}>
+                      {product.name}
+                    </a>
+                  ) : (
+                    product.name
+                  )}
                 </th>
               ))}
             </tr>
