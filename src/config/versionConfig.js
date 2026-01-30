@@ -9,6 +9,8 @@
  */
 
 export const vclusterEOLVersions = [
+  { to: "https://vcluster.com/docs/v0.26", label: "v0.26 (EOL)" },
+  { to: "https://vcluster.com/docs/v0.25", label: "v0.25 (EOL)" },
   { to: "https://vcluster.com/docs/v0.24", label: "v0.24 (EOL)" },
   { to: "https://vcluster.com/docs/v0.23", label: "v0.23 (EOL)" },
   { to: "https://vcluster.com/docs/v0.22", label: "v0.22 (EOL)" },
