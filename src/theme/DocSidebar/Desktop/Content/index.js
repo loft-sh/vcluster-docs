@@ -2,7 +2,7 @@ import React from 'react';
 import {useLocation} from '@docusaurus/router';
 import Content from '@theme-original/DocSidebar/Desktop/Content';
 import DocsVersionDropdownNavbarItem from '@theme-original/NavbarItem/DocsVersionDropdownNavbarItem';
-import {vclusterEOLVersions, platformEOLVersions, getDesktopVersions} from '@site/src/config/versionConfig';
+// Archive branch: version dropdowns disabled
 import styles from "./styles.module.css";
 
 function VersionSelector({docsPluginId, dropdownItemsAfter}) {
@@ -29,13 +29,13 @@ export default function ContentWrapper(props) {
       {shouldShowVClusterVersioning && (
         <VersionSelector
           docsPluginId="vcluster"
-          dropdownItemsAfter={getDesktopVersions(vclusterEOLVersions)}
+          dropdownItemsAfter={[]}
         />
       )}
       {shouldShowPlatformVersioning && (
         <VersionSelector
           docsPluginId="platform"
-          dropdownItemsAfter={getDesktopVersions(platformEOLVersions)}
+          dropdownItemsAfter={[]}
         />
       )}
       <Content {...props} />

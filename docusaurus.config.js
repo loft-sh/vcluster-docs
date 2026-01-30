@@ -78,7 +78,7 @@ const config = {
           lastVersion: "current",
           versions: {
             current: {
-              label: "v0.31",
+              label: "Platform v4.3",
               banner: "none",
               badge: false,
             },
@@ -190,7 +190,7 @@ const config = {
           `https://github.com/loft-sh/vcluster-docs/edit/main/${versionDocsDirPath}/${docPath}`,
         editCurrentVersion: true,
         lastVersion: "0.31.0",
-        onlyIncludeVersions: ["current", "0.31.0", "0.30.0", "0.29.0", "0.28.0", "0.27.0"],
+        onlyIncludeVersions: ["0.31.0"],
         versions: {
           current: {
             label: "main 🚧",
@@ -233,8 +233,8 @@ const config = {
         editUrl: ({ versionDocsDirPath, docPath }) =>
           `https://github.com/loft-sh/vcluster-docs/edit/main/${versionDocsDirPath}/${docPath}`,
         editCurrentVersion: true,
-        lastVersion: "4.6.0",
-        onlyIncludeVersions: ["current", "4.6.0", "4.5.0", "4.4.0"],
+        lastVersion: "4.3.0",
+        onlyIncludeVersions: ["4.3.0"],
         versions: {
           current: {
             label: "main 🚧",
@@ -251,6 +251,11 @@ const config = {
           },
           "4.4.0": {
             label: "v4.4",
+            banner: "none",
+            badge: true,
+          },
+          "4.3.0": {
+            label: "v4.3",
             banner: "none",
             badge: true,
           },
