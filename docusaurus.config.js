@@ -78,7 +78,7 @@ const config = {
           lastVersion: "current",
           versions: {
             current: {
-              label: "v0.31",
+              label: "v0.25",
               banner: "none",
               badge: false,
             },
@@ -189,34 +189,11 @@ const config = {
         editUrl: ({ versionDocsDirPath, docPath }) =>
           `https://github.com/loft-sh/vcluster-docs/edit/main/${versionDocsDirPath}/${docPath}`,
         editCurrentVersion: true,
-        lastVersion: "0.31.0",
-        onlyIncludeVersions: ["current", "0.31.0", "0.30.0", "0.29.0", "0.28.0", "0.27.0"],
+        lastVersion: "0.25.0",
+        onlyIncludeVersions: ["0.25.0"],
         versions: {
-          current: {
-            label: "main 🚧",
-          },
-          "0.31.0": {
-            label: "v0.31 Stable",
-            banner: "none",
-            badge: true,
-          },
-          "0.30.0": {
-            label: "v0.30",
-            banner: "none",
-            badge: true,
-          },
-          "0.29.0": {
-            label: "v0.29",
-            banner: "none",
-            badge: true,
-          },
-          "0.28.0": {
-            label: "v0.28",
-            banner: "none",
-            badge: true,
-          },
-          "0.27.0": {
-            label: "v0.27 (EOS)",
+          "0.25.0": {
+            label: "v0.25 (EOL)",
             banner: "none",
             badge: true,
           },
@@ -233,24 +210,11 @@ const config = {
         editUrl: ({ versionDocsDirPath, docPath }) =>
           `https://github.com/loft-sh/vcluster-docs/edit/main/${versionDocsDirPath}/${docPath}`,
         editCurrentVersion: true,
-        lastVersion: "4.6.0",
-        onlyIncludeVersions: ["current", "4.6.0", "4.5.0", "4.4.0"],
+        lastVersion: "4.3.0",
+        onlyIncludeVersions: ["4.3.0"],
         versions: {
-          current: {
-            label: "main 🚧",
-          },
-          "4.6.0": {
-            label: "v4.6 Stable",
-            banner: "none",
-            badge: true,
-          },
-          "4.5.0": {
-            label: "v4.5",
-            banner: "none",
-            badge: true,
-          },
-          "4.4.0": {
-            label: "v4.4",
+          "4.3.0": {
+            label: "v4.3 (EOL)",
             banner: "none",
             badge: true,
           },
