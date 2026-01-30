@@ -116,15 +116,19 @@ const FeatureTable = ({ names, tenancy, showEnterpriseHeader = true }) => {
         'standalone': 'Standalone'
       };
       const tenancyName = tenancyNames[tenancy] || tenancy;
-      return `Features available for ${tenancyName}:`;
+      return `Available for ${tenancyName}`;
     }
-    return 'Feature availability:';
+    return 'Available in these plans';
   };
+
+  // Use compact layout when showing specific features (not "all")
+  const wrapperClass = showAll
+    ? styles.featureTableWrapper
+    : `${styles.featureTableWrapper} ${styles.featureTableWrapperCompact}`;
 
   return (
     <>
-      <p className={styles.featureTableHeading}>{getHeading()}</p>
-      <div className={styles.featureTableWrapper}>
+      <div className={wrapperClass}>
         <table className={styles.featureTable}>
           <thead>
             {showEnterpriseHeader && enterpriseTiers.length > 0 && (
@@ -139,10 +143,16 @@ const FeatureTable = ({ names, tenancy, showEnterpriseHeader = true }) => {
               </tr>
             )}
             <tr>
-              <th>Feature</th>
+              <th><span className={styles.headerLabel}>{getHeading()}</span></th>
               {products.map(product => (
                 <th key={product.key} className={styles.centerAlign}>
-                  {product.name}
+                  {product.docs_url ? (
+                    <a href={product.docs_url} className={styles.productLink}>
+                      {product.name}
+                    </a>
+                  ) : (
+                    product.name
+                  )}
                 </th>
               ))}
             </tr>
