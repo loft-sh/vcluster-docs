@@ -308,42 +308,6 @@ The command line interface name is `vcluster`.
 - [CoreDNS](https://coredns.io/)
 - [etcd](https://etcd.io/)
 
-## Feature tables sync {#feature-tables-sync}
-
-The feature tables in `src/data/features.yaml` and `src/data/products.yaml` are
-synced from upstream repositories:
-
-- **Features**: `loft-sh/admin-apis/definitions/features.yaml`
-- **Tier mappings**: `loft-sh/plans/*.yaml` (free.yaml, dev.yaml, prod.yaml, scale.yaml)
-
-### Syncing features
-
-To update the feature tables from upstream:
-
-```bash
-npm run sync-upstream
-```
-
-This command:
-- Fetches the latest features from `loft-sh/admin-apis`
-- Fetches tier assignments from `loft-sh/plans`
-- Adds new features to `features.yaml`
-- Updates tier assignments in `products.yaml`
-- Validates that all feature references are valid
-
-### Validating sync status
-
-To check if local files are in sync with upstream (used in CI):
-
-```bash
-npm run validate-upstream
-```
-
-This runs in dry-run mode and exits with code 1 if files are out of sync.
-
-> [!NOTE]
-> The sync script requires `gh` CLI with authentication to access private repos.
-
 ## Style guide automation {#style-guide-automation}
 
 To maintain quality and consistency in our technical documentation, we use
