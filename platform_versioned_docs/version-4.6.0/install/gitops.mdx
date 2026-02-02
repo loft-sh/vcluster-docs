@@ -5,6 +5,8 @@ sidebar_position: 3
 description: Learn how to install vCluster Platform in a GitOps style using ArgoCD.
 ---
 
+import Tabs from "@theme/Tabs";
+import TabItem from "@theme/TabItem";
 import ListHelmVersions from "../_partials/install/list-helm-versions.mdx";
 import BasePrerequisites from '../_partials/install/base-prerequisites.mdx';
 import LoginAfterHelmInstall from '../_partials/install/login-after-helm-install.mdx';
@@ -428,6 +430,211 @@ spec:
 <!-- vale on -->
 
 Once again, note that when managing the agent installations via ArgoCD or your GitOps tooling of choice, ensure that the `DISABLE_AGENT` environment variable is set to `true` for your platform deployment.
+
+
+## Manage GitOps drift
+
+When managing Platform resources through GitOps, you may encounter drift detection issues where resources appear out-of-sync even immediately after a successful sync. This typically occurs because Platform controllers modify certain fields after resource creation.
+
+### Why drift occurs
+
+The Platform controllers may add or modify fields on your resources for several reasons:
+
+- **Status fields**: Controllers continuously update status subresources to reflect current state (quota usage, conditions, health checks)
+- **Default values**: Empty or omitted spec fields may be populated with default values
+- **Access rules**: Default access rules may be added to resources if not explicitly specified
+- **Annotations**: Controllers add tracking annotations like `loft.sh/apply`, `loft.sh/project-namespace`
+- **Finalizers**: The `loft.sh/cleanup` finalizer is auto-added to managed resources
+
+### Drift-causing fields by resource type
+
+The following table summarizes fields that commonly cause drift for each Platform CRD:
+
+| Resource type | Common drift fields | Description |
+|---------------|---------------------|-------------|
+| **Project** | `status`, `spec.access`, `spec.quotas`, `spec.requireTemplate`, `spec.requirePreset`, `metadata.finalizers`, `metadata.annotations` | Status, default access rules, empty objects get defaults, finalizers and tracking annotations auto-added |
+| **Team** | `status`, `spec.access`, `metadata.finalizers`, `metadata.annotations` | Status, default access rules, finalizers and tracking annotations auto-added |
+| **VirtualClusterTemplate** | `status`, `spec.template.metadata`, `spec.template.instanceTemplate.metadata`, `spec.template.spaceTemplate.metadata`, `spec.template.accessPoint.ingress`, `metadata.annotations` | Empty nested objects, tracking annotations like `loft.sh/last-applied-parameter-defaults` |
+| **SpaceTemplate** | `status`, `spec.template.metadata` | Status and metadata defaults |
+| **SharedSecret** | `status` | Status field updates |
+| **Cluster** | `status`, `spec.access` | Connection status and default access rules |
+| **VirtualClusterInstance** | `status`, `spec.clusterRef` | Instance status continuously updated |
+
+### GitOps tool configuration
+
+<Tabs
+  defaultValue="argocd"
+  values={[
+    { label: "ArgoCD", value: "argocd" },
+    { label: "Flux", value: "flux" },
+  ]}
+>
+  <TabItem value="argocd">
+
+ArgoCD provides several mechanisms to handle drift from Platform resources.
+
+#### Application-level ignore differences
+
+Configure `ignoreDifferences` in your ArgoCD Application to ignore specific fields:
+
+```yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-resources
+  namespace: argocd
+spec:
+  # ... other config ...
+  ignoreDifferences:
+    # Ignore status for all Platform CRDs
+    - group: management.loft.sh
+      kind: "*"
+      jsonPointers:
+        - /status
+
+    # Project-specific: ignore empty spec objects that get defaults
+    - group: management.loft.sh
+      kind: Project
+      jsonPointers:
+        - /spec/quotas
+        - /spec/requireTemplate
+        - /spec/requirePreset
+        - /spec/vault
+
+    # Team-specific: ignore access modifications
+    - group: management.loft.sh
+      kind: Team
+      jsonPointers:
+        - /spec/access
+
+    # VirtualClusterTemplate: ignore nested empty metadata objects
+    - group: management.loft.sh
+      kind: VirtualClusterTemplate
+      jsonPointers:
+        - /spec/template/metadata
+        - /spec/template/instanceTemplate/metadata
+        - /spec/template/spaceTemplate/metadata
+        - /spec/template/pro
+
+  syncPolicy:
+    syncOptions:
+      # Ensures ignored differences are also ignored during sync
+      - RespectIgnoreDifferences=true
+```
+
+:::warning RespectIgnoreDifferences required
+Always include `RespectIgnoreDifferences=true` in sync options. Without this, ArgoCD ignores differences for display purposes only but still applies the desired state during sync, overwriting controller-managed fields.
+:::
+
+#### Use managed fields managers
+
+For more dynamic drift handling, configure ArgoCD to trust specific field managers:
+
+```yaml
+ignoreDifferences:
+  - group: management.loft.sh
+    kind: "*"
+    managedFieldsManagers:
+      - loft
+```
+
+This tells ArgoCD to ignore any fields managed by the `loft` controller, automatically adapting to field changes without explicit paths.
+
+#### System-level configuration
+
+For cluster-wide settings, configure the `argocd-cm` ConfigMap:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+  namespace: argocd
+data:
+  # Ignore status field for all Platform CRDs
+  resource.customizations.ignoreDifferences.management.loft.sh_Project: |
+    jsonPointers:
+      - /status
+      - /spec/quotas
+  resource.customizations.ignoreDifferences.management.loft.sh_Team: |
+    jsonPointers:
+      - /status
+  resource.customizations.ignoreDifferences.management.loft.sh_VirtualClusterTemplate: |
+    jsonPointers:
+      - /status
+  resource.customizations.ignoreDifferences.management.loft.sh_SharedSecret: |
+    jsonPointers:
+      - /status
+
+  # Alternative: ignore status for all resources
+  resource.compareoptions: |
+    ignoreResourceStatusField: all
+```
+
+  </TabItem>
+  <TabItem value="flux">
+
+Flux uses server-side apply for drift detection and correction, which handles many drift scenarios automatically through Kubernetes managed fields semantics.
+
+#### Best practices
+
+1. **Omit fields you don't manage**: Remove fields that controllers manage (like `status: {}`) from your manifests entirely. Server-side apply only manages fields you explicitly set.
+
+2. **Use field managers**: Flux's `kustomize-controller` acts as a distinct field manager. Fields managed by Platform controllers won't conflict as long as you don't include them in your manifests.
+
+3. **Minimal manifests**: Define only the fields you want to control:
+
+```yaml
+# Good: Minimal manifest - Flux won't conflict with controller-managed fields
+apiVersion: management.loft.sh/v1
+kind: Project
+metadata:
+  name: my-project
+spec:
+  displayName: My Project
+  allowedClusters:
+    - name: "*"
+  members:
+    - kind: User
+      group: storage.loft.sh
+      name: admin
+      clusterRole: loft-management-project-admin
+```
+
+```yaml
+# Avoid: Including empty objects that controllers may populate
+apiVersion: management.loft.sh/v1
+kind: Project
+metadata:
+  name: my-project
+spec:
+  displayName: My Project
+  quotas: {}           # Remove - controllers will manage this
+  requireTemplate: {}  # Remove - let the controller set defaults
+  vault: {}            # Remove - unless explicitly configuring Vault
+status: {}             # Remove - never include status in manifests
+```
+
+4. **Force reconciliation for immutable fields**: If drift correction fails due to immutable fields, use the `force` option in your Kustomization:
+
+```yaml
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+spec:
+  force: true  # Recreates resources when patching fails
+```
+
+  </TabItem>
+</Tabs>
+
+### Troubleshoot drift issues
+
+If resources continue showing as out-of-sync:
+
+1. **Examine the diff**: Check which specific fields are causing drift in your GitOps tool's UI or CLI
+2. **Review controller logs**: Platform controller logs may indicate why fields are being modified
+3. **Compare live vs desired state**: Use `kubectl get <resource> -o yaml` to see the full live state
+4. **Check for webhooks**: Mutating admission webhooks may modify resources after apply
 
 
 ## Login
