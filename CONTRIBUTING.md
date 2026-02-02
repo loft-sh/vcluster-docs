@@ -157,6 +157,25 @@ Use `<>` to indicate placeholders in code blocks. For example:
 kubectl get pods <pod-name>
 ```
 
+#### Dynamic version tokens
+
+Instead of hardcoding version numbers that go stale, use these tokens:
+
+| Token | Renders as |
+|-------|------------|
+| `__PLATFORM_VERSION__` | Latest platform version (e.g., 4.5.0) |
+| `__VCLUSTER_VERSION__` | Latest vCluster version (e.g., 0.30.0) |
+| `__PLATFORM_VERSION_MINOR__` | Minor version only (e.g., 4.5) |
+| `__VCLUSTER_VERSION_MINOR__` | Minor version only (e.g., 0.30) |
+
+```bash
+export PLATFORM_VERSION=__PLATFORM_VERSION__
+helm install vcluster --version __VCLUSTER_VERSION__
+```
+
+Tokens are replaced at build time by a remark plugin. In versioned docs
+(e.g., `/platform/4.3.0/`), tokens resolve to that version instead of latest.
+
 #### Interactive code blocks
 
 For code blocks that contain values users need to customize, use the `InterpolatedCodeBlock` component instead of regular code blocks. This allows users to edit values directly in the documentation.
