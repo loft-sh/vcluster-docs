@@ -148,15 +148,15 @@ HTTP 301
 [Asserts]
 header "Location" contains "/docs/platform/99.0.0/configure/platform-configs/single-sign-on"
 
-# Test: platform/use-platform/virtual-clusters/key-features/sleep-mode -> platform/use-platform/virtual-clusters/key-features/sleep
+# Test: platform/use-platform/virtual-clusters/key-features/sleep-mode -> vcluster/configure/vcluster-yaml/sleep
 GET {{BASE_URL}}/docs/platform/99.0.0/use-platform/virtual-clusters/key-features/sleep-mode/
 HTTP 301
 [Asserts]
-header "Location" contains "/docs/platform/99.0.0/use-platform/virtual-clusters/key-features/sleep"
+header "Location" contains "/docs/vcluster/configure/vcluster-yaml/sleep"
 
-# Test: platform/use-platform/virtual-clusters/key-features/snapshots -> configure/vcluster-yaml/snapshots
+# Test: platform/use-platform/virtual-clusters/key-features/snapshots -> vcluster/configure/vcluster-yaml/snapshots
 GET {{BASE_URL}}/docs/platform/99.0.0/use-platform/virtual-clusters/key-features/snapshots/
 HTTP 301
 [Asserts]
-header "Location" contains "/docs/platform/99.0.0/configure/vcluster-yaml/snapshots"
+header "Location" contains "/docs/vcluster/configure/vcluster-yaml/snapshots"
 
