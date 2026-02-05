@@ -22,7 +22,7 @@ const yaml = require('js-yaml');
 
 // Configuration
 const FEATURES_YAML = path.join(__dirname, '../src/data/features.yaml');
-const DOCS_ROOT = path.join(__dirname, '../vcluster');
+const PROJECT_ROOT = path.join(__dirname, '..');
 const FEATURE_TABLE_IMPORT = "import FeatureTable from '@site/src/components/FeatureTable';";
 
 // Parse command line arguments
@@ -44,13 +44,23 @@ const stats = {
  * Convert docs URL to file path
  * Example: /docs/vcluster/deploy/control-plane/high-availability
  * Returns: vcluster/deploy/control-plane/high-availability.mdx
+ * Example: /docs/platform/administer/clusters/connect-cluster
+ * Returns: platform/administer/clusters/connect-cluster.mdx
  */
 function urlToFilePath(docsUrl) {
   if (!docsUrl) return null;
 
-  // Remove leading /docs/vcluster/ and trailing slash
-  let filePath = docsUrl
-    .replace(/^\/docs\/vcluster\//, '')
+  // Skip external URLs
+  if (docsUrl.startsWith('http://') || docsUrl.startsWith('https://')) {
+    return null;
+  }
+
+  // Strip anchor (e.g., #isolatedcontrolplane)
+  let filePath = docsUrl.split('#')[0];
+
+  // Remove leading /docs/ and trailing slash
+  filePath = filePath
+    .replace(/^\/docs\//, '')
     .replace(/\/$/, '');
 
   // Add .mdx extension
@@ -58,7 +68,7 @@ function urlToFilePath(docsUrl) {
     filePath += '.mdx';
   }
 
-  return path.join(DOCS_ROOT, filePath);
+  return path.join(PROJECT_ROOT, filePath);
 }
 
 /**
@@ -95,6 +105,12 @@ function buildFeatureDocumentMapping() {
     }
 
     const filePath = urlToFilePath(featureData.docs_url);
+    if (!filePath) {
+      if (isVerbose) {
+        console.log(`[WARN] Feature '${featureId}' has external URL, skipping: ${featureData.docs_url}`);
+      }
+      continue;
+    }
     const resolvedPath = resolveFilePath(filePath);
 
     if (!resolvedPath) {
@@ -195,7 +211,7 @@ function insertOrUpdateFeatureTable(filePath, featureIds) {
     // Check if update needed
     if (JSON.stringify(existingFeatures.sort()) === JSON.stringify(newFeatures)) {
       if (isVerbose) {
-        console.log(`[SKIP] ${path.relative(DOCS_ROOT, filePath)} - FeatureTable up to date`);
+        console.log(`[SKIP] ${path.relative(PROJECT_ROOT, filePath)} - FeatureTable up to date`);
       }
       stats.skipped++;
       return false;
@@ -209,12 +225,12 @@ function insertOrUpdateFeatureTable(filePath, featureIds) {
     );
 
     if (isDryRun) {
-      console.log(`[UPDATE] Would update ${path.relative(DOCS_ROOT, filePath)}`);
+      console.log(`[UPDATE] Would update ${path.relative(PROJECT_ROOT, filePath)}`);
       console.log(`   Old: ${existingFeatures.join(',')}`);
       console.log(`   New: ${newFeatures.join(',')}`);
     } else {
       fs.writeFileSync(filePath, content, 'utf8');
-      console.log(`[OK] Updated ${path.relative(DOCS_ROOT, filePath)}`);
+      console.log(`[OK] Updated ${path.relative(PROJECT_ROOT, filePath)}`);
     }
 
     stats.updated++;
@@ -243,11 +259,11 @@ function insertOrUpdateFeatureTable(filePath, featureIds) {
   const newContent = lines.join('\n');
 
   if (isDryRun) {
-    console.log(`[INSERT] Would insert FeatureTable in ${path.relative(DOCS_ROOT, filePath)}`);
+    console.log(`[INSERT] Would insert FeatureTable in ${path.relative(PROJECT_ROOT, filePath)}`);
     console.log(`   Features: ${featureIds.join(',')}`);
   } else {
     fs.writeFileSync(filePath, newContent, 'utf8');
-    console.log(`[OK] Inserted FeatureTable in ${path.relative(DOCS_ROOT, filePath)}`);
+    console.log(`[OK] Inserted FeatureTable in ${path.relative(PROJECT_ROOT, filePath)}`);
   }
 
   stats.inserted++;
@@ -281,7 +297,7 @@ function main() {
     try {
       insertOrUpdateFeatureTable(filePath, featureIds);
     } catch (error) {
-      console.error(`[ERROR] Processing ${path.relative(DOCS_ROOT, filePath)}: ${error.message}`);
+      console.error(`[ERROR] Processing ${path.relative(PROJECT_ROOT, filePath)}: ${error.message}`);
       stats.errors++;
     }
   }
