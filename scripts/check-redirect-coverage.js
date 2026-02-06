@@ -21,7 +21,7 @@ const DOCS_ROOT = process.cwd();
 // Docs to check: [currentPath, versionedPath, urlPrefix]
 const DOCS_TO_CHECK = [
   ['platform', 'platform_versioned_docs/version-4.5.0', '/docs/platform'],
-  // Add vcluster when needed
+  ['vcluster', 'vcluster_versioned_docs/version-0.31.0', '/docs/vcluster'],
 ];
 
 function getAllMdxPaths(dir, basePath = '') {
