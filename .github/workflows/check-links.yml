@@ -1,0 +1,124 @@
+name: Check Links
+
+on:
+  pull_request:
+    types: [labeled]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'PR number for deploy preview URL'
+        required: true
+        type: string
+      base_url:
+        description: 'URL to check (overrides deploy preview)'
+        required: false
+        type: string
+
+concurrency:
+  group: check-links-${{ inputs.pr_number || github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  check-links:
+    name: Check Broken Links
+    runs-on: ubuntu-latest
+    if: ${{ (github.event_name == 'workflow_dispatch') || (github.event_name == 'pull_request' && github.event.label.name == 'check-links') }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Wait for Netlify Deploy Preview
+        id: get-url
+        if: inputs.base_url == ''
+        run: |
+          PR_NUM="${{ github.event.pull_request.number || inputs.pr_number }}"
+          PREVIEW_URL="https://deploy-preview-${PR_NUM}--vcluster-docs-site.netlify.app"
+          echo "Waiting for Netlify preview: $PREVIEW_URL"
+          for i in {1..60}; do
+            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "$PREVIEW_URL/docs/vcluster")
+            echo "Attempt $i: HTTP $HTTP_CODE"
+            if [[ "$HTTP_CODE" =~ ^(200|301|302)$ ]]; then
+              echo "url=$PREVIEW_URL" >> $GITHUB_OUTPUT
+              echo "Preview ready at $PREVIEW_URL"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::Netlify preview not ready after 10 minutes."
+          exit 1
+
+      - name: Set manual URL
+        id: set-url
+        run: |
+          if [ -n "${{ inputs.base_url }}" ]; then
+            echo "url=${{ inputs.base_url }}" >> $GITHUB_OUTPUT
+          else
+            echo "url=${{ steps.get-url.outputs.url }}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Restore lychee cache
+        uses: actions/cache@v4
+        with:
+          path: .lycheecache
+          key: cache-lychee-${{ github.sha }}
+          restore-keys: cache-lychee-
+
+      - name: Check links with lychee
+        uses: lycheeverse/lychee-action@v2
+        with:
+          args: >-
+            --verbose
+            --no-progress
+            --cache
+            --max-cache-age 1d
+            --accept 200,301,302
+            --timeout 30
+            --max-retries 3
+            --exclude-mail
+            --exclude 'linkedin\.com'
+            --exclude 'twitter\.com'
+            --exclude 'x\.com'
+            --exclude 'localhost'
+            --exclude '127\.0\.0\.1'
+            --exclude 'schema\.io'
+            --exclude 'browserstack\.com'
+            --base '${{ steps.set-url.outputs.url }}'
+            --suggest
+            '${{ steps.set-url.outputs.url }}/docs/platform/'
+            '${{ steps.set-url.outputs.url }}/docs/vcluster/'
+          fail: true
+          format: markdown
+          output: lychee-report.md
+
+      - name: Upload link check report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lychee-report
+          path: lychee-report.md
+
+      - name: Comment PR with results
+        if: failure() && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const report = fs.readFileSync('lychee-report.md', 'utf8');
+            const body = `## 🔗 Link Check Results
+
+            <details>
+            <summary>Broken links found - click to expand</summary>
+
+            ${report}
+
+            </details>
+
+            > Run triggered by \`check-links\` label on PR #${{ github.event.pull_request.number }}`;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });
