@@ -1,15 +1,9 @@
 # Auto-generated redirect tests
-# Generated: 2026-01-28 15:42:41 UTC
+# Generated: 2026-02-06 13:35:58 UTC
 # Usage: hurl --test --variable BASE_URL=https://www.vcluster.com hack/test-redirects.hurl
 #
 # Tests use fake version (99.0.0) to avoid versioned docs serving content.
 # Redirects are fallbacks - they only fire when no content exists at source path.
-
-# Test: deploy/control-plane/container/* -> deploy/control-plane/kubernetes-pod/*
-GET {{BASE_URL}}/docs/vcluster/99.0.0/deploy/control-plane/container/basics/
-HTTP 301
-[Asserts]
-header "Location" contains "/docs/vcluster/99.0.0/deploy/control-plane/kubernetes-pod/basics"
 
 # Test: deploy/control-plane/container/flux -> third-party-integrations/git-operations/flux
 GET {{BASE_URL}}/docs/vcluster/99.0.0/deploy/control-plane/container/flux/
@@ -28,6 +22,18 @@ GET {{BASE_URL}}/docs/vcluster/99.0.0/manage/backup-restore/volume-snapshots/REA
 HTTP 301
 [Asserts]
 header "Location" contains "/docs/vcluster/99.0.0/manage/backup-restore/volume-snapshots/setup"
+
+# Test: platform/administer/backup-restore/backup-restore-platform -> platform/maintenance/backup-restore/backup-restore-platform
+GET {{BASE_URL}}/docs/platform/99.0.0/administer/backup-restore/backup-restore-platform/
+HTTP 301
+[Asserts]
+header "Location" contains "/docs/platform/99.0.0/maintenance/backup-restore/backup-restore-platform"
+
+# Test: platform/administer/backup-restore/preserve-license -> platform/maintenance/backup-restore/preserve-license
+GET {{BASE_URL}}/docs/platform/99.0.0/administer/backup-restore/preserve-license/
+HTTP 301
+[Asserts]
+header "Location" contains "/docs/platform/99.0.0/maintenance/backup-restore/preserve-license"
 
 # Test: platform/configure/advanced/audit -> platform/configure/platform-configs/audit
 GET {{BASE_URL}}/docs/platform/99.0.0/configure/advanced/audit/
