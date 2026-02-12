@@ -229,7 +229,7 @@ Existing code blocks without a title will continue to work as before.
 
 #### Icon component
 
-Use the `Icon` component to display checkmarks and crosses for feature availability, comparison tables, or inline indicators.
+Use the `Icon` component to display checkmarks, crosses or warnings for feature availability, comparison tables, or inline indicators.
 
 **Usage:**
 
@@ -259,6 +259,7 @@ Connection pooling <Icon type="check" /> is available in all tiers.
 **Icon types:**
 - `type="check"` or `type="checkmark"` - Orange checkmark (light mode), green (dark mode)
 - `type="cross"` or `type="x"` - Gray X symbol
+- `type="warning"` or `type="!"` - Yellow ! symbol
 
 The component automatically adapts to dark/light theme changes.
 
