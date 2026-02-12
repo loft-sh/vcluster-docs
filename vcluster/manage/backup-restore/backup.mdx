@@ -8,6 +8,7 @@ sidebar_class_name: host-nodes private-nodes
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 import TenancySupport from '../../_fragments/tenancy-support.mdx';
+import InterpolatedCodeBlock from '@site/src/components/InterpolatedCodeBlock';
 
 <TenancySupport hostNodes="true" privateNodes="true" />
 
@@ -117,7 +118,9 @@ vcluster snapshot create my-vcluster "oci://ghcr.io/my-user/my-repo:my-tag?usern
 
 #### Store snapshots in S3 buckets
 
-Store snapshots in an S3-compatible bucket using the `s3` protocol. You can authenticate in two ways: by using local environment credentials or by passing credentials directly in the URL.
+Store snapshots in an S3-compatible bucket using the `s3` protocol. This works with AWS S3 and S3-compatible providers such as MinIO or Ceph, which are common in on-premise and air-gapped environments where cloud storage isn't available.
+
+You can authenticate in two ways: by using local environment credentials or by passing credentials directly in the URL.
 
 To use local environment credentials, log in to AWS CLI, then create and save the snapshot:
 
@@ -137,13 +140,19 @@ Alternatively, you can pass options directly in the snapshot URL. The following 
 | `secret-access-key`         | Base64-encoded S3 secret access key for authentication | Yes, when not using local credentials |
 | `session-token`             | Base64-encoded temporary session token for authentication | Yes, when not using local credentials |
 | `region`                    | Region of the S3-compatible bucket | No |
+| `url`                       | Base64-encoded custom endpoint URL for S3-compatible providers (e.g. MinIO, Ceph) | No |
+| `force-path-style`          | Use path-style addressing (`endpoint/bucket`) instead of virtual-hosted-style. Required for most S3-compatible providers. | No, defaults to `false` |
 | `profile`                   | AWS profile to use for authentication | No |
 | `skip-client-credentials`   | Skips use of local credentials for authentication | No, defaults to `false` |
 | `server-side-encryption`    | Server-side encryption method (`AES256` for SSE-S3, `aws:kms` for SSE-KMS) | No |
 | `kms-key-id`               | KMS key ID for SSE-KMS encryption | No |
 
 
-Run the following command to create a snapshot and store it in an S3-compatible bucket, such as AWS S3 or MinIO:
+:::warning Security
+Credentials passed in the snapshot URL are Base64-encoded, not encrypted. Avoid storing snapshot commands with inline credentials in shell history, scripts, or CI logs. For production environments, prefer local credential-based authentication with `aws configure` or a Kubernetes Secret, and set `skip-client-credentials=false`.
+:::
+
+Run the following command to create a snapshot and store it in an S3 bucket:
 
 <Tabs
   defaultValue="macos"
@@ -153,7 +162,7 @@ Run the following command to create a snapshot and store it in an S3-compatible 
   ]}>
 
 <TabItem value="macos">
-For S3 bucket, you can use:
+
 ```bash title="Pass S3 credentials directly in the URL to create a snapshot"
 # Read the AWS credentials from files and encode them with base64
 # This allows them to be safely included in the S3 URL
@@ -164,28 +173,6 @@ export SESSION_TOKEN=$(cat my-session-token.txt | base64)
 vcluster snapshot create my-vcluster "s3://my-s3-bucket/my-bucket-key?access-key-id=$ACCESS_KEY_ID&secret-access-key=$SECRET_ACCESS_KEY&session-token=$SESSION_TOKEN"
 ```
 
-For MinIO, you should follow:
-```bash title="Create snapshot in MinIO"
-# Set your values and MinIO endpoint
-export BUCKET="your-bucket-name"
-export KEY="path/to/snapshot.tar.gz"
-export ENDPOINT="https://your-minio-endpoint:9000"
-export REGION="us-east-1"
-
-# Read the AWS credentials from files and encode them with base64
-# This allows them to be safely included in the S3 URL
-export ACCESS_KEY_ID=$(cat my-access-key-id.txt | base64)
-export SECRET_ACCESS_KEY=$(cat my-secret-access-key.txt | base64)
-
-# Create snapshot through CLI
-vcluster snapshot my-vcluster \
-"s3://${BUCKET}/${KEY}\
-?url=$(printf %s "$ENDPOINT" | base64)\
-&access-key-id=$(printf '%s' "$ACCESS_KEY_ID" | base64)\
-&secret-access-key=$(printf '%s' "$SECRET_ACCESS_KEY" | base64)
-&region="$REGION"\
-&force-path-style=true"
-```
 </TabItem>
 
 <TabItem value="linux">
@@ -200,28 +187,49 @@ export SESSION_TOKEN=$(cat my-session-token.txt | base64 -w 0)
 vcluster snapshot create my-vcluster "s3://my-s3-bucket/my-bucket-key?access-key-id=$ACCESS_KEY_ID&secret-access-key=$SECRET_ACCESS_KEY&session-token=$SESSION_TOKEN"
 ```
 
-For MinIO, you should follow:
-```bash title="Create snapshot in MinIO"
-# Set your values and MinIO endpoint
-export BUCKET="your-bucket-name"
-export KEY="path/to/snapshot.tar.gz"
-export ENDPOINT="https://your-minio-endpoint:9000"
-export REGION="us-east-1"
+</TabItem>
+</Tabs>
 
-# Read the AWS credentials from files and encode them with base64
-# This allows them to be safely included in the S3 URL
+##### S3-compatible providers {#s3-compatible}
+
+S3-compatible providers such as MinIO or Ceph require two additional parameters: `url` to specify the custom endpoint and `force-path-style` to use path-style bucket addressing. These providers don't use session tokens, so you can omit that parameter.
+
+<Tabs
+  defaultValue="macos"
+  values={[
+    {label: 'macOS', value: 'macos'},
+    {label: 'Linux', value: 'linux'},
+  ]}>
+
+<TabItem value="macos">
+
+<InterpolatedCodeBlock
+  code={`# Base64-encode the credentials and the custom endpoint URL
+export ACCESS_KEY_ID=$(cat my-access-key-id.txt | base64)
+export SECRET_ACCESS_KEY=$(cat my-secret-access-key.txt | base64)
+export ENDPOINT=$(echo -n "[[VAR:ENDPOINT:https://s3.example.com:9000]]" | base64)
+
+vcluster snapshot create [[VAR:VCLUSTER_NAME:my-vcluster]] "s3://[[VAR:BUCKET:my-bucket]]/[[VAR:SNAPSHOT_KEY:my-snapshot-key]]?access-key-id=$ACCESS_KEY_ID&secret-access-key=$SECRET_ACCESS_KEY&url=$ENDPOINT&region=[[VAR:REGION:us-east-1]]&force-path-style=true"`}
+  language="bash"
+  title="Store a snapshot with an S3-compatible provider"
+/>
+
+</TabItem>
+
+<TabItem value="linux">
+
+<InterpolatedCodeBlock
+  code={`# Base64-encode the credentials and the custom endpoint URL
+# On Linux, the -w 0 flag prevents line wrapping of the encoded output
 export ACCESS_KEY_ID=$(cat my-access-key-id.txt | base64 -w 0)
 export SECRET_ACCESS_KEY=$(cat my-secret-access-key.txt | base64 -w 0)
+export ENDPOINT=$(echo -n "[[VAR:ENDPOINT:https://s3.example.com:9000]]" | base64 -w 0)
 
-# Create snapshot through CLI
-vcluster snapshot my-vcluster \
-"s3://${BUCKET}/${KEY}\
-?url=$(printf %s "$ENDPOINT" | base64 -w 0)\
-&access-key-id=$(printf '%s' "$ACCESS_KEY_ID" | base64 -w 0)\
-&secret-access-key=$(printf '%s' "$SECRET_ACCESS_KEY" | base64 -w 0)
-&region="$REGION"\
-&force-path-style=true"
-```
+vcluster snapshot create [[VAR:VCLUSTER_NAME:my-vcluster]] "s3://[[VAR:BUCKET:my-bucket]]/[[VAR:SNAPSHOT_KEY:my-snapshot-key]]?access-key-id=$ACCESS_KEY_ID&secret-access-key=$SECRET_ACCESS_KEY&url=$ENDPOINT&region=[[VAR:REGION:us-east-1]]&force-path-style=true"`}
+  language="bash"
+  title="Store a snapshot with an S3-compatible provider"
+/>
+
 </TabItem>
 </Tabs>
 
