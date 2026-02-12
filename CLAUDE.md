@@ -3,6 +3,28 @@
 See CONTRIBUTING.md for general style guide. This file covers AI-specific
 gotchas.
 
+## MCP Server Usage (PR Reviews)
+
+When reviewing PRs with `@claude`, use these MCP servers based on PR content:
+
+**vcluster-yaml MCP** (`mcp__vcluster-yaml__validate-config`):
+- Use when PR modifies or creates vCluster YAML files
+- Validates syntax and configuration against schema
+- Catches common misconfigurations
+
+**context7 MCP** (`mcp__context7__query-docs`):
+- Use when PR references external documentation (Kubernetes, Helm, libraries)
+- Verifies claims against official docs
+- Confirms API usage is correct
+- Example: "PR mentions PodDisruptionBudget" → query Kubernetes docs to verify
+
+**sequential-thinking MCP** (`mcp__sequential-thinking__sequentialthinking`):
+- Use for complex architectural decisions or multi-step reasoning
+- Breaking down complicated review logic
+
+Always use these tools proactively when the PR content warrants it - don't wait
+to be asked.
+
 ## Vale linting: paths vs prose
 
 Vale rules apply to PROSE TEXT ONLY. When vale suggests capitalizing
