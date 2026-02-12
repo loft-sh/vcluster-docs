@@ -20,4 +20,3 @@ Closes DOC-
 <!-- Do not change the line below -->
 @netlify /docs
 
-<!-- CLAUDE_SUMMARY --><!-- /CLAUDE_SUMMARY -->
