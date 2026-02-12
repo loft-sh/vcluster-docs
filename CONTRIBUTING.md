@@ -227,6 +227,41 @@ export REGION=[[VAR:REGION:eu-central-1]]`}
 The `title` attribute is completely optional and backwards compatible.
 Existing code blocks without a title will continue to work as before.
 
+#### Icon component
+
+Use the `Icon` component to display checkmarks and crosses for feature availability, comparison tables, or inline indicators.
+
+**Usage:**
+
+```mdx
+import Icon from '@site/src/components/Icon';
+
+| Feature | Supported |
+|---------|-----------|
+| Connection pooling | <Icon type="check" /> |
+| SSL encryption | <Icon type="check" /> |
+| Legacy auth | <Icon type="cross" /> |
+```
+
+**Inline usage:**
+
+```mdx
+Connection pooling <Icon type="check" /> is available in all tiers.
+```
+
+**With custom tooltips:**
+
+```mdx
+<Icon type="check" title="Available in all tiers" />
+<Icon type="cross" title="Deprecated in v4.0" />
+```
+
+**Icon types:**
+- `type="check"` or `type="checkmark"` - Orange checkmark (light mode), green (dark mode)
+- `type="cross"` or `type="x"` - Gray X symbol
+
+The component automatically adapts to dark/light theme changes.
+
 #### Formatting and variables
 
 To make code blocks easier to work with, consider adding variables and use
