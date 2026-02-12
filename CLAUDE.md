@@ -99,8 +99,10 @@ npm run build   # production build (validates glossary first)
 npm run clear   # clear cache if things look wrong
 ```
 
-**CI runs automatically:** claude-review, validate-glossary, integration-tests,
+**CI runs automatically:** validate-glossary, integration-tests,
 lifecycle-json updates
+
+**On-demand:** mention `@claude` in a PR comment for AI review
 
 Note: Claude Code reads this file automatically (local and CI).
 

@@ -51,13 +51,12 @@ fix any broken links that may have been introduced.
 
 ## AI-assisted PR review
 
-Pull requests automatically receive an AI-generated summary and review from Claude. The review:
+Pull requests can receive an on-demand AI review from Claude. Mention `@claude`
+in a PR comment to trigger a review. The review:
 
 - Checks documentation style adherence
 - Validates vCluster YAML configurations
 - Identifies broken links or incorrect paths
-- Adds a summary to the PR description between `<!-- CLAUDE_SUMMARY -->` markers
-
 The AI review is meant to assist, not replace, human review.
 
 ## Style guide
