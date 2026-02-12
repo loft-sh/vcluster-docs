@@ -87,10 +87,18 @@ function parseMDXTable(content, product) {
   const rows = tbody.match(/<tr>[\s\S]*?<\/tr>/g) || [];
 
   let extendedSupportNote = null;
+  // Track the "no longer supported" divider — versions below it are EOL
+  // regardless of date calculations (the MDX is the source of truth)
+  let belowEolDivider = false;
 
   for (const row of rows) {
-    // Skip separator rows
-    if (row.includes('colspan') || row.includes('no longer supported')) {
+    // Detect the EOL divider row
+    if (row.includes('colspan') && row.includes('no longer supported')) {
+      belowEolDivider = true;
+      continue;
+    }
+    // Skip other separator rows
+    if (row.includes('colspan')) {
       continue;
     }
 
@@ -110,10 +118,13 @@ function parseMDXTable(content, product) {
       extendedSupportNote = `Extended support: Due to breaking changes, this version has extended support period.`;
     }
 
+    const dateStatus = calculateStatus(parseDate(eosDate), parseDate(eolDate));
+    const status = belowEolDivider ? 'eol' : dateStatus;
+
     const versionObj = {
       version: version.replace('v', '') + '.0',  // v0.30 → 0.30.0
       releaseDate: parseDate(releaseDate),
-      status: calculateStatus(parseDate(eosDate), parseDate(eolDate)),
+      status,
       eosDate: parseDate(eosDate),
       eolDate: parseDate(eolDate)
     };
