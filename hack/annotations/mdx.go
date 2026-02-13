@@ -106,6 +106,10 @@ func buildStubs(annotations []Annotation) string {
 		sb.WriteString("\n")
 		sb.WriteString(fmt.Sprintf("**Example:** `%s: \"\"`\n", a.Key))
 		sb.WriteString("\n")
+		if a.Comment != "" {
+			sb.WriteString(a.Comment + "\n")
+			sb.WriteString("\n")
+		}
 	}
 	return sb.String()
 }
