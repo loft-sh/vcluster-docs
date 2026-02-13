@@ -1,9 +1,15 @@
 # Auto-generated redirect tests
-# Generated: 2026-02-06 13:35:58 UTC
+# Generated: 2026-02-13 10:09:51 UTC
 # Usage: hurl --test --variable BASE_URL=https://www.vcluster.com hack/test-redirects.hurl
 #
 # Tests use fake version (99.0.0) to avoid versioned docs serving content.
 # Redirects are fallbacks - they only fire when no content exists at source path.
+
+# Test: cli/0-20-cli-changes -> reference/migrations/0-20-cli-changes
+GET {{BASE_URL}}/docs/vcluster/99.0.0/cli/0-20-cli-changes/
+HTTP 301
+[Asserts]
+header "Location" contains "/docs/vcluster/99.0.0/reference/migrations/0-20-cli-changes"
 
 # Test: deploy/control-plane/container/flux -> third-party-integrations/git-operations/flux
 GET {{BASE_URL}}/docs/vcluster/99.0.0/deploy/control-plane/container/flux/
