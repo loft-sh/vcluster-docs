@@ -106,10 +106,6 @@ func buildStubs(annotations []Annotation) string {
 		sb.WriteString("\n")
 		sb.WriteString(fmt.Sprintf("**Example:** `%s: \"\"`\n", a.Key))
 		sb.WriteString("\n")
-		sb.WriteString("**Used on:** TODO\n")
-		sb.WriteString("\n")
-		sb.WriteString("TODO: Add description.\n")
-		sb.WriteString("\n")
 	}
 	return sb.String()
 }
