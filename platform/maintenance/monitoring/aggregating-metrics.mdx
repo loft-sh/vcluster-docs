@@ -7,15 +7,42 @@ sidebar_position: 4
 import Flow, { Step } from '@site/src/components/Flow'
 import NavStep from '@site/src/components/NavStep'
 import Button from '@site/src/components/Button'
+import Tabs from '@theme/Tabs'
+import TabItem from '@theme/TabItem'
+import InterpolatedCodeBlock from '@site/src/components/InterpolatedCodeBlock'
 import GrafanaExample from '@site/static/media/screenshots/grafana-example.png'
 
-This guide explains how to configure OpenTelemetry with Prometheus to
-collect workload metrics from across multiple virtual clusters and aggregate by
-Project, vCluster, and Space. This approach uses shared OpenTelemetry DaemonSets on the host cluster without requiring individual collector installations per virtual cluster.
+This guide explains how to collect workload metrics from across multiple virtual clusters and aggregate them by Project, vCluster, and Space. The collection strategy depends on your tenancy model:
+
+- **Shared Nodes**: A host-level OpenTelemetry Collector DaemonSet scrapes all vCluster workloads on shared nodes and pushes metrics to Prometheus via OTLP.
+- **Private Nodes**: Each vCluster with dedicated nodes runs its own Prometheus instance that scrapes kubelet metrics and forwards them to the host Prometheus via remote write.
 
 ## Prerequisites
 
+<Tabs
+  groupId="tenancy-model"
+  defaultValue="shared"
+  values={[
+    { label: "Shared Nodes", value: "shared" },
+    { label: "Private Nodes", value: "private" },
+  ]}
+>
+<TabItem value="shared">
+
 Before you begin, decide where to deploy Prometheus and Grafana. This guide uses the Platform's connected `local-cluster` with both services in an `observability` namespace. You can adapt this to external clusters or different namespaces based on your requirements.
+
+</TabItem>
+<TabItem value="private">
+
+Before you begin, ensure the following:
+
+- Prometheus and Grafana are deployed on the host cluster. This guide uses the `local-cluster` with both services in an `observability` namespace.
+- Each vCluster has [`privateNodes.enabled: true`](/docs/vcluster/configure/vcluster-yaml/private-nodes/) in its configuration.
+- If private nodes are on a different network from the host cluster, enable [VPN connectivity](/docs/vcluster/configure/vcluster-yaml/private-nodes/vpn).
+- You have access to each vCluster context via `vcluster connect`.
+
+</TabItem>
+</Tabs>
 
 :::warning Don't use kube-prometheus-stack
 Do not use the `kube-prometheus-stack` chart from the Platform Apps page for this setup. Instead, use the standalone `prometheus` and `grafana` charts as described below, which are optimized to work with the OpenTelemetry Collector.
@@ -25,7 +52,7 @@ Do not use the `kube-prometheus-stack` chart from the Platform Apps page for thi
 ## Deploy Prometheus
 <!-- vale on -->
 
-Deploy Prometheus with OTLP receiver support using the Platform Apps UI.
+Deploy Prometheus with OTLP and remote write receiver support using the Platform Apps UI.
 
 <Flow id="deploy-prometheus">
   <Step>
@@ -51,15 +78,17 @@ Go to the <NavStep>Infra</NavStep> section using the menu on the left, and selec
 | Release Name | `prometheus` |
 <!-- vale on -->
 
-Use the following chart values to enable the OTLP receiver and required features:
+Use the following chart values to enable the OTLP and remote write receivers:
 
 ```yaml title="Prometheus Helm values"
 # Enable OTLP receiver for OpenTelemetry metrics ingestion
+# Enable remote write receiver for per-vCluster Prometheus forwarding
 # Enable delta-to-cumulative conversion for OTLP metrics
 # Enable lifecycle API for configuration reloads
 server:
   extraFlags:
     - web.enable-otlp-receiver
+    - web.enable-remote-write-receiver
     - web.enable-lifecycle
   extraArgs:
     enable-feature: otlp-deltatocumulative
@@ -79,6 +108,13 @@ prometheus-pushgateway:
   enabled: false
 ```
 
+:::info Receiver flags
+- `web.enable-otlp-receiver`: Accepts OTLP metrics from the OpenTelemetry Collector (Shared Nodes).
+- `web.enable-remote-write-receiver`: Accepts remote write from per-vCluster Prometheus instances (Private Nodes).
+
+Both flags can be enabled simultaneously to support mixed tenancy environments.
+:::
+
 :::info Existing Prometheus installations
 The `rbac.create: false` setting skips ClusterRole creation, which prevents conflicts if a `prometheus-server` ClusterRole already exists in your cluster from vCluster Platform or other components. If you don't have an existing ClusterRole, either remove this setting or use `server.clusterRoleNameOverride: "otel-prometheus-server"` to create one with a unique name.
 :::
@@ -86,8 +122,20 @@ The `rbac.create: false` setting skips ClusterRole creation, which prevents conf
 Click <Button>Install</Button> to deploy Prometheus.
 
 <!-- vale off -->
-## Deploy OpenTelemetry Collector
+## Deploy metrics collector
 <!-- vale on -->
+
+<Tabs
+  groupId="tenancy-model"
+  defaultValue="shared"
+  values={[
+    { label: "Shared Nodes", value: "shared" },
+    { label: "Private Nodes", value: "private" },
+  ]}
+>
+<TabItem value="shared">
+
+### Deploy OpenTelemetry Collector
 
 Deploy the built-in OpenTelemetry App on each connected host cluster.
 This OpenTelemetry App accepts the Prometheus connection information and deploys [opentelemetry-collector](https://opentelemetry.io/docs/collector/)
@@ -120,6 +168,104 @@ The OpenTelemetry Collector Agent on each node pushes metrics about the workload
 If you deployed Prometheus in a different namespace or cluster, adjust the endpoint URL accordingly. The format is `http://<release-name>-server.<namespace>.svc.cluster.local:80`.
 :::
 
+</TabItem>
+<TabItem value="private">
+
+### Deploy per-vCluster Prometheus
+
+Each vCluster with private nodes needs its own Prometheus instance to scrape kubelet metrics from its dedicated nodes and forward them to the host Prometheus via remote write. The host-level OpenTelemetry DaemonSet cannot reach private nodes, so a per-vCluster collector is required.
+
+**1. Connect to the vCluster:**
+
+<InterpolatedCodeBlock
+  code={'vcluster connect [[VAR:VCLUSTER NAME:my-vcluster]] --project [[VAR:PROJECT NAME:my-project]]'}
+  language="bash"
+/>
+
+**2. Configure Helm values:**
+
+Save the following as `prometheus-values.yaml`. Set the `external_labels` to match the Platform project, vCluster, space, and cluster names so that metrics carry the same `loft_*` labels used by the Shared Nodes approach.
+
+<InterpolatedCodeBlock
+  code={
+    'server:\n' +
+    '  global:\n' +
+    '    external_labels:\n' +
+    '      loft_project_name: "[[VAR:PROJECT NAME:my-project]]"\n' +
+    '      loft_virtualcluster_name: "[[VAR:VCLUSTER NAME:my-vcluster]]"\n' +
+    '      loft_space_name: "[[VAR:SPACE NAME:my-space]]"\n' +
+    '      loft_cluster_name: "[[VAR:CLUSTER NAME:my-cluster]]"\n' +
+    '  remoteWrite:\n' +
+    '    - url: "http://[[VAR:PROMETHEUS HOST:prometheus-server.observability.svc.cluster.local]]:80/api/v1/write"\n' +
+    '  retention: "2h"\n' +
+    '\n' +
+    'extraScrapeConfigs: |\n' +
+    '  - job_name: kubelet\n' +
+    '    kubernetes_sd_configs:\n' +
+    '      - role: node\n' +
+    '    scheme: https\n' +
+    '    tls_config:\n' +
+    '      insecure_skip_verify: true\n' +
+    '    bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token\n' +
+    '    relabel_configs:\n' +
+    '      - source_labels: [__address__]\n' +
+    '        regex: (.+):(\\d+)\n' +
+    '        target_label: __address__\n' +
+    '        replacement: ${1}:10250\n' +
+    '  - job_name: kubelet-cadvisor\n' +
+    '    kubernetes_sd_configs:\n' +
+    '      - role: node\n' +
+    '    scheme: https\n' +
+    '    tls_config:\n' +
+    '      insecure_skip_verify: true\n' +
+    '    bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token\n' +
+    '    metrics_path: /metrics/cadvisor\n' +
+    '    relabel_configs:\n' +
+    '      - source_labels: [__address__]\n' +
+    '        regex: (.+):(\\d+)\n' +
+    '        target_label: __address__\n' +
+    '        replacement: ${1}:10250\n' +
+    '\n' +
+    'alertmanager:\n' +
+    '  enabled: false\n' +
+    'kube-state-metrics:\n' +
+    '  enabled: false\n' +
+    'prometheus-node-exporter:\n' +
+    '  enabled: false\n' +
+    'prometheus-pushgateway:\n' +
+    '  enabled: false'
+  }
+  language="yaml"
+  title="prometheus-values.yaml"
+/>
+
+**3. Install Prometheus inside the vCluster:**
+
+<InterpolatedCodeBlock
+  code={
+    'helm repo add prometheus-community https://prometheus-community.github.io/helm-charts\n' +
+    'helm repo update\n' +
+    'helm install prometheus prometheus-community/prometheus \\\n' +
+    '  --namespace monitoring \\\n' +
+    '  --create-namespace \\\n' +
+    '  -f prometheus-values.yaml'
+  }
+  language="bash"
+/>
+
+:::info Host Prometheus endpoint reachability
+The remote write endpoint (`prometheus-server.observability.svc.cluster.local`) is a host cluster service. To reach it from private nodes, either expose the host Prometheus via an internal LoadBalancer service or ensure [VPN connectivity](/docs/vcluster/configure/vcluster-yaml/private-nodes/vpn) is enabled between the vCluster and host cluster networks.
+:::
+
+:::info Lightweight alternatives
+For resource-constrained environments, consider using [VictoriaMetrics vmagent](https://docs.victoriametrics.com/vmagent/) (~170 MB) or an [OpenTelemetry Collector](https://opentelemetry.io/docs/collector/) (~350 MB) instead of a full Prometheus server as the per-vCluster forwarding agent.
+:::
+
+Repeat these steps for each vCluster that uses private nodes. Each instance must have unique `external_labels` values matching its Platform project, vCluster, space, and cluster names.
+
+</TabItem>
+</Tabs>
+
 <!-- vale off -->
 ## Deploy Grafana
 <!-- vale on -->
@@ -151,6 +297,16 @@ Deploy Grafana with a pre-configured Prometheus datasource and dashboard using t
 <!-- vale on -->
 
 Use the following chart values to configure the Prometheus datasource and include a pre-built dashboard:
+
+<Tabs
+  groupId="tenancy-model"
+  defaultValue="shared"
+  values={[
+    { label: "Shared Nodes", value: "shared" },
+    { label: "Private Nodes", value: "private" },
+  ]}
+>
+<TabItem value="shared">
 
 ```yaml title="Grafana Helm values"
 # Configure Prometheus as the default datasource
@@ -185,6 +341,46 @@ dashboards:
       json: |
         {"title":"CPU and Memory usage by Project, Space, Virtual Cluster","panels":[{"gridPos":{"h":8,"w":12,"x":0,"y":0},"id":3,"options":{"legend":{"calcs":[],"displayMode":"list","placement":"bottom","showLegend":true}},"targets":[{"disableTextWrap":false,"editorMode":"code","expr":"sum by(loft_virtualcluster_name) (k8s_pod_cpu_time_seconds_total{loft_virtualcluster_name=~\".+\"})","fullMetaSearch":false,"includeNullMetadata":true,"instant":false,"legendFormat":"__auto","range":true,"refId":"A","useBackend":false}],"title":"CPU Usage by Virtual Cluster","type":"timeseries"},{"gridPos":{"h":8,"w":12,"x":12,"y":0},"id":4,"options":{"legend":{"calcs":[],"displayMode":"list","placement":"bottom","showLegend":true}},"targets":[{"disableTextWrap":false,"editorMode":"code","expr":"sum by (loft_virtualcluster_name) (k8s_pod_memory_usage_bytes{loft_virtualcluster_name=~\".+\"})\n/1024/1024","fullMetaSearch":false,"includeNullMetadata":true,"instant":false,"legendFormat":"__auto","range":true,"refId":"A","useBackend":false}],"title":"Memory Usage (MiB) by Virtual Cluster","type":"timeseries"},{"gridPos":{"h":8,"w":12,"x":0,"y":8},"id":2,"options":{"legend":{"calcs":[],"displayMode":"list","placement":"bottom","showLegend":true}},"targets":[{"disableTextWrap":false,"editorMode":"builder","expr":"sum by(loft_project_name) (k8s_pod_cpu_time_seconds_total{loft_project_name=~\".+\"})","fullMetaSearch":false,"includeNullMetadata":true,"instant":false,"interval":"","legendFormat":"__auto","range":true,"refId":"A","useBackend":false}],"title":"CPU Usage by Project","type":"timeseries"},{"gridPos":{"h":8,"w":12,"x":12,"y":8},"id":1,"options":{"legend":{"calcs":[],"displayMode":"list","placement":"bottom","showLegend":true}},"targets":[{"disableTextWrap":false,"editorMode":"code","expr":"sum by (loft_project_name) (k8s_pod_memory_usage_bytes{loft_project_name=~\".+\"})\n/1024/1024","fullMetaSearch":false,"includeNullMetadata":true,"instant":false,"legendFormat":"__auto","range":true,"refId":"A","useBackend":false}],"title":"Memory Usage (MiB) by Project","type":"timeseries"},{"gridPos":{"h":8,"w":12,"x":0,"y":16},"id":6,"options":{"legend":{"calcs":[],"displayMode":"list","placement":"bottom","showLegend":true}},"targets":[{"disableTextWrap":false,"editorMode":"code","expr":"sum by(loft_space_name) (k8s_pod_cpu_time_seconds_total{loft_space_name=~\".+\"})","fullMetaSearch":false,"includeNullMetadata":true,"instant":false,"legendFormat":"__auto","range":true,"refId":"A","useBackend":false}],"title":"CPU Usage by Space","type":"timeseries"},{"gridPos":{"h":8,"w":12,"x":12,"y":16},"id":5,"options":{"legend":{"calcs":[],"displayMode":"list","placement":"bottom","showLegend":true}},"targets":[{"disableTextWrap":false,"editorMode":"code","expr":"sum by (loft_space_name) (k8s_pod_memory_usage_bytes{loft_space_name=~\".+\"})\n/1024/1024","fullMetaSearch":false,"includeNullMetadata":true,"instant":false,"legendFormat":"__auto","range":true,"refId":"A","useBackend":false}],"title":"Memory Usage (MiB) by Space","type":"timeseries"}],"schemaVersion":38}
 ```
+
+</TabItem>
+<TabItem value="private">
+
+```yaml title="Grafana Helm values"
+# Configure Prometheus as the default datasource
+datasources:
+  datasources.yaml:
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        type: prometheus
+        url: http://prometheus-server
+        access: proxy
+        isDefault: true
+
+# Configure dashboard provisioning
+dashboardProviders:
+  dashboardproviders.yaml:
+    apiVersion: 1
+    providers:
+      - name: 'default'
+        orgId: 1
+        folder: ''
+        type: file
+        disableDeletion: false
+        editable: true
+        options:
+          path: /var/lib/grafana/dashboards/default
+
+# Include a pre-built dashboard for vCluster Platform metrics (cadvisor)
+dashboards:
+  default:
+    vcluster-platform-metrics:
+      json: |
+        {"title":"CPU and Memory usage by Project, Space, Virtual Cluster","panels":[{"gridPos":{"h":8,"w":12,"x":0,"y":0},"id":3,"options":{"legend":{"calcs":[],"displayMode":"list","placement":"bottom","showLegend":true}},"targets":[{"disableTextWrap":false,"editorMode":"code","expr":"sum by(loft_virtualcluster_name) (rate(container_cpu_usage_seconds_total{container!=\"\",loft_virtualcluster_name=~\".+\"}[5m]))","fullMetaSearch":false,"includeNullMetadata":true,"instant":false,"legendFormat":"__auto","range":true,"refId":"A","useBackend":false}],"title":"CPU Usage by Virtual Cluster","type":"timeseries"},{"gridPos":{"h":8,"w":12,"x":12,"y":0},"id":4,"options":{"legend":{"calcs":[],"displayMode":"list","placement":"bottom","showLegend":true}},"targets":[{"disableTextWrap":false,"editorMode":"code","expr":"sum by (loft_virtualcluster_name) (container_memory_working_set_bytes{container!=\"\",loft_virtualcluster_name=~\".+\"})\n/1024/1024","fullMetaSearch":false,"includeNullMetadata":true,"instant":false,"legendFormat":"__auto","range":true,"refId":"A","useBackend":false}],"title":"Memory Usage (MiB) by Virtual Cluster","type":"timeseries"},{"gridPos":{"h":8,"w":12,"x":0,"y":8},"id":2,"options":{"legend":{"calcs":[],"displayMode":"list","placement":"bottom","showLegend":true}},"targets":[{"disableTextWrap":false,"editorMode":"builder","expr":"sum by(loft_project_name) (rate(container_cpu_usage_seconds_total{container!=\"\",loft_project_name=~\".+\"}[5m]))","fullMetaSearch":false,"includeNullMetadata":true,"instant":false,"interval":"","legendFormat":"__auto","range":true,"refId":"A","useBackend":false}],"title":"CPU Usage by Project","type":"timeseries"},{"gridPos":{"h":8,"w":12,"x":12,"y":8},"id":1,"options":{"legend":{"calcs":[],"displayMode":"list","placement":"bottom","showLegend":true}},"targets":[{"disableTextWrap":false,"editorMode":"code","expr":"sum by (loft_project_name) (container_memory_working_set_bytes{container!=\"\",loft_project_name=~\".+\"})\n/1024/1024","fullMetaSearch":false,"includeNullMetadata":true,"instant":false,"legendFormat":"__auto","range":true,"refId":"A","useBackend":false}],"title":"Memory Usage (MiB) by Project","type":"timeseries"},{"gridPos":{"h":8,"w":12,"x":0,"y":16},"id":6,"options":{"legend":{"calcs":[],"displayMode":"list","placement":"bottom","showLegend":true}},"targets":[{"disableTextWrap":false,"editorMode":"code","expr":"sum by(loft_space_name) (rate(container_cpu_usage_seconds_total{container!=\"\",loft_space_name=~\".+\"}[5m]))","fullMetaSearch":false,"includeNullMetadata":true,"instant":false,"legendFormat":"__auto","range":true,"refId":"A","useBackend":false}],"title":"CPU Usage by Space","type":"timeseries"},{"gridPos":{"h":8,"w":12,"x":12,"y":16},"id":5,"options":{"legend":{"calcs":[],"displayMode":"list","placement":"bottom","showLegend":true}},"targets":[{"disableTextWrap":false,"editorMode":"code","expr":"sum by (loft_space_name) (container_memory_working_set_bytes{container!=\"\",loft_space_name=~\".+\"})\n/1024/1024","fullMetaSearch":false,"includeNullMetadata":true,"instant":false,"legendFormat":"__auto","range":true,"refId":"A","useBackend":false}],"title":"Memory Usage (MiB) by Space","type":"timeseries"}],"schemaVersion":38}
+```
+
+</TabItem>
+</Tabs>
 
 Click <Button>Install</Button> to deploy Grafana.
 
@@ -262,17 +458,37 @@ Navigate to your configured hostname and log in with the admin credentials.
 ## Create Prometheus queries
 <!-- vale on -->
 
-After collecting data with OpenTelemetry, you can aggregate the metrics using the associated labels like the vCluster name.
+After collecting metrics, you can aggregate them using the associated labels like the vCluster name.
 
-Here's an example Prometheus query showing the CPU usage aggregated by the vCluster name:
+Here's an example Prometheus query showing CPU usage aggregated by vCluster name:
+
+<Tabs
+  groupId="tenancy-model"
+  defaultValue="shared"
+  values={[
+    { label: "Shared Nodes", value: "shared" },
+    { label: "Private Nodes", value: "private" },
+  ]}
+>
+<TabItem value="shared">
 
 ```promql
 sum by(loft_virtualcluster_name) (k8s_pod_cpu_time_seconds_total{loft_virtualcluster_name=~".+"})
 ```
 
+</TabItem>
+<TabItem value="private">
+
+```promql
+sum by(loft_virtualcluster_name) (rate(container_cpu_usage_seconds_total{container!="",loft_virtualcluster_name=~".+"}[5m]))
+```
+
+</TabItem>
+</Tabs>
+
 ### Available labels
 
-The OpenTelemetry Collector adds the following vCluster Platform labels to metrics:
+The following vCluster Platform labels are available on metrics:
 
 | Label | Description |
 |-------|-------------|
@@ -281,7 +497,21 @@ The OpenTelemetry Collector adds the following vCluster Platform labels to metri
 | `loft_space_name` | The space name |
 | `loft_cluster_name` | The connected cluster name |
 
+:::info Label sources
+With Shared Nodes, the OpenTelemetry Collector adds these labels automatically. With Private Nodes, they come from the `external_labels` configuration in the per-vCluster Prometheus Helm values.
+:::
+
 ### Example queries
+
+<Tabs
+  groupId="tenancy-model"
+  defaultValue="shared"
+  values={[
+    { label: "Shared Nodes", value: "shared" },
+    { label: "Private Nodes", value: "private" },
+  ]}
+>
+<TabItem value="shared">
 
 **Memory usage by project:**
 ```promql
@@ -293,9 +523,25 @@ sum by (loft_project_name) (k8s_pod_memory_usage_bytes{loft_project_name=~".+"})
 sum by(loft_space_name) (k8s_pod_cpu_time_seconds_total{loft_space_name=~".+"})
 ```
 
+</TabItem>
+<TabItem value="private">
+
+**Memory usage by project:**
+```promql
+sum by (loft_project_name) (container_memory_working_set_bytes{container!="",loft_project_name=~".+"}) / 1024 / 1024
+```
+
+**CPU usage by space:**
+```promql
+sum by(loft_space_name) (rate(container_cpu_usage_seconds_total{container!="",loft_space_name=~".+"}[5m]))
+```
+
+</TabItem>
+</Tabs>
+
 ## Example dashboard
 
-The Grafana deployment includes a pre-built dashboard that visualizes CPU and Memory usage aggregated by vCluster, Project, and Space.
+The Grafana deployment includes a pre-built dashboard that visualizes CPU and Memory usage aggregated by vCluster, Project, and Space. The dashboard layout is the same for both tenancy models; the underlying metric names differ based on the selected Grafana Helm values.
 
 <img src={GrafanaExample} width="100%" alt="Grafana dashboard showing CPU and Memory usage by Project, Space, and Virtual Cluster"/>
 
