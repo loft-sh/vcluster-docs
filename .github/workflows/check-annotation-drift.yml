@@ -23,6 +23,12 @@ jobs:
         with:
           token: ${{ secrets.GH_ACCESS_TOKEN }}
 
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache-dependency-path: hack/annotations/go.mod
+
       - name: Read active platform versions
         id: versions
         run: |
@@ -69,12 +75,6 @@ jobs:
               label="v${version}"
             fi
 
-            # Skip if docs file doesn't exist for this version
-            if [[ ! -f "$docs_path" ]]; then
-              echo "  No platform-annotations.mdx for $label, skipping"
-              continue
-            fi
-
             # Clone loft-enterprise at the right branch (reuse if already cloned)
             if [[ ! -d "loft-enterprise" ]]; then
               gh repo clone loft-sh/loft-enterprise loft-enterprise -- --depth 1 --branch "$source_branch" 2>/dev/null || {
@@ -93,19 +93,22 @@ jobs:
               }
             fi
 
-            # Run drift check
-            undoc_file="/tmp/undocumented-platform-${version}.txt"
-            if UNDOCUMENTED_OUT="$undoc_file" \
-               SOURCE_LABEL="loft-enterprise ($label)" \
-               scripts/check-annotation-drift.sh loft-enterprise "$docs_path"; then
+            # Run annotation tool (exit 0=no changes, 1=updated, 2=error)
+            set +e
+            go run ./hack/annotations \
+              --source loft-enterprise \
+              --docs "$docs_path" \
+              --label "loft-enterprise ($label)" \
+              --product platform
+            exit_code=$?
+            set -e
+            if [[ $exit_code -eq 0 ]]; then
               echo "  No drift for $label"
-            else
-              echo "  Drift detected for $label"
+            elif [[ $exit_code -eq 1 ]]; then
+              echo "  Drift detected for $label — stubs added"
               any_drift=true
-              # Generate stubs and update the MDX
-              if [[ -f "$undoc_file" ]] && [[ -s "$undoc_file" ]]; then
-                scripts/generate-annotation-stubs.sh loft-enterprise "$docs_path" "$undoc_file"
-              fi
+            else
+              echo "::warning::Annotation tool failed for platform $label (exit $exit_code)"
             fi
             echo ""
           done
@@ -113,7 +116,7 @@ jobs:
           echo "any_drift=$any_drift" >> "$GITHUB_OUTPUT"
 
       - name: Clean up cloned source repo
-        if: steps.check.outputs.any_drift == 'true'
+        if: always()
         run: rm -rf loft-enterprise
 
       - name: Create pull request
@@ -147,6 +150,12 @@ jobs:
         uses: actions/checkout@v4
         with:
           token: ${{ secrets.GH_ACCESS_TOKEN }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache-dependency-path: hack/annotations/go.mod
 
       - name: Read active vcluster versions
         id: versions
@@ -191,11 +200,6 @@ jobs:
               label="v${version}"
             fi
 
-            if [[ ! -f "$docs_path" ]]; then
-              echo "  No annotations.mdx for $label, skipping"
-              continue
-            fi
-
             # Clone vcluster at the right ref
             if [[ ! -d "vcluster-source" ]]; then
               gh repo clone loft-sh/vcluster vcluster-source -- --depth 1 --branch "$source_ref" 2>/dev/null || {
@@ -214,17 +218,22 @@ jobs:
               }
             fi
 
-            undoc_file="/tmp/undocumented-vcluster-${version}.txt"
-            if UNDOCUMENTED_OUT="$undoc_file" \
-               SOURCE_LABEL="vcluster ($label)" \
-               scripts/check-annotation-drift.sh vcluster-source "$docs_path"; then
+            # Run annotation tool (exit 0=no changes, 1=updated, 2=error)
+            set +e
+            go run ./hack/annotations \
+              --source vcluster-source \
+              --docs "$docs_path" \
+              --label "vcluster ($label)" \
+              --product vcluster
+            exit_code=$?
+            set -e
+            if [[ $exit_code -eq 0 ]]; then
               echo "  No drift for $label"
-            else
-              echo "  Drift detected for $label"
+            elif [[ $exit_code -eq 1 ]]; then
+              echo "  Drift detected for $label — stubs added"
               any_drift=true
-              if [[ -f "$undoc_file" ]] && [[ -s "$undoc_file" ]]; then
-                scripts/generate-annotation-stubs.sh vcluster-source "$docs_path" "$undoc_file"
-              fi
+            else
+              echo "::warning::Annotation tool failed for vcluster $label (exit $exit_code)"
             fi
             echo ""
           done
@@ -232,7 +241,7 @@ jobs:
           echo "any_drift=$any_drift" >> "$GITHUB_OUTPUT"
 
       - name: Clean up cloned source repo
-        if: steps.check.outputs.any_drift == 'true'
+        if: always()
         run: rm -rf vcluster-source
 
       - name: Create pull request
