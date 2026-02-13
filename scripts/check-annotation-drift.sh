@@ -13,19 +13,25 @@ set -eo pipefail
 #   SOURCE_LABEL        Human-readable label for the source (default: repo dir name)
 #   UNDOCUMENTED_OUT    If set, write undocumented annotation list to this file path
 
+SCRIPT_NAME="$(basename "$0")"
+
 SOURCE_REPO_PATH="${1:?Usage: $0 <source-repo-path> <docs-mdx-path>}"
 DOCS_MDX_PATH="${2:?Usage: $0 <source-repo-path> <docs-mdx-path>}"
 SOURCE_REF="${SOURCE_REF:-}"
 SOURCE_LABEL="${SOURCE_LABEL:-$(basename "$SOURCE_REPO_PATH")}"
 UNDOCUMENTED_OUT="${UNDOCUMENTED_OUT:-}"
 
+# Annotation namespace patterns (add new namespaces here)
+# Used by grep to match Go string literals like "loft.sh/some-key"
+ANNOTATION_GREP_PATTERN='"loft\.sh/[^"]*"\|"sleepmode\.loft\.sh/[^"]*"\|"vcluster\.loft\.sh/[^"]*"\|"virtualcluster\.loft\.sh/[^"]*"\|"drift\.loft\.sh/[^"]*"\|"rbac\.loft\.sh/[^"]*"\|"platform\.vcluster\.com/[^"]*"'
+
 if [[ ! -d "$SOURCE_REPO_PATH" ]]; then
-    echo "ERROR: Source repo path does not exist: $SOURCE_REPO_PATH" >&2
+    echo "[$SCRIPT_NAME] ERROR: Source repo path does not exist: $SOURCE_REPO_PATH" >&2
     exit 2
 fi
 
 if [[ ! -f "$DOCS_MDX_PATH" ]]; then
-    echo "SKIP: MDX file does not exist: $DOCS_MDX_PATH" >&2
+    echo "[$SCRIPT_NAME] SKIP: MDX file does not exist: $DOCS_MDX_PATH" >&2
     exit 0
 fi
 
@@ -33,7 +39,7 @@ fi
 if [[ -n "$SOURCE_REF" ]]; then
     git -C "$SOURCE_REPO_PATH" checkout "$SOURCE_REF" --quiet 2>/dev/null || \
     git -C "$SOURCE_REPO_PATH" checkout "origin/$SOURCE_REF" --quiet 2>/dev/null || {
-        echo "ERROR: Could not checkout ref: $SOURCE_REF" >&2
+        echo "[$SCRIPT_NAME] ERROR: Could not checkout ref: $SOURCE_REF" >&2
         exit 2
     }
 fi
@@ -46,7 +52,7 @@ fi
 extract_codebase_annotations() {
     local path="$1"
     grep -roh \
-        '"loft\.sh/[^"]*"\|"sleepmode\.loft\.sh/[^"]*"\|"vcluster\.loft\.sh/[^"]*"\|"virtualcluster\.loft\.sh/[^"]*"\|"drift\.loft\.sh/[^"]*"\|"rbac\.loft\.sh/[^"]*"\|"platform\.vcluster\.com/[^"]*"' \
+        "$ANNOTATION_GREP_PATTERN" \
         --include='*.go' "$path" \
     | tr -d '"' \
     | sort -u \

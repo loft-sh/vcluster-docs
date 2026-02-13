@@ -12,17 +12,22 @@ set -eo pipefail
 #   docs-mdx-path      Path to the MDX reference file to update
 #   undocumented-file   File containing undocumented annotation keys (one per line)
 
+SCRIPT_NAME="$(basename "$0")"
+
 SOURCE_REPO_PATH="${1:?Usage: $0 <source-repo-path> <docs-mdx-path> <undocumented-file>}"
 DOCS_MDX_PATH="${2:?Usage: $0 <source-repo-path> <docs-mdx-path> <undocumented-file>}"
 UNDOCUMENTED_FILE="${3:?Usage: $0 <source-repo-path> <docs-mdx-path> <undocumented-file>}"
 
+# Annotation namespace patterns for context extraction (add new namespaces here)
+ANNOTATION_CONTEXT_PATTERN='"loft\.sh/\|"sleepmode\.loft\.sh/\|"vcluster\.loft\.sh/\|"virtualcluster\.loft\.sh/\|"drift\.loft\.sh/\|"rbac\.loft\.sh/\|"platform\.vcluster\.com/'
+
 if [[ ! -f "$UNDOCUMENTED_FILE" ]] || [[ ! -s "$UNDOCUMENTED_FILE" ]]; then
-    echo "No undocumented annotations to process"
+    echo "[$SCRIPT_NAME] No undocumented annotations to process"
     exit 0
 fi
 
 if [[ ! -f "$DOCS_MDX_PATH" ]]; then
-    echo "ERROR: MDX file does not exist: $DOCS_MDX_PATH" >&2
+    echo "[$SCRIPT_NAME] ERROR: MDX file does not exist: $DOCS_MDX_PATH" >&2
     exit 2
 fi
 
@@ -35,9 +40,14 @@ trap 'rm -rf "$TMPDIR_WORK"' EXIT
 # Single-pass: extract ALL annotation definitions with surrounding context
 # Format: filename:linenum:content (with 3 lines before for comments)
 grep -rnB3 \
-    '"loft\.sh/\|"sleepmode\.loft\.sh/\|"vcluster\.loft\.sh/\|"virtualcluster\.loft\.sh/\|"drift\.loft\.sh/\|"rbac\.loft\.sh/\|"platform\.vcluster\.com/' \
+    "$ANNOTATION_CONTEXT_PATTERN" \
     --include='*.go' "$SOURCE_REPO_PATH" \
     > "$TMPDIR_WORK/all_context.txt" 2>/dev/null || true
+
+if [[ -f "$TMPDIR_WORK/all_context.txt" ]]; then
+    context_lines=$(wc -l < "$TMPDIR_WORK/all_context.txt")
+    echo "[$SCRIPT_NAME] Cached $context_lines lines of annotation context"
+fi
 
 # Build a lookup: annotation_key -> {comment, type}
 declare -A ANNOTATION_COMMENTS
@@ -54,7 +64,8 @@ while IFS= read -r annotation_key; do
     while IFS= read -r ctx_line; do
         if [[ "$ctx_line" =~ //[[:space:]]*(.*) ]]; then
             stripped="${BASH_REMATCH[1]}"
-            # Skip guideline/category comments
+            # Skip standalone category header comments (e.g. "// Guidelines:")
+            # Note: this also filters comments that happen to start with these prefixes
             [[ "$stripped" =~ ^(Guidelines:|Informational:|Functional:|Template:|Defaults:|Projects|Cluster\ Quota:|vCluster:) ]] && continue
             if [[ -n "$comment" ]]; then
                 comment="$comment $stripped"
@@ -83,17 +94,32 @@ while IFS= read -r annotation_key; do
     ANNOTATION_TYPES["$annotation_key"]="$type"
 done < "$UNDOCUMENTED_FILE"
 
-# Remove trailing <!-- vale on --> if present (we'll re-add it)
-sed -i '/^<!-- vale on -->$/d' "$DOCS_MDX_PATH"
+# Build the new file atomically: preserve content before "Needs documentation",
+# strip trailing <!-- vale on -->, append fresh stubs, then replace original.
+OUTPUT_FILE="$TMPDIR_WORK/output.mdx"
 
-# Remove existing "Needs documentation" section if present (regenerated each run)
+# Extract content up to (but not including) the "Needs documentation" section
 needs_doc_line=$(grep -n "^## Needs documentation" "$DOCS_MDX_PATH" | head -1 | cut -d: -f1 || true)
 if [[ -n "$needs_doc_line" ]]; then
-    sed -i "${needs_doc_line},\$d" "$DOCS_MDX_PATH"
+    head -n "$((needs_doc_line - 1))" "$DOCS_MDX_PATH" > "$OUTPUT_FILE"
+else
+    cp "$DOCS_MDX_PATH" "$OUTPUT_FILE"
 fi
 
-# Generate the stubs section
-STUBS_FILE="$TMPDIR_WORK/stubs.md"
+# Strip trailing <!-- vale on --> from preserved content (we'll re-add it)
+# Use a temp file to avoid sed -i edge cases
+if grep -q '^<!-- vale on -->$' "$OUTPUT_FILE"; then
+    grep -v '^<!-- vale on -->$' "$OUTPUT_FILE" > "$TMPDIR_WORK/stripped.mdx"
+    mv "$TMPDIR_WORK/stripped.mdx" "$OUTPUT_FILE"
+fi
+
+# Strip trailing blank lines
+while [[ -s "$OUTPUT_FILE" ]] && [[ "$(tail -c 1 "$OUTPUT_FILE" | wc -l)" -eq 1 ]] && [[ -z "$(tail -n 1 "$OUTPUT_FILE")" ]]; do
+    head -n -1 "$OUTPUT_FILE" > "$TMPDIR_WORK/trimmed.mdx"
+    mv "$TMPDIR_WORK/trimmed.mdx" "$OUTPUT_FILE"
+done
+
+# Append the stubs section
 {
     echo ""
     echo "## Needs documentation {#needs-documentation}"
@@ -127,9 +153,9 @@ STUBS_FILE="$TMPDIR_WORK/stubs.md"
     done < "$UNDOCUMENTED_FILE"
 
     echo "<!-- vale on -->"
-} > "$STUBS_FILE"
+} >> "$OUTPUT_FILE"
 
-# Append stubs to the MDX file
-cat "$STUBS_FILE" >> "$DOCS_MDX_PATH"
+# Atomic replace: move completed file over original
+mv "$OUTPUT_FILE" "$DOCS_MDX_PATH"
 
-echo "Appended $stub_count stubs to $DOCS_MDX_PATH"
+echo "[$SCRIPT_NAME] Appended $stub_count stubs to $DOCS_MDX_PATH"
