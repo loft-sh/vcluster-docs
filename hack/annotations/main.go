@@ -83,6 +83,10 @@ func main() {
 	// Create docs file with frontmatter if it doesn't exist
 	created := false
 	if _, err := os.Stat(*docs); os.IsNotExist(err) {
+		if *detectOnly {
+			fmt.Printf("Docs file does not exist: %s (skipping in detect-only mode)\n", *docs)
+			os.Exit(0)
+		}
 		fm, ok := frontmatter[*product]
 		if !ok {
 			fmt.Fprintf(os.Stderr, "ERROR: docs file does not exist and --product is not set or invalid: %q\n", *product)

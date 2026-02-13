@@ -124,35 +124,17 @@ func buildStubs(annotations []Annotation) string {
 }
 
 func insertStubs(content, stubs string) string {
-	// Check if "## Needs documentation" section already exists
-	needsDocIdx := strings.Index(content, "## Needs documentation")
-	if needsDocIdx != -1 {
-		// Find the end of the section (before <!-- vale on --> or EOF)
-		valeOnIdx := strings.Index(content[needsDocIdx:], "<!-- vale on -->")
-		if valeOnIdx != -1 {
-			insertPoint := needsDocIdx + valeOnIdx
-			// Insert stubs before <!-- vale on -->
-			return content[:insertPoint] + stubs + content[insertPoint:]
-		}
-		// No vale on marker — append at end
-		return content + "\n" + stubs
-	}
-
-	// No "Needs documentation" section — create one
-	section := "\n## Needs documentation {#needs-documentation}\n\n" +
-		stubs
-
-	// Try to insert before <!-- vale on -->
+	// Insert stubs before <!-- vale on -->
 	valeOnIdx := strings.LastIndex(content, "<!-- vale on -->")
 	if valeOnIdx != -1 {
-		return content[:valeOnIdx] + section + content[valeOnIdx:]
+		return content[:valeOnIdx] + stubs + content[valeOnIdx:]
 	}
 
 	// No vale marker — append at end
 	if !strings.HasSuffix(content, "\n") {
 		content += "\n"
 	}
-	return content + section + "<!-- vale on -->\n"
+	return content + stubs
 }
 
 // toAnchor converts "loft.sh/cluster-uid" to "loft-sh-cluster-uid"
