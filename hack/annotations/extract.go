@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -12,9 +11,11 @@ import (
 // Annotation holds an extracted annotation key, its classified type, and the
 // Go doc comment from the constant definition (if any).
 type Annotation struct {
-	Key     string // e.g. "loft.sh/cluster-uid"
-	Type    string // "Annotation", "Label", or "Finalizer"
-	Comment string // Go doc comment text, empty if none
+	Key           string `json:"key"`
+	Type          string `json:"type"`
+	Comment       string `json:"comment,omitempty"`
+	SourceFile    string `json:"source_file,omitempty"`
+	SourceContext string `json:"source_context,omitempty"`
 }
 
 // annotationPattern matches Go string literals containing known annotation namespaces.
@@ -37,8 +38,10 @@ var (
 
 // annotationEntry tracks an annotation with its comment and type for deduplication.
 type annotationEntry struct {
-	typ     string
-	comment string
+	typ           string
+	comment       string
+	sourceFile    string
+	sourceContext string
 }
 
 // ExtractAnnotations walks all .go files under root and returns sorted, deduplicated annotations.
@@ -61,20 +64,17 @@ func ExtractAnnotations(root string) ([]Annotation, error) {
 			return nil
 		}
 
-		f, err := os.Open(path)
+		data, err := os.ReadFile(path)
 		if err != nil {
 			return nil
 		}
-		defer f.Close()
+		lines := strings.Split(string(data), "\n")
 
+		relPath, _ := filepath.Rel(root, path)
 		lowerPath := strings.ToLower(path)
-		scanner := bufio.NewScanner(f)
-		buf := make([]byte, 0, 256*1024)
-		scanner.Buffer(buf, 1024*1024)
 
 		var commentLines []string
-		for scanner.Scan() {
-			line := scanner.Text()
+		for lineNum, line := range lines {
 
 			// Track comments: accumulate consecutive comment lines
 			if m := commentPattern.FindStringSubmatch(line); m != nil {
@@ -97,12 +97,13 @@ func ExtractAnnotations(root string) ([]Annotation, error) {
 
 				comment := cleanComment(strings.Join(commentLines, " "))
 				typ := classifyType(key, line, lowerPath)
+				ctx := extractContext(lines, lineNum, 15)
 
 				// Only override if new entry has a comment or upgrading type
 				if existing, ok := seen[key]; !ok || (existing.comment == "" && comment != "") {
-					seen[key] = annotationEntry{typ: typ, comment: comment}
+					seen[key] = annotationEntry{typ: typ, comment: comment, sourceFile: relPath, sourceContext: ctx}
 				} else if existing.typ == "Annotation" && typ != "Annotation" {
-					seen[key] = annotationEntry{typ: typ, comment: existing.comment}
+					seen[key] = annotationEntry{typ: typ, comment: existing.comment, sourceFile: existing.sourceFile, sourceContext: existing.sourceContext}
 				}
 			}
 
@@ -117,7 +118,13 @@ func ExtractAnnotations(root string) ([]Annotation, error) {
 
 	result := make([]Annotation, 0, len(seen))
 	for key, entry := range seen {
-		result = append(result, Annotation{Key: key, Type: entry.typ, Comment: entry.comment})
+		result = append(result, Annotation{
+			Key:           key,
+			Type:          entry.typ,
+			Comment:       entry.comment,
+			SourceFile:    entry.sourceFile,
+			SourceContext: entry.sourceContext,
+		})
 	}
 	sort.Slice(result, func(i, j int) bool {
 		return result[i].Key < result[j].Key
@@ -166,6 +173,19 @@ func classifyType(key, line, lowerPath string) string {
 	}
 
 	return "Annotation"
+}
+
+// extractContext returns lines[lineNum-radius : lineNum+radius] joined by newlines.
+func extractContext(lines []string, lineNum, radius int) string {
+	start := lineNum - radius
+	if start < 0 {
+		start = 0
+	}
+	end := lineNum + radius + 1
+	if end > len(lines) {
+		end = len(lines)
+	}
+	return strings.Join(lines[start:end], "\n")
 }
 
 // cleanComment strips Go doc comment prefixes like "ConstName is used to ..."
