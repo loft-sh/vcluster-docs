@@ -229,7 +229,8 @@ Existing code blocks without a title will continue to work as before.
 
 #### Icon component
 
-Use the `Icon` component to display checkmarks, crosses or warnings for feature availability, comparison tables, or inline indicators.
+Use the `Icon` component to display checkmarks, crosses or warnings for feature availability, comparison tables, or
+inline indicators.
 
 **Usage:**
 
@@ -239,7 +240,7 @@ import Icon from '@site/src/components/Icon';
 | Feature | Supported |
 |---------|-----------|
 | Connection pooling | <Icon type="check" /> |
-| SSL encryption | <Icon type="check" /> |
+| SSL encryption | <Icon type="warning" /> |
 | Legacy auth | <Icon type="cross" /> |
 ```
 
@@ -257,6 +258,7 @@ Connection pooling <Icon type="check" /> is available in all tiers.
 ```
 
 **Icon types:**
+
 - `type="check"` or `type="checkmark"` - Orange checkmark (light mode), green (dark mode)
 - `type="cross"` or `type="x"` - Gray X symbol
 - `type="warning"` or `type="!"` - Yellow ! symbol
