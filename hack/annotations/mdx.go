@@ -31,6 +31,15 @@ func parseHeadings(content string) map[string]bool {
 	return documented
 }
 
+// DriftReport is the JSON output for --detect-only mode.
+type DriftReport struct {
+	DocsPath           string       `json:"docs_path"`
+	Product            string       `json:"product"`
+	Label              string       `json:"label"`
+	NewAnnotations     []Annotation `json:"new_annotations"`
+	RemovedAnnotations []string     `json:"removed_annotations,omitempty"`
+}
+
 // MergeResult holds the outcome of a merge operation.
 type MergeResult struct {
 	NewAnnotations     []Annotation // annotations added as stubs
@@ -131,10 +140,6 @@ func insertStubs(content, stubs string) string {
 
 	// No "Needs documentation" section — create one
 	section := "\n## Needs documentation {#needs-documentation}\n\n" +
-		":::caution\n" +
-		"The following annotations were detected in the codebase but lack full documentation.\n" +
-		"Entries are auto-generated stubs.\n" +
-		":::\n\n" +
 		stubs
 
 	// Try to insert before <!-- vale on -->

@@ -21,6 +21,7 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -65,6 +66,8 @@ func main() {
 	docs := flag.String("docs", "", "path to MDX annotations reference file")
 	label := flag.String("label", "source", "human-readable label for the source (used in output)")
 	product := flag.String("product", "", "product type: 'platform' or 'vcluster' (used for frontmatter when creating new file)")
+	detectOnly := flag.Bool("detect-only", false, "only detect drift, output JSON instead of writing stubs")
+	jsonOutput := flag.String("json-output", "", "path to write JSON output (used with --detect-only)")
 	flag.Parse()
 
 	if *source == "" || *docs == "" {
@@ -106,6 +109,64 @@ func main() {
 	}
 	fmt.Printf("=== Annotation Report (%s) ===\n", *label)
 	fmt.Printf("Source annotations: %d\n", len(annotations))
+
+	// Detect-only mode: output JSON and exit
+	if *detectOnly {
+		documented, err := ParseDocumentedAnnotations(*docs)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "ERROR: reading docs: %v\n", err)
+			os.Exit(2)
+		}
+
+		sourceSet := make(map[string]bool)
+		for _, a := range annotations {
+			sourceSet[a.Key] = true
+		}
+
+		var newAnnotations []Annotation
+		for _, a := range annotations {
+			if !documented[a.Key] {
+				newAnnotations = append(newAnnotations, a)
+			}
+		}
+
+		var removed []string
+		for key := range documented {
+			if !sourceSet[key] {
+				removed = append(removed, key)
+			}
+		}
+
+		report := DriftReport{
+			DocsPath:           *docs,
+			Product:            *product,
+			Label:              *label,
+			NewAnnotations:     newAnnotations,
+			RemovedAnnotations: removed,
+		}
+
+		data, err := json.MarshalIndent(report, "", "  ")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "ERROR: marshaling JSON: %v\n", err)
+			os.Exit(2)
+		}
+
+		if *jsonOutput != "" {
+			if err := os.WriteFile(*jsonOutput, data, 0644); err != nil {
+				fmt.Fprintf(os.Stderr, "ERROR: writing %s: %v\n", *jsonOutput, err)
+				os.Exit(2)
+			}
+			fmt.Printf("Wrote drift report to %s\n", *jsonOutput)
+		} else {
+			fmt.Println(string(data))
+		}
+
+		fmt.Printf("New: %d, Removed: %d\n", len(newAnnotations), len(removed))
+		if len(newAnnotations) > 0 {
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
 
 	// Merge with existing docs
 	result, err := MergeAnnotations(*docs, annotations, *label)
