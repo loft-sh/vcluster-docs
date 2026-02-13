@@ -9,10 +9,12 @@ import (
 	"strings"
 )
 
-// Annotation holds an extracted annotation key and its classified type.
+// Annotation holds an extracted annotation key, its classified type, and the
+// Go doc comment from the constant definition (if any).
 type Annotation struct {
-	Key  string // e.g. "loft.sh/cluster-uid"
-	Type string // "Annotation", "Label", or "Finalizer"
+	Key     string // e.g. "loft.sh/cluster-uid"
+	Type    string // "Annotation", "Label", or "Finalizer"
+	Comment string // Go doc comment text, empty if none
 }
 
 // annotationPattern matches Go string literals containing known annotation namespaces.
@@ -20,22 +22,35 @@ var annotationPattern = regexp.MustCompile(
 	`"((?:loft\.sh|sleepmode\.loft\.sh|vcluster\.loft\.sh|virtualcluster\.loft\.sh|drift\.loft\.sh|rbac\.loft\.sh|platform\.vcluster\.com)/[^"]+)"`,
 )
 
+// commentPattern matches Go single-line comments.
+var commentPattern = regexp.MustCompile(`^\s*//\s*(.*)`)
+
+// godocPrefixPattern strips the Go constant name and connecting verb from doc comments.
+// Matches: "ConstName is ...", "ConstName specifies ...", "ConstName holds ...", etc.
+var godocPrefixPattern = regexp.MustCompile(`^\w+\s+(?:is\s+(?:used\s+to\s+|the\s+)?|specifies\s+|holds\s+|indicates\s+|signals\s+|marks\s+|stores\s+|contains\s+|defines\s+|controls\s+|prevents\s+|skips\s+)`)
+
 // Filters applied after extraction.
 var (
 	filterFormatSpec = regexp.MustCompile(`%[sdvftwq]`)
 	filterUUIDSuffix = regexp.MustCompile(`-[a-f0-9]{10}$`)
 )
 
+// annotationEntry tracks an annotation with its comment and type for deduplication.
+type annotationEntry struct {
+	typ     string
+	comment string
+}
+
 // ExtractAnnotations walks all .go files under root and returns sorted, deduplicated annotations.
+// Only annotations with a Go doc comment on the preceding line are included.
 func ExtractAnnotations(root string) ([]Annotation, error) {
-	seen := make(map[string]string) // key → type
+	seen := make(map[string]annotationEntry) // key → entry
 
 	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil // skip inaccessible files
 		}
 		if info.IsDir() {
-			// Skip .git and vendor directories
 			base := info.Name()
 			if base == ".git" || base == "vendor" || base == "node_modules" {
 				return filepath.SkipDir
@@ -57,21 +72,42 @@ func ExtractAnnotations(root string) ([]Annotation, error) {
 		buf := make([]byte, 0, 256*1024)
 		scanner.Buffer(buf, 1024*1024)
 
+		var commentLines []string
 		for scanner.Scan() {
 			line := scanner.Text()
+
+			// Track comments: accumulate consecutive comment lines
+			if m := commentPattern.FindStringSubmatch(line); m != nil {
+				commentLines = append(commentLines, strings.TrimSpace(m[1]))
+				continue
+			}
+
+			// Check for annotation on this line
 			matches := annotationPattern.FindAllStringSubmatch(line, -1)
 			for _, m := range matches {
 				key := m[1]
 				if !isValidAnnotation(key) {
 					continue
 				}
-				// Classify type
+
+				// Only include annotations that have a Go doc comment
+				if len(commentLines) == 0 {
+					continue
+				}
+
+				comment := cleanComment(strings.Join(commentLines, " "))
 				typ := classifyType(key, line, lowerPath)
-				// Only override if upgrading from default "Annotation"
-				if existing, ok := seen[key]; !ok || existing == "Annotation" {
-					seen[key] = typ
+
+				// Only override if new entry has a comment or upgrading type
+				if existing, ok := seen[key]; !ok || (existing.comment == "" && comment != "") {
+					seen[key] = annotationEntry{typ: typ, comment: comment}
+				} else if existing.typ == "Annotation" && typ != "Annotation" {
+					seen[key] = annotationEntry{typ: typ, comment: existing.comment}
 				}
 			}
+
+			// Reset comment tracker on any non-comment line (including blanks)
+			commentLines = nil
 		}
 		return nil
 	})
@@ -80,8 +116,8 @@ func ExtractAnnotations(root string) ([]Annotation, error) {
 	}
 
 	result := make([]Annotation, 0, len(seen))
-	for key, typ := range seen {
-		result = append(result, Annotation{Key: key, Type: typ})
+	for key, entry := range seen {
+		result = append(result, Annotation{Key: key, Type: entry.typ, Comment: entry.comment})
 	}
 	sort.Slice(result, func(i, j int) bool {
 		return result[i].Key < result[j].Key
@@ -90,28 +126,22 @@ func ExtractAnnotations(root string) ([]Annotation, error) {
 }
 
 func isValidAnnotation(key string) bool {
-	// Exclude format specifiers
 	if filterFormatSpec.MatchString(key) {
 		return false
 	}
-	// Exclude assignment patterns
 	if strings.HasSuffix(key, "=") {
 		return false
 	}
-	// Exclude boolean/value assignments
 	if idx := strings.Index(key, "="); idx != -1 {
 		return false
 	}
-	// Exclude bare namespaces (no key after /)
 	parts := strings.SplitN(key, "/", 2)
 	if len(parts) < 2 || parts[1] == "" {
 		return false
 	}
-	// Exclude prefix constants (e.g. "vcluster.loft.sh/token-")
 	if strings.HasSuffix(key, "-") || strings.HasSuffix(key, "/") {
 		return false
 	}
-	// Exclude UUID-like suffixes (generated names)
 	if filterUUIDSuffix.MatchString(key) {
 		return false
 	}
@@ -121,7 +151,6 @@ func isValidAnnotation(key string) bool {
 func classifyType(key, line, lowerPath string) string {
 	lowerLine := strings.ToLower(line)
 
-	// Check line context
 	if strings.Contains(lowerLine, "label") {
 		return "Label"
 	}
@@ -129,7 +158,6 @@ func classifyType(key, line, lowerPath string) string {
 		return "Finalizer"
 	}
 
-	// Check filename
 	if strings.Contains(lowerPath, "label") {
 		return "Label"
 	}
@@ -138,4 +166,24 @@ func classifyType(key, line, lowerPath string) string {
 	}
 
 	return "Annotation"
+}
+
+// cleanComment strips Go doc comment prefixes like "ConstName is used to ..."
+// and capitalizes the first letter of the remaining text.
+func cleanComment(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	cleaned := godocPrefixPattern.ReplaceAllString(s, "")
+	if cleaned == s {
+		// No prefix matched — return as-is
+		return s
+	}
+	cleaned = strings.TrimSpace(cleaned)
+	if cleaned == "" {
+		return s
+	}
+	// Capitalize first letter
+	return strings.ToUpper(cleaned[:1]) + cleaned[1:]
 }
