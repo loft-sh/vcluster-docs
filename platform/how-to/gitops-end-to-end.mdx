@@ -1,0 +1,340 @@
+---
+title: End-to-end GitOps with ArgoCD
+sidebar_label: GitOps End-to-End
+sidebar_position: 1
+description: Complete guide to managing vCluster Platform and virtual clusters with ArgoCD, from platform installation to virtual cluster deployment.
+---
+
+import InterpolatedCodeBlock from "@site/src/components/InterpolatedCodeBlock";
+
+This guide walks through the full lifecycle of managing platform resources with ArgoCD, covering platform installation, cluster connections, project creation, and virtual cluster deployment. Each section references the detailed documentation for that step and provides the ArgoCD-specific configuration needed.
+
+:::info
+While this guide uses ArgoCD as the example, the same principles apply to other GitOps tools like Flux. Each section links to detailed documentation that includes tabs for alternative tooling.
+:::
+
+## Prerequisites
+
+Before you begin, ensure you have:
+
+- A Kubernetes cluster with administrative access
+- [ArgoCD installed](https://argo-cd.readthedocs.io/en/stable/getting_started/) and configured on the cluster
+- `helm` v3.10 or later
+- `kubectl` configured with admin access to the target cluster
+
+## 1. Install the platform
+
+Deploy the platform as an ArgoCD Application. This uses the platform Helm chart with your desired configuration values.
+
+Create an ArgoCD Application that points to the platform Helm chart:
+
+<InterpolatedCodeBlock
+  code={`apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: vcluster-platform
+  namespace: argocd
+spec:
+  destination:
+    namespace: vcluster-platform
+    server: "https://kubernetes.default.svc"
+  source:
+    repoURL: "https://charts.loft.sh"
+    targetRevision: [[VAR:PLATFORM_VERSION:4.6.0]]
+    chart: vcluster-platform
+    helm:
+      parameters:
+        - name: admin.create
+          value: "true"
+        - name: admin.username
+          value: admin
+        - name: admin.password
+          value: "[[VAR:ADMIN_PASSWORD:your-secure-password]]"
+        - name: ingress.enabled
+          value: "true"
+        - name: ingress.host
+          value: "[[VAR:PLATFORM_HOST:vcluster-platform.example.com]]"
+        - name: config.loftHost
+          value: "https://[[VAR:PLATFORM_HOST:vcluster-platform.example.com]]"
+  project: default
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true`}
+  language="yaml"
+  title="platform-application.yaml"
+/>
+
+Apply this to your cluster or commit it to a Git repository that ArgoCD monitors.
+
+```bash
+kubectl apply -f platform-application.yaml
+```
+
+:::warning ArgoCD and Helm releases
+ArgoCD does not deploy the Helm release secret. Platform configuration updates must be managed through your Git repository, not the platform UI.
+:::
+
+For the full set of Helm configuration options and alternative installation methods, see the [platform installation with ArgoCD guide](../install/gitops.mdx).
+
+## 2. Connect a host cluster
+
+After the platform is running, connect host clusters where virtual clusters will be deployed. In a GitOps workflow, you can manage connected clusters as Kubernetes resources alongside your platform installation.
+
+Each connected cluster requires two resources: a Cluster object and a Secret containing the cluster credentials.
+
+<InterpolatedCodeBlock
+  code={`apiVersion: management.loft.sh/v1
+kind: Cluster
+metadata:
+  name: [[VAR:CLUSTER_NAME:my-host-cluster]]
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  displayName: "[[VAR:CLUSTER_NAME:my-host-cluster]]"
+  owner:
+    user: admin
+  config:
+    secretName: "loft-cluster-config-[[VAR:CLUSTER_NAME:my-host-cluster]]"
+    secretNamespace: "vcluster-platform"
+  access:
+    - subresources:
+        - "*"
+      users:
+        - admin
+      verbs:
+        - "*"`}
+  language="yaml"
+  title="cluster.yaml"
+/>
+
+<InterpolatedCodeBlock
+  code={`apiVersion: v1
+kind: Secret
+metadata:
+  name: "loft-cluster-config-[[VAR:CLUSTER_NAME:my-host-cluster]]"
+  namespace: vcluster-platform
+type: Opaque
+stringData:
+  config: |
+    apiVersion: v1
+    kind: Config
+    clusters:
+      - name: [[VAR:CLUSTER_NAME:my-host-cluster]]
+        cluster:
+          server: [[VAR:CLUSTER_API_SERVER:https://1.2.3.4:6443]]
+          certificate-authority-data: [[VAR:CA_DATA:YOUR-CA-DATA]]
+    contexts:
+      - name: [[VAR:CLUSTER_NAME:my-host-cluster]]
+        context:
+          cluster: [[VAR:CLUSTER_NAME:my-host-cluster]]
+          user: [[VAR:CLUSTER_NAME:my-host-cluster]]-user
+    current-context: [[VAR:CLUSTER_NAME:my-host-cluster]]
+    users:
+      - name: [[VAR:CLUSTER_NAME:my-host-cluster]]-user
+        user:
+          token: [[VAR:CLUSTER_TOKEN:YOUR-TOKEN]]`}
+  language="yaml"
+  title="cluster-secret.yaml"
+/>
+
+:::warning Cluster secrets
+The Secret contains authentication data for the remote cluster. Handle this appropriately in your GitOps pipeline. Consider using sealed secrets or an external secrets operator.
+:::
+
+The `SkipDryRunOnMissingResource=true` annotation is required because the Cluster CRD is installed by the platform itself. Without it, ArgoCD cannot sync the resource on initial deployment.
+
+You also need to install the platform agent on each connected cluster. If you manage agents through GitOps, set the `DISABLE_AGENT=true` environment variable in your platform deployment and create a separate ArgoCD Application for the agent:
+
+<InterpolatedCodeBlock
+  code={`apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-agent-[[VAR:CLUSTER_NAME:my-host-cluster]]
+  namespace: argocd
+spec:
+  destination:
+    namespace: vcluster-platform
+    server: "[[VAR:CLUSTER_API_SERVER:https://1.2.3.4:6443]]"
+  source:
+    repoURL: "https://charts.loft.sh"
+    targetRevision: [[VAR:PLATFORM_VERSION:4.6.0]]
+    chart: vcluster-platform
+    helm:
+      parameters:
+        - name: agentOnly
+          value: "true"
+  project: default
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true`}
+  language="yaml"
+  title="agent-application.yaml"
+/>
+
+For interactive setup methods using the UI or CLI, see the [connect a cluster guide](../administer/clusters/connect-cluster.mdx).
+
+## 3. Create a project
+
+Projects organize virtual clusters and control access, templates, and quotas. In a GitOps workflow, define projects as Project custom resources.
+
+<InterpolatedCodeBlock
+  code={`apiVersion: management.loft.sh/v1
+kind: Project
+metadata:
+  name: [[VAR:PROJECT_NAME:team-alpha]]
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  displayName: [[VAR:PROJECT_NAME:team-alpha]]
+  owner:
+    user: admin
+  allowedClusters:
+    - name: "*"
+  allowedTemplates:
+    - kind: VirtualClusterTemplate
+      group: storage.loft.sh
+      name: "*"
+  members:
+    - kind: Team
+      group: storage.loft.sh
+      name: [[VAR:TEAM_NAME:dev-team]]
+      clusterRole: loft-management-project-admin`}
+  language="yaml"
+  title="project.yaml"
+/>
+
+### Enable ArgoCD integration on the project
+
+To sync virtual clusters into ArgoCD as deployment targets, enable the ArgoCD integration on the project. This is configured through the project spec and allows virtual clusters to appear as available clusters in the ArgoCD UI.
+
+See the [ArgoCD integration guide](../integrations/argocd.mdx) for UI-based setup and configuration of SSO integration and App Project mapping.
+
+:::info management.loft.sh vs storage.loft.sh
+Define resources using the `management.loft.sh` API group. The `storage.loft.sh` group is used internally by platform controllers and appears in some spec fields as references to existing resources.
+:::
+
+For interactive project creation using the UI, see the [create a project guide](../administer/projects/create.mdx).
+
+## 4. Deploy virtual clusters
+
+With the platform, cluster, and project in place, deploy virtual clusters through ArgoCD. There are two approaches depending on how you want to manage the virtual cluster lifecycle.
+
+### Option A: Deploy with VirtualClusterInstance
+
+Create a VirtualClusterInstance resource that the platform manages. This gives you full platform features like sleep mode, auto-delete, and template enforcement.
+
+<InterpolatedCodeBlock
+  code={`apiVersion: storage.loft.sh/v1
+kind: VirtualClusterInstance
+metadata:
+  name: [[VAR:VCLUSTER_NAME:dev-vcluster]]
+  namespace: loft-p-[[VAR:PROJECT_NAME:team-alpha]]
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  clusterRef:
+    cluster: [[VAR:CLUSTER_NAME:my-host-cluster]]
+  external: false
+  owner:
+    user: admin
+  template:
+    helmRelease:
+      chart:
+        version: [[VAR:VCLUSTER_VERSION:0.31.0]]
+      values: |
+        controlPlane:
+          backingStore:
+            etcd:
+              deploy:
+                enabled: true`}
+  language="yaml"
+  title="virtualclusterinstance.yaml"
+/>
+
+:::tip
+The namespace follows the pattern `loft-p-<project-name>`. The platform uses this convention to associate virtual clusters with projects.
+:::
+
+### Option B: Deploy with Helm chart directly
+
+Deploy the vCluster Helm chart through an ArgoCD Application. This approach gives you direct control over the Helm release but does not provide platform lifecycle features unless you [register the virtual cluster afterward](../use-platform/virtual-clusters/add-virtual-clusters.mdx).
+
+<InterpolatedCodeBlock
+  code={`apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: [[VAR:VCLUSTER_NAME:dev-vcluster]]
+  namespace: argocd
+spec:
+  project: default
+  source:
+    chart: vcluster
+    repoURL: https://charts.loft.sh
+    targetRevision: [[VAR:VCLUSTER_VERSION:0.31.0]]
+    helm:
+      releaseName: [[VAR:VCLUSTER_NAME:dev-vcluster]]
+      valueFiles:
+        - vcluster.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: [[VAR:NAMESPACE:team-alpha]]`}
+  language="yaml"
+  title="vcluster-application.yaml"
+/>
+
+For the full list of deployment options including CLI, Terraform, and Flux, see the [deploy vCluster guide](/docs/vcluster/deploy/control-plane/kubernetes-pod/basics).
+
+## Manage GitOps drift
+
+Platform controllers may modify certain fields on resources after creation, causing drift in ArgoCD. Configure `ignoreDifferences` in your ArgoCD Applications to handle this:
+
+```yaml
+spec:
+  ignoreDifferences:
+    # Ignore status for all Platform CRDs
+    - group: management.loft.sh
+      kind: "*"
+      jsonPointers:
+        - /status
+    # Ignore controller-managed fields
+    - group: management.loft.sh
+      kind: "*"
+      managedFieldsManagers:
+        - loft
+  syncPolicy:
+    syncOptions:
+      - RespectIgnoreDifferences=true
+```
+
+For a complete breakdown of drift-causing fields by resource type and tool-specific configuration, see the [GitOps drift management section](../install/gitops.mdx#manage-gitops-drift).
+
+## Repository structure
+
+A typical Git repository for this workflow looks like:
+
+```text
+platform-gitops/
+  applications/
+    platform.yaml              # ArgoCD Application for vCluster Platform
+    agent-cluster-1.yaml       # ArgoCD Application for agent on cluster-1
+  resources/
+    clusters/
+      cluster-1.yaml           # Cluster + Secret resources
+    projects/
+      team-alpha.yaml           # Project resource
+    virtual-clusters/
+      dev-vcluster.yaml         # VirtualClusterInstance
+```
+
+## Next steps
+
+- [Configure platform settings](../configure/introduction.mdx) for authentication, audit logging, and more
+- [Set up templates](../administer/templates/create-templates.mdx) to standardize virtual cluster configurations
+- [Configure project quotas](../administer/projects/quotas.mdx) to control resource usage
+- [Enable sleep mode](/docs/vcluster/manage/sleep-wakeup) to reduce costs on idle virtual clusters
