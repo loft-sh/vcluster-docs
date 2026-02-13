@@ -131,10 +131,6 @@ func insertStubs(content, stubs string) string {
 
 	// No "Needs documentation" section — create one
 	section := "\n## Needs documentation {#needs-documentation}\n\n" +
-		":::caution\n" +
-		"The following annotations were detected in the codebase but lack full documentation.\n" +
-		"Entries are auto-generated stubs.\n" +
-		":::\n\n" +
 		stubs
 
 	// Try to insert before <!-- vale on -->
