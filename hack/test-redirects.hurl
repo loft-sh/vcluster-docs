@@ -5,6 +5,18 @@
 # Tests use fake version (99.0.0) to avoid versioned docs serving content.
 # Redirects are fallbacks - they only fire when no content exists at source path.
 
+# Test: deploy/control-plane/container/* -> deploy/control-plane/kubernetes-pod/*
+GET {{BASE_URL}}/docs/vcluster/99.0.0/deploy/control-plane/container/basics/
+HTTP 301
+[Asserts]
+header "Location" contains "/docs/vcluster/99.0.0/deploy/control-plane/kubernetes-pod/basics"
+
+# Test: configure/vcluster-yaml/sleep-mode -> configure/vcluster-yaml/sleep
+GET {{BASE_URL}}/docs/vcluster/99.0.0/configure/vcluster-yaml/sleep-mode/
+HTTP 301
+[Asserts]
+header "Location" contains "/docs/vcluster/99.0.0/configure/vcluster-yaml/sleep"
+
 # Test: deploy/control-plane/container/flux -> third-party-integrations/git-operations/flux
 GET {{BASE_URL}}/docs/vcluster/99.0.0/deploy/control-plane/container/flux/
 HTTP 301
@@ -149,15 +161,15 @@ HTTP 301
 [Asserts]
 header "Location" contains "/docs/platform/99.0.0/configure/platform-configs/single-sign-on"
 
-# Test: platform/how-to/uninstall -> platform/install/uninstall
-GET {{BASE_URL}}/docs/platform/99.0.0/how-to/uninstall/
+# Test: platform/use-platform/virtual-clusters/key-features/sleep-mode -> vcluster/configure/vcluster-yaml/sleep
+GET {{BASE_URL}}/docs/platform/99.0.0/use-platform/virtual-clusters/key-features/sleep-mode/
 HTTP 301
 [Asserts]
-header "Location" contains "/docs/platform/99.0.0/install/uninstall"
+header "Location" contains "/docs/vcluster/configure/vcluster-yaml/sleep"
 
-# Test: platform/install/advanced/air-gapped -> platform/install/air-gapped
-GET {{BASE_URL}}/docs/platform/99.0.0/install/advanced/air-gapped/
+# Test: platform/use-platform/virtual-clusters/key-features/snapshots -> vcluster/configure/vcluster-yaml/snapshots
+GET {{BASE_URL}}/docs/platform/99.0.0/use-platform/virtual-clusters/key-features/snapshots/
 HTTP 301
 [Asserts]
-header "Location" contains "/docs/platform/99.0.0/install/air-gapped"
+header "Location" contains "/docs/vcluster/configure/vcluster-yaml/snapshots"
 
