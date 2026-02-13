@@ -1,0 +1,252 @@
+name: Check Annotation Drift
+
+on:
+  schedule:
+    # Run nightly at 02:00 UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: check-annotation-drift
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update-platform-annotations:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout vcluster-docs
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GH_ACCESS_TOKEN }}
+
+      - name: Read active platform versions
+        id: versions
+        run: |
+          versions=$(node -e "
+            const fs = require('fs');
+            const cfg = fs.readFileSync('docusaurus.config.js', 'utf8');
+            const m = cfg.match(/id:\s*['\"]platform['\"][\s\S]*?onlyIncludeVersions:\s*(\[[^\]]+\])/);
+            if (m) console.log(m[1]); else console.log('[]');
+          ")
+          echo "versions=$versions" >> "$GITHUB_OUTPUT"
+          echo "Platform versions: $versions"
+
+          if [[ "$versions" == "[]" ]]; then
+            echo "::error::Failed to extract platform versions from docusaurus.config.js"
+            exit 1
+          fi
+
+      - name: Check each version for drift and update docs
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GH_ACCESS_TOKEN }}
+        run: |
+          versions='${{ steps.versions.outputs.versions }}'
+          any_drift=false
+
+          # Parse versions array
+          mapfile -t version_list < <(node -e "
+            const v = $versions;
+            v.forEach(x => console.log(x));
+          ")
+
+          for version in "${version_list[@]}"; do
+            echo "=== Checking platform version: $version ==="
+
+            # Determine docs path and source branch
+            if [[ "$version" == "current" ]]; then
+              docs_path="platform/reference/platform-annotations.mdx"
+              source_branch="main"
+              label="next"
+            else
+              docs_path="platform_versioned_docs/version-${version}/reference/platform-annotations.mdx"
+              major_minor=$(echo "$version" | cut -d. -f1,2)
+              source_branch="release-${major_minor}"
+              label="v${version}"
+            fi
+
+            # Skip if docs file doesn't exist for this version
+            if [[ ! -f "$docs_path" ]]; then
+              echo "  No platform-annotations.mdx for $label, skipping"
+              continue
+            fi
+
+            # Clone loft-enterprise at the right branch (reuse if already cloned)
+            if [[ ! -d "loft-enterprise" ]]; then
+              gh repo clone loft-sh/loft-enterprise loft-enterprise -- --depth 1 --branch "$source_branch" 2>/dev/null || {
+                echo "  Could not clone loft-enterprise at $source_branch, skipping"
+                echo "::warning::Skipped platform $label (branch $source_branch not found)"
+                echo "- ⚠️ Skipped platform **$label** (branch \`$source_branch\` not found)" >> "$GITHUB_STEP_SUMMARY"
+                continue
+              }
+            else
+              git -C loft-enterprise fetch origin "$source_branch" --depth 1 2>/dev/null
+              git -C loft-enterprise checkout "origin/$source_branch" --quiet 2>/dev/null || {
+                echo "  Could not checkout $source_branch, skipping"
+                echo "::warning::Skipped platform $label (could not checkout $source_branch)"
+                echo "- ⚠️ Skipped platform **$label** (could not checkout \`$source_branch\`)" >> "$GITHUB_STEP_SUMMARY"
+                continue
+              }
+            fi
+
+            # Run drift check
+            undoc_file="/tmp/undocumented-platform-${version}.txt"
+            if UNDOCUMENTED_OUT="$undoc_file" \
+               SOURCE_LABEL="loft-enterprise ($label)" \
+               scripts/check-annotation-drift.sh loft-enterprise "$docs_path"; then
+              echo "  No drift for $label"
+            else
+              echo "  Drift detected for $label"
+              any_drift=true
+              # Generate stubs and update the MDX
+              if [[ -f "$undoc_file" ]] && [[ -s "$undoc_file" ]]; then
+                scripts/generate-annotation-stubs.sh loft-enterprise "$docs_path" "$undoc_file"
+              fi
+            fi
+            echo ""
+          done
+
+          echo "any_drift=$any_drift" >> "$GITHUB_OUTPUT"
+
+      - name: Create pull request
+        if: steps.check.outputs.any_drift == 'true'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ secrets.GH_ACCESS_TOKEN }}
+          commit-message: 'chore: update platform annotations reference with undocumented entries'
+          title: 'chore: update platform annotations reference with undocumented entries'
+          body: |
+            Automated update of platform annotation reference pages.
+
+            The nightly annotation drift check detected annotations in `loft-enterprise`
+            that are not documented in the platform annotations reference. This PR adds
+            stub entries for undocumented annotations in a "Needs documentation" section.
+
+            **Action required:** Review the stub entries and add proper descriptions,
+            examples, and "Used on" / "Set by" fields. Once documented, move entries
+            from the "Needs documentation" section to the appropriate category section.
+
+            ---
+            *Generated by the check-annotation-drift workflow*
+          branch: chore/update-platform-annotations
+          delete-branch: true
+          labels: automation,annotation-drift
+
+  update-vcluster-annotations:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout vcluster-docs
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GH_ACCESS_TOKEN }}
+
+      - name: Read active vcluster versions
+        id: versions
+        run: |
+          versions=$(node -e "
+            const fs = require('fs');
+            const cfg = fs.readFileSync('docusaurus.config.js', 'utf8');
+            const m = cfg.match(/id:\s*['\"]vcluster['\"][\s\S]*?onlyIncludeVersions:\s*(\[[^\]]+\])/);
+            if (m) console.log(m[1]); else console.log('[]');
+          ")
+          echo "versions=$versions" >> "$GITHUB_OUTPUT"
+          echo "vCluster versions: $versions"
+
+          if [[ "$versions" == "[]" ]]; then
+            echo "::error::Failed to extract vcluster versions from docusaurus.config.js"
+            exit 1
+          fi
+
+      - name: Check each version for drift and update docs
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GH_ACCESS_TOKEN }}
+        run: |
+          versions='${{ steps.versions.outputs.versions }}'
+          any_drift=false
+
+          mapfile -t version_list < <(node -e "
+            const v = $versions;
+            v.forEach(x => console.log(x));
+          ")
+
+          for version in "${version_list[@]}"; do
+            echo "=== Checking vcluster version: $version ==="
+
+            if [[ "$version" == "current" ]]; then
+              docs_path="vcluster/reference/annotations.mdx"
+              source_ref="main"
+              label="next"
+            else
+              docs_path="vcluster_versioned_docs/version-${version}/reference/annotations.mdx"
+              source_ref="v${version}"
+              label="v${version}"
+            fi
+
+            if [[ ! -f "$docs_path" ]]; then
+              echo "  No annotations.mdx for $label, skipping"
+              continue
+            fi
+
+            # Clone vcluster at the right ref
+            if [[ ! -d "vcluster-source" ]]; then
+              gh repo clone loft-sh/vcluster vcluster-source -- --depth 1 --branch "$source_ref" 2>/dev/null || {
+                echo "  Could not clone vcluster at $source_ref, skipping"
+                echo "::warning::Skipped vcluster $label (ref $source_ref not found)"
+                echo "- ⚠️ Skipped vcluster **$label** (ref \`$source_ref\` not found)" >> "$GITHUB_STEP_SUMMARY"
+                continue
+              }
+            else
+              git -C vcluster-source fetch origin "$source_ref" --depth 1 2>/dev/null
+              git -C vcluster-source checkout FETCH_HEAD --quiet 2>/dev/null || {
+                echo "  Could not checkout $source_ref, skipping"
+                echo "::warning::Skipped vcluster $label (could not checkout $source_ref)"
+                echo "- ⚠️ Skipped vcluster **$label** (could not checkout \`$source_ref\`)" >> "$GITHUB_STEP_SUMMARY"
+                continue
+              }
+            fi
+
+            undoc_file="/tmp/undocumented-vcluster-${version}.txt"
+            if UNDOCUMENTED_OUT="$undoc_file" \
+               SOURCE_LABEL="vcluster ($label)" \
+               scripts/check-annotation-drift.sh vcluster-source "$docs_path"; then
+              echo "  No drift for $label"
+            else
+              echo "  Drift detected for $label"
+              any_drift=true
+              if [[ -f "$undoc_file" ]] && [[ -s "$undoc_file" ]]; then
+                scripts/generate-annotation-stubs.sh vcluster-source "$docs_path" "$undoc_file"
+              fi
+            fi
+            echo ""
+          done
+
+          echo "any_drift=$any_drift" >> "$GITHUB_OUTPUT"
+
+      - name: Create pull request
+        if: steps.check.outputs.any_drift == 'true'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ secrets.GH_ACCESS_TOKEN }}
+          commit-message: 'chore: update vcluster annotations reference with undocumented entries'
+          title: 'chore: update vcluster annotations reference with undocumented entries'
+          body: |
+            Automated update of vCluster annotation reference pages.
+
+            The nightly annotation drift check detected annotations in `vcluster`
+            that are not documented in the annotations reference. This PR adds
+            stub entries for undocumented annotations in a "Needs documentation" section.
+
+            **Action required:** Review the stub entries and add proper descriptions,
+            examples, and "Used on" / "Set by" fields. Once documented, move entries
+            from the "Needs documentation" section to the appropriate category section.
+
+            ---
+            *Generated by the check-annotation-drift workflow*
+          branch: chore/update-vcluster-annotations
+          delete-branch: true
+          labels: automation,annotation-drift
