@@ -17,6 +17,8 @@ Read more about working with vale in the contribution guidelines: https://github
 Closes DOC-
 
 
+**AI review:** mention `@claude` in a comment to request a review or changes. See [CONTRIBUTING.md](https://github.com/loft-sh/vcluster-docs/blob/main/CONTRIBUTING.md#ai-assisted-pr-review) for available commands.
+
 <!-- Do not change the line below -->
 @netlify /docs
 

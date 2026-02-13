@@ -52,12 +52,22 @@ fix any broken links that may have been introduced.
 ## AI-assisted PR review
 
 Pull requests can receive an on-demand AI review from Claude. Mention `@claude`
-in a PR comment to trigger a review. The review:
+in a PR comment to trigger a review.
 
-- Checks documentation style adherence
-- Validates vCluster YAML configurations
-- Identifies broken links or incorrect paths
-The AI review is meant to assist, not replace, human review.
+Example commands:
+
+- `@claude review this PR` - get a focused review
+- `@claude fix the linting issues` - ask for specific changes
+- `@claude update the examples to use the new API` - request targeted updates
+
+Claude can also work on fork PRs. Since it can't push directly to external
+forks, ask it to create a PR with changes:
+
+- `@claude create a PR with your suggested changes to this PR`
+
+The review checks documentation style, validates vCluster YAML configurations,
+and identifies broken links. The AI review is meant to assist, not replace,
+human review.
 
 ## Style guide
 
