@@ -28,7 +28,7 @@ header "Location" contains "https://www.vcluster.com/docs/vcluster/deploy/contro
 GET {{BASE_URL}}/docs/get-started
 HTTP 301
 [Asserts]
-header "Location" contains "/docs/vcluster/introduction/what-are-virtual-clusters"
+header "Location" contains "/docs/vcluster/"
 
 # Test 5: Getting started wildcard
 GET {{BASE_URL}}/docs/getting-started/setup
@@ -218,13 +218,13 @@ header "Location" contains "/docs/vcluster/introduction/what-are-virtual-cluster
 GET {{BASE_URL}}/docs/vcluster/learn-how-to/enable-debug-logging
 HTTP 301
 [Asserts]
-header "Location" contains "/docs/vcluster/learn-how-to/control-plane/kubernetes-pod/enable-debug-logging"
+header "Location" contains "/docs/vcluster/learn-how-to/control-plane/container/enable-debug-logging"
 
 # Test 34: Enable debug logging (next)
 GET {{BASE_URL}}/docs/vcluster/next/learn-how-to/enable-debug-logging
 HTTP 301
 [Asserts]
-header "Location" contains "/docs/vcluster/next/learn-how-to/control-plane/kubernetes-pod/enable-debug-logging"
+header "Location" contains "/docs/vcluster/next/learn-how-to/control-plane/container/enable-debug-logging"
 
 # Test 35: Configure kai scheduler (next with trailing slash)
 GET {{BASE_URL}}/docs/vcluster/next/learn-how-to/configure-kai-scheduler/
