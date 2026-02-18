@@ -109,9 +109,9 @@ const config = {
                 return { ...item, priority: 1.0, changefreq: 'daily' };
               }
 
-              // Latest stable versions get highest priority (0.32.0 for vCluster, 4.6.0 for platform)
+              // Latest stable versions get highest priority (0.32.0 for vCluster, 4.7.0 for platform)
               if (item.url.match(/\/vcluster\/0\.32\.0\//) ||
-                  item.url.match(/\/platform\/4\.6\.0\//)) {
+                  item.url.match(/\/platform\/4\.7\.0\//)) {
                 return { ...item, priority: 1.0, changefreq: 'daily' };
               }
 
@@ -243,24 +243,24 @@ const config = {
         beforeDefaultRemarkPlugins: [
           [remarkVersionTokens, { siteDir: __dirname }],
         ],
-        lastVersion: "4.6.0",
-        onlyIncludeVersions: ["current", "4.6.0", "4.5.0", "4.4.0"],
+        lastVersion: "4.7.0",
+        onlyIncludeVersions: ["current", "4.7.0", "4.6.0", "4.5.0"],
         versions: {
           current: {
             label: "main 🚧",
           },
+          "4.7.0": {
+            label: "v4.7 Stable",
+            banner: "none",
+            badge: true,
+          },
           "4.6.0": {
-            label: "v4.6 Stable",
+            label: "v4.6",
             banner: "none",
             badge: true,
           },
           "4.5.0": {
             label: "v4.5",
-            banner: "none",
-            badge: true,
-          },
-          "4.4.0": {
-            label: "v4.4",
             banner: "none",
             badge: true,
           },
@@ -398,7 +398,7 @@ const config = {
       announcementBar: {
         id: "vcluster-0-32-release",
         content:
-          '🚀 <strong>New releases: <a href="https://www.vcluster.com/releases/en/changelog?hideLogo=true&hideMenu=true&theme=dark&embed=true&c=vCluster" target="_blank">vCluster Platform 4.6 and vCluster 0.32</a></strong>',
+          '🚀 <strong>New releases: <a href="https://www.vcluster.com/releases/en/changelog?hideLogo=true&hideMenu=true&theme=dark&embed=true&c=vCluster" target="_blank">vCluster Platform 4.7 and vCluster 0.32</a></strong>',
         backgroundColor: "#4a90e2",
         textColor: "#ffffff",
         isCloseable: true,

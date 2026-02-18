@@ -1,0 +1,69 @@
+---
+title: GitLab CI
+sidebar_label: GitLab CI
+sidebar_position: 4
+---
+
+When using vCluster Platform with GitLab you can use the
+official image `ghcr.io/loft-sh/vcluster-cli` as either a base image or
+directly. If additional tooling is needed for your CI/CD process, a custom image can be created.
+
+## Virtual Clusters for Merge Requests
+
+This example shows how to create and delete a Virtual Cluster for running end-to-end tests for
+the default branch and merge requests. It assumes you have configured CI/CD variables `VCLUSTER_PRO_URL`,
+`VCLUSTER_PRO_ACCESS_KEY`, and `VCLUSTER_PRO_PROJECT`.
+
+:::note
+The `script:` section below demonstrates what usage with a custom image would look like, as the base image does not contain the
+`./kubernetes` directory with resources to apply.  Those would be provided by you to accommodate you particular testing requirements.
+:::
+
+```yaml
+image: ghcr.io/loft-sh/vcluster-cli
+
+stages:
+  - test
+
+e2e:
+  rules:
+    - if: $CI_MERGE_REQUEST_IID
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+  stage: test
+  before_script:
+    # Add --namespace to create a space for the e2e tests, see the tip below.
+    - vcluster platform login $VCLUSTER_PRO_URL --access-key $VCLUSTER_PRO_ACCESS_KEY
+    - vcluster platform create vcluster "${CI_PROJECT_NAME}-${CI_COMMIT_SHORT_SHA}-${CI_PIPELINE_ID}" --project $VCLUSTER_PRO_PROJECT
+    - apk add go make
+  script:
+    - kubectl apply -Rf ./kubernetes
+    - kubectl rollout status deployments/my-app
+    - make e2e
+  after_script:
+    - vcluster delete "${CI_PROJECT_NAME}-${CI_COMMIT_SHORT_SHA}-${CI_PIPELINE_ID}" --delete-namespace --project $VCLUSTER_PRO_PROJECT
+```
+:::tip
+To create a space (vCluter platform managed namespace) for your e2e test you can add `vcluster platform create namespace <namespace>` to the `before_script` section,
+or add the `--namespace` flag to the `vcluster platform create` command.
+:::
+
+
+**Explanation:**
+
+1. The `ghcr.io/loft-sh/vcluster-cli` image is used for all pipeline jobs and provides the `vcluster` CLI, the
+   `devspace` CLI, `helm`, and `kubectl`.
+2. The `before_script` first logs in to vCluster Platform using the `$VCLUSTER_PRO_URL` and `$VCLUSTER_PRO_ACCESS_KEY`
+   variables that you defined in GitLab.
+   [See the GitLab docs for more information](https://docs.gitlab.com/ee/ci/variables/)
+3. The `before_script` then creates a virtual cluster using
+   [predefined GitLab variables](https://docs.gitlab.com/ee/ci/variables/predefined_variables.html)
+   to create a unique name. Optionally, the `--upgrade` flag can be used to reuse an existing virtual cluster instead of creating a new one.
+4. Next `before_script` installs some additional tooling needed to run the end-to-end tests. For
+   more complex scenarios creating a custom image is recommended.
+5. Then the `script` section uses `kubectl` to deploy the application to the space and waits for
+   the `my-app` deployment to become ready. `make` is then used to run an end-to-end test suite.
+6. Finally `after_script` deletes the virtual cluster, and passes `--delete-namespace` to ensure the
+   corresponding namespace for the virtual cluster is deleted. By using `after_script` we can ensure the virtual cluster
+   is deleted even if the tests fail. You may wish to skip this step if reusing the virtual cluster with the `--upgrade` flag when creating the virtual cluster.
+
+
