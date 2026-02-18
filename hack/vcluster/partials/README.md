@@ -39,9 +39,9 @@ vCluster versions. When generating partials for older versions, the tool:
 ### Example output
 
 ```text
-Warning: Skipping path "integrations/istio": couldn't find schema path 
+Warning: Skipping path "integrations/istio": couldn't find schema path
   'integrations/istio' at 'istio'
-Warning: Skipping path "logging": couldn't find schema path 'logging' at 
+Warning: Skipping path "logging": couldn't find schema path 'logging' at
   'logging'
 ```
 
