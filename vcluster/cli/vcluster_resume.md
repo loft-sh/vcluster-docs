@@ -29,7 +29,7 @@ vcluster resume test --namespace test
 ## Flags
 
 ```
-      --driver string    The driver for the virtual cluster, can be either helm or platform.
+      --driver string    The driver for the virtual cluster, can be either helm, platform, or docker.
   -h, --help             help for resume
       --project string   [PLATFORM] The vCluster platform project to use
 ```

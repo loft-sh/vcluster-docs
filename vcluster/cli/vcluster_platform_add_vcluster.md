@@ -34,6 +34,7 @@ vcluster platform add vcluster --project my-project --all
       --access-key string     The access key for the vCluster to connect to the platform. If empty, the CLI will generate one
       --all                   all will try to add Virtual Cluster found in all namespaces in the host cluster. If this flag is set, any provided vCluster name argument is ignored
       --ca-data bytesBase64   additional, base64 encoded certificate authority data that will be passed to the platform secret
+      --external              If the virtual cluster is managed by the platform agent or externally. If set to false, the host cluster must be added to the vCluster Platform prior to the add command (default true)
   -h, --help                  help for vcluster
       --host string           The host where to reach the platform
       --import-name string    The name of the vCluster under projects. If unspecified, will use the vcluster name

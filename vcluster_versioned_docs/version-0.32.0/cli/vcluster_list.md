@@ -29,7 +29,7 @@ vcluster list --namespace test
 ## Flags
 
 ```
-      --driver string   The driver to use for managing the virtual cluster, can be either helm or platform.
+      --driver string   The driver to use for managing the virtual cluster, can be either helm, platform, or docker.
   -h, --help            help for list
       --output string   Choose the format of the output. [table|json] (default "table")
 ```

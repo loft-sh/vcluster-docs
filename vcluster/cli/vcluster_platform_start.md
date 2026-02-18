@@ -38,6 +38,7 @@ before running this command:
       --chart-path string    The vCluster platform chart path to deploy vCluster platform
       --chart-repo string    The chart repo to deploy vCluster platform (default "https://charts.loft.sh/")
       --context string       The kube context to use for installation
+      --docker               If true, vCluster platform will be installed in Docker
       --email string         The email to use for the installation
   -h, --help                 help for start
       --host string          Provide a hostname to enable ingress and configure its hostname

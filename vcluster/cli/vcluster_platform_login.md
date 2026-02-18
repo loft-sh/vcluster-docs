@@ -32,7 +32,7 @@ vcluster platform login https://my-vcluster-platform.com --access-key myaccesske
       --docker-login        If true, will log into the docker image registries the user has image pull secrets for (default true)
   -h, --help                help for login
       --insecure            Allow login into an insecure Loft instance
-      --use-driver string   Switch vCluster driver between platform and helm
+      --use-driver string   Switch vCluster driver between platform, helm, and docker
 ```
 
 

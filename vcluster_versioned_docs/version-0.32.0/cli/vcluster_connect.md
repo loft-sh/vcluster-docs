@@ -34,7 +34,7 @@ vcluster connect test -n test -- kubectl get ns
       --background-proxy                Try to use a background-proxy to access the vCluster. Only works if docker is installed and reachable (default true)
       --background-proxy-image string   The image to use for the background proxy. Only used if --background-proxy is enabled. (default "ghcr.io/loft-sh/vcluster-pro:")
       --cluster-role string             If specified, vCluster will create the service account if it does not exist and also add a cluster role binding for the given cluster role to it. Requires --service-account to be set
-      --driver string                   The driver to use for managing the virtual cluster, can be either helm or platform.
+      --driver string                   The driver to use for managing the virtual cluster, can be either helm, platform, or docker.
   -h, --help                            help for connect
       --insecure                        If specified, vCluster will create the kube config with insecure-skip-tls-verify
       --local-port int                  The local port to forward the virtual cluster to. If empty, vCluster will use a random unused port

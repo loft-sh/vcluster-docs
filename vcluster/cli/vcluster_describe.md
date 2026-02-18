@@ -28,7 +28,8 @@ vcluster describe -o json test
 ## Flags
 
 ```
-      --driver string    The driver to use for managing the virtual cluster, can be either helm or platform.
+      --config-only      Return only the vcluster.yaml configuration
+      --driver string    The driver to use for managing the virtual cluster, can be either helm, platform, or docker.
   -h, --help             help for describe
   -o, --output string    The format to use to display the information, can either be json or yaml
   -p, --project string   The project to use

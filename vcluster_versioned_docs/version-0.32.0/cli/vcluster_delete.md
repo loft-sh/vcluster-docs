@@ -31,7 +31,7 @@ vcluster delete test --namespace test
       --delete-configmap        If enabled, vCluster will delete the ConfigMap of the vCluster
       --delete-context          If the corresponding kube context should be deleted if there is any (default true)
       --delete-namespace        If enabled, vCluster will delete the namespace of the vCluster. In cases when sync.toHost.namespaces was enabled, any namespaces and resources created due to syncing from the vCluster to the host cluster will also be deleted.
-      --driver string           The driver to use for managing the virtual cluster, can be either helm or platform.
+      --driver string           The driver to use for managing the virtual cluster, can be either helm, platform, or docker.
   -h, --help                    help for delete
       --ignore-not-found        If enabled, vcluster will not error out in case the target vcluster does not exist
       --keep-pvc                If enabled, vcluster will not delete the persistent volume claim of the vcluster

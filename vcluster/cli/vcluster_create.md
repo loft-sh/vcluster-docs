@@ -39,7 +39,7 @@ vcluster create test --namespace test
       --create-namespace                  If true the namespace will be created if it does not exist (default true)
       --description string                [PLATFORM] The description to show in the platform UI for this virtual cluster
       --display-name string               [PLATFORM] The display name to show in the platform UI for this virtual cluster
-      --driver string                     The driver to use for managing the virtual cluster, can be either helm or platform.
+      --driver string                     The driver to use for managing the virtual cluster, can be either helm, platform, or docker.
       --expose                            If true will create a load balancer service to expose the vcluster endpoint
   -h, --help                              help for create
       --kube-config-context-name string   If set, will override the context name of the generated virtual cluster kube config with this name

@@ -17,7 +17,7 @@ vcluster platform destroy [flags]
 ############# vcluster platform destroy ##################
 ########################################################
 
-Destroys a vCluster Platform instance in your Kubernetes cluster.
+Destroys a vCluster Platform instance in your Kubernetes cluster or Docker.
 
 IMPORTANT: This action is done against the cluster the the kube-context is pointing to, and not the vCluster Platform instance that is logged in.
 It does not require logging in to vCluster Platform.
@@ -28,6 +28,7 @@ before running this command:
 1. Current kube-context has admin access to the cluster
 2. Helm v3 must be installed
 
+If you installed vCluster platform using '--docker', use 'vcluster platform destroy --docker' to clean up the Docker container and volume.
 
 VirtualClusterInstances managed with driver helm will be deleted, but the underlying virtual cluster will not be uninstalled.
 
@@ -40,6 +41,7 @@ VirtualClusterInstances managed with driver helm will be deleted, but the underl
 ```
       --context string            The kube context to use for installation
       --delete-namespace          Whether to delete the namespace or not (default true)
+      --docker                    If true, destroys the vCluster platform docker container and volume instead of the Kubernetes installation
       --force                     Try uninstalling even if the platform is not installed. '--namespace' is required if true
       --force-remove-finalizers   IMPORTANT! Removing finalizers may cause unintended behaviours like leaving resources behind, but will ensure the platform is uninstalled.
   -h, --help                      help for destroy

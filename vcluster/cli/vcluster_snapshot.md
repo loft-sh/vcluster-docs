@@ -34,6 +34,7 @@ vcluster snapshot my-vcluster container:///data/my-local-snapshot.tar.gz
 ```
       --customer-key-encryption-file string   AWS customer key encryption file used for SSE-C. Mutually exclusive with kms-key-id
   -h, --help                                  help for snapshot
+      --include-volumes                       Create CSI volume snapshots (shared and private nodes only)
       --kms-key-id string                     AWS KMS key ID that is configured for given S3 bucket. If set, aws-kms SSE will be used
       --pod-env stringArray                   Additional environment variables for the created pod. Use key=value. E.g.: MY_ENV=my-value
       --pod-exec                              Instead of creating a pod, exec into the vCluster container

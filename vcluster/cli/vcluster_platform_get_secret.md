@@ -22,6 +22,8 @@ Returns the key value of a project / shared secret.
 Example:
 vcluster platform get secret test-secret.key
 vcluster platform get secret test-secret.key --project myproject
+
+For shared secret, if the --namespace flag is not set, it looks for the secrets in vcluster-platform and loft namespaces.
 ########################################################
 ```
 

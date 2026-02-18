@@ -33,7 +33,7 @@ vcluster pause test --namespace test
 ## Flags
 
 ```
-      --driver string                             The driver for the virtual cluster, can be either helm or platform.
+      --driver string                             The driver for the virtual cluster, can be either helm, platform, or docker.
   -h, --help                                      help for pause
       --prevent-wakeup vcluster resume vcluster   [PLATFORM] The amount of seconds this vcluster should sleep until it can be woken up again (use 0 for infinite sleeping). During this time the space can only be woken up by vcluster resume vcluster, manually deleting the annotation on the namespace or through the loft UI (default -1)
       --project string                            [PLATFORM] The vCluster platform project to use

@@ -4,7 +4,7 @@ sidebar_label: vcluster use driver
 ---
 
 
-Switch the virtual clusters driver between platform and helm
+Switch the virtual clusters driver between platform, helm, and docker
 
 ## Synopsis
 
@@ -16,7 +16,7 @@ vcluster use driver [flags]
 ########################################################
 ################# vcluster use driver #################
 ########################################################
-Either use "helm" or "platform" as the deployment method for managing virtual clusters.
+Either use "helm", "platform", or "docker" as the deployment method for managing virtual clusters.
 #######################################################
 ```
 
