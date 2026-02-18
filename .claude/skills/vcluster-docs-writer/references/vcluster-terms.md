@@ -2,11 +2,11 @@
 
 ## Company and Product Names
 
-### LoftLabs
-**LoftLabs** is the company name.
+### vCluster Labs
+**vCluster Labs** is the company name.
 
-- ✅ DO: "LoftLabs is the company behind vCluster"
-- ❌ DON'T: Use "Loft" or "Loft Platform" to refer to vCluster products
+- ✅ DO: "vCluster Labs is the company behind vCluster"
+- ❌ DON'T: Use "Loft", "LoftLabs", or "Loft Platform" to refer to vCluster products
 
 ### vCluster (The Trademark)
 
