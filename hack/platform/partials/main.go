@@ -13,12 +13,13 @@ import (
 	clusterv1 "github.com/loft-sh/agentapi/v4/pkg/apis/loft/cluster/v1"
 	managementv1 "github.com/loft-sh/api/v4/pkg/apis/management/v1"
 	storagev1 "github.com/loft-sh/api/v4/pkg/apis/storage/v1"
-	orderedmap "github.com/wk8/go-ordered-map/v2"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
+
+var paths []string
 
 func main() {
 	if len(os.Args) != 2 {
@@ -961,12 +962,6 @@ spec:
 	if err != nil {
 		panic(fmt.Errorf("failed to parse JSON schema from %q: %w", jsonSchemaPath, err))
 	}
-	externalProperty, ok := schema.Properties.Get("external")
-
-	if !ok {
-		panic("external property not found in " + jsonSchemaPath)
-	}
-	walkTree(externalProperty, schema, "external", "")
 
 	// fmt.Println("properties:")
 	// for childNode := schema.Properties.Oldest(); childNode != nil; childNode = childNode.Next() {
@@ -981,38 +976,4 @@ spec:
 			continue
 		}
 	}
-}
-
-var paths []string
-
-func walkTree(node, parent *jsonschema.Schema, name, parentName string) bool {
-	if node == nil || getChildren(node, parent) == nil {
-		return true
-	} else {
-		parentName = fmt.Sprintf("%s/%s", parentName, name)
-		paths = append(paths, parentName)
-	}
-	children := getChildren(node, parent)
-
-	for childNode := children.Oldest(); childNode != nil; childNode = childNode.Next() {
-		if walkTree(childNode.Value, parent, childNode.Key, parentName) {
-			continue
-		}
-	}
-	return true
-}
-
-func getChildren(node *jsonschema.Schema, parentSchema *jsonschema.Schema) *orderedmap.OrderedMap[string, *jsonschema.Schema] {
-	if node == nil {
-		return nil
-	}
-	if node.Ref != "" {
-		refSplit := strings.Split(node.Ref, "/")
-		fieldSchema, ok := parentSchema.Definitions[refSplit[len(refSplit)-1]]
-		if !ok {
-			panic(fmt.Errorf("schema definition %q not found in reference %q", refSplit[len(refSplit)-1], node.Ref))
-		}
-		return fieldSchema.Properties
-	}
-	return nil
 }
