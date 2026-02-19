@@ -82,7 +82,7 @@ const config = {
           lastVersion: "current",
           versions: {
             current: {
-              label: "v0.32",
+              label: "v0.27",
               banner: "none",
               badge: false,
             },
@@ -196,34 +196,11 @@ const config = {
         beforeDefaultRemarkPlugins: [
           [remarkVersionTokens, { siteDir: __dirname }],
         ],
-        lastVersion: "0.32.0",
-        onlyIncludeVersions: ["current", "0.32.0", "0.31.0", "0.30.0", "0.29.0", "0.28.0"],
+        lastVersion: "0.27.0",
+        onlyIncludeVersions: ["0.27.0"],
         versions: {
-          current: {
-            label: "main 🚧",
-          },
-          "0.32.0": {
-            label: "v0.32 Stable",
-            banner: "none",
-            badge: true,
-          },
-          "0.31.0": {
-            label: "v0.31",
-            banner: "none",
-            badge: true,
-          },
-          "0.30.0": {
-            label: "v0.30",
-            banner: "none",
-            badge: true,
-          },
-          "0.29.0": {
-            label: "v0.29",
-            banner: "none",
-            badge: true,
-          },
-          "0.28.0": {
-            label: "v0.28",
+          "0.27.0": {
+            label: "v0.27 (EOL)",
             banner: "none",
             badge: true,
           },
@@ -244,23 +221,10 @@ const config = {
           [remarkVersionTokens, { siteDir: __dirname }],
         ],
         lastVersion: "4.7.0",
-        onlyIncludeVersions: ["current", "4.7.0", "4.6.0", "4.5.0"],
+        onlyIncludeVersions: ["4.7.0"],
         versions: {
-          current: {
-            label: "main 🚧",
-          },
           "4.7.0": {
-            label: "v4.7 Stable",
-            banner: "none",
-            badge: true,
-          },
-          "4.6.0": {
-            label: "v4.6",
-            banner: "none",
-            badge: true,
-          },
-          "4.5.0": {
-            label: "v4.5",
+            label: "v4.7 (EOL)",
             banner: "none",
             badge: true,
           },
@@ -396,11 +360,11 @@ const config = {
         additionalLanguages: ["bash", "hcl"],
       },
       announcementBar: {
-        id: "vcluster-0-32-release",
+        id: "vcluster-0-27-eol",
         content:
-          '🚀 <strong>New releases: <a href="https://www.vcluster.com/releases/en/changelog?hideLogo=true&hideMenu=true&theme=dark&embed=true&c=vCluster" target="_blank">vCluster Platform 4.7 and vCluster 0.32</a></strong>',
-        backgroundColor: "#4a90e2",
-        textColor: "#ffffff",
+          '\ud83d\udce6 <strong>This is an archived version. <a href="https://vcluster.com/docs/vcluster/">View current docs</a></strong>',
+        backgroundColor: "#e2e2e2",
+        textColor: "#333333",
         isCloseable: true,
       },
     }
