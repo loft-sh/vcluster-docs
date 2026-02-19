@@ -82,7 +82,7 @@ const config = {
           lastVersion: "current",
           versions: {
             current: {
-              label: "v0.32",
+              label: "Platform v4.4",
               banner: "none",
               badge: false,
             },
@@ -197,33 +197,10 @@ const config = {
           [remarkVersionTokens, { siteDir: __dirname }],
         ],
         lastVersion: "0.32.0",
-        onlyIncludeVersions: ["current", "0.32.0", "0.31.0", "0.30.0", "0.29.0", "0.28.0"],
+        onlyIncludeVersions: ["0.32.0"],
         versions: {
-          current: {
-            label: "main 🚧",
-          },
           "0.32.0": {
             label: "v0.32 Stable",
-            banner: "none",
-            badge: true,
-          },
-          "0.31.0": {
-            label: "v0.31",
-            banner: "none",
-            badge: true,
-          },
-          "0.30.0": {
-            label: "v0.30",
-            banner: "none",
-            badge: true,
-          },
-          "0.29.0": {
-            label: "v0.29",
-            banner: "none",
-            badge: true,
-          },
-          "0.28.0": {
-            label: "v0.28",
             banner: "none",
             badge: true,
           },
@@ -243,24 +220,11 @@ const config = {
         beforeDefaultRemarkPlugins: [
           [remarkVersionTokens, { siteDir: __dirname }],
         ],
-        lastVersion: "4.7.0",
-        onlyIncludeVersions: ["current", "4.7.0", "4.6.0", "4.5.0"],
+        lastVersion: "4.4.0",
+        onlyIncludeVersions: ["4.4.0"],
         versions: {
-          current: {
-            label: "main 🚧",
-          },
-          "4.7.0": {
-            label: "v4.7 Stable",
-            banner: "none",
-            badge: true,
-          },
-          "4.6.0": {
-            label: "v4.6",
-            banner: "none",
-            badge: true,
-          },
-          "4.5.0": {
-            label: "v4.5",
+          "4.4.0": {
+            label: "v4.4",
             banner: "none",
             badge: true,
           },

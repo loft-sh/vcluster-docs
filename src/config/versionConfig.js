@@ -8,22 +8,9 @@
  * `versions` and `onlyIncludeVersions` config.
  */
 
-export const vclusterEOLVersions = [
-  { to: "https://vcluster.com/docs/v0.26", label: "v0.26 (EOL)" },
-  { to: "https://vcluster.com/docs/v0.25", label: "v0.25 (EOL)" },
-  { to: "https://vcluster.com/docs/v0.24", label: "v0.24 (EOL)" },
-  { to: "https://vcluster.com/docs/v0.23", label: "v0.23 (EOL)" },
-  { to: "https://vcluster.com/docs/v0.22", label: "v0.22 (EOL)" },
-  { to: "https://vcluster.com/docs/v0.21", label: "v0.21 (EOL)" },
-  { to: "https://vcluster.com/docs/v0.20", label: "v0.20 (EOL)" },
-  { to: "https://vcluster.com/docs/v0.19", label: "v0.19 (EOL)" },
-];
+export const vclusterEOLVersions = [];
 
-export const platformEOLVersions = [
-  { to: "https://platform-v4-3--vcluster-docs-site.netlify.app/docs/platform/", label: "v4.3 (EOS)" },
-  { to: "https://vcluster.com/docs/v4.2", label: "v4.2 (EOL)" },
-  { to: "https://loft.sh/docs/getting-started/install", label: "v3.4 (EOL)" },
-];
+export const platformEOLVersions = [];
 
 // Desktop sidebar uses arrow suffix
 export const getDesktopVersions = (versions) =>
