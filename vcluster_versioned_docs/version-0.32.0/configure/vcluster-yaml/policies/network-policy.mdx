@@ -1,0 +1,347 @@
+---
+title: Network policy
+sidebar_label: networkPolicy
+sidebar_position: 1
+description: Configure network policies to isolate virtual cluster workloads and implement project-scoped network boundaries.
+sidebar_class_name: host-nodes
+---
+
+import NetworkPolicy from '../../../_partials/config/policies/networkPolicy.mdx'
+import TenancySupport from '../../../_fragments/tenancy-support.mdx';
+import Columns from '@site/src/components/Columns';
+import Column from '@site/src/components/Column';
+
+
+<TenancySupport hostNodes="true" />
+
+:::note
+This feature is disabled by default.
+:::
+
+By default, workloads created by vCluster are able to communicate with other workloads in the host cluster through their cluster IPs. Configure network policies when you want to isolate namespaces and do not want the pods running inside the virtual cluster to have access to other workloads in the host cluster.
+
+Enabling this creates Kubernetes [NetworkPolicy](https://kubernetes.io/docs/concepts/services-networking/network-policies/) resources in the host namespace that control how vCluster pods (both control plane and workloads) communicate with each other and with other pods on the host cluster.
+
+## Prerequisites
+
+[Network policies](https://kubernetes.io/docs/concepts/services-networking/network-policies/) are implemented by the [network plugin (CNI)](https://kubernetes.io/docs/concepts/extend-kubernetes/compute-storage-net/network-plugins/). To use network policies, you must be using a networking solution which supports NetworkPolicy. Creating a NetworkPolicy resource without a controller that implements it will have no effect.
+
+## Enable network isolation {#enable-isolation}
+
+Set `policies.networkPolicy.enabled` to create NetworkPolicies that isolate the virtual cluster:
+
+```yaml title="vcluster.yaml"
+policies:
+  networkPolicy:
+    enabled: true
+```
+
+This creates Kubernetes NetworkPolicies resources in the host namespace that:
+- Allow traffic between pods within the virtual cluster
+- Block traffic from other namespaces
+- Permit DNS and API server communication
+
+:::note
+The Kubernetes NetworkPolicies resources are managed by vCluster. Manual changes to these resources will be overwritten.
+:::
+
+<details>
+  <summary>Example of NetworkPolicies resources created in the host namespace</summary>
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: vc-work-{name}
+  namespace: vcluster-{name}
+  labels:
+    app: vcluster
+    chart: vcluster-0.31.0
+    heritage: Helm
+    release: {name}
+spec:
+  # Pod selector matching virtual cluster workloads pods.
+  podSelector:
+    matchLabels:
+      vcluster.loft.sh/managed-by: {name}
+  policyTypes:
+    - Egress
+    - Ingress
+  egress:
+    # Allow egress to vcluster DNS and control plane.
+    - ports:
+        - port: 1053
+          protocol: UDP
+        - port: 1053
+          protocol: TCP
+        - port: 8443
+          protocol: TCP
+      to:
+        - podSelector:
+            matchLabels:
+              release: {name}
+    # Allow egress to other vcluster workloads, including coredns when not embedded.
+    - to:
+        - podSelector:
+            matchLabels:
+              vcluster.loft.sh/managed-by: {name}
+    # Allow public egress.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 100.64.0.0/10
+              - 127.0.0.0/8
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+  ingress:
+    # Allow ingress from vcluster control plane.
+    - from:
+        - podSelector:
+            matchLabels:
+              release: {name}
+    # Allow ingress from other vcluster workloads.
+    - from:
+        - podSelector:
+            matchLabels:
+              vcluster.loft.sh/managed-by: {name}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: vc-cp-{name}
+  namespace: vcluster-{name}
+  labels:
+    app: vcluster
+    chart: vcluster-0.31.0
+    heritage: Helm
+    release: {name}
+spec:
+  # Pod selector matching virtual cluster control plane pods.
+  podSelector:
+    matchLabels:
+      release: {name}
+  policyTypes:
+    - Egress
+    - Ingress
+  egress:
+    # Allow egress to host kube-dns.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: 'kube-system'
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+    # Allow egress to host control plane.
+    - ports:
+        - port: 443
+          protocol: TCP
+        - port: 8443
+          protocol: TCP
+        - port: 6443
+          protocol: TCP
+    # Allow egress to vcluster control plane peers, including etcd peers, when using etcd as the backend in HA mode.
+    - to:
+        - podSelector:
+            matchLabels:
+              release: {name}
+    # Allow egress connections to vcluster workloads.
+    - to:
+        - podSelector:
+            matchLabels:
+              vcluster.loft.sh/managed-by: {name}
+    # Allow egress to vcluster platform.
+    - to:
+        - podSelector:
+            matchLabels:
+              app: loft
+          namespaceSelector: {}
+  ingress:
+    # Allow ingress from vcluster control plane peers, including etcd peers, when using etcd as the backend in HA mode.
+    - from:
+        - podSelector:
+            matchLabels:
+              release: {name}
+    # Allow ingress for vcluster workloads.
+    - ports:
+        - port: 1053
+          protocol: UDP
+        - port: 1053
+          protocol: TCP
+        - port: 8443
+          protocol: TCP
+      from:
+        - podSelector:
+            matchLabels:
+              vcluster.loft.sh/managed-by: {name}
+    # Allow ingress from vcluster snapshot.
+    - from:
+        - podSelector:
+            matchLabels:
+              app: vcluster-snapshot
+    # Allow ingress from vcluster platform.
+    - from:
+        - podSelector:
+            matchLabels:
+              app: loft
+          namespaceSelector: {}
+
+```
+</details>
+
+### Example configurations {#examples}
+
+#### Custom ingress and egress rules {#custom-rules}
+Control inbound and outbound traffic with specific ports and IP addresses for vCluster control plane and workloads:
+```yaml title="vcluster.yaml"
+policies:
+  networkPolicy:
+    enabled: true
+
+    workload:
+      ingress:
+        # Allow ingress from anywhere to specific ports
+        - ports:
+            - port: 6060
+            - port: 444
+
+      egress:
+        # Allow egress to a specific address and port
+        - to:
+            - ipBlock:
+                cidr: 172.19.10.23/32
+          ports:
+            - port: 7777
+              protocol: TCP
+
+      publicEgress:
+        # Disable convenience common public egress rule.
+        enabled: false
+
+    controlPlane:
+      ingress:
+        # Allow ingress traffic from anywhere to the virtual cluster control plane api
+        - ports:
+            - port: 8443
+
+      egress:
+        # Allow egress traffic to a specific address
+        - to:
+            - ipBlock:
+                cidr: 172.19.10.23/32
+```
+
+:::note
+`ingress` and `egress` config sections accept the same content type as [PodNetworkPolicy](https://kubernetes.io/docs/concepts/services-networking/network-policies/#podnetworkpolicy-resource)
+:::
+
+#### Add custom labels {#custom-labels}
+
+Apply labels to generated NetworkPolicies for easier management:
+
+```yaml title="vcluster.yaml"
+policies:
+  networkPolicy:
+    enabled: true
+    labels:
+      environment: production
+      team: platform
+    annotations:
+      description: "Network isolation for production vCluster"
+```
+
+:::warning DNS Port in vCluster
+vCluster uses port 1053 for DNS queries, not the standard port 53. When creating custom NetworkPolicies for pods inside vCluster, ensure DNS rules target port 1053:
+
+```yaml
+ports:
+  - port: 1053
+    protocol: UDP
+```
+:::
+
+## Project-scoped isolation with Platform {#project-scoped-isolation}
+
+For Platform users needing project-level network boundaries, combine `policies.networkPolicy` with [VirtualClusterTemplates](/platform/administer/templates/create-templates):
+
+```yaml title="project-isolated-template.yaml"
+apiVersion: management.loft.sh/v1
+kind: VirtualClusterTemplate
+metadata:
+  name: project-isolated
+spec:
+  template:
+    helmRelease:
+      chart:
+        version: 0.26.0
+      values: |
+        policies:
+          networkPolicy:
+            enabled: true
+            labels:
+              vcluster.io/project: "{{ .Values.loft.project }}"
+```
+
+This automatically:
+- Isolates virtual clusters by project
+- Allows communication within the same project
+- Enforces network boundaries for CI/CD pipelines
+
+## Migration from v0.30 config {#migration}
+`workload` and `controlPlane` configuration sections are introduced to allow defining additional ingress/egress rules for the specific components.
+
+<Columns>
+<Column>
+```yaml title="vcluster.yaml (v0.30 and earlier)"
+policies:
+  networkPolicy:
+    enabled: true
+
+    extraControlPlaneRules:
+      - ports:
+          - port: 8443
+
+
+    extraWorkloadRules:
+      - ports:
+          - port: 6060
+
+
+    outgoingConnections:
+      ipBlock:
+        cidr: 172.19.10.23/32
+```
+</Column>
+<Column>
+```yaml title="vcluster.yaml (v0.31)"
+policies:
+  networkPolicy:
+    enabled: true
+
+    controlPlane:
+      egress:
+        - ports:
+            - port: 8443
+
+    workload:
+      egress:
+        - ports:
+            - port: 6060
+
+      publicEgress:
+        cidr: 172.19.10.23/32
+
+```
+</Column>
+</Columns>
+
+## Config reference
+
+| Deprecated Field | New Field |
+| ----------------- | ---------------- |
+| `extraControlPlaneRules` | `controlPlane.egress` |
+| `extraWorkloadRules` | `workload.egress` |
+| `outgoingConnections.ipBlock` | `workload.publicEgress` |
+
+<NetworkPolicy/>
