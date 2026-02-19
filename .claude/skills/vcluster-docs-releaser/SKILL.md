@@ -102,10 +102,9 @@ versions: {
 ```
 
 **Pattern:**
-- Keep 5-6 versions in `onlyIncludeVersions` (current + 5 stable)
+- Add new version to `onlyIncludeVersions` (never remove existing versions unless Netlify OOM forces it - 8GB limit caps at ~6 versions. If dropping oldest, create archive issue first)
 - New version gets "Stable" label
 - Previous stable loses "Stable" suffix
-- Remove oldest version (drops out of build)
 
 **Location 5: Announcement bar (~line 400)**
 ```js
@@ -155,13 +154,56 @@ announcementBar: {
 
 **IMPORTANT:** Hurl tests run AFTER PR is deployed to Netlify preview.
 
-### Part 3: Verification
+### Part 3: Regenerate Config Partials
+
+**When:** After versioned docs are created and schema is available.
+
+**Process:**
+1. Download the JSON schema from the RC or GA release tag:
+   ```bash
+   # Check configsrc for available schemas
+   ls configsrc/vcluster/
+   # If X.Y.Z schema not present, download from release:
+   mkdir -p configsrc/vcluster/X.Y.Z
+   # Copy from latest RC or release tag
+   ```
+
+2. Regenerate partials for both current and versioned docs:
+   ```bash
+   go run hack/vcluster/partials/main.go configsrc/vcluster/X.Y.Z/ vcluster/_partials/config
+   go run hack/vcluster/partials/main.go configsrc/vcluster/X.Y.Z/ vcluster_versioned_docs/version-X.Y.Z/_partials/config
+   ```
+
+3. Review diff for meaningful changes (new sync resources, k8s version bumps, removed migration notes, etc.)
+
+**Why this matters:** Schema changes between versions can introduce new config options, sync resources, or remove deprecated fields. Stale partials = inaccurate docs.
+
+### Part 4: Update Lifecycle Page
+
+**File:** `docs/_partials/vcluster_supported_versions.mdx`
+
+**Process:**
+1. Add new version row to the supported versions table:
+   - Released: current month/year
+   - End of Standard Support (EOS): +3 months
+   - End of Life (EOL): +6 months
+2. Regenerate lifecycle JSON:
+   ```bash
+   npm run generate-lifecycle-json
+   ```
+3. Check `static/api/lifecycle/vcluster.json` was updated
+
+**Reference:** PR #1639 (v0.31 release) for exact table format.
+
+### Part 5: Verification
 
 **AI performs:**
 1. ✅ Verify versioned docs exist: `ls -la vcluster_versioned_docs/version-0.XX.0/`
 2. ✅ Count CLI docs: `ls vcluster_versioned_docs/version-0.XX.0/cli/*.md | wc -l` (expect 90+)
 3. ✅ Check vcluster_versions.json includes new version
 4. ✅ All config changes applied
+5. ✅ Partials regenerated from release schema
+6. ✅ Lifecycle page updated with new version row
 
 **User performs:**
 1. Build check: `npm run build` (not AI's responsibility)
@@ -181,16 +223,18 @@ announcementBar: {
 
 ## Division of Responsibilities
 
-### AI Handles (Items 2-5):
+### AI Handles:
 - ✅ **Update banner** - `announcementBar.content`
 - ✅ **Update netlify redirect** - `netlify.toml`
 - ✅ **Verify CLI commands** - Check files exist
 - ✅ **Create hurl test** - Create new test file
+- ✅ **Regenerate config partials** - From release schema (Part 3)
+- ✅ **Update lifecycle page** - Add version row + generate JSON (Part 4)
+- ✅ **Fix cross-plugin broken links** - Check build output after config changes
 
-### User Handles (Items 1, 6-9):
+### User Handles:
 - **Create versioned docs** - `npm run docusaurus docs:version:vcluster X.Y.Z`
 - **Review enterprise/pro tags** - Manual review of `<ProAdmonition>` tags
-- **Partials PR** - Verify automation ran
 - **Update support dates** - Edit `vcluster/deploy/upgrade/supported_versions.mdx`
 - **Update compatibility matrix** - Edit same file
 - **Run build** - `npm run build`
@@ -206,19 +250,17 @@ announcementBar: {
 
 ### onlyIncludeVersions Pattern
 ```js
-// Rolling window of 6 versions (current + 5 stable)
+// Add new version, keep all existing versions
 onlyIncludeVersions: ["current", "0.30.0", "0.29.0", "0.28.0", "0.27.0", "0.26.0"]
 
 // When 0.31.0 releases, becomes:
-onlyIncludeVersions: ["current", "0.31.0", "0.30.0", "0.29.0", "0.28.0", "0.27.0"]
-// 0.26.0 drops out - goes to archive branch
+onlyIncludeVersions: ["current", "0.31.0", "0.30.0", "0.29.0", "0.28.0", "0.27.0", "0.26.0"]
+// NEVER remove existing versions - just add the new one
 ```
 
 ### Archive Process
-When a version drops out of `onlyIncludeVersions`:
-- Gets moved to dedicated archive branch (see `vcluster-docs-archiver` skill)
-- Gets own Netlify deployment
-- Main branch dropdown links to archived version
+Archiving is a separate, human-initiated process (see `vcluster-docs-archiver` skill).
+Do NOT remove versions from `onlyIncludeVersions` during a release.
 
 ## Testing & Validation
 
@@ -249,7 +291,13 @@ hurl --test --variable BASE_URL=https://deploy-preview-XXXX--vcluster-docs-site.
 ### Issue: CLI docs missing
 **Solution:** Check if CLI generation script ran - see [Notion doc](https://www.notion.so/loftsh/Update-vCluster-CLI-docs-1a5109408069807aa9ffd8e392269e08)
 
-### Issue: Build fails
+### Issue: Build fails with broken links
+**Cause:** When `lastVersion` changes, cross-plugin links in older versioned docs can break if the new version restructured paths (e.g., `sleep-mode` → `sleep`, `external/platform` → `platform`). Check build output for broken link errors and fix across all affected versioned docs.
+
+### Issue: Build fails with OOM (out of memory)
+**Cause:** Netlify has an 8GB memory limit. 7+ vCluster versions can exceed this during webpack optimization. Drop the oldest version from `onlyIncludeVersions` and create a follow-up archive issue (see `vcluster-docs-archiver` skill).
+
+### Issue: Build fails (other)
 **Solution:** User responsibility - they run `npm run build`
 
 ### Issue: Hurl tests fail
@@ -306,7 +354,7 @@ Ready to commit and push!
 
 - This skill is for **vCluster only** - Platform has separate release process
 - Always remove "Stable" label from previous version when adding new one
-- Keep 5-6 versions in `onlyIncludeVersions` for build performance
+- NEVER remove versions from `onlyIncludeVersions` - only add the new version
 - Hurl tests validate redirects work correctly
 - User runs build - AI does not run npm commands
 
