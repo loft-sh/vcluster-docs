@@ -1,0 +1,66 @@
+---
+title: High Availability Installation
+sidebar_label: High Availability
+sidebar_position: 5
+description: Learn how to configure and run the vCluster Platform in high availability mode with multiple replicas.
+---
+
+By default, the platform runs in a cluster as a single replica without high availability.
+
+:::warning Licensed Feature
+Running the platform in high availability mode is an enterprise feature.
+:::
+
+## Enable high availability and run the platform with multiple replicas
+
+To configure the platform to be highly available, scale up the replicas and the
+platform starts with leader election mode. You can do this via Helm on an existing platform installation:
+
+```bash title="Run the platform with 3 replicas"
+helm upgrade loft vcluster-platform --repo https://charts.loft.sh/ \
+  --namespace vcluster-platform \
+  --reuse-values \
+  --set replicaCount=3
+```
+
+Now check that 3 replicas are running:
+
+```bash title="Verify running replicas"
+kubectl get po -n vcluster-platform
+```
+
+Expected output:
+
+```
+NAME                     READY   STATUS    RESTARTS   AGE
+loft-84bfdb746c-7t922    1/1     Running   0          40s
+loft-84bfdb746c-jpwlz    1/1     Running   0          40s
+loft-84bfdb746c-9c4jx    1/1     Running   0          40s
+```
+
+:::info Recommended number of replicas
+For optimal high availability, it is recommended to run at least 3 replicas of the platform.
+:::
+
+## How does it work?
+
+To understand how the platform can be made highly available and scaled to multiple replicas, it's important to examine its core components:
+
+1. **API Server**: The platform starts an internal Kubernetes API server that handles most of the functional requests it receives. Since the platform saves everything in Kubernetes resources rather than storing data in volumes, it can easily scale horizontally.
+
+2. **Controller**: A significant part of the platform reacts to Kubernetes resource changes and modifies other Kubernetes resources in return. This component is similar to the [`kube-controller-manager`](https://kubernetes.io/docs/reference/command-line-tools-reference/kube-controller-manager/) which executes the core control loops for Kubernetes. Running multiple instances of this component would result in conflicting changes and race conditions among the controllers, which is why leader election is used.
+
+:::info Leader election
+Leader election is a process that allows running multiple instances where a
+single leader is elected to execute the actual capability, while all other instances are waiting. When the leader fails for any reason, another replica takes over.
+:::
+
+For simplicity and performance, both components are compiled into the same binary in the platform. Scaling of the platform works differently than with Kubernetes components by using a combination of leader election and simple horizontal scaling to ensure high availability.
+
+The modes for a platform replica are:
+
+1. **Leader Mode**: If a platform replica runs as a leader, all capability is started normally, so both API server and controllers are running.
+2. **Non-Leader Mode**: If a platform replica runs as a non-leader, all
+capability except the controllers are started, so only the API server is running. If the leader fails for any reason and this replica is made the new leader, the platform simply starts the controller component within this replica.
+
+If configured, the platform automatically determines which replica to run in leader mode and which to run in non-leader mode. With this approach, it is possible to run multiple instances of the API server and allow horizontal scaling for that component, while ensuring the controllers are only run once.
