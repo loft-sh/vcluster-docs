@@ -82,7 +82,7 @@ const config = {
           lastVersion: "current",
           versions: {
             current: {
-              label: "v0.31",
+              label: "v0.32",
               banner: "none",
               badge: false,
             },
@@ -109,8 +109,8 @@ const config = {
                 return { ...item, priority: 1.0, changefreq: 'daily' };
               }
 
-              // Latest stable versions get highest priority (0.31.0 for vCluster, 4.6.0 for platform)
-              if (item.url.match(/\/vcluster\/0\.31\.0\//) ||
+              // Latest stable versions get highest priority (0.32.0 for vCluster, 4.6.0 for platform)
+              if (item.url.match(/\/vcluster\/0\.32\.0\//) ||
                   item.url.match(/\/platform\/4\.6\.0\//)) {
                 return { ...item, priority: 1.0, changefreq: 'daily' };
               }
@@ -121,7 +121,7 @@ const config = {
                 return { ...item, priority: 0.8, changefreq: 'weekly' };
               }
 
-              // ALL other versioned docs get very low priority (0.19-0.30 for vCluster, older platform versions)
+              // ALL other versioned docs get very low priority (0.19-0.31 for vCluster, older platform versions)
               if (item.url.match(/\/vcluster\/\d+\.\d+\.\d+\//) ||
                   item.url.match(/\/platform\/\d+\.\d+\.\d+\//)) {
                 return { ...item, priority: 0.1, changefreq: 'yearly' };
@@ -196,14 +196,19 @@ const config = {
         beforeDefaultRemarkPlugins: [
           [remarkVersionTokens, { siteDir: __dirname }],
         ],
-        lastVersion: "0.31.0",
-        onlyIncludeVersions: ["current", "0.31.0", "0.30.0", "0.29.0", "0.28.0", "0.27.0"],
+        lastVersion: "0.32.0",
+        onlyIncludeVersions: ["current", "0.32.0", "0.31.0", "0.30.0", "0.29.0", "0.28.0"],
         versions: {
           current: {
             label: "main 🚧",
           },
+          "0.32.0": {
+            label: "v0.32 Stable",
+            banner: "none",
+            badge: true,
+          },
           "0.31.0": {
-            label: "v0.31 Stable",
+            label: "v0.31",
             banner: "none",
             badge: true,
           },
@@ -219,11 +224,6 @@ const config = {
           },
           "0.28.0": {
             label: "v0.28",
-            banner: "none",
-            badge: true,
-          },
-          "0.27.0": {
-            label: "v0.27 (EOS)",
             banner: "none",
             badge: true,
           },
@@ -396,9 +396,9 @@ const config = {
         additionalLanguages: ["bash", "hcl"],
       },
       announcementBar: {
-        id: "vcluster-0-31-release",
+        id: "vcluster-0-32-release",
         content:
-          '🚀 <strong>New releases: <a href="https://www.vcluster.com/releases/en/changelog?hideLogo=true&hideMenu=true&theme=dark&embed=true&c=vCluster" target="_blank">vCluster Platform 4.6 and vCluster 0.31</a></strong>',
+          '🚀 <strong>New releases: <a href="https://www.vcluster.com/releases/en/changelog?hideLogo=true&hideMenu=true&theme=dark&embed=true&c=vCluster" target="_blank">vCluster Platform 4.6 and vCluster 0.32</a></strong>',
         backgroundColor: "#4a90e2",
         textColor: "#ffffff",
         isCloseable: true,

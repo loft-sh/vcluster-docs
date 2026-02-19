@@ -1,0 +1,329 @@
+---
+title: Resolve etcd NOSPACE alarm in vCluster
+sidebar_label: etcd alarm - NOSPACE
+description: Diagnose and resolve the etcd NOSPACE alarm in vCluster.
+---
+
+import Flow, { Step } from '@site/src/components/Flow';
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+# Resolve etcd NOSPACE alarm in vCluster
+
+The <GlossaryTerm term="etcd">etcd</GlossaryTerm> `NOSPACE` alarm signals that the etcd database inside the <GlossaryTerm term="vcluster">vCluster</GlossaryTerm> has used its available disk space. When this occurs, etcd fails its health checks, which causes the <GlossaryTerm term="control-plane">control plane</GlossaryTerm> to become unresponsive. As a result, all cluster operations—such as deploying workloads, updating resources, or managing cluster components—are blocked, and the vCluster is unusable until the issue is resolved.
+
+## Error message
+
+You might find the following error in the logs of your etcd pods, if the etcd has run out of storage space:
+
+```bash title="etcd NOSPACE alarm"
+etcdhttp/metrics.go:86 /health error ALARM NOSPACE status-code 503
+```
+
+<details id="etcd-nospace-alarm">
+<summary>Identifying an etcd `NOSPACE` alarm in vCluster</summary>
+
+When interacting with the affected vCluster using `kubectl`, API requests fail with timeout errors:
+
+```bash
+Error from server: etcdserver: request timed out
+```
+
+Additionally, the etcd health metrics endpoint returns a `503` status code and the following error:
+
+```text
+etcdhttp/metrics.go:86 /health error ALARM NOSPACE status-code 503
+```
+
+To verify the `NOSPACE` alarm, run the following command against the etcd instance:
+
+```bash
+etcdctl alarm list --endpoints=https://$ETCD_SRVNAME:2379 [...]
+```
+
+The output displays the triggered alarm:
+
+```text
+memberID:XXXXX alarm:NOSPACE
+```
+</details>
+
+## Causes
+
+The `NOSPACE` alarm occurs due to two common conditions:
+
+- **Excessive etcd data growth:** A large number of objects—such as Deployments, ConfigMaps, and Secrets—can fill etcd’s storage if regular <GlossaryTerm term="compaction">compaction</GlossaryTerm> is not performed.
+
+- **Synchronization conflicts:** Conflicting objects between the vCluster and <GlossaryTerm term="host-cluster">host cluster</GlossaryTerm> can trigger continuous sync loops. For example, a Custom Resource Definition (CRD) modified by the host cluster might sync back to the vCluster repeatedly. This behavior quickly fills etcd’s backend storage.
+
+## Solution
+
+To resolve the issue, compact, and defragment the etcd database to free up space. Then, reconfigure etcd with automatic compaction and increase its storage quota to prevent recurrence.
+
+:::info Backing store differences
+The compaction process differs between deployed and embedded etcd. Choose the appropriate tab below based on your vCluster configuration.
+:::
+
+<Flow id="resolve-etcd-nospace-alarm">
+
+<Step>
+
+**Identify if there's a syncing conflict**.
+
+Check for objects that might be caught in a sync loop:
+
+  ```bash
+  kubectl -n <namespace> logs <vcluster-pod> | grep -i "sync" | grep -i "error"
+  ```
+If you find a problematic object, pause syncing for it in your vCluster config.
+</Step>
+
+<Step>
+
+**Compact and defragment etcd**.
+
+<Tabs>
+<TabItem value="deployed" label="Deployed etcd" default>
+
+- Connect to each etcd pod. Access the etcd pod using the following command:
+
+   ```bash
+   kubectl -n <namespace> exec -it <etcd-pod-name> -- sh
+   ```
+
+- Set environment variables. Export the etcd service name as an environment variable:
+
+   ```bash
+   export ETCD_SRVNAME=<etcd-pod-name>
+   ```
+
+- Get the current revision number. Retrieve the current revision number of etcd using the following command:
+
+   ```bash
+   etcdctl endpoint status --write-out json \
+       --endpoints=https://$ETCD_SRVNAME:2379 \
+       --cacert=/run/config/pki/etcd-ca.crt \
+       --key=/run/config/pki/etcd-peer.key \
+       --cert=/run/config/pki/etcd-peer.crt
+   ```
+
+- Compact the etcd database. Compact etcd to remove old data and free up disk space:
+
+   ```bash
+   etcdctl --command-timeout=600s compact <revision-number> \
+       --endpoints=https://$ETCD_SRVNAME:2379 \
+       --cacert=/run/config/pki/etcd-ca.crt \
+       --key=/run/config/pki/etcd-peer.key \
+       --cert=/run/config/pki/etcd-peer.crt
+   ```
+    Replace `<revision-number>` with the value retrieved from the previous command.
+
+- Defragment etcd. Defragment etcd to optimize disk usage and improve performance:
+
+   ```bash
+   etcdctl --command-timeout=600s defrag \
+       --endpoints=https://$ETCD_SRVNAME:2379 \
+       --cacert=/run/config/pki/etcd-ca.crt \
+       --key=/run/config/pki/etcd-peer.key \
+       --cert=/run/config/pki/etcd-peer.crt
+   ```
+
+- Repeat for all etcd pods in your cluster.
+
+</TabItem>
+<TabItem value="embedded" label="Embedded etcd">
+
+- Connect to the vCluster pod. Access the vCluster pod using the following command:
+
+   ```bash
+   kubectl -n <namespace> exec -it <vcluster-pod-name> -- sh
+   ```
+
+- Get the current revision number. Retrieve the current revision number of embedded etcd:
+
+   ```bash
+   etcdctl endpoint status --write-out json \
+       --endpoints=https://127.0.0.1:2379 \
+       --cacert=/data/pki/etcd/ca.crt \
+       --key=/data/pki/etcd/tls.key \
+       --cert=/data/pki/etcd/tls.crt
+   ```
+
+- Compact the etcd database. Compact etcd to remove old data and free up disk space:
+
+   ```bash
+   etcdctl --command-timeout=600s compact <revision-number> \
+       --endpoints=https://127.0.0.1:2379 \
+       --cacert=/data/pki/etcd/ca.crt \
+       --key=/data/pki/etcd/tls.key \
+       --cert=/data/pki/etcd/tls.crt
+   ```
+    Replace `<revision-number>` with the value retrieved from the previous command.
+
+- Defragment etcd. Defragment etcd to optimize disk usage and improve performance:
+
+   ```bash
+   etcdctl --command-timeout=600s defrag \
+       --endpoints=https://127.0.0.1:2379 \
+       --cacert=/data/pki/etcd/ca.crt \
+       --key=/data/pki/etcd/tls.key \
+       --cert=/data/pki/etcd/tls.crt
+   ```
+
+- For HA setups with multiple replicas, repeat for each vCluster pod (e.g., `<vcluster-name>-0`, `<vcluster-name>-1`, etc.).
+
+</TabItem>
+</Tabs>
+
+</Step>
+
+<Step>
+
+**Verify disk usage reduction**.
+
+<Tabs>
+<TabItem value="deployed" label="Deployed etcd" default>
+
+Check that the operation freed up space:
+
+```bash
+etcdctl endpoint status -w table \
+    --endpoints=https://$ETCD_SRVNAME:2379 \
+    --cacert=/run/config/pki/etcd-ca.crt \
+    --key=/run/config/pki/etcd-peer.key \
+    --cert=/run/config/pki/etcd-peer.crt
+```
+
+</TabItem>
+<TabItem value="embedded" label="Embedded etcd">
+
+Check that the operation freed up space:
+
+```bash
+etcdctl endpoint status -w table \
+    --endpoints=https://127.0.0.1:2379 \
+    --cacert=/data/pki/etcd/ca.crt \
+    --key=/data/pki/etcd/tls.key \
+    --cert=/data/pki/etcd/tls.crt
+```
+
+</TabItem>
+</Tabs>
+
+</Step>
+
+<Step>
+
+**Disarm the NOSPACE alarm**.
+
+<Tabs>
+<TabItem value="deployed" label="Deployed etcd" default>
+
+Remove the alarm to restore normal operation:
+
+```bash
+etcdctl alarm disarm \
+    --endpoints=https://$ETCD_SRVNAME:2379 \
+    --cacert=/run/config/pki/etcd-ca.crt \
+    --key=/run/config/pki/etcd-peer.key \
+    --cert=/run/config/pki/etcd-peer.crt
+```
+
+</TabItem>
+<TabItem value="embedded" label="Embedded etcd">
+
+Remove the alarm to restore normal operation:
+
+```bash
+etcdctl alarm disarm \
+    --endpoints=https://127.0.0.1:2379 \
+    --cacert=/data/pki/etcd/ca.crt \
+    --key=/data/pki/etcd/tls.key \
+    --cert=/data/pki/etcd/tls.crt
+```
+
+</TabItem>
+</Tabs>
+
+</Step>
+</Flow>
+
+## Prevention
+
+Update your vCluster configuration to prevent future occurrences. Use the following recommended settings to enable automatic maintenance of your etcd database:
+
+<Tabs>
+<TabItem value="deployed" label="Deployed etcd" default>
+
+```yaml title="vcluster.yaml"
+controlPlane:
+  backingStore:
+    etcd:
+      deploy:
+        enabled: true
+        statefulSet:
+          enabled: true
+          extraArgs:
+            - '--auto-compaction-mode=periodic'
+            - '--auto-compaction-retention=30m'
+            - '--quota-backend-bytes=8589934592'  # 8 GB
+```
+
+</TabItem>
+<TabItem value="embedded" label="Embedded etcd">
+
+```yaml title="vcluster.yaml"
+controlPlane:
+  backingStore:
+    etcd:
+      embedded:
+        enabled: true
+        extraArgs:
+          - '--auto-compaction-mode=periodic'
+          - '--auto-compaction-retention=30m'
+          - '--quota-backend-bytes=8589934592'  # 8GB
+```
+
+</TabItem>
+</Tabs>
+
+This configuration enables periodic compaction every 30 minutes and sets etcd quota to 8 GB. You can adjust parameters based on your needs.
+
+## Verification
+
+After completing the solution steps:
+
+1. Check that etcd pods are healthy:
+
+   ```bash
+   kubectl -n <namespace> get pods | grep etcd
+   ```
+
+2. Verify that vCluster is functioning properly:
+
+   ```bash
+   kubectl -n <namespace> get pods
+   kubectl -n <namespace> logs <vcluster-pod> | grep -i "alarm"
+   ```
+
+## Best practices
+
+To ensure optimal etcd performance in vCluster:
+
+- **Monitor etcd disk usage**: Use metrics tools to track disk usage and set up alerts for high usage levels.
+- **Enable automated compaction**: Configure compaction with `--auto-compaction-mode=periodic` and `--auto-compaction-retention=30m` to clean up old data.
+- **Size etcd storage appropriately**: Set `--quota-backend-bytes` based on usage, with a buffer for growth.
+- **Defragment etcd regularly**: Optimize disk usage by defragmenting etcd periodically.
+- **Resolve syncing conflicts**: Identify and fix syncing issues to prevent unnecessary data growth.
+- **Consider backing store choice**: Embedded etcd simplifies management but deployed etcd provides more control for complex scenarios.
+
+## Certificate and path reference
+
+| Configuration | Deployed etcd | Embedded etcd |
+|--------------|---------------|---------------|
+| Endpoint | `https://<etcd-pod>:2379` | `https://127.0.0.1:2379` |
+| CA certificate | `/run/config/pki/etcd-ca.crt` | `/data/pki/etcd/ca.crt` |
+| Client key | `/run/config/pki/etcd-peer.key` | `/data/pki/etcd/tls.key` |
+| Client certificate | `/run/config/pki/etcd-peer.crt` | `/data/pki/etcd/tls.crt` |
+| Data directory | Separate PVC | `/data` in vCluster PVC |
+| Access method | Via etcd pod | Via vCluster pod |

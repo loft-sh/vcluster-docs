@@ -1,0 +1,263 @@
+---
+title: Auto Sleep
+sidebar_label: Auto Sleep
+sidebar_position: 1
+---
+import Tabs from "@theme/Tabs";
+import TabItem from "@theme/TabItem";
+import PartialActivityDetection from "../_partials/sleep/activity-detection.mdx";
+import PartialAdvancedConfiguration from "../_partials/sleep/advanced-configuration.mdx";
+import PartialWorkingWithSleepMode from "../_partials/sleep/working-with-sleep.mdx";
+import PartialSleepConfigureUI from "../_partials/sleep/configure-ui.mdx";
+import PartialSleepManualUI from "../_partials/sleep/manual-ui.mdx";
+import PartialSleepScheduleUI from "../_partials/sleep/schedule-ui.mdx";
+import PartialSleepWakeUI from "../_partials/sleep/wake-ui.mdx";
+import PartialAutoDeleteConfigureUI from "../_partials/auto-delete/configure-ui.mdx";
+import FeatureTable from '@site/src/components/FeatureTable';
+
+<FeatureTable names="vcluster-sleep-mode" />
+
+:::info
+Platform auto sleep has been integrated into the standard sleep configuration and is no longer a separate feature.
+:::
+
+# Auto sleep and auto delete for virtual clusters
+
+The platform provides two features to reduce Kubernetes costs:
+
+- **Auto Sleep** puts virtual clusters to sleep when nobody is using them. This removes all pods while keeping all resources inside the virtual clusters during periods of inactivity.
+- **Auto-delete** deletes virtual clusters that have been idle for a while.
+
+Both features rely on the platform's [inactivity detection](#inactivity-detection).
+
+## Work with auto sleep
+
+<PartialWorkingWithSleepMode name="virtual cluster"/>
+
+### Manual and automatic auto sleep
+
+<details>
+ <summary>Start sleep manually</summary>
+ <PartialSleepManualUI name="virtual cluster" kind="Virtual Cluster" />
+</details>
+
+<details>
+ <summary>Configure auto sleep</summary>
+ <PartialSleepConfigureUI name="vCluster instance" />
+</details>
+
+<details>
+ <summary>Wake up virtual cluster</summary>
+ <PartialSleepWakeUI name="virtual cluster" />
+</details>
+
+### Scheduled auto sleep
+
+<details>
+ <summary>Configure scheduled sleep and wake-up</summary>
+ <PartialSleepScheduleUI name="virtual cluster" />
+</details>
+
+## Work with auto-delete
+
+The platform lets you configure auto-delete for virtual clusters that have not been used for a certain period of time.
+
+<details>
+ <summary>Configure auto-delete timeout</summary>
+ <PartialAutoDeleteConfigureUI name="virtual cluster" />
+</details>
+
+## Inactivity detection
+
+<PartialActivityDetection name="virtual cluster" />
+
+## Advanced configuration
+
+<PartialAdvancedConfiguration name="virtual cluster" />
+
+For detailed vCluster-specific auto sleep configuration and examples, see the [vCluster auto sleep documentation](../configure/vcluster-yaml/sleep.mdx).
+
+## Auto sleep operations
+
+Auto sleep involves two main actions: **sleeping** and **waking**. These actions help save resources when the cluster is not in use.
+
+**Sleeping** reduces resource consumption and costs during inactive periods.
+
+- Delete bare pods: Pods not managed by controllers are removed permanently.
+- Scale down resources: The following resources are scaled down to reduce resource usage:
+  - Deployments
+  - ReplicaSets
+  - ReplicationControllers
+  - DaemonSets
+
+**Waking** restore scaled-down resources.
+
+- Restore scaled-down resources: Deployments, ReplicaSets, ReplicationControllers, and DaemonSets are returned to their original state.
+- Bare pods are not restored: Bare pods deleted during the Sleeping step cannot be recovered.
+
+### Without an agent
+**How it works**: The virtual cluster instance manages auto sleep itself by scaling down workloads (pods, Deployments, StatefulSets, etc.) while keeping the control plane active.
+
+**What happens**:
+- Workloads are scaled down to zero replicas
+- Control plane remains running (API server, etcd, syncer)
+- Cluster can detect activity and wake up automatically
+- Resource savings are moderate (workloads only)
+
+**Use when**: You want automatic sleep/wake feature but don't have the platform or prefer instance-managed auto sleep.
+
+### With a platform agent
+**How it works**: When connected to the platform using an agent, the platform agent takes over auto sleep management and can shut down the entire control plane.
+
+**What happens**:
+- Workloads are scaled down to zero replicas
+- Control plane can be completely shut down (maximum resource savings)
+- Platform manages sleep/wake operations
+- Enables additional features like auto-deletion
+
+**Use when**: You want maximum resource savings and advanced features like auto-deletion, or you're already using the platform for virtual cluster instance management.
+
+### Key differences
+
+| Feature | Without agent | With agent |
+|---------|---------------|------------|
+| Control plane | Remains active | Can be shut down completely |
+| Resource savings | Moderate (workloads only) | Maximum (workloads + control plane) |
+| Auto-deletion | Not available | Available |
+| Management | virtual cluster instance manages itself | Platform agent manages |
+| Activity detection | Supported | Supported |
+| Scheduling | Supported | Supported |
+
+
+### Resource exemption in auto sleep {#resource-exemption}
+
+With auto sleep, you can prevent specific resources from entering sleep by configuring them with the following options:
+
+- Add the annotation `sleepmode.loft.sh/exclude: true` to the resource.
+- Configure `sleep` with [specific labels](../configure/vcluster-yaml/sleep.mdx#enable-auto-sleep-with-label-selectors-and-schedules) to define which resources should remain active. This allows targeting specific resources based on their labels.
+- Add labels to workloads that you want to remain active. By using labels, it is possible to control which resources are exempt from sleep at a more granular level.
+
+For example, the following Deployment would not sleep when the virtual cluster is sleeping:
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: test
+  annotations:
+    sleepmode.loft.sh/exclude: "true"
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: test
+  template:
+    metadata:
+      labels:
+        app: test
+    spec:
+      containers:
+        - name: busybox
+          image: busybox
+          command:
+            - sleep
+            - "3600"
+```
+
+### Detect activity in auto sleep
+
+Auto sleep tracks certain actions to detect activity and wake the cluster when necessary. To wake a sleeping cluster or update the last active time, auto sleep captures the following actions:
+
+- Accessing cluster resources through API calls (for example `kubectl get <resource>`).
+- Attempting to contact ingress endpoints (NGINX and Istio only).
+
+:::note
+Ingress activity detection with the [ingress-nginx](https://github.com/kubernetes/ingress-nginx/tree/main) (deprecated) ingress controller relies on the [mirror-target](https://github.com/kubernetes/ingress-nginx/blob/main/docs/user-guide/nginx-configuration/annotations.md#mirror) annotation, which will overwrite any previously set mirror-target annotation.
+:::
+
+#### Last activity update interval
+
+The platform periodically checks for activity to determine when an environment should enter or remain in auto sleep. This check interval—called the **Auto Sleep Last Activity Update Interval**—defines how often the platform updates the "last active" timestamp for each environment.
+
+By default, the interval is **5 minutes**, meaning that the inactivity timeout will only be reset if it occurs more than 5 minutes after the previous update.
+
+You can customize this interval by setting the platform environment variable `SLEEP_MODE_LAST_ACTIVITY_UPDATE_INTERVAL` via the `vCluster-platform` chart Helm values:
+
+```yaml
+env:
+  SLEEP_MODE_LAST_ACTIVITY_UPDATE_INTERVAL: "1m"
+```
+
+:::info Ingress Wakeup
+vCluster Platform supports waking up a virtual cluster through an ingress independent of the underlying ingress controller. Just navigate to the ingress host and you should see a wakeup page for the virtual cluster.
+:::
+
+### Ignore other types of activity in auto sleep
+
+The [resource exemption](#resource-exemption) feature keeps specifically configured resources active when the virtual cluster instance enters auto sleep. The [Configure request handling for auto sleep table](#configure-request) describes how to ignore requests that keep the cluster awake or wake it up if it is asleep.
+
+<details id="configure-request">
+<summary>Configure request handling for auto sleep table</summary>
+
+| Annotation                               | Behavior                                                | Format                                                                 |
+|------------------------------------------|---------------------------------------------------------|------------------------------------------------------------------------|
+| `sleepmode.loft.sh/ignore-all`           | Ignore all activity.                                     | `true` or `false`                                                      |
+| `sleepmode.loft.sh/ignore-ingresses`     | Ignore requests to associated ingresses.               | `true` or `false`                                                      |
+| `sleepmode.loft.sh/ignore-groups`        | Ignore specified groups the requesting user belongs to.  | `group2,group3`                                                         |
+| `sleepmode.loft.sh/ignore-resources`     | Ignore requests to specific resource types.              | `pods,resource2,resource3`                                             |
+| `sleepmode.loft.sh/ignore-verbs`         | Ignore requests with specific verbs.                     | `create,verb1,verb2`                                                   |
+| `sleepmode.loft.sh/ignore-resource-verbs`| Ignore requests with specific verbs to specific resources.| `myresource.mygroup=create update delete, myresource2.mygroup=create update` |
+| `sleepmode.loft.sh/ignore-resource-names`| Ignore requests to specific resources with specific names.| `myresource.mygroup=name1 name2,myotherresource.mygroup=name1`         |
+| `sleepmode.loft.sh/ignore-user-agents`   | Ignore specific user agents with trailing wildcard support. | `kubectl*,argo,useragent3`                                              |
+| `sleepmode.loft.sh/disable-ingress-wakeup`| Ignore ingress access.                                  | `true`                                                                  |
+
+</details>
+
+:::note
+Add the annotations to the virtual cluster instance workload, such as the StatefulSet or Deployment running the virtual cluster. You can dynamically ignore any request by adding the `X-Sleep-Mode-Ignore` header.
+:::
+
+### Long-living connections
+
+It's possible that certain requests such as `kubectl exec` or `kubectl port-forward` keep an active connection open to the virtual cluster that prevents it from sleeping. This is in most cases wanted since the virtual cluster shouldn't start sleeping when someone is still clearly using it, however there are cases where the connection might be idle (someone left the laptop open, but is not using it anymore) in which you want to end such connections and put the virtual cluster to sleep.
+
+There are multiple ways to approach this problem of active connections preventing a virtual cluster from sleeping:
+
+1. You can tell the platform to timeout idle streaming connections (such as `kubectl exec`, `kubectl port-forward` etc.) after a certain time period with the annotation `loft.sh/streaming-connection-idle-timeout: '3600'` on a **cluster**. With this annotation set, the platform will close connections automatically that are idle after the given seconds. By default, the platform will not timeout any connections. This will only apply to new opened connections to that cluster and not affect already running connections.
+2. Tell the platform to ignore all active connections for determining virtual cluster activity via the annotation `sleepmode.loft.sh/ignore-active-conntections: 'true'`. This will put a virtual cluster to sleep even though there still might be open connections such as `kubectl exec` or `kubectl port-forward`.
+3. Configure your kubelets with the flag `--streaming-connection-idle-timeout duration` (see [Kubernetes docs](https://kubernetes.io/docs/reference/command-line-tools-reference/kubelet/)). This behaves essentially as option 1, however this configuration is independent of the platform.
+
+### Connect to the platform
+
+When you connect a virtual cluster instance that has sleep configured to the platform (via an agent), the platform agent automatically takes over auto sleep management. The virtual cluster instance stops managing its own auto sleep and the agent handles all sleep/wake operations.
+
+### Transition from instance-managed to agent-managed auto sleep
+
+When a virtual cluster instance with sleep configured connects to the platform:
+- The platform reads the existing `sleep` configuration
+- The agent takes over auto sleep management automatically
+- No configuration changes are needed (for vCluster 0.24.0+ and platform 4.3.0+)
+- The virtual cluster instance's sleep configuration continues to work, but is now managed by the platform agent
+
+This requires compatible versions of virtual cluster instance and the platform (vCluster 0.24.0+ and platform 4.3.0+).
+
+## Ingress configuration
+
+### Sync to host
+
+If you install ingress controllers in the virtual cluster instance, prevent them from sleeping. This keeps the controllers active and allows them to handle requests that would wake the virtual cluster instance. If you install the ingress controller in the host cluster, enable ingress syncing to the host.
+
+```yaml title="Enable ingress syncing"
+sync:
+  toHost:
+    ingresses:
+      enabled: true
+```
+
+### Reachability for ingress activity detection
+
+To enable ingress activity detection in your virtual cluster instance, ensure the following conditions are met:
+
+- The ingress controller needs to be able to discover the virtual cluster instance pod to route traffic correctly.
+- Ensure that the DNS lookup for `<vcluster-namespace>.<vcluster-svc-name>.svc.cluster.local` resolves properly. This allows the ingress controller to reach the virtual cluster instance's service address.
+- Ensure that the correct `dnsPolicy` is set in the ingress controller's Helm chart. This ensures DNS resolution works as expected and allows communication between the ingress controller and the virtual cluster instance.
