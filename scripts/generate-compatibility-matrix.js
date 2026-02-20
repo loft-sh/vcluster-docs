@@ -151,12 +151,22 @@ function main() {
   let modified = false;
 
   // Parse flags
+  const VERSION_RE = /^\d+\.\d+$/;
+
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--add' && args[i + 1]) {
+      if (!VERSION_RE.test(args[i + 1])) {
+        console.error(`Invalid version "${args[i + 1]}". Expected MAJOR.MINOR (e.g. 1.35)`);
+        process.exit(1);
+      }
       data = addVersion(data, args[i + 1]);
       modified = true;
       i++;
     } else if (args[i] === '--prune' && args[i + 1]) {
+      if (!VERSION_RE.test(args[i + 1])) {
+        console.error(`Invalid version "${args[i + 1]}". Expected MAJOR.MINOR (e.g. 1.35)`);
+        process.exit(1);
+      }
       data = pruneVersion(data, args[i + 1]);
       modified = true;
       i++;
