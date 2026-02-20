@@ -1,0 +1,335 @@
+---
+sidebar_label: Multi-Region Plaform
+title: Multi-Region Platform
+---
+
+# Multi-region platform
+
+This document explains how to configure a multi-region platform setup for vCluster Platform that uses a shared database as the backing store and replicates the Platform across different regions.
+
+## AWS (EKS)
+
+These steps will guide walks you through setting up vCluster Platform across two AWS regions using EKS, cross-region VPC
+peering, shared database (Kine), ALB ingress, and Route 53 GeoDNS.
+
+### Prerequisites
+
+Before you begin, ensure you have:
+
+-   An **AWS account** with sufficient IAM permissions
+-   A **registered domain** (example: `multi-region.example.com`)
+-   A **public Route 53 hosted zone**
+-   The following tools installed:
+    -   `eksctl`
+    -   `kubectl`
+    -   `awscli`
+    -   `helm`
+
+### Step 1 - Create two EKS clusters
+
+> **Important:**\
+> The clusters must use **different VPC CIDR ranges** to allow
+> cross-region VPC peering.
+
+**U.S. region**
+
+```bash
+eksctl create cluster \
+  --name platform-multi-region-us-east-1 \
+  --region us-east-1 \
+  --nodes 2 \
+  --managed \
+  --vpc-cidr 10.0.0.0/16 \
+  --with-oidc
+```
+
+**E.U. region**
+
+```bash
+eksctl create cluster \
+  --name platform-multi-region-eu-west-1 \
+  --region eu-west-1 \
+  --nodes 2 \
+  --managed \
+  --vpc-cidr 172.21.0.0/16 \
+  --with-oidc
+```
+
+### Step 2 - Install AWS load balancer controller
+
+#### Create IAM policy
+
+```bash
+curl -o iam_policy.json \
+https://raw.githubusercontent.com/kubernetes-sigs/aws-load-balancer-controller/main/docs/install/iam_policy.json
+
+aws iam create-policy \
+  --policy-name AWSLoadBalancerControllerIAMPolicy \
+  --policy-document file://iam_policy.json
+```
+
+#### Create IAM service account (IRSA)
+
+Replace `<ACCOUNT_ID>` with your AWS account ID.
+
+**U.S. region**
+
+```bash
+eksctl create iamserviceaccount \
+  --cluster platform-multi-region-us-east-1 \
+  --namespace kube-system \
+  --name aws-load-balancer-controller \
+  --attach-policy-arn arn:aws:iam::<ACCOUNT_ID>:policy/AWSLoadBalancerControllerIAMPolicy \
+  --approve
+```
+
+**E.U. region**
+
+```bash
+eksctl create iamserviceaccount \
+  --cluster platform-multi-region-eu-west-1 \
+  --namespace kube-system \
+  --name aws-load-balancer-controller \
+  --attach-policy-arn arn:aws:iam::<ACCOUNT_ID>:policy/AWSLoadBalancerControllerIAMPolicy \
+  --approve
+```
+
+#### Install via Helm
+
+```bash
+helm repo add eks https://aws.github.io/eks-charts
+helm repo update
+```
+
+**U.S. region**
+
+```bash
+helm install aws-load-balancer-controller eks/aws-load-balancer-controller \
+  -n kube-system \
+  --set clusterName=platform-multi-region-us-east-1 \
+  --set serviceAccount.create=false \
+  --set serviceAccount.name=aws-load-balancer-controller
+```
+
+**E.U. region**
+
+```bash
+helm install aws-load-balancer-controller eks/aws-load-balancer-controller \
+  -n kube-system \
+  --set clusterName=platform-multi-region-eu-west-1 \
+  --set serviceAccount.create=false \
+  --set serviceAccount.name=aws-load-balancer-controller
+```
+
+### Step 3 - Create the database (Kine backend)
+
+Create an RDS instance (MariaDB) in the same VPC as one of the clusters.
+
+```bash
+aws rds create-db-instance \
+  --engine mariadb \
+  --db-instance-identifier mariadb-us-east-1 \
+  --allocated-storage 20 \
+  --region us-east-1 \
+  --db-instance-class db.t3.medium \
+  --master-username admin \
+  --db-subnet-group-name <EKS_CLUSTER_VPC> \
+  --master-user-password <PASSWORD> 
+```
+
+#### Create the Kine database
+
+When the database is created, connect to the database instance and run the command below.
+
+``` sql
+CREATE DATABASE IF NOT EXISTS kine;
+
+DROP USER IF EXISTS 'kine'@'%';
+CREATE USER '<USERNAME>'@'%' IDENTIFIED BY '<PASSWORD>';
+
+GRANT ALL PRIVILEGES ON kine.* TO '<USERNAME>'@'%';
+FLUSH PRIVILEGES;
+```
+
+### Step 4 - Create cross-region VPC peering
+
+```bash
+aws ec2 create-vpc-peering-connection \
+  --vpc-id <VPC_ID_US_REGION_CLUSTER> \
+  --peer-vpc-id <VPC_ID_EU_REGION_CLUSTER> \
+  --peer-region eu-west-1
+```
+
+Accept the VPC peering connection
+
+```bash
+aws ec2 accept-vpc-peering-connection \
+  --vpc-peering-connection-id <VPC_PEERING_ID>
+```
+
+### Step 5 - Deploy vCluster platform
+
+Run on both clusters:
+
+```bash
+helm upgrade loft vcluster-platform --install --create-namespace --repository-config='' \
+  --namespace vcluster-platform \
+  --repo "https://charts.loft.sh/" \
+  --version v4.5.4 \
+  --set admin.email="<ADMIN_EMAIL>" \
+  --set env.LOFT_EMBEDDED_K8S=true \
+  --set env.LOFT_EMBEDDED_K8S_DATA_SOURCE="mysql://<USERNAME>:<PASSWORD>@tcp(<DATABASE_URL>:3306)/kine?tls=skip-verify" \
+  --set env.LOFT_EMBEDDED_K8S_MAX_DATABASE_CONNECTIONS=20 \
+  --set env.LEADER_ELECTION_ENABLED=true \
+  --set costControl.enabled=false \
+  --set config.loftHost="<GEODNS_DOMAIN>" \
+  --reuse-values
+```
+
+------------------------------------------------------------------------
+
+### Step 6 - Configure HTTPS with AWS Certificate Manager (ACM)
+
+Request certificates per region and validate via DNS in Route 53.
+
+This will request Wildcard Certificate (Per Region), we will be issuing certificate for three subdomains:
+
+* multi-region.mydomain.com
+* us.multi-region.mydomain.com
+* eu.multi-regionmydomain.com
+
+Replace `<AWS_REGION>` with the AWS region.
+
+```bash
+aws acm request-certificate \
+  --region <AWS_REGION> \
+  --domain-name "*.us.multi-region.mydomain.com" \
+  --subject-alternative-names "us.multi-region.mydomain.com" \
+  --validation-method DNS
+```
+
+Get the arn code from the command above and describe the certificate
+
+Replace `<ACCOUNT_ID>` with your AWS account ID.
+Replace `<CERTIFICATE_ARN_ID>` with the ARN ID genereted from the command above.
+
+```bash
+aws acm describe-certificate \
+  --region <AWS_REGION> \
+  --certificate-arn arn:aws:acm:<AWS_REGION>:<ACCOUNT_ID>:certificate/<CERTIFICATE_ARN_ID>
+```
+
+Add DNS validation CNAMEs in Route 53 and wait until certificate status is ISSUED
+
+> **Note:**\
+> You can also do this step by setting up cert-manager in the clusters instead of using AWS ACM
+
+### Step 7 - Create Ingress (ALB)
+
+Create the load balancers in each cluster via the kubernetes ingress resource and point to the loft platform service.
+
+Apply the Ingress manifest in each cluster to provision an AWS ALB.
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: loft
+  namespace: vcluster-platform
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80},{"HTTPS":443}]'
+    alb.ingress.kubernetes.io/healthcheck-path: /
+    alb.ingress.kubernetes.io/certificate-arn: "arn:aws:acm:eu-west-1:<ACCOUNT_ID>:certificate/<CERT_ID>"
+    alb.ingress.kubernetes.io/ssl-redirect: "443"
+    alb.ingress.kubernetes.io/healthcheck-path: /healthz
+    alb.ingress.kubernetes.io/success-codes: "200"
+spec:
+  ingressClassName: alb
+  rules:
+    - host: eu.multi-region.infraloft.cloud
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: loft
+                port:
+                  number: 80
+    - host: multi-region.infraloft.cloud
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: loft
+                port:
+                  number: 80
+```
+
+
+### Step 8 - Configure Route 53 GeoDNS
+
+Create latency-based A (Alias) records in Route 53 pointing to each
+regional ALB and attach health checks.
+
+Go to the AWS Route 53 console under Hosted Zone -> [Domain] -> Create Record
+
+**U.S. region**
+
+```
+Name: us.multi-region.infraloft.cloud
+Type: A (Alias)
+Routing Policy: Latency
+Region: us-east-1
+Alias target: US ALB
+Attach Health Check
+```
+
+**E.U. region**
+```
+Name: eu.multi-region.infraloft.cloud
+Type: A (Alias)
+Routing Policy: Latency
+Region: eu-west-1
+Alias target: EU ALB
+Attach Health Check
+```
+
+### Step 9 - Deploy the agent on the clusters
+
+Go to the platform UI and under Infra -> Clusters add a connected cluster, select the helm (advanced) option. 
+
+You will get a Helm command like the one below, change the namespace of where the agent will be deployed to `vcluster-agent`
+
+
+```bash
+helm upgrade loft vcluster-platform --install --namespace vcluster-agent --repo https://charts.loft.sh/ --version 4.5.4 \
+ --create-namespace \
+ --set agentOnly=true \
+ --set costControl.enabled=false \ 
+ --set url=<LOFT_HOST_URL> \
+ --set token=token=<access-token> \ 
+ --values 'https://<platform-url>/clusters/agent-values/cluster-n9072?token=<access-token>'
+```
+
+Repeat the same on the second cluster
+
+
+## Result
+
+You now have a fully operational **multi-region vCluster Platform
+deployment** with:
+
+-   Two EKS clusters (US + EU)
+-   Shared Kine database
+-   Cross-region VPC peering
+-   Regional ALBs
+-   ACM certificates
+-   Route 53 latency-based routing with failover
+-   Platform deploy on the two clusters and sharing the same Kine database
+
+------------------------------------------------------------------------
