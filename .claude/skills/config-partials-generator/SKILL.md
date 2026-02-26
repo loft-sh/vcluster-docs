@@ -151,7 +151,6 @@ The generator produces/updates MDX files under `vcluster/_partials/config/`:
 
 ## Never Do
 
-- Run `npm run build` locally — let CI handle it
 - Modify generated partials by hand — they get overwritten on next generation
 - Run the platform generator without checking its manual-content-preservation status
 - Modify files under `vcluster_versioned_docs/` unless explicitly targeting a released version
