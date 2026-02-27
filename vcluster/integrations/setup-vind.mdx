@@ -1,0 +1,99 @@
+---
+title: CI testing with setup-vind
+sidebar_label: CI Testing (setup-vind)
+sidebar_position: 7
+description: Use the setup-vind GitHub Action to provision Kubernetes clusters via vCluster's Docker driver for CI/CD testing.
+---
+
+import InterpolatedCodeBlock from '@site/src/components/InterpolatedCodeBlock';
+
+The [`setup-vind`](https://github.com/loft-sh/setup-vind) GitHub Action provisions Kubernetes clusters via [vCluster's Docker driver (vind)](../configure/vcluster-yaml/experimental/docker.mdx) for CI/CD testing. It replaces `setup-kind` with a full virtual cluster running in Docker, usable for end-to-end (e2e) tests, multi-cluster setups, and more.
+
+Compared to KinD, vind provides:
+
+- **No image loading** - vind uses the host Docker daemon directly, so there's no need to run `kind load docker-image` before tests.
+- **LoadBalancer support** - Kubernetes Services of type `LoadBalancer` work out of the box and are reachable within the CI runner.
+- **Full vCluster configuration** - the cluster supports any [vCluster configuration](../configure/vcluster-yaml/README.mdx), including multi-node setups and VPN-based private nodes.
+
+The action handles the full lifecycle automatically:
+
+- **Main step**: installs the vCluster CLI, sets the Docker driver, creates the cluster, and waits for nodes to become ready.
+- **Post step**: exports container logs as a GitHub artifact and deletes the cluster.
+
+## Basic usage
+
+```yaml
+# .github/workflows/e2e.yaml
+name: E2E Tests
+on:
+  pull_request:
+    branches: [main]
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: loft-sh/setup-vind@v1
+      - run: kubectl get nodes
+      - run: make e2e
+```
+
+:::tip
+After the `setup-vind` step completes, `kubectl` is configured and the cluster is ready to use. The action waits up to 5 minutes for nodes to register before proceeding.
+:::
+
+## Inputs
+
+| Input | Default | Description |
+|-------|---------|-------------|
+| `version` | `latest` | vCluster CLI version to install |
+| `name` | `vind` | Cluster name |
+| `config` | | Path to `vcluster.yaml` values file (repo-relative) |
+| `kubernetes-version` | | Kubernetes version for the cluster |
+| `skipClusterDeletion` | `false` | Skip cluster deletion in post step |
+| `skipClusterLogsExport` | `false` | Skip log export in post step |
+
+## Examples
+
+### Specify a Kubernetes version
+
+<InterpolatedCodeBlock
+  code={'- uses: loft-sh/setup-vind@v1\n  with:\n    kubernetes-version: "[[VAR:KUBERNETES_VERSION:1.35.0]]"'}
+  language="yaml"
+/>
+
+### Use a config file
+
+<InterpolatedCodeBlock
+  code={'- uses: loft-sh/setup-vind@v1\n  with:\n    config: [[VAR:CONFIG_PATH:hack/vcluster.yaml]]'}
+  language="yaml"
+/>
+
+### Multi-cluster setup
+
+Create multiple clusters in the same job by giving each a unique name:
+
+<InterpolatedCodeBlock
+  code={'- uses: loft-sh/setup-vind@v1\n  with:\n    name: [[VAR:CLUSTER_NAME_1:platform]]\n- uses: loft-sh/setup-vind@v1\n  with:\n    name: [[VAR:CLUSTER_NAME_2:agent]]'}
+  language="yaml"
+/>
+
+## Migrate from setup-kind
+
+The following table shows how `setup-kind` inputs map to `setup-vind`. Version numbers are illustrative.
+
+| `setup-kind` | `setup-vind` | Notes |
+|------------|------------|-------|
+| `version: v0.30.0` | `version: v0.32.0` | vCluster CLI version, not KinD |
+| `image: kindest/node:v1.35.0` | `kubernetes-version: "1.35.0"` | No node image needed |
+| `config: kind.yaml` | `config: vcluster.yaml` | Different config format (vCluster values) |
+| `kind load docker-image` | *(not needed)* | vind runs in Docker directly |
+
+## Requirements and limitations
+
+:::warning Linux runners only
+The action supports `linux/amd64` and `linux/arm64` runners. It does not run on Windows or macOS GitHub-hosted runners.
+:::
+
+- **Docker required** - the runner must have Docker installed (standard on `ubuntu-latest`).
+- **Kernel modules** - the action pre-loads `br_netfilter`, `overlay`, and `bridge` modules automatically. No user action needed.
