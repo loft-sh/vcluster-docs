@@ -27,10 +27,14 @@ This page describes how to set up a shared database connector for cloud provider
 
 <!-- vale on -->
 
-- RDS instance running MySQL or PostgreSQL with IAM Database Authentication enabled
-  - PostgreSQL: version 9.6.9+, 10.4+, or 11+
-  - MySQL: version 5.6.34+, 5.7.16+, or 8.0+
+- RDS instance running MySQL or PostgreSQL **with IAM Database Authentication enabled**
+  - PostgreSQL: version 14+
+  - MySQL: version 5.7.16+, or 8.0+
 - A database admin user with `CREATE DATABASE`, `CREATE ROLE`, and `GRANT` privileges
+
+:::note
+AWS RDS Aurora instances are currently not supported.
+:::
 
 #### EKS requirements
 
@@ -129,7 +133,7 @@ If the connection fails:
 
 #### Grant IAM authentication permissions
 
-Once connectivity is verified, grant the admin user permissions to connect via RDS IAM authentication.
+Once connectivity is verified, grant the admin user permission to connect via RDS IAM authentication.
 
 <Tabs
     defaultValue="postgres"
@@ -219,30 +223,186 @@ For example, if the `DbProxyArn` is `arn:aws:rds:us-east-1:123456789012:db-proxy
 
 <!-- vale on -->
 
-This policy allows the vCluster Platform to manage policies that allow virtual clusters to connect to newly created virtual cluster databases. The vCluster Platform utilizes inline policies to avoid the need to manage many to one relationships between policies and roles.
+This policy allows the vCluster Platform to manage IAM roles for virtual cluster database access.
+You can set this up with or without an AWS IAM permission boundary.
 
-```json title="IAM Management Policy"
+Using a permission boundary is strongly recommended for production environments. Permission boundaries act as a safety
+net by defining the maximum permissions that any IAM role created by the platform can have. Even if an inline policy
+grants broader permissions, the permission boundary ensures those roles can never exceed the allowed scope (for
+example, only `rds-db:connect` to a specific database), even though vCluster Platform is able to create new IAM roles.
+This prevents privilege escalation and limits the blast radius if a role is compromised.
+
+<Tabs
+    defaultValue="with-boundary"
+    values={[
+      {label: 'With permission boundary (recommended)', value: 'with-boundary'},
+      {label: 'Without permission boundary', value: 'without-boundary'},
+    ]}>
+  <TabItem value="with-boundary">
+
+##### Permission Boundary Policy
+
+First, create the permission boundary policy. This policy defines the
+maximum set of permissions that any IAM role created by the platform
+can have. It should only allow `rds-db:connect` to the specific
+RDS instance.
+
+Replace `${REGION}`, `${ACCOUNT}`, and `${DB_RESOURCE_ID}` with your RDS instance values.
+
+```json title="Permission Boundary Policy"
 {
   "Version": "2012-10-17",
   "Statement": [
     {
       "Effect": "Allow",
       "Action": [
-        "iam:GetRole",
-        "iam:UpdateAssumeRolePolicy",
-        "iam:PassRole",
-        "iam:DeleteRolePolicy",
-        "iam:CreateRole",
-        "iam:DeleteRole",
-        "iam:UpdateRole",
-        "iam:PutRolePolicy",
-        "iam:GetRolePolicy"
+        "rds-db:connect"
       ],
-      "Resource": "*"
+      "Resource": "arn:aws:rds-db:${REGION}:${ACCOUNT}:dbuser:${DB_RESOURCE_ID}/u???????????????????????????????"
     }
   ]
 }
 ```
+
+##### IAM Management Policy (with permission boundary)
+
+Next, create the IAM Management Policy. When using a permission boundary, this policy restricts role creation
+to only those roles that have the specified permission boundary attached. It also includes a deny statement
+that prevents the platform from modifying the permission boundary policy itself.
+
+Replace `${ACCOUNT}` with your AWS account ID and `${PERMISSION_BOUNDARY_POLICY_ARN}` with the ARN of the
+permission boundary policy created above.
+
+```json title="IAM Management Policy (with permission boundary)"
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "iam:TagRole",
+        "iam:ListRoleTags",
+        "iam:GetRole"
+      ],
+      "Resource": "arn:aws:iam::${ACCOUNT}:role/u???????????????????????????????"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "iam:PutRolePermissionsBoundary",
+        "iam:CreateRole"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "iam:PermissionsBoundary": "${PERMISSION_BOUNDARY_POLICY_ARN}"
+        }
+      },
+      "Resource": "arn:aws:iam::${ACCOUNT}:role/u???????????????????????????????"
+    },
+    {
+      "Sid": "NoBoundaryPolicyEdit",
+      "Effect": "Deny",
+      "Action": [
+        "iam:CreatePolicyVersion",
+        "iam:DeletePolicy",
+        "iam:DeletePolicyVersion",
+        "iam:SetDefaultPolicyVersion"
+      ],
+      "Resource": "${PERMISSION_BOUNDARY_POLICY_ARN}"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "iam:GetRolePolicy",
+        "iam:PutRolePolicy",
+        "iam:DeleteRolePolicy",
+        "iam:DeleteRole"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/loft.sh/managed-by": "platform"
+        }
+      }
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "iam:PassRole"
+      ],
+      "Resource": "arn:aws:iam::${ACCOUNT}:role/u???????????????????????????????",
+      "Condition": {
+        "StringEquals": {
+          "iam:PassedToService": "pods.eks.amazonaws.com"
+        }
+      }
+    }
+  ]
+}
+```
+
+  </TabItem>
+  <TabItem value="without-boundary">
+    Without a permission boundary, the IAM Management Policy grants the platform broader permissions to manage IAM roles.
+    This is simpler to set up but provides fewer guardrails and allows the platform to create roles with broader
+    permissions than intended.
+
+    Replace `${ACCOUNT}` with your AWS account ID.
+
+```json title="IAM Management Policy (without permission boundary)"
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "iam:TagRole",
+        "iam:ListRoleTags",
+        "iam:GetRole"
+      ],
+      "Resource": "arn:aws:iam::${ACCOUNT}:role/u???????????????????????????????"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "iam:PutRolePermissionsBoundary",
+        "iam:CreateRole"
+      ],
+      "Resource": "arn:aws:iam::${ACCOUNT}:role/u???????????????????????????????"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "iam:GetRolePolicy",
+        "iam:PutRolePolicy",
+        "iam:DeleteRolePolicy",
+        "iam:DeleteRole"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/vcluster.com/managed-by": "platform"
+        }
+      }
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "iam:PassRole"
+      ],
+      "Resource": "arn:aws:iam::${ACCOUNT}:role/u???????????????????????????????",
+      "Condition": {
+        "StringEquals": {
+          "iam:PassedToService": "pods.eks.amazonaws.com"
+        }
+      }
+    }
+  ]
+}
+```
+
+  </TabItem>
+</Tabs>
 
 <!-- vale off -->
 
@@ -250,7 +410,11 @@ This policy allows the vCluster Platform to manage policies that allow virtual c
 
 <!-- vale on -->
 
-This read only policy allows the vCluster Platform to look up the DB_RESOURCE_ID for each DB Connector.
+This read-only policy allows the vCluster Platform to look up the `DB_RESOURCE_ID` for each DB Connector.
+
+Replace `${REGION}`, `${ACCOUNT}`, `${DB_INSTANCE_ID}`, and `${DB_PROXY_ID}` with your values. `${DB_INSTANCE_ID}` is
+the RDS instance identifier and `${DB_PROXY_ID}` is the RDS Proxy identifier. If you are not using RDS Proxy, you can
+remove the second statement.
 
 ```json title="RDS Resource ID Lookup Policy"
 {
@@ -258,8 +422,17 @@ This read only policy allows the vCluster Platform to look up the DB_RESOURCE_ID
   "Statement": [
     {
       "Effect": "Allow",
-      "Action": ["rds:DescribeDBInstances", "rds:DescribeDBProxies"],
-      "Resource": "*"
+      "Action": [
+        "rds:DescribeDBInstances"
+      ],
+      "Resource": "arn:aws:rds:${REGION}:${ACCOUNT}:db:${DB_INSTANCE_ID}"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "rds:DescribeDBProxies"
+      ],
+      "Resource": "arn:aws:rds:${REGION}:${ACCOUNT}:db-proxy:${DB_PROXY_ID}"
     }
   ]
 }
@@ -273,6 +446,8 @@ This read only policy allows the vCluster Platform to look up the DB_RESOURCE_ID
 
 Manages EKS Pod Identity Associations for virtual clusters to allow them to assume the IAM Roles created for database access.
 
+Replace `${REGION}`, `${ACCOUNT}`, and `${EKS_CLUSTER_NAME}` with your values.
+
 ```json title="EKS Pod Identity Association Policy"
 {
   "Version": "2012-10-17",
@@ -280,14 +455,20 @@ Manages EKS Pod Identity Associations for virtual clusters to allow them to assu
     {
       "Effect": "Allow",
       "Action": [
-        "eks:DescribePodIdentityAssociation",
-        "eks:ListPodIdentityAssociations",
         "eks:CreatePodIdentityAssociation",
-        "eks:TagResource",
-        "eks:DeletePodIdentityAssociation",
-        "eks:UpdatePodIdentityAssociation"
+        "eks:ListPodIdentityAssociations"
       ],
-      "Resource": "*"
+      "Resource": "arn:aws:eks:${REGION}:${ACCOUNT}:cluster/${EKS_CLUSTER_NAME}"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "eks:TagResource",
+        "eks:DescribePodIdentityAssociation",
+        "eks:UpdatePodIdentityAssociation",
+        "eks:DeletePodIdentityAssociation"
+      ],
+      "Resource": "arn:aws:eks:${REGION}:${ACCOUNT}:podidentityassociation/${EKS_CLUSTER_NAME}/*"
     }
   ]
 }
@@ -351,7 +532,13 @@ For the platform to start using a database server, a secret must be created that
   - user
   - identityProvider (only for IAM based authentication)
 
-To create a database connector secret in the UI, navigate to the sidebar and select **Databases** -> **Connect Database Secrets**. Then, select the **AWS IAM** authentication method and fill in the required fields.
+To create a database connector secret in the UI, navigate to the sidebar and select **Databases** -> **Connect Database
+Secrets**. Then, select the **AWS IAM** authentication method and fill in the required fields.
+
+:::note
+The UI does not currently support setting a AWS IAM permission boundary. If you want to use such a permission boundary,
+you can add the annotation to the secret after it has been created by the UI, by using `kubectl annotate` for example.
+:::
 
 <!-- vale off -->
 
@@ -359,21 +546,49 @@ Alternatively, a Secret YAML manifest can be applied to the platform's host clus
 
 <!-- vale on -->
 
-```yaml title="Shared database secret template"
-apiVersion: v1
-kind: Secret
-metadata:
-  name: <name> # Descriptive name, used to reference this connector in vCluster configs
-  namespace: <vcluster-platform-namespace> # Namespace where vCluster Platform is installed
-  labels:
-    loft.sh/connector-type: "shared-database"
-stringData:
-  endpoint: <endpoint> # RDS endpoint (e.g., mydb.abc123.us-east-1.rds.amazonaws.com)
-  port: <port> # 5432 for PostgreSQL, 3306 for MySQL
-  user: <user> # Database user with rds_iam granted
-  type: <type> # "mysql" or "postgres"
-  identityProvider: "aws"
-```
+<Tabs
+    defaultValue="with-boundary"
+    values={[
+      {label: 'With permission boundary', value: 'with-boundary'},
+      {label: 'Without permission boundary', value: 'without-boundary'},
+    ]}>
+  <TabItem value="with-boundary">
+    ```yaml title="Shared database secret template (with permission boundary)"
+    apiVersion: v1
+    kind: Secret
+    metadata:
+      name: <name>
+      namespace: <vcluster-platform-namespace>
+      labels:
+        loft.sh/connector-type: "shared-database"
+      annotations:
+        connector.platform.vcluster.com/aws-permission-boundary-policy-arn: <permission-boundary-policy-arn>
+    stringData:
+      endpoint: <endpoint>
+      port: <port> # 5432 for PostgreSQL, 3306 for MySQL
+      user: <user> # Database user with rds_iam granted
+      type: <type> # "mysql" or "postgres"
+      identityProvider: aws
+    ```
+  </TabItem>
+  <TabItem value="without-boundary">
+    ```yaml title="Shared database secret template (without permission boundary)"
+    apiVersion: v1
+    kind: Secret
+    metadata:
+      name: <name>
+      namespace: <vcluster-platform-namespace>
+      labels:
+        loft.sh/connector-type: "shared-database"
+    stringData:
+      endpoint: <endpoint>
+      port: <port> # 5432 for PostgreSQL, 3306 for MySQL
+      user: <user> # Database user with rds_iam granted
+      type: <type> # "mysql" or "postgres"
+      identityProvider: aws
+    ```
+  </TabItem>
+</Tabs>
 
 Use the following `kubectl` command to create the secret:
 
@@ -384,38 +599,44 @@ Use the following `kubectl` command to create the secret:
       {label: 'MySQL', value: 'mysql'},
     ]}>
   <TabItem value="postgres">
+    ```bash title="Create PostgreSQL connector secret"
+    kubectl create secret generic my-rds-connector \
+      --namespace=vcluster-platform \
+      --from-literal=endpoint="your-rds-endpoint.region.rds.amazonaws.com" \
+      --from-literal=identityProvider="aws" \
+      --from-literal=port="5432" \
+      --from-literal=type="postgres" \
+      --from-literal=user="postgres"
 
-```bash title="Create PostgreSQL connector secret"
-kubectl create secret generic my-rds-connector \
-  --namespace=vcluster-platform \
-  --from-literal=endpoint="your-rds-endpoint.region.rds.amazonaws.com" \
-  --from-literal=identityProvider="aws" \
-  --from-literal=port="5432" \
-  --from-literal=type="postgres" \
-  --from-literal=user="postgres"
+    kubectl label secret my-rds-connector \
+      --namespace=vcluster-platform \
+      loft.sh/connector-type=shared-database
 
-kubectl label secret my-rds-connector \
-  --namespace=vcluster-platform \
-  loft.sh/connector-type=shared-database
-```
-
+    # If using permission boundary, add the annotation:
+    kubectl annotate secret my-rds-connector \
+      --namespace=vcluster-platform \
+      connector.platform.vcluster.com/aws-permission-boundary-policy-arn="YOUR_BOUNDARY_ARN"
+    ```
   </TabItem>
   <TabItem value="mysql">
+    ```bash title="Create MySQL connector secret"
+    kubectl create secret generic my-rds-connector \
+      --namespace=vcluster-platform \
+      --from-literal=endpoint="your-rds-endpoint.region.rds.amazonaws.com" \
+      --from-literal=identityProvider="aws" \
+      --from-literal=port="3306" \
+      --from-literal=type="mysql" \
+      --from-literal=user="admin"
 
-```bash title="Create MySQL connector secret"
-kubectl create secret generic my-rds-connector \
-  --namespace=vcluster-platform \
-  --from-literal=endpoint="your-rds-endpoint.region.rds.amazonaws.com" \
-  --from-literal=identityProvider="aws" \
-  --from-literal=port="3306" \
-  --from-literal=type="mysql" \
-  --from-literal=user="admin"
+    kubectl label secret my-rds-connector \
+      --namespace=vcluster-platform \
+      loft.sh/connector-type=shared-database
 
-kubectl label secret my-rds-connector \
-  --namespace=vcluster-platform \
-  loft.sh/connector-type=shared-database
-```
-
+    # If using permission boundary, add the annotation:
+    kubectl annotate secret my-rds-connector \
+      --namespace=vcluster-platform \
+      connector.platform.vcluster.com/aws-permission-boundary-policy-arn="YOUR_BOUNDARY_ARN"
+    ```
   </TabItem>
 </Tabs>
 
@@ -426,6 +647,26 @@ kubectl get secrets -n vcluster-platform -l loft.sh/connector-type=shared-databa
 ```
 
 To use the secret in a virtual cluster, refer to the [Database Connectors](./database#use-virtual-cluster-with-shared-database) documentation.
+
+:::note
+AWS RDS PostgreSQL requires secure transport for IAM authentication to work. You must set the appropriate SSL mode environment variable for each virtual cluster that uses an IAM database connector.
+
+Set `PGSSLMODE` to `require` in the virtual cluster's `values.yaml`:
+
+```yaml
+controlPlane:
+  distro:
+    k8s:
+      env:
+        - name: PGSSLMODE
+          value: "require"
+  backingStore:
+    database:
+      external:
+        enabled: true
+        connector: my-rds-connector
+```
+:::
 
 ### Troubleshoot common issues
 
