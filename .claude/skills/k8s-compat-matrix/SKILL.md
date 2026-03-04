@@ -23,7 +23,7 @@ Trigger this skill when:
 | `scripts/generate-compatibility-matrix.js` | CLI: add/prune/validate |
 | `.github/workflows/update-compatibility-matrix.yml` | CI validation on PR |
 | `tests/specs/k8s-compatibility-matrix.spec.js` | Playwright/BrowserStack browser tests |
-| `vcluster/deploy/upgrade/supported_versions.mdx` | Page that imports the component |
+| `vcluster/manage/upgrade/supported_versions.mdx` | Page that imports the component |
 
 ## Statuses
 

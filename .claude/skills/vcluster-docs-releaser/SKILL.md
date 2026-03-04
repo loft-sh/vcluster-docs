@@ -166,7 +166,7 @@ announcementBar: {
 **User performs:**
 1. Build check: `npm run build` (not AI's responsibility)
 2. Review enterprise/pro tags (manual)
-3. Update support dates in `vcluster/deploy/upgrade/supported_versions.mdx`
+3. Update support dates in `vcluster/manage/upgrade/supported_versions.mdx`
 4. Update compatibility matrix in same file
 5. Verify partials PR merged (automated PR)
 6. Run hurl tests after PR deployed
@@ -191,7 +191,7 @@ announcementBar: {
 - **Create versioned docs** - `npm run docusaurus docs:version:vcluster X.Y.Z`
 - **Review enterprise/pro tags** - Manual review of `<ProAdmonition>` tags
 - **Partials PR** - Verify automation ran
-- **Update support dates** - Edit `vcluster/deploy/upgrade/supported_versions.mdx`
+- **Update support dates** - Edit `vcluster/manage/upgrade/supported_versions.mdx`
 - **Update compatibility matrix** - Edit same file
 - **Run build** - `npm run build`
 - **Run hurl tests** - After PR deployed
