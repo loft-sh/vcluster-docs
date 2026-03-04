@@ -99,7 +99,7 @@ Complete checklist for vCluster documentation releases based on Linear issue tem
 
 ### Item 8: Update Release Support Dates
 
-- [ ] File: `vcluster/deploy/upgrade/supported_versions.mdx`
+- [ ] File: `vcluster/manage/upgrade/supported_versions.mdx`
 - [ ] Update: Release date for new version
 - [ ] Update: End of support dates for older versions
 - [ ] Update: End of life dates
@@ -107,7 +107,7 @@ Complete checklist for vCluster documentation releases based on Linear issue tem
 
 ### Item 9: Update Compatibility Matrix
 
-- [ ] File: `vcluster/deploy/upgrade/supported_versions.mdx`
+- [ ] File: `vcluster/manage/upgrade/supported_versions.mdx`
 - [ ] Update: Kubernetes version support matrix
 - [ ] Add: New K8s versions if released
 - [ ] Verify: Host cluster compatibility
@@ -183,7 +183,7 @@ Ready for: Build & Test
 | `docusaurus.config.js` | Version config, labels, SEO | AI |
 | `netlify.toml` | Redirect config | AI |
 | `hack/test-vcluster-0.XX.hurl` | SEO/redirect tests | AI |
-| `vcluster/deploy/upgrade/supported_versions.mdx` | Support dates & compat | User |
+| `vcluster/manage/upgrade/supported_versions.mdx` | Support dates & compat | User |
 | `vcluster_versioned_docs/version-0.XX.0/` | Versioned docs | User |
 | `vcluster_versions.json` | Version list | Auto |
 
