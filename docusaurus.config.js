@@ -213,17 +213,17 @@ const config = {
             badge: true,
           },
           "0.30.0": {
-            label: "v0.30",
+            label: "v0.30 (EOS)",
             banner: "none",
             badge: true,
           },
           "0.29.0": {
-            label: "v0.29",
+            label: "v0.29 (EOS)",
             banner: "none",
             badge: true,
           },
           "0.28.0": {
-            label: "v0.28",
+            label: "v0.28 (EOS)",
             banner: "none",
             badge: true,
           },
