@@ -165,6 +165,26 @@ const config = {
   plugins: [
     "docusaurus-plugin-sass",
     "plugin-image-zoom",
+    [
+      "@signalwire/docusaurus-plugin-llms-txt",
+      {
+        content: {
+          enableLlmsFullTxt: true,
+          includeDocs: true,
+          includeBlog: false,
+          includePages: false,
+          includeVersionedDocs: false,
+          excludeRoutes: [
+            '/search/**',
+            '/tags/**',
+          ],
+        },
+        siteTitle: 'vCluster Documentation',
+        siteDescription: 'Documentation for vCluster (virtual Kubernetes clusters) and vCluster Platform (multi-cluster management)',
+        enableDescriptions: true,
+        depth: 2,
+      },
+    ],
     function(context, options) {
       return {
         name: 'yaml-loader',
