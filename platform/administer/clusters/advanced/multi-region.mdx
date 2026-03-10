@@ -1,5 +1,5 @@
 ---
-sidebar_label: Multi-Region Plaform
+sidebar_label: Multi-Region Platform
 title: Multi-Region Platform
 ---
 
@@ -9,7 +9,7 @@ This document explains how to configure a multi-region platform setup for vClust
 
 ## AWS (EKS)
 
-These steps will guide walks you through setting up vCluster Platform across two AWS regions using EKS, cross-region VPC
+These steps walk you through setting up vCluster Platform across two AWS regions using EKS, cross-region VPC
 peering, shared database (Kine), ALB ingress, and Route 53 GeoDNS.
 
 ### Prerequisites
@@ -134,7 +134,7 @@ aws rds create-db-instance \
   --db-instance-class db.t3.medium \
   --master-username admin \
   --db-subnet-group-name <EKS_CLUSTER_VPC> \
-  --master-user-password <PASSWORD> 
+  --master-user-password <PASSWORD>
 ```
 
 #### Create the Kine database
@@ -169,22 +169,45 @@ aws ec2 accept-vpc-peering-connection \
 
 ### Step 5 - Deploy vCluster platform
 
-Run on both clusters:
+Deploy the platform on each cluster using the `multiRegion` Helm values. Each cluster needs a **region-specific** `multiRegion.host` value (used as the DERP mesh endpoint), while `config.loftHost` should be the **shared GeoDNS domain**.
+
+**U.S. region**
 
 ```bash
 helm upgrade loft vcluster-platform --install --create-namespace --repository-config='' \
   --namespace vcluster-platform \
   --repo "https://charts.loft.sh/" \
-  --version v4.5.4 \
   --set admin.email="<ADMIN_EMAIL>" \
-  --set env.LOFT_EMBEDDED_K8S=true \
-  --set env.LOFT_EMBEDDED_K8S_DATA_SOURCE="mysql://<USERNAME>:<PASSWORD>@tcp(<DATABASE_URL>:3306)/kine?tls=skip-verify" \
-  --set env.LOFT_EMBEDDED_K8S_MAX_DATABASE_CONNECTIONS=20 \
-  --set env.LEADER_ELECTION_ENABLED=true \
+  --set multiRegion.enabled=true \
+  --set multiRegion.host="us.multi-region.mydomain.com" \
+  --set multiRegion.dataSource="mysql://<USERNAME>:<PASSWORD>@tcp(<DATABASE_URL>:3306)/kine?tls=skip-verify" \
+  --set multiRegion.dataSourceMaxConnections=20 \
   --set costControl.enabled=false \
-  --set config.loftHost="<GEODNS_DOMAIN>" \
-  --reuse-values
+  --set config.loftHost="multi-region.mydomain.com"
 ```
+
+**E.U. region**
+
+```bash
+helm upgrade loft vcluster-platform --install --create-namespace --repository-config='' \
+  --namespace vcluster-platform \
+  --repo "https://charts.loft.sh/" \
+  --set admin.email="<ADMIN_EMAIL>" \
+  --set multiRegion.enabled=true \
+  --set multiRegion.host="eu.multi-region.mydomain.com" \
+  --set multiRegion.dataSource="mysql://<USERNAME>:<PASSWORD>@tcp(<DATABASE_URL>:3306)/kine?tls=skip-verify" \
+  --set multiRegion.dataSourceMaxConnections=20 \
+  --set costControl.enabled=false \
+  --set config.loftHost="multi-region.mydomain.com"
+```
+
+Setting `multiRegion.enabled=true` automatically configures:
+- Embedded Kubernetes (Kine) with the shared database
+- Leader election across regions
+- DERP mesh networking between platform instances
+- Multi-region platform license check
+
+> **Tip:** For AWS deployments, you can use IAM authentication instead of a password in the connection string by adding `--set multiRegion.dataSourceIdentityProvider="aws"`. This requires configuring IAM database authentication on your RDS instance.
 
 ------------------------------------------------------------------------
 
@@ -196,7 +219,7 @@ This will request Wildcard Certificate (Per Region), we will be issuing certific
 
 * multi-region.mydomain.com
 * us.multi-region.mydomain.com
-* eu.multi-regionmydomain.com
+* eu.multi-region.mydomain.com
 
 Replace `<AWS_REGION>` with the AWS region.
 
@@ -211,7 +234,7 @@ aws acm request-certificate \
 Get the arn code from the command above and describe the certificate
 
 Replace `<ACCOUNT_ID>` with your AWS account ID.
-Replace `<CERTIFICATE_ARN_ID>` with the ARN ID genereted from the command above.
+Replace `<CERTIFICATE_ARN_ID>` with the ARN ID generated from the command above.
 
 ```bash
 aws acm describe-certificate \
@@ -240,15 +263,14 @@ metadata:
     alb.ingress.kubernetes.io/scheme: internet-facing
     alb.ingress.kubernetes.io/target-type: ip
     alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80},{"HTTPS":443}]'
-    alb.ingress.kubernetes.io/healthcheck-path: /
-    alb.ingress.kubernetes.io/certificate-arn: "arn:aws:acm:eu-west-1:<ACCOUNT_ID>:certificate/<CERT_ID>"
+    alb.ingress.kubernetes.io/certificate-arn: "arn:aws:acm:<AWS_REGION>:<ACCOUNT_ID>:certificate/<CERT_ID>"
     alb.ingress.kubernetes.io/ssl-redirect: "443"
     alb.ingress.kubernetes.io/healthcheck-path: /healthz
     alb.ingress.kubernetes.io/success-codes: "200"
 spec:
   ingressClassName: alb
   rules:
-    - host: eu.multi-region.infraloft.cloud
+    - host: <REGION>.multi-region.mydomain.com
       http:
         paths:
           - path: /
@@ -258,7 +280,7 @@ spec:
                 name: loft
                 port:
                   number: 80
-    - host: multi-region.infraloft.cloud
+    - host: multi-region.mydomain.com
       http:
         paths:
           - path: /
@@ -281,7 +303,7 @@ Go to the AWS Route 53 console under Hosted Zone -> [Domain] -> Create Record
 **U.S. region**
 
 ```
-Name: us.multi-region.infraloft.cloud
+Name: us.multi-region.mydomain.com
 Type: A (Alias)
 Routing Policy: Latency
 Region: us-east-1
@@ -291,7 +313,7 @@ Attach Health Check
 
 **E.U. region**
 ```
-Name: eu.multi-region.infraloft.cloud
+Name: eu.multi-region.mydomain.com
 Type: A (Alias)
 Routing Policy: Latency
 Region: eu-west-1
@@ -310,9 +332,9 @@ You will get a Helm command like the one below, change the namespace of where th
 helm upgrade loft vcluster-platform --install --namespace vcluster-agent --repo https://charts.loft.sh/ --version 4.5.4 \
  --create-namespace \
  --set agentOnly=true \
- --set costControl.enabled=false \ 
+ --set costControl.enabled=false \
  --set url=<LOFT_HOST_URL> \
- --set token=token=<access-token> \ 
+ --set token=<access-token> \
  --values 'https://<platform-url>/clusters/agent-values/cluster-n9072?token=<access-token>'
 ```
 
