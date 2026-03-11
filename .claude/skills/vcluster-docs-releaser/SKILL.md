@@ -1,43 +1,77 @@
+---
+name: vcluster-docs-releaser
+description: vCluster Documentation Release Skill
+---
+
 # vCluster Documentation Release Skill
 
 ## Overview
 
 This skill automates the vCluster documentation release process, handling version updates, configuration changes, and SEO setup for new vCluster releases.
 
+## Versioning Timing: rc-1 Process
+
+Starting with vCluster v0.33, docs versioning happens at rc-1, NOT on release day.
+
+### How it works
+
+1. At rc-1: Create the new docs version the same day rc-1 is cut
+2. Deploy hidden: The version is deployed but HIDDEN from the public version dropdown — users cannot discover it via the UI
+3. Validation window: The hidden version can be accessed via Netlify preview URL or by manually changing the version in the URL, allowing the platform team and contributors to validate against real deployed docs
+4. On release day: A single "config flip" PR exposes the version in the dropdown. This PR is small, reviewable, and safe to merge by anyone with merge rights
+5. Backport flow: Contributors continue targeting `vcluster/` on `main` as usual. If a change needs to land in the upcoming release, add the `backport-v0.33` label to the PR
+
+### Config flip PR (release day)
+
+The config flip PR changes only the version visibility in `docusaurus.config.js`:
+- Moves the new version entry from hidden to visible in the dropdown
+- Updates `lastVersion` to point to the new version
+- Demotes the previous stable version label (removes "Stable" suffix)
+- Updates SEO sitemap priorities, announcement bar, and netlify redirect
+
+This separation means all the heavy lifting (version creation, content, link fixes) is done during the rc-1 window, and release day is a low-risk config change.
+
 ## When to Use This Skill
 
 Trigger this skill when:
 - User mentions "vCluster release", "new vCluster version", or "prepare vCluster docs"
+- User mentions "rc-1" or "release candidate" for vCluster docs
 - Working on Linear issue with title matching "docs updates for vCluster vX.Y release"
-- User asks to prepare docs for a new vCluster version (e.g., 0.30.0)
+- User asks to prepare docs for a new vCluster version (e.g., 0.33.0)
 - User references the release checklist or ENG-XXXX release issues
+- User asks to create the "config flip" PR for release day
 
-**Note:** This skill is for vCluster releases only. Platform releases will have a separate skill.
+Note: This skill is for vCluster releases only. Platform releases have a separate skill (`platform-docs-releaser`).
 
 ## Prerequisites
 
 Before starting:
-1. **User must create versioned docs folder** - Run: `npm run docusaurus docs:version:vcluster X.Y.Z`
-2. **Verify version exists**: Check `vcluster_versions.json` and `vcluster_versioned_docs/version-X.Y.Z/` exist
-3. **CLI docs should be generated** - Usually automated, but verify 90+ `.md` files in `vcluster_versioned_docs/version-X.Y.Z/cli/`
+1. User must create versioned docs folder — Run: `npm run docusaurus docs:version:vcluster X.Y.Z`
+2. Verify version exists: Check `vcluster_versions.json` and `vcluster_versioned_docs/version-X.Y.Z/` exist
+3. CLI docs should be generated — Usually automated, but verify 90+ `.md` files in `vcluster_versioned_docs/version-X.Y.Z/cli/`
 
 ## Release Workflow
 
+### Part 0: Timing Decision
+
+- rc-1 day: Perform Parts 1-3 (version creation + hidden deploy)
+- Release day: Perform Part 4 (config flip PR only)
+
 ### Part 1: Next Branch Merge (If Needed)
 
-**When:** Only if `next` branch contains preview docs that need to go to `main`
+When: Only if `next` branch contains preview docs that need to go to `main`
 
-**Process:**
+Process:
 1. Check if `next` has unique content:
    ```bash
    git log --oneline --no-merges origin/next ^main | grep -v "Merge remote-tracking branch"
    ```
 
 2. If `next` has content to merge:
-   - Create PR from `next` → `main` with **squash merge**
+   - Create PR from `next` → `main` with squash merge
    - PR Title: `docs: merge next branch for vX.Y release`
    - PR Body: "Squash merge of preview docs from next branch"
-   - **Why PR?** Branch auto-delete + allows review + CI checks
+   - Why PR? Branch auto-delete + allows review + CI checks
 
 3. Merge command:
    ```bash
@@ -49,9 +83,9 @@ Before starting:
    gh pr merge <pr-number> --squash
    ```
 
-**Note:** Currently `next` only has merge commits, so this step can be skipped for now.
+Note: Currently `next` only has merge commits, so this step can be skipped for now.
 
-### Part 2: Configuration Updates
+### Part 2: Configuration Updates (rc-1 — hidden deploy)
 
 These are the AI's responsibility (automated):
 
@@ -155,21 +189,41 @@ announcementBar: {
 
 **IMPORTANT:** Hurl tests run AFTER PR is deployed to Netlify preview.
 
-### Part 3: Verification
+### Part 3: Verification (rc-1)
 
-**AI performs:**
+AI performs:
 1. ✅ Verify versioned docs exist: `ls -la vcluster_versioned_docs/version-0.XX.0/`
 2. ✅ Count CLI docs: `ls vcluster_versioned_docs/version-0.XX.0/cli/*.md | wc -l` (expect 90+)
 3. ✅ Check vcluster_versions.json includes new version
 4. ✅ All config changes applied
+5. ✅ Version is hidden from dropdown (not in `onlyIncludeVersions` or `lastVersion` yet)
 
-**User performs:**
+User performs:
 1. Build check: `npm run build` (not AI's responsibility)
 2. Review enterprise/pro tags (manual)
 3. Update support dates in `vcluster/manage/upgrade/supported_versions.mdx`
 4. Update compatibility matrix in same file
 5. Verify partials PR merged (automated PR)
 6. Run hurl tests after PR deployed
+
+### Part 4: Config Flip PR (Release Day)
+
+This is the release-day action. All heavy work was done at rc-1. This PR only flips visibility.
+
+Changes in the config flip PR:
+
+1. `docusaurus.config.js` — `lastVersion`: set to new version (e.g., `"0.33.0"`)
+2. `docusaurus.config.js` — `onlyIncludeVersions`: add new version, remove oldest
+3. `docusaurus.config.js` — versions object: add new version with "Stable" label, demote previous
+4. `docusaurus.config.js` — SEO sitemap priorities: update to new version
+5. `docusaurus.config.js` — announcement bar: update version numbers
+6. `netlify.toml` — redirect: update to new version
+7. `hack/test-vcluster-0.XX.hurl` — create or update hurl test file
+
+PR title: `docs: expose vCluster 0.XX docs in version dropdown`
+PR body: "Config flip to make the pre-deployed v0.XX docs visible in the version dropdown. All content was deployed at rc-1."
+
+This PR is small, reviewable, and safe to merge by anyone with merge rights.
 
 ## Files Modified Summary
 
@@ -304,11 +358,14 @@ Ready to commit and push!
 
 ## Notes
 
-- This skill is for **vCluster only** - Platform has separate release process
+- This skill is for vCluster only — Platform has separate release process
+- Starting with v0.33, versioning happens at rc-1, not on release day
+- The version is deployed hidden at rc-1, then exposed via config flip PR on release day
+- Contributors use `backport-v0.33` label for changes that must land in the upcoming release
 - Always remove "Stable" label from previous version when adding new one
 - Keep 5-6 versions in `onlyIncludeVersions` for build performance
 - Hurl tests validate redirects work correctly
-- User runs build - AI does not run npm commands
+- User runs build — AI does not run npm commands
 
 ## CRITICAL: Cross-Plugin Links to Platform
 

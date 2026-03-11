@@ -1,18 +1,47 @@
+---
+name: platform-docs-releaser
+description: Platform Documentation Release Skill
+---
+
 # Platform Documentation Release Skill
 
 ## Overview
 
 This skill automates the vCluster Platform documentation release process, handling API generation, version updates, configuration changes, and SEO setup for new Platform releases.
 
+## Versioning Timing: rc-1 Process
+
+Starting with Platform v4.8, docs versioning happens at rc-1, NOT on release day.
+
+### How it works
+
+1. At rc-1: Create the new docs version the same day rc-1 is cut
+2. Deploy hidden: The version is deployed but HIDDEN from the public version dropdown — users cannot discover it via the UI
+3. Validation window: The hidden version can be accessed via Netlify preview URL or by manually changing the version in the URL, allowing the platform team and contributors to validate against real deployed docs
+4. On release day: A single "config flip" PR exposes the version in the dropdown. This PR is small, reviewable, and safe to merge by anyone with merge rights
+5. Backport flow: Contributors continue targeting `platform/` on `main` as usual. If a change needs to land in the upcoming release, add the `backport-v4.8.0` label to the PR
+
+### Config flip PR (release day)
+
+The config flip PR changes only the version visibility in `docusaurus.config.js`:
+- Updates `lastVersion` to point to the new version
+- Adds the new version to the dropdown with "Stable" label
+- Demotes the previous stable version label (removes "Stable" suffix)
+- Updates SEO sitemap priorities, announcement bar, and netlify redirect
+
+This separation means all the heavy lifting (version creation, API partials, content, link fixes) is done during the rc-1 window, and release day is a low-risk config change.
+
 ## When to Use This Skill
 
 Trigger this skill when:
 - User mentions "Platform release", "new Platform version", or "prepare Platform docs"
+- User mentions "rc-1" or "release candidate" for Platform docs
 - Working on Linear issue with title matching "docs updates for Platform vX.Y release"
-- User asks to prepare docs for a new Platform version (e.g., 4.5.0)
+- User asks to prepare docs for a new Platform version (e.g., 4.8.0)
 - User references the platform release checklist
+- User asks to create the "config flip" PR for release day
 
-**Note:** This skill is for Platform releases only. vCluster releases have a separate skill (`vcluster-docs-releaser`).
+Note: This skill is for Platform releases only. vCluster releases have a separate skill (`vcluster-docs-releaser`).
 
 ## Prerequisites
 
@@ -199,24 +228,43 @@ announcementBar: {
 - Older vCluster versions link to appropriate Platform versions
 - Example: vCluster 0.27 → Platform 4.4, vCluster 0.26 → Platform 4.3
 
-### Part 3: Verification
+### Part 3: Verification (rc-1)
 
-**AI performs:**
+AI performs:
 1. ✅ Verify versioned docs exist: `ls -la platform_versioned_docs/version-X.Y.0/`
 2. ✅ Check platform_versions.json includes new version
 3. ✅ Verify API partials generated: `ls platform/api/_partials/resources/`
 4. ✅ All config changes applied
+5. ✅ Version is hidden from dropdown (not in `lastVersion` yet)
 
-**User performs:**
-1. Build check: `npm run build` (**IMPORTANT**: Per CLAUDE.md, AI never runs build - user only)
+User performs:
+1. Build check: `npm run build` (IMPORTANT: Per CLAUDE.md, AI never runs build — user only)
 2. Review enterprise/pro tags (manual)
 3. Update support dates in platform-specific supported versions file
 4. Update compatibility matrix
 5. Run hurl tests after PR deployed
 
-**If build errors occur**: Reference CLAUDE.md for:
+If build errors occur: Reference CLAUDE.md for:
 - Link resolution rules (use relative file paths with `.mdx` extensions)
 - Broken link debugging method (cd into versioned folder, grep for file)
+
+### Part 4: Config Flip PR (Release Day)
+
+This is the release-day action. All heavy work was done at rc-1. This PR only flips visibility.
+
+Changes in the config flip PR:
+
+1. `docusaurus.config.js` — `lastVersion`: set to new version (e.g., `"4.8.0"`)
+2. `docusaurus.config.js` — versions object: add new version with "Stable" label, demote previous
+3. `docusaurus.config.js` — SEO sitemap priorities: update to new version
+4. `docusaurus.config.js` — announcement bar: update version numbers
+5. `netlify.toml` — redirect: update to new version
+6. `hack/test-platform-X.Y.hurl` — create or update hurl test file
+
+PR title: `docs: expose Platform X.Y docs in version dropdown`
+PR body: "Config flip to make the pre-deployed vX.Y docs visible in the version dropdown. All content was deployed at rc-1."
+
+This PR is small, reviewable, and safe to merge by anyone with merge rights.
 
 ## Files Modified Summary
 
@@ -470,10 +518,13 @@ Ready to commit and push!
 
 ## Notes
 
-- This skill is for **Platform only** - vCluster has separate release process
+- This skill is for Platform only — vCluster has separate release process
+- Starting with v4.8, versioning happens at rc-1, not on release day
+- The version is deployed hidden at rc-1, then exposed via config flip PR on release day
+- Contributors use `backport-v4.8.0` label for changes that must land in the upcoming release
 - Always generate API partials FIRST before any other changes
 - Platform maintains fewer versions than vCluster
 - Cross-version testing with vCluster links is important
-- **Per CLAUDE.md**: User runs build - AI NEVER runs `npm run build`
-- **⚠️ CRITICAL**: Never modify versioned docs unless explicitly requested by user (CLAUDE.md warning)
+- Per CLAUDE.md: User runs build — AI NEVER runs `npm run build`
+- CRITICAL: Never modify versioned docs unless explicitly requested by user (CLAUDE.md warning)
 - For detailed Docusaurus guidelines, always reference CLAUDE.md
