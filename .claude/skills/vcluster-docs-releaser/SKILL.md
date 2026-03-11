@@ -87,107 +87,49 @@ Note: Currently `next` only has merge commits, so this step can be skipped for n
 
 ### Part 2: Configuration Updates (rc-1 — hidden deploy)
 
-These are the AI's responsibility (automated):
+At rc-1, the version is added to the build but hidden from the dropdown. Do NOT change `lastVersion`, SEO, netlify redirect, or announcement bar — those are Part 4 (release day).
 
-#### 1. Update `docusaurus.config.js`
+#### 1. Update `docusaurus.config.js` — vCluster plugin config
 
-**Location 1: Main docs label (~line 80)**
+Add the new version to `onlyIncludeVersions` and `versions` with hidden/unreleased flags:
+
 ```js
-versions: {
-  current: {
-    label: "v0.XX",  // Update version number
-    banner: "none",
-    badge: false,
-  },
-},
-```
-
-**Location 2: SEO sitemap priorities (~line 108)**
-```js
-// Latest stable versions get highest priority (0.XX.0 for vCluster, 4.4.0 for platform)
-if (item.url.match(/\/vcluster\/0\.XX\.0\//) ||
-```
-
-**Location 3: SEO comment (~line 120)**
-```js
-// ALL other versioned docs get very low priority (0.19-0.XX for vCluster, older platform versions)
-```
-
-**Location 4: vCluster plugin config (~line 192)**
-```js
-lastVersion: "0.XX.0",
-onlyIncludeVersions: ["current", "0.XX.0", "0.YY.0", "0.ZZ.0", ...],  // Add new, remove oldest
+lastVersion: "0.YY.0",  // DO NOT CHANGE — stays on current stable
+onlyIncludeVersions: ["current", "0.XX.0", "0.YY.0", ...],  // Add new version
 versions: {
   current: {
     label: "main 🚧",
   },
-  "0.XX.0": {  // NEW ENTRY
-    label: "v0.XX Stable",
+  "0.XX.0": {  // NEW ENTRY — hidden pre-release
+    label: "v0.XX",
+    banner: "unreleased",  // Shows warning banner on every page
+    badge: true,
+    noIndex: true,          // Prevents search engine indexing
+  },
+  "0.YY.0": {  // KEEP as-is — still current stable
+    label: "v0.YY Stable",
     banner: "none",
     badge: true,
   },
-  "0.YY.0": {  // DEMOTE previous stable
-    label: "v0.YY",  // Remove "Stable" suffix
-    banner: "none",
-    badge: true,
-  },
-  // ... rest
+  // ... rest unchanged
 }
 ```
 
-**Pattern:**
-- Keep 5-6 versions in `onlyIncludeVersions` (current + 5 stable)
-- New version gets "Stable" label
-- Previous stable loses "Stable" suffix
-- Remove oldest version (drops out of build)
+#### 2. Update `src/config/versionConfig.js` — hide from dropdown
 
-**Location 5: Announcement bar (~line 400)**
+Add the version to the hidden array so it doesn't appear in the version dropdown:
+
 ```js
-announcementBar: {
-  id: "platform-4-4-release",
-  content:
-    '🚀 <strong>New releases: <a href="https://www.vcluster.com/releases/en/changelog?hideLogo=true&hideMenu=true&theme=dark&embed=true&c=vCluster" target="_blank">vCluster Platform 4.4 and vCluster 0.XX</a></strong>',
-  backgroundColor: "#4a90e2",
-  textColor: "#ffffff",
-  isCloseable: true,
-},
+export const vclusterHiddenVersions = ["0.XX.0"];
+export const platformHiddenVersions = [];
 ```
 
-#### 2. Update `netlify.toml`
+This is the single source of truth for hiding versions. Two custom components consume it:
 
-**Location: Redirect section (~line 520)**
-```toml
-[[redirects]]
-  from = "/docs/vcluster/0.XX.0/*"  # Update to new version
-  to = "/docs/vcluster/:splat"
-  status = 301
-  force = true
-```
+- Desktop sidebar (`src/theme/DocSidebar/Desktop/Content/index.js`): filters `useVersions()` and passes visible names to `DocsVersionDropdownNavbarItem` `versions` prop
+- Mobile TOC (`src/theme/TOCCollapsible/index.js`): filters `useVersions()` before rendering
 
-#### 3. Create Hurl Test File
-
-**File:** `hack/test-vcluster-0.XX.hurl`
-
-**Process:**
-1. Copy previous version: `cp hack/test-vcluster-0.YY.hurl hack/test-vcluster-0.XX.hurl`
-2. Update header:
-   ```
-   # vCluster 0.XX Comprehensive Redirect Tests
-   # Usage: hurl --test --variable BASE_URL=https://deploy-preview-XXXX--vcluster-docs-site.netlify.app hack/test-vcluster-0.XX.hurl
-   ```
-3. Update redirect test (~line 207):
-   ```
-   # Test 32: vCluster 0.XX.0 wildcard redirect
-   GET {{BASE_URL}}/docs/vcluster/0.XX.0/introduction/what-are-virtual-clusters
-   ```
-4. Update verification tests (~line 441-448):
-   ```
-   body contains "vCluster 0.XX"
-   body contains "v0.XX Stable"
-   ```
-5. **Remove all line number references**: Do NOT include `(lines X-Y)` in section headers - they're volatile
-
-**IMPORTANT:** Hurl tests run AFTER PR is deployed to Netlify preview.
+Result: the version is built, accessible via direct URL (e.g., `/docs/vcluster/0.XX.0/`), shows the "unreleased" banner, but does not appear in the dropdown.
 
 ### Part 3: Verification (rc-1)
 
@@ -196,7 +138,7 @@ AI performs:
 2. ✅ Count CLI docs: `ls vcluster_versioned_docs/version-0.XX.0/cli/*.md | wc -l` (expect 90+)
 3. ✅ Check vcluster_versions.json includes new version
 4. ✅ All config changes applied
-5. ✅ Version is hidden from dropdown (not in `onlyIncludeVersions` or `lastVersion` yet)
+5. ✅ Version is hidden from dropdown (in `vclusterHiddenVersions` array in `versionConfig.js`)
 
 User performs:
 1. Build check: `npm run build` (not AI's responsibility)
@@ -210,28 +152,78 @@ User performs:
 
 This is the release-day action. All heavy work was done at rc-1. This PR only flips visibility.
 
-Changes in the config flip PR:
-
-1. `docusaurus.config.js` — `lastVersion`: set to new version (e.g., `"0.33.0"`)
-2. `docusaurus.config.js` — `onlyIncludeVersions`: add new version, remove oldest
-3. `docusaurus.config.js` — versions object: add new version with "Stable" label, demote previous
-4. `docusaurus.config.js` — SEO sitemap priorities: update to new version
-5. `docusaurus.config.js` — announcement bar: update version numbers
-6. `netlify.toml` — redirect: update to new version
-7. `hack/test-vcluster-0.XX.hurl` — create or update hurl test file
-
 PR title: `docs: expose vCluster 0.XX docs in version dropdown`
 PR body: "Config flip to make the pre-deployed v0.XX docs visible in the version dropdown. All content was deployed at rc-1."
+
+#### 1. `src/config/versionConfig.js` — unhide from dropdown
+
+```js
+export const vclusterHiddenVersions = [];  // Remove the version string
+```
+
+#### 2. `docusaurus.config.js` — promote to stable
+
+```js
+lastVersion: "0.XX.0",  // Was 0.YY.0 — now points to new version
+versions: {
+  "0.XX.0": {
+    label: "v0.XX Stable",  // Was "v0.XX" — add "Stable"
+    banner: "none",          // Was "unreleased" — remove banner
+    badge: true,
+    // noIndex removed — allow search engine indexing
+  },
+  "0.YY.0": {
+    label: "v0.YY",  // Was "v0.YY Stable" — demote
+    banner: "none",
+    badge: true,
+  },
+}
+```
+
+#### 3. `docusaurus.config.js` — SEO sitemap priorities
+
+```js
+if (item.url.match(/\/vcluster\/0\.XX\.0\//) ||
+    item.url.match(/\/platform\/X\.Y\.0\//)) {
+  return { ...item, priority: 1.0, changefreq: 'daily' };
+}
+```
+
+#### 4. `docusaurus.config.js` — announcement bar
+
+```js
+announcementBar: {
+  id: "vcluster-0-XX-release",
+  content: '... vCluster 0.XX ...',
+},
+```
+
+#### 5. `netlify.toml` — redirect
+
+```toml
+[[redirects]]
+  from = "/docs/vcluster/0.XX.0/*"
+  to = "/docs/vcluster/:splat"
+  status = 301
+  force = true
+```
+
+#### 6. `hack/test-vcluster-0.XX.hurl` — create hurl test
+
+Copy from previous version, update version numbers. Hurl tests run AFTER PR is deployed to Netlify preview.
 
 This PR is small, reviewable, and safe to merge by anyone with merge rights.
 
 ## Files Modified Summary
 
-| File | Changes | Lines |
+| File | Changes | Phase |
 |------|---------|-------|
-| `docusaurus.config.js` | Label, SEO, versions, banner | ~81, ~108, ~120, ~192-223, ~400 |
-| `netlify.toml` | Redirect | ~521 |
-| `hack/test-vcluster-0.XX.hurl` | New file | All |
+| `docusaurus.config.js` | Add to `onlyIncludeVersions`, add version with `banner: "unreleased"` + `noIndex: true` | rc-1 |
+| `src/config/versionConfig.js` | Add version to `vclusterHiddenVersions` array | rc-1 |
+| `docusaurus.config.js` | `lastVersion`, labels, SEO, announcement bar | Release day |
+| `src/config/versionConfig.js` | Remove version from `vclusterHiddenVersions` | Release day |
+| `netlify.toml` | Redirect | Release day |
+| `hack/test-vcluster-0.XX.hurl` | New file | Release day |
 
 ## Division of Responsibilities
 
