@@ -9,7 +9,7 @@
  */
 
 export const vclusterHiddenVersions = ["0.33.0"];
-export const platformHiddenVersions = [];
+export const platformHiddenVersions = ["4.8.0"];
 
 export const vclusterEOLVersions = [
   { to: "https://vcluster.com/docs/v0.28", label: "v0.28 (EOS)" },
