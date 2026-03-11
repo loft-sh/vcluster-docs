@@ -45,11 +45,19 @@ vcluster-docs-releaser/
 - "new vCluster version"
 - Linear issue: "docs updates for vCluster vX.Y release"
 
-### Workflow
-1. **User:** Create versioned docs (`npm run docusaurus docs:version:vcluster X.Y.Z`)
-2. **AI:** Update configurations (docusaurus.config.js, netlify.toml, hurl tests)
-3. **User:** Manual tasks (support dates, compatibility matrix, enterprise tags)
-4. **User:** Build and test (`npm run build`, hurl tests)
+### Workflow (rc-1 process, starting with v0.33)
+
+Versioning happens at rc-1, not on release day. The version deploys hidden, then a config flip PR exposes it on release day.
+
+rc-1 day:
+1. User: Create versioned docs (`npm run docusaurus docs:version:vcluster X.Y.Z`)
+2. AI: Update configurations (docusaurus.config.js, netlify.toml, hurl tests) — version is hidden from dropdown
+3. User: Manual tasks (support dates, compatibility matrix, enterprise tags)
+4. User: Build and test (`npm run build`, hurl tests)
+
+Release day:
+5. AI: Create config flip PR (updates lastVersion, onlyIncludeVersions, SEO, announcement bar)
+6. User: Merge config flip PR — version appears in dropdown
 
 ## Division of Labor
 
@@ -96,13 +104,16 @@ hurl --test --variable BASE_URL=https://deploy-preview-XXXX--vcluster-docs-site.
 
 ## Related Skills
 
-- **vcluster-docs-archiver** - Archive EOL versions to dedicated branches
-- **platform-docs-releaser** (future) - Platform release process
+- `vcluster-docs-archiver` — Archive EOL versions to dedicated branches
+- `platform-docs-releaser` — Platform release process
 
 ## Notes
 
-- This skill is for **vCluster only** (Platform has separate process)
-- User runs build - AI does not run npm commands
+- This skill is for vCluster only (Platform has separate process)
+- Starting with v0.33, versioning happens at rc-1, not on release day
+- Version deploys hidden at rc-1, config flip PR exposes it on release day
+- Contributors use `backport-v0.33` label for release-bound changes
+- User runs build — AI does not run npm commands
 - Hurl tests run after PR is deployed to Netlify
 - Keep 5-6 versions in `onlyIncludeVersions` for performance
 - Always remove "Stable" label from previous version when adding new one

@@ -1,3 +1,8 @@
+---
+name: k8s-compat-matrix
+description: Manages the Kubernetes compatibility matrix data and React component. Use when adding/removing K8s versions, updating conformance test results, or documenting known issues.
+---
+
 # Kubernetes Compatibility Matrix Skill
 
 ## Overview
