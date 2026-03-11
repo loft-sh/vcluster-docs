@@ -31,12 +31,36 @@ scripts/verify_version.sh 0.22.0
 Edit `docusaurus.config.js`:
 - Set `lastVersion: "0.22.0"` (actual version)
 - Set `onlyIncludeVersions: ["0.22.0"]` (only this version)
+- Set `noIndex: true` at top level (prevent search engine indexing)
+- Set `onBrokenLinks: "warn"` (cross-section mismatches are expected in archives)
 - Update main docs label to match version
+- Add archive announcement bar (yellow warning, not closeable, links to latest docs)
+
+Edit `src/config/versionConfig.js`:
+- Empty both hidden arrays: `vclusterHiddenVersions = []`, `platformHiddenVersions = []`
 
 Edit `src/theme/DocSidebar/Desktop/Content/index.js`:
 - Set `dropdownItemsAfter={[]}` (empty dropdown)
 
-See `references/docusaurus-config.md` for detailed configuration.
+See `references/docusaurus-config.md` and `references/platform-archiving.md` (section 4b) for detailed configuration.
+
+### Step 2b: Strip Version Prefix from Internal Links
+
+When a version becomes `lastVersion`, Docusaurus serves it without the version segment. Strip all internal links that include the version prefix:
+
+```bash
+# For platform archives (e.g., 4.5.0)
+find platform_versioned_docs/version-4.5.0 -name "*.mdx" \
+  -exec sed -i 's|/docs/platform/4.5.0/|/docs/platform/|g' {} +
+
+# For vCluster archives (e.g., 0.28.0)
+find vcluster_versioned_docs/version-0.28.0 -name "*.mdx" \
+  -exec sed -i 's|/docs/vcluster/0.28.0/|/docs/vcluster/|g' {} +
+```
+
+Expect 50-70+ replacements for platform archives. Verify with grep afterward.
+
+See `references/platform-archiving.md` (section 4c) for details.
 
 ### Step 3: Fix Broken Links
 ```bash
@@ -105,7 +129,7 @@ If dropdown merges first, users clicking EOL links will hit 404s.
 🚨 **NEVER perform git operations** - NO commits, NO PRs, NO branches, NO pushes
 - Platform `onlyIncludeVersions` MUST NOT be empty - use `["X.X.X"]`
 - NEVER set `includeCurrentVersion: false` - breaks partials
-- Use LATEST vCluster version with Platform archives (0.30.0, not 0.25.0)
+- Use LATEST vCluster version with Platform archives (0.32.0, not 0.25.0)
 - Clear cache after major fixes: `scripts/clear_cache.sh`
 
 See `references/critical-rules.md` for complete list.
