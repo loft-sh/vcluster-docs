@@ -80,8 +80,7 @@ export default function TOCCollapsibleWrapper(props) {
       {showVersionSelector && (
         <VersionSelectorCollapsible
           pluginId={pluginId}
-          eolVersions={eolVersions}
-          hiddenVersions={isVClusterDocs ? vclusterHiddenVersions : platformHiddenVersions}
+          eolVersions={[]}
         />
       )}
       <TOCCollapsible {...props} />

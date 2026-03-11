@@ -36,15 +36,13 @@ export default function ContentWrapper(props) {
       {shouldShowVClusterVersioning && (
         <VersionSelector
           docsPluginId="vcluster"
-          dropdownItemsAfter={getDesktopVersions(vclusterEOLVersions)}
-          hiddenVersions={vclusterHiddenVersions}
+          dropdownItemsAfter={[]}
         />
       )}
       {shouldShowPlatformVersioning && (
         <VersionSelector
           docsPluginId="platform"
-          dropdownItemsAfter={getDesktopVersions(platformEOLVersions)}
-          hiddenVersions={platformHiddenVersions}
+          dropdownItemsAfter={[]}
         />
       )}
       <Content {...props} />
