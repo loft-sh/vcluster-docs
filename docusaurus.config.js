@@ -49,7 +49,8 @@ const config = {
     },
   ],
 
-  onBrokenLinks: "throw",
+  noIndex: true,
+  onBrokenLinks: "warn",
   onBrokenMarkdownLinks: "warn",
 
   // Even if you don't use internationalization, you can use this field to set
@@ -217,36 +218,12 @@ const config = {
           [remarkVersionTokens, { siteDir: __dirname }],
         ],
         lastVersion: "0.32.0",
-        onlyIncludeVersions: ["current", "0.33.0", "0.32.0", "0.31.0", "0.30.0", "0.29.0"],
+        onlyIncludeVersions: ["0.32.0"],
         versions: {
-          current: {
-            label: "main 🚧",
-          },
-          "0.33.0": {
-            label: "v0.33",
-            banner: "unreleased",
-            badge: true,
-            noIndex: true,
-          },
           "0.32.0": {
-            label: "v0.32 Stable",
+            label: "v0.32",
             banner: "none",
-            badge: true,
-          },
-          "0.31.0": {
-            label: "v0.31",
-            banner: "none",
-            badge: true,
-          },
-          "0.30.0": {
-            label: "v0.30 (EOS)",
-            banner: "none",
-            badge: true,
-          },
-          "0.29.0": {
-            label: "v0.29 (EOS)",
-            banner: "none",
-            badge: true,
+            badge: false,
           },
         },
       },
@@ -264,27 +241,13 @@ const config = {
         beforeDefaultRemarkPlugins: [
           [remarkVersionTokens, { siteDir: __dirname }],
         ],
-        lastVersion: "4.7.0",
-        onlyIncludeVersions: ["current", "4.8.0", "4.7.0", "4.6.0"],
+        lastVersion: "4.5.0",
+        onlyIncludeVersions: ["4.5.0"],
         versions: {
-          current: {
-            label: "main 🚧",
-          },
-          "4.8.0": {
-            label: "v4.8",
-            banner: "unreleased",
-            badge: true,
-            noIndex: true,
-          },
-          "4.7.0": {
-            label: "v4.7 Stable",
+          "4.5.0": {
+            label: "v4.5 (EOS)",
             banner: "none",
-            badge: true,
-          },
-          "4.6.0": {
-            label: "v4.6",
-            banner: "none",
-            badge: true,
+            badge: false,
           },
         },
       },
@@ -418,12 +381,12 @@ const config = {
         additionalLanguages: ["bash", "hcl"],
       },
       announcementBar: {
-        id: "vcluster-0-32-release",
+        id: "platform-v4-5-eos",
         content:
-          '🚀 <strong>New releases: <a href="https://www.vcluster.com/releases/en/changelog?hideLogo=true&hideMenu=true&theme=dark&embed=true&c=vCluster" target="_blank">vCluster Platform 4.7 and vCluster 0.32</a></strong>',
-        backgroundColor: "#4a90e2",
-        textColor: "#ffffff",
-        isCloseable: true,
+          '⚠️ <strong>This is an archived version of the docs. Go to the <a href="https://vcluster.com/docs/platform/">latest Platform docs</a>.</strong>',
+        backgroundColor: "#e8a735",
+        textColor: "#000000",
+        isCloseable: false,
       },
     }
   ),
