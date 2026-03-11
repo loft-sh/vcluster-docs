@@ -2,9 +2,12 @@
 
 Complete checklist for Platform documentation releases.
 
-## Pre-Release
+Starting with v4.8, docs versioning happens at rc-1, not on release day.
+The version is deployed hidden, then exposed via a config flip PR on release day.
 
-- [ ] New Platform version released (e.g., 4.5.0)
+## Pre-Release (rc-1 day)
+
+- [ ] rc-1 for new Platform version cut (e.g., 4.8.0)
 - [ ] Version number confirmed with user
 - [ ] Working directory: `/home/decoder/loft/vcluster-docs`
 - [ ] On appropriate branch and up to date
@@ -132,17 +135,18 @@ Complete checklist for Platform documentation releases.
 - [ ] Add: New integrations if released
 - [ ] Verify: vCluster version compatibility with platform
 
-## Part 5: Build & Test
+## Part 5: Build & Test (rc-1 window)
 
-**User Responsibility:**
+User Responsibility:
 
 ### Build Check
 
 - [ ] Clear cache (optional): `rm -rf .docusaurus build node_modules/.cache`
 - [ ] Run build: `npm run build`
 - [ ] Check for errors: Build should complete successfully
-- [ ] **If build errors occur**: Check `CLAUDE.md` for instructions on fixing broken import paths in versioned docs
+- [ ] If build errors occur: Check `CLAUDE.md` for instructions on fixing broken import paths in versioned docs
 - [ ] Fix any broken links or issues
+- [ ] Verify hidden version is accessible via direct URL but not in dropdown
 
 ### Hurl Test (After PR Deployed)
 
@@ -158,13 +162,30 @@ Complete checklist for Platform documentation releases.
 - [ ] Verify: Cross-version references work
 - [ ] Fix: Any failing redirects
 
-## Part 6: Final Review & Merge
+## Part 5.5: Backport Window (rc-1 to release day)
 
-- [ ] Review all changes in PR
-- [ ] Verify checklist complete
-- [ ] Get approval if required
-- [ ] Merge PR to main
+- [ ] Contributors add `backport-v4.X.0` label to PRs that must land in the release
+- [ ] Backported content is merged to main and picked into the versioned docs
+- [ ] Team validates content against real deployed (hidden) docs
+
+## Part 6: Config Flip PR (Release Day)
+
+This is the release-day action. All heavy work was done at rc-1.
+
+- [ ] Create config flip PR with title: `docs: expose Platform X.Y docs in version dropdown`
+- [ ] Update `lastVersion` in `docusaurus.config.js`
+- [ ] Update versions object (add new with "Stable", demote previous)
+- [ ] Update SEO sitemap priorities
+- [ ] Update announcement bar
+- [ ] Update netlify redirect
+- [ ] Create/update hurl test file
+- [ ] PR is small, reviewable, safe to merge by anyone with merge rights
+- [ ] Merge config flip PR
 - [ ] Monitor production deployment
+- [ ] Verify version appears in dropdown
+
+## Part 7: Final Review
+
 - [ ] Verify site loads correctly
 - [ ] Test version dropdown works
 
