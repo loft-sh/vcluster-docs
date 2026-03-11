@@ -4,7 +4,7 @@
 
 Platform versions include vCluster documentation for compatibility. When archiving a Platform version, you must include a vCluster version.
 
-**Critical Rule**: Use LATEST vCluster version, not oldest!
+Critical rule: Use LATEST vCluster version, not oldest!
 
 ### Why This Matters
 
@@ -24,10 +24,10 @@ Platform versions include vCluster documentation for compatibility. When archivi
 
 ```bash
 # Platform version to archive
-PLATFORM_VERSION="4.2.0"
+PLATFORM_VERSION="4.5.0"
 
 # Use LATEST vCluster version
-VCLUSTER_VERSION="0.30.0"  # NOT 0.25.0!
+VCLUSTER_VERSION="0.32.0"  # NOT 0.25.0!
 
 # Verify both exist
 ls platform_versioned_docs/version-${PLATFORM_VERSION}
@@ -101,6 +101,76 @@ Set BOTH dropdowns to empty (archive branch has no version selector):
 ```javascript
 {shouldShowVClusterVersioning && <VersionSelector docsPluginId={"vcluster"} dropdownItemsAfter={[]} />}
 {shouldShowPlatformVersioning && <VersionSelector docsPluginId={"platform"} dropdownItemsAfter={[]} />}
+```
+
+### 4b. Archive-Specific Config Settings
+
+These settings apply only to archive branches, not to main:
+
+#### noIndex: true (top-level)
+Prevents search engines from indexing the archive. Add at the top level of the config:
+```javascript
+const config = {
+  // ...
+  noIndex: true,  // Archive should not be indexed
+  onBrokenLinks: "warn",  // See below
+  // ...
+}
+```
+
+#### onBrokenLinks: "warn"
+Archive branches pair mismatched product versions (e.g., vCluster 0.32 with Platform 4.5). Cross-section links between vCluster and Platform will have expected mismatches since paths change between versions. Set `onBrokenLinks: "warn"` to allow the build to succeed despite these expected cross-section broken links.
+
+#### Archive Announcement Bar
+Replace the existing announcement bar with an archive warning:
+```javascript
+announcementBar: {
+  id: "platform-v4-5-eos",
+  content:
+    'Warning: This is an archived version of the docs. Go to the <a href="https://vcluster.com/docs/platform/">latest Platform docs</a>.',
+  backgroundColor: "#e8a735",
+  textColor: "#000000",
+  isCloseable: false,
+},
+```
+
+#### versionConfig.js Cleanup
+Empty both hidden version arrays on the archive branch (only one version of each product is built):
+```javascript
+export const vclusterHiddenVersions = [];
+export const platformHiddenVersions = [];
+```
+
+### 4c. Strip Version Prefix from Internal Links
+
+When a version becomes `lastVersion`, Docusaurus serves it without the version segment in the URL. All internal links that include the version prefix must be stripped.
+
+Example: Platform 4.5 becomes lastVersion on the archive branch:
+- `/docs/platform/4.5.0/administer/clusters` must become `/docs/platform/administer/clusters`
+
+This typically affects 50-70+ links. Use bulk sed:
+```bash
+# Strip version prefix from all platform versioned docs
+find platform_versioned_docs/version-4.5.0 -name "*.mdx" \
+  -exec sed -i 's|/docs/platform/4.5.0/|/docs/platform/|g' {} +
+
+# Verify count
+grep -r "/docs/platform/4.5.0/" platform_versioned_docs/version-4.5.0/ | wc -l
+# Should be 0 after fix
+```
+
+Also check `docs/_partials/` for cross-version links that point to the archived version:
+```bash
+grep -r "/docs/platform/4.5.0/" docs/_partials/
+```
+
+If a partial links to the archived version and that version is excluded from the main build, update the link to point to the archive URL instead:
+```markdown
+<!-- WRONG - version excluded from build, will 404 -->
+[Migration guide](/docs/platform/4.5.0/reference/migrations/4-0-migration)
+
+<!-- CORRECT - point to archive site -->
+[Migration guide](https://platform-v4-5--vcluster-docs-site.netlify.app/docs/platform/reference/migrations/4-0-migration)
 ```
 
 ### 5. Fix Platform-Specific Links
