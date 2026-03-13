@@ -171,19 +171,76 @@ aws ec2 accept-vpc-peering-connection \
 
 Deploy the platform on each cluster using the `multiRegion` Helm values. Each cluster needs a **region-specific** `multiRegion.host` value (used as the DERP mesh endpoint), while `config.loftHost` should be the **shared GeoDNS domain**.
 
+Create a values file for each region. The only differences between regions are
+`multiRegion.host` and `multiRegion.region`.
+
+**U.S. region** (`platform-us-east-1-values.yaml`)
+
+```yaml
+admin:
+  email: <ADMIN_EMAIL>
+
+multiRegion:
+  enabled: true
+  host: us.multi-region.mydomain.com
+  region: us-east-1
+
+config:
+  loftHost: multi-region.mydomain.com
+  database:
+    enabled: true
+    dataSource: "mysql://<USERNAME>:<PASSWORD>@tcp(<DATABASE_URL>:3306)/kine?tls=skip-verify"
+    extraArgs:
+      - --datastore-max-open-connections=20
+      - --datastore-max-idle-connections=0
+
+  costControl:
+    enabled: false
+
+agentValues:
+  replicaCount: 2
+  env:
+    LEADER_ELECTION_ENABLED: "true"
+```
+
+**E.U. region** (`platform-eu-west-1-values.yaml`)
+
+```yaml
+admin:
+  email: <ADMIN_EMAIL>
+
+multiRegion:
+  enabled: true
+  host: eu.multi-region.mydomain.com
+  region: eu-west-1
+
+config:
+  loftHost: multi-region.mydomain.com
+  database:
+    enabled: true
+    dataSource: "mysql://<USERNAME>:<PASSWORD>@tcp(<DATABASE_URL>:3306)/kine?tls=skip-verify"
+    extraArgs:
+      - --datastore-max-open-connections=20
+      - --datastore-max-idle-connections=0
+
+  costControl:
+    enabled: false
+
+agentValues:
+  replicaCount: 2
+  env:
+    LEADER_ELECTION_ENABLED: "true"
+```
+
+Install the platform on each cluster using its values file.
+
 **U.S. region**
 
 ```bash
 helm upgrade loft vcluster-platform --install --create-namespace --repository-config='' \
   --namespace vcluster-platform \
   --repo "https://charts.loft.sh/" \
-  --set admin.email="<ADMIN_EMAIL>" \
-  --set multiRegion.enabled=true \
-  --set multiRegion.host="us.multi-region.mydomain.com" \
-  --set multiRegion.dataSource="mysql://<USERNAME>:<PASSWORD>@tcp(<DATABASE_URL>:3306)/kine?tls=skip-verify" \
-  --set multiRegion.dataSourceMaxConnections=20 \
-  --set costControl.enabled=false \
-  --set config.loftHost="multi-region.mydomain.com"
+  -f platform-us-east-1-values.yaml
 ```
 
 **E.U. region**
@@ -192,13 +249,7 @@ helm upgrade loft vcluster-platform --install --create-namespace --repository-co
 helm upgrade loft vcluster-platform --install --create-namespace --repository-config='' \
   --namespace vcluster-platform \
   --repo "https://charts.loft.sh/" \
-  --set admin.email="<ADMIN_EMAIL>" \
-  --set multiRegion.enabled=true \
-  --set multiRegion.host="eu.multi-region.mydomain.com" \
-  --set multiRegion.dataSource="mysql://<USERNAME>:<PASSWORD>@tcp(<DATABASE_URL>:3306)/kine?tls=skip-verify" \
-  --set multiRegion.dataSourceMaxConnections=20 \
-  --set costControl.enabled=false \
-  --set config.loftHost="multi-region.mydomain.com"
+  -f platform-eu-west-1-values.yaml
 ```
 
 Setting `multiRegion.enabled=true` automatically configures:
@@ -207,7 +258,7 @@ Setting `multiRegion.enabled=true` automatically configures:
 - DERP mesh networking between platform instances
 - Multi-region platform license check
 
-> **Tip:** For AWS deployments, you can use IAM authentication instead of a password in the connection string by adding `--set multiRegion.dataSourceIdentityProvider="aws"`. This requires configuring IAM database authentication on your RDS instance.
+> **Tip:** For AWS deployments, you can use IAM authentication instead of a password in the connection string by adding `multiRegion.dataSourceIdentityProvider: "aws"` to the values file. This requires configuring IAM database authentication on your RDS instance.
 
 ------------------------------------------------------------------------
 
@@ -295,51 +346,254 @@ spec:
 
 ### Step 8 - Configure Route 53 GeoDNS
 
-Create latency-based A (Alias) records in Route 53 pointing to each
-regional ALB and attach health checks.
+#### Create health checks
 
-Go to the AWS Route 53 console under Hosted Zone -> [Domain] -> Create Record
+Create an HTTPS health check for each regional ALB. Route 53 uses these to
+detect when a region is unavailable and fail over traffic automatically.
+
+**U.S. region**
+
+```bash
+aws route53 create-health-check \
+  --caller-reference "us-east-1-platform-healthz" \
+  --health-check-config '{
+    "FullyQualifiedDomainName": "us.multi-region.mydomain.com",
+    "Port": 443,
+    "Type": "HTTPS",
+    "ResourcePath": "/healthz",
+    "RequestInterval": 10,
+    "FailureThreshold": 3,
+    "EnableSNI": true
+  }'
+```
+
+**E.U. region**
+
+```bash
+aws route53 create-health-check \
+  --caller-reference "eu-west-1-platform-healthz" \
+  --health-check-config '{
+    "FullyQualifiedDomainName": "eu.multi-region.mydomain.com",
+    "Port": 443,
+    "Type": "HTTPS",
+    "ResourcePath": "/healthz",
+    "RequestInterval": 10,
+    "FailureThreshold": 3,
+    "EnableSNI": true
+  }'
+```
+
+Note the health check IDs from the output. You can tag them for easier identification:
+
+```bash
+aws route53 change-tags-for-resource \
+  --resource-type healthcheck --resource-id <HEALTH_CHECK_ID> \
+  --add-tags Key=Name,Value=<REGION>-platform-healthz
+```
+
+#### Create DNS records
+
+Create latency-based A (Alias) records in Route 53 pointing to each
+regional ALB. Attach the health checks created above so that Route 53 can
+fail over traffic when a region becomes unavailable.
+
+Replace `<US_HEALTH_CHECK_ID>` and `<EU_HEALTH_CHECK_ID>` with the IDs from the
+previous step, and `<US_ALB_HOSTED_ZONE_ID>`, `<EU_ALB_HOSTED_ZONE_ID>` with the
+canonical hosted zone IDs of each ALB.
+
+```bash
+aws route53 change-resource-record-sets \
+  --hosted-zone-id <HOSTED_ZONE_ID> \
+  --change-batch '{
+    "Changes": [
+      {
+        "Action": "UPSERT",
+        "ResourceRecordSet": {
+          "Name": "multi-region.mydomain.com",
+          "Type": "A",
+          "SetIdentifier": "us-east-1",
+          "Region": "us-east-1",
+          "HealthCheckId": "<US_HEALTH_CHECK_ID>",
+          "AliasTarget": {
+            "HostedZoneId": "<US_ALB_HOSTED_ZONE_ID>",
+            "DNSName": "<US_ALB_DNS_NAME>",
+            "EvaluateTargetHealth": true
+          }
+        }
+      },
+      {
+        "Action": "UPSERT",
+        "ResourceRecordSet": {
+          "Name": "multi-region.mydomain.com",
+          "Type": "A",
+          "SetIdentifier": "eu-west-1",
+          "Region": "eu-west-1",
+          "HealthCheckId": "<EU_HEALTH_CHECK_ID>",
+          "AliasTarget": {
+            "HostedZoneId": "<EU_ALB_HOSTED_ZONE_ID>",
+            "DNSName": "<EU_ALB_DNS_NAME>",
+            "EvaluateTargetHealth": true
+          }
+        }
+      }
+    ]
+  }'
+```
+
+Also create A records for the region-specific subdomains used by the DERP mesh
+and health checks:
 
 **U.S. region**
 
 ```
 Name: us.multi-region.mydomain.com
 Type: A (Alias)
-Routing Policy: Latency
-Region: us-east-1
 Alias target: US ALB
-Attach Health Check
 ```
 
 **E.U. region**
+
 ```
 Name: eu.multi-region.mydomain.com
 Type: A (Alias)
-Routing Policy: Latency
-Region: eu-west-1
 Alias target: EU ALB
-Attach Health Check
 ```
+
+#### Verify health checks
+
+Confirm both health checks are healthy before proceeding:
+
+```bash
+aws route53 get-health-check-status --health-check-id <HEALTH_CHECK_ID> \
+  --query 'HealthCheckObservations[].{Region:Region,Status:StatusReport.Status}' \
+  --output table
+```
+
+> **Important:** Without health checks attached to the latency-based records, Route 53 cannot detect regional failures and continues routing traffic to an unavailable region. Always verify that health checks are healthy before proceeding.
 
 ### Step 9 - Deploy the agent on the clusters
 
-Go to the platform UI and under Infra -> Clusters add a connected cluster, select the helm (advanced) option. 
+Go to the platform UI and under Infra -> Clusters, add a connected cluster and select the Helm (advanced) option.
 
-You will get a Helm command like the one below, change the namespace of where the agent will be deployed to `vcluster-agent`
-
+You get a Helm command with a `--values` URL that contains agent-specific configuration. The agent must be deployed in a **different namespace** than the platform (for example, `vcluster-agent`). The `agentValues` block in the platform values files (Step 5) controls the agent's replica count, leader election, and other settings.
 
 ```bash
-helm upgrade loft vcluster-platform --install --namespace vcluster-agent --repo https://charts.loft.sh/ --version 4.5.4 \
- --create-namespace \
- --set agentOnly=true \
- --set costControl.enabled=false \
- --set url=<LOFT_HOST_URL> \
- --set token=<access-token> \
- --values 'https://<platform-url>/clusters/agent-values/cluster-n9072?token=<access-token>'
+helm upgrade loft vcluster-platform --install --create-namespace --repository-config='' \
+  --namespace vcluster-agent \
+  --repo "https://charts.loft.sh/" \
+  --set agentOnly=true \
+  --set costControl.enabled=false \
+  --set url=<LOFT_HOST_URL> \
+  --set token=<ACCESS_TOKEN> \
+  --values 'https://<PLATFORM_URL>/clusters/agent-values/<CLUSTER_NAME>?token=<ACCESS_TOKEN>'
 ```
 
-Repeat the same on the second cluster
+Repeat on the second cluster with its own `url` and `token` values.
 
+
+## Upgrading a multi-region deployment
+
+This runbook describes how to upgrade vCluster Platform across regions with
+minimal downtime. The process upgrades one region at a time while the other
+continues serving traffic through GeoDNS failover.
+
+### Prerequisites
+
+- Updated values files for each region (for example, `platform-us-east-1-values.yaml` and `platform-eu-west-1-values.yaml`)
+- `kubectl` contexts configured for both clusters
+- The target chart version available in the Helm repository
+
+### Step 1 - Scale down the first region
+
+Pick the region to upgrade first and scale its platform deployment to zero.
+GeoDNS routes all traffic to the other region while this one is offline.
+
+```bash
+kubectl --context <FIRST_REGION_CONTEXT> \
+  scale deployment -n vcluster-platform loft --replicas=0
+```
+
+Wait for all pods to terminate before proceeding.
+
+```bash
+kubectl --context <FIRST_REGION_CONTEXT> \
+  get pods -n vcluster-platform -l app=loft --watch
+```
+
+### Step 2 - Upgrade the first region
+
+Run `helm upgrade` with the region's values file. The deployment stays at
+zero replicas after the upgrade because Helm does not override the manual
+scale-down.
+
+```bash
+helm upgrade loft vcluster-platform --install --create-namespace --repository-config='' \
+  --namespace vcluster-platform \
+  --repo "https://charts.loft.sh/" \
+  --version <CHART_VERSION> \
+  --kube-context <FIRST_REGION_CONTEXT> \
+  -f <FIRST_REGION_VALUES_FILE> \
+  --server-side=true --force-conflicts
+```
+
+### Step 3 - Upgrade the second region (rolling)
+
+Upgrade the second region without scaling down. Helm performs a rolling update
+so the region continues serving traffic during the upgrade.
+
+```bash
+helm upgrade loft vcluster-platform --install --create-namespace --repository-config='' \
+  --namespace vcluster-platform \
+  --repo "https://charts.loft.sh/" \
+  --version <CHART_VERSION> \
+  --kube-context <SECOND_REGION_CONTEXT> \
+  -f <SECOND_REGION_VALUES_FILE> \
+  --server-side=true --force-conflicts
+```
+
+Wait for the rollout to complete.
+
+```bash
+kubectl --context <SECOND_REGION_CONTEXT> \
+  rollout status deployment/loft -n vcluster-platform
+```
+
+### Step 4 - Scale up the first region
+
+Bring the first region back online.
+
+```bash
+kubectl --context <FIRST_REGION_CONTEXT> \
+  scale deployment -n vcluster-platform loft --replicas=3
+```
+
+Wait for all pods to become ready.
+
+```bash
+kubectl --context <FIRST_REGION_CONTEXT> \
+  rollout status deployment/loft -n vcluster-platform
+```
+
+### Step 5 - Verify all deployments
+
+Confirm that both platform and agent deployments are running the expected image.
+
+```bash
+for CTX in <FIRST_REGION_CONTEXT> <SECOND_REGION_CONTEXT>; do
+  echo "=== $CTX ==="
+  echo -n "Platform: " && kubectl --context "$CTX" get deployment -n vcluster-platform loft \
+    -o jsonpath='{.spec.template.spec.containers[0].image}' && echo
+  echo -n "Agent:    " && kubectl --context "$CTX" get deployment -n vcluster-agent loft \
+    -o jsonpath='{.spec.template.spec.containers[0].image}' && echo
+  echo
+done
+```
+
+If agents are on an older image, upgrade them separately using the agent values
+or re-register the clusters from the platform UI to pick up the new
+`agentValues` from the platform configuration.
+
+------------------------------------------------------------------------
 
 ## Result
 
