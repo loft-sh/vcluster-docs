@@ -7,6 +7,7 @@ sidebar_position: 5
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 import FeatureTable from '@site/src/components/FeatureTable';
+import Flow, {Step} from "@site/src/components/Flow";
 
 <FeatureTable names="auto-nodes-metal3" />
 
@@ -14,6 +15,30 @@ The Metal3 provider allows you to provision bare metal servers as Machines using
 When a Machine is requested, the platform claims an available `BareMetalHost` resource, configures it with the requested OS image and user data, and Ironic handles the PXE boot and OS installation on the physical server.
 
 This enables you to offer different configurations of bare metal servers, all managed through BareMetalHost resources on a host cluster. Machines can be used as private nodes for virtual clusters or provisioned independently.
+
+```mermaid
+flowchart LR
+    subgraph platform["vCluster Platform"]
+        direction LR
+        Machine["Machine"]
+        Select("Select BareMetalHost")
+        Configure("Configure image & userData")
+    end
+
+    subgraph host_cluster["Host Cluster"]
+        direction TB
+        BMH["BareMetalHost"]
+        Ironic["Ironic"]
+        Server["Physical Server"]
+    end
+
+    Machine -- "Triggers" --> Select
+    Select -- "Claims" --> BMH
+    Configure -- "Sets image & userData" --> BMH
+    BMH -- "Provisions via" --> Ironic
+    Ironic -- "PXE boot & OS install" --> Server
+    Server -- "Joins as Node" --> Machine
+```
 
 ## Overview
 
@@ -205,6 +230,138 @@ spec:
       properties:
         vcluster.com/os-image: ubuntu-noble
 ```
+
+## Get started
+
+This walkthrough covers the essential steps to go from a connected host cluster to a provisioned bare metal server.
+
+<Flow>
+<Step>
+Create BMC credentials.
+
+Create a Secret with the BMC username and password for your server. This Secret is referenced by the BareMetalHost resource.
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: server-01-bmc
+  namespace: metal3-system
+type: Opaque
+stringData:
+  username: admin
+  password: <BMC-PASSWORD>
+```
+
+```bash
+kubectl apply -f server-01-bmc-secret.yaml
+```
+</Step>
+
+<Step>
+Create a BareMetalHost.
+
+Register the physical server by creating a BareMetalHost resource. The `bmc.address` scheme determines which driver Metal3 uses (Redfish, IPMI, etc.). The `bootMACAddress` identifies the NIC used for PXE boot.
+
+```yaml
+apiVersion: metal3.io/v1alpha1
+kind: BareMetalHost
+metadata:
+  name: server-01
+  namespace: metal3-system
+  labels:
+    role: compute
+spec:
+  bmc:
+    address: redfish://192.168.1.100
+    credentialsName: server-01-bmc
+    disableCertificateVerification: true
+  bootMACAddress: "aa:bb:cc:dd:ee:01"
+```
+
+```bash
+kubectl apply -f server-01-bmh.yaml
+```
+
+The server moves through `registering` and `inspecting` states as Metal3 verifies BMC access and collects hardware inventory.
+</Step>
+
+<Step>
+Apply the NodeProvider.
+
+Create a NodeProvider that references your host cluster and defines at least one node type. The node type's label selector determines which BareMetalHosts it can claim.
+
+```yaml
+apiVersion: management.loft.sh/v1
+kind: NodeProvider
+metadata:
+  name: metal3-provider
+spec:
+  displayName: "Metal3 Bare Metal Provider"
+  metal3:
+    clusterRef:
+      cluster: bare-metal-cluster
+      namespace: metal3-system
+    deploy:
+      metal3:
+        enabled: true
+      dhcp:
+        enabled: true
+    nodeTypes:
+    - name: "compute-node"
+      displayName: "Compute Node"
+      resources:
+        cpu: "32"
+        memory: 128Gi
+      bareMetalHosts:
+        selector:
+          matchLabels:
+            role: compute
+      properties:
+        vcluster.com/os-image: ubuntu-noble
+```
+
+```bash
+kubectl apply -f metal3-provider.yaml
+```
+</Step>
+
+<Step>
+Verify the server reaches available state.
+
+Once the BareMetalHost passes inspection, it transitions to `available`. This means the server is registered, its hardware inventory is collected, and it is ready for provisioning.
+
+```bash
+kubectl get baremetalhost -n metal3-system
+```
+
+```text
+NAME        STATE       CONSUMER   ONLINE   ERROR
+server-01   available              true
+```
+</Step>
+
+<Step>
+Create a vCluster that claims the server.
+
+Create a vCluster with private nodes configured to use the Metal3 provider. The platform provisions a Machine, which claims the BareMetalHost and installs the OS through Ironic.
+
+```yaml
+privateNodes:
+  enabled: true
+  autoNodes:
+    - provider: metal3-provider
+      static:
+        - name: compute-nodes
+          quantity: 1
+          nodeTypeSelector:
+            - property: vcluster.com/node-type
+              value: compute-node
+```
+
+After provisioning completes, the server boots into the configured OS and joins the virtual cluster as a worker node.
+</Step>
+</Flow>
 
 ## Define NodeTypes
 
