@@ -180,37 +180,85 @@ aws iam create-policy \
   }'
 ```
 
-#### Create IRSA for the platform service account
+#### Create an IAM role for Pod Identity
 
-Create an IAM role for the `loft` service account in the `vcluster-platform`
-namespace on each cluster. This allows the platform pods to generate temporary
-IAM authentication tokens for the database connection.
+Create an IAM role with a trust policy that allows the EKS Pod Identity agent
+to assume it. Replace `<ACCOUNT_ID>` with your AWS account ID.
+
+```bash
+aws iam create-role \
+  --role-name PlatformKineRDSRole \
+  --assume-role-policy-document '{
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Principal": {
+          "Service": "pods.eks.amazonaws.com"
+        },
+        "Action": [
+          "sts:AssumeRole",
+          "sts:TagSession"
+        ]
+      }
+    ]
+  }'
+
+aws iam attach-role-policy \
+  --role-name PlatformKineRDSRole \
+  --policy-arn arn:aws:iam::<ACCOUNT_ID>:policy/RDSIAMAuthKine
+```
+
+#### Install the EKS Pod Identity Agent
+
+Install the Pod Identity Agent add-on on each cluster if it is not already
+present.
+
+```bash
+aws eks create-addon \
+  --cluster-name platform-multi-region-us-east-1 \
+  --addon-name eks-pod-identity-agent \
+  --region us-east-1
+
+aws eks create-addon \
+  --cluster-name platform-multi-region-eu-west-1 \
+  --addon-name eks-pod-identity-agent \
+  --region eu-west-1
+```
+
+#### Create Pod Identity associations
+
+Associate the IAM role with the `loft` service account in the
+`vcluster-platform` namespace on each cluster. This allows the platform pods to
+generate temporary IAM authentication tokens for the database connection.
 
 **U.S. region**
 
 ```bash
-eksctl create iamserviceaccount \
-  --cluster platform-multi-region-us-east-1 \
-  --region us-east-1 \
+aws eks create-pod-identity-association \
+  --cluster-name platform-multi-region-us-east-1 \
+  --role-arn arn:aws:iam::<ACCOUNT_ID>:role/PlatformKineRDSRole \
   --namespace vcluster-platform \
-  --name loft \
-  --attach-policy-arn arn:aws:iam::<ACCOUNT_ID>:policy/RDSIAMAuthKine \
-  --approve \
-  --override-existing-serviceaccounts
+  --service-account loft \
+  --region us-east-1
 ```
 
 **E.U. region**
 
 ```bash
-eksctl create iamserviceaccount \
-  --cluster platform-multi-region-eu-west-1 \
-  --region eu-west-1 \
+aws eks create-pod-identity-association \
+  --cluster-name platform-multi-region-eu-west-1 \
+  --role-arn arn:aws:iam::<ACCOUNT_ID>:role/PlatformKineRDSRole \
   --namespace vcluster-platform \
-  --name loft \
-  --attach-policy-arn arn:aws:iam::<ACCOUNT_ID>:policy/RDSIAMAuthKine \
-  --approve \
-  --override-existing-serviceaccounts
+  --service-account loft \
+  --region eu-west-1
 ```
+
+After creating the associations, restart the platform pods to pick up the new
+role.
+
+For more details on IAM database authentication with EKS Pod Identity, see
+[IAM database authentication](/docs/platform/administer/connector/iam_database).
 
 ### Step 4 - Create cross-region VPC peering
 
@@ -325,21 +373,19 @@ Setting `multiRegion.enabled=true` automatically configures:
 
 ### Step 6 - Configure HTTPS with AWS Certificate Manager (ACM)
 
-Request certificates per region and validate via DNS in Route 53.
+Request a certificate in each region that covers both the shared GeoDNS domain
+and the region-specific subdomain. The wildcard `*.multi-region.mydomain.com`
+covers the regional subdomains (`us.multi-region.mydomain.com`,
+`eu.multi-region.mydomain.com`), and `multi-region.mydomain.com` is added as a
+SAN to cover the apex.
 
-This will request Wildcard Certificate (Per Region), we will be issuing certificate for three subdomains:
-
-* multi-region.mydomain.com
-* us.multi-region.mydomain.com
-* eu.multi-region.mydomain.com
-
-Replace `<AWS_REGION>` with the AWS region.
+Run this command in each region, replacing `<AWS_REGION>`.
 
 ```bash
 aws acm request-certificate \
   --region <AWS_REGION> \
-  --domain-name "*.us.multi-region.mydomain.com" \
-  --subject-alternative-names "us.multi-region.mydomain.com" \
+  --domain-name "multi-region.mydomain.com" \
+  --subject-alternative-names "*.multi-region.mydomain.com" \
   --validation-method DNS
 ```
 
