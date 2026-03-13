@@ -123,7 +123,8 @@ helm install aws-load-balancer-controller eks/aws-load-balancer-controller \
 
 ### Step 3 - Create the database (Kine backend)
 
-Create an RDS instance (MariaDB) in the same VPC as one of the clusters.
+Create an RDS instance (MariaDB) in the same VPC as one of the clusters with
+IAM database authentication enabled.
 
 ```bash
 aws rds create-db-instance \
@@ -134,21 +135,76 @@ aws rds create-db-instance \
   --db-instance-class db.t3.medium \
   --master-username admin \
   --db-subnet-group-name <EKS_CLUSTER_VPC> \
-  --master-user-password <PASSWORD>
+  --master-user-password <ADMIN_PASSWORD> \
+  --enable-iam-database-authentication
 ```
 
-#### Create the Kine database
+#### Create the Kine database and IAM user
 
-When the database is created, connect to the database instance and run the command below.
+When the database is available, connect to the database instance as the `admin`
+user and create the `kine` database and user. The user authenticates with the
+`AWSAuthenticationPlugin` instead of a password.
 
 ``` sql
 CREATE DATABASE IF NOT EXISTS kine;
 
-DROP USER IF EXISTS 'kine'@'%';
-CREATE USER '<USERNAME>'@'%' IDENTIFIED BY '<PASSWORD>';
-
-GRANT ALL PRIVILEGES ON kine.* TO '<USERNAME>'@'%';
+CREATE USER 'kine'@'%' IDENTIFIED WITH AWSAuthenticationPlugin AS 'RDS';
+GRANT ALL PRIVILEGES ON kine.* TO 'kine'@'%';
 FLUSH PRIVILEGES;
+```
+
+#### Create an IAM policy for RDS access
+
+Create an IAM policy that grants the `rds-db:connect` permission for the `kine`
+database user. Replace `<ACCOUNT_ID>` with your AWS account ID and
+`<DBI_RESOURCE_ID>` with the RDS instance resource ID (found via
+`aws rds describe-db-instances --query 'DBInstances[0].DbiResourceId'`).
+
+```bash
+aws iam create-policy \
+  --policy-name RDSIAMAuthKine \
+  --policy-document '{
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Action": "rds-db:connect",
+        "Resource": "arn:aws:rds-db:<AWS_REGION>:<ACCOUNT_ID>:dbuser:<DBI_RESOURCE_ID>/kine"
+      }
+    ]
+  }'
+```
+
+#### Create IRSA for the platform service account
+
+Create an IAM role for the `loft` service account in the `vcluster-platform`
+namespace on each cluster. This allows the platform pods to generate temporary
+IAM authentication tokens for the database connection.
+
+**U.S. region**
+
+```bash
+eksctl create iamserviceaccount \
+  --cluster platform-multi-region-us-east-1 \
+  --region us-east-1 \
+  --namespace vcluster-platform \
+  --name loft \
+  --attach-policy-arn arn:aws:iam::<ACCOUNT_ID>:policy/RDSIAMAuthKine \
+  --approve \
+  --override-existing-serviceaccounts
+```
+
+**E.U. region**
+
+```bash
+eksctl create iamserviceaccount \
+  --cluster platform-multi-region-eu-west-1 \
+  --region eu-west-1 \
+  --namespace vcluster-platform \
+  --name loft \
+  --attach-policy-arn arn:aws:iam::<ACCOUNT_ID>:policy/RDSIAMAuthKine \
+  --approve \
+  --override-existing-serviceaccounts
 ```
 
 ### Step 4 - Create cross-region VPC peering
@@ -189,7 +245,8 @@ config:
   loftHost: multi-region.mydomain.com
   database:
     enabled: true
-    dataSource: "mysql://<USERNAME>:<PASSWORD>@tcp(<DATABASE_URL>:3306)/kine?tls=skip-verify"
+    dataSource: "mysql://kine@tcp(<DATABASE_URL>:3306)/kine?tls=skip-verify"
+    identityProvider: "aws"
     extraArgs:
       - --datastore-max-open-connections=20
       - --datastore-max-idle-connections=0
@@ -218,7 +275,8 @@ config:
   loftHost: multi-region.mydomain.com
   database:
     enabled: true
-    dataSource: "mysql://<USERNAME>:<PASSWORD>@tcp(<DATABASE_URL>:3306)/kine?tls=skip-verify"
+    dataSource: "mysql://kine@tcp(<DATABASE_URL>:3306)/kine?tls=skip-verify"
+    identityProvider: "aws"
     extraArgs:
       - --datastore-max-open-connections=20
       - --datastore-max-idle-connections=0
@@ -257,8 +315,6 @@ Setting `multiRegion.enabled=true` automatically configures:
 - Leader election across regions
 - DERP mesh networking between platform instances
 - Multi-region platform license check
-
-> **Tip:** For AWS deployments, you can use IAM authentication instead of a password in the connection string by adding `multiRegion.dataSourceIdentityProvider: "aws"` to the values file. This requires configuring IAM database authentication on your RDS instance.
 
 ------------------------------------------------------------------------
 
