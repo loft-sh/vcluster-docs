@@ -388,7 +388,7 @@ const config = {
       },
       algolia: {
         appId: "K85RIQNFGF",
-        apiKey: "057a9f939df7215d92c8171d47352c54",
+        apiKey: "7c88fbdab6aea75d67f1f52e41b5d456",
         indexName: "vcluster",
         placeholder: "Search...",
         externalUrlRegex: "vcluster\\.com\/docs\/v0\\.19",
