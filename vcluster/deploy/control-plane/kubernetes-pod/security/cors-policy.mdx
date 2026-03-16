@@ -2,13 +2,9 @@
 title: Configure CORS policy for the API server
 sidebar_label: CORS policy
 sidebar_position: 8
-description: Configure Cross-Origin Resource Sharing (CORS) allowed origins on the virtual cluster API server.
+description: Configure Cross-Origin Resource Sharing (CORS) allowed origins on the virtual cluster API server using ingress annotations.
 ---
 
-import Tabs from '@theme/Tabs';
-import TabItem from '@theme/TabItem';
-import Flow, { Step } from "@site/src/components/Flow";
-import InterpolatedCodeBlock from "@site/src/components/InterpolatedCodeBlock";
 import BasePrerequisites from '@site/docs/_partials/base-prerequisites.mdx';
 
 <!-- vale Google.Headings = NO -->
@@ -21,231 +17,21 @@ Control which browser-based origins can make cross-origin requests to the <Gloss
 
 <BasePrerequisites />
 
-- (API server flag method only) The <GlossaryTerm term="k8s">K8s</GlossaryTerm> distribution configured for your virtual cluster. The [ingress-level approach](#ingress-cors) works with any distribution.
+- An ingress controller (such as ingress-nginx) deployed on the host cluster.
 
 ## Overview
 
 Browsers enforce the [same-origin policy](https://developer.mozilla.org/en-US/docs/Web/Security/Same-origin_policy) for cross-origin requests. When browser-based tools such as dashboards or monitoring UIs connect directly to the virtual cluster API server, requests from a different origin are blocked unless the server includes the correct CORS response headers.
 
-The platform doesn't set CORS headers by default. Since the vCluster Platform is self-hosted, you must configure CORS manually if you expose the API server through an [ingress](../../../../configure/vcluster-yaml/control-plane/deployment/ingress.mdx) or [AccessPoint](../../../../key-features/ingress-access.mdx) and browser-based clients need access. Use one of these methods:
-
-- **API server flag** (K8s distribution only): pass `--cors-allowed-origins` through `extraArgs`. This works with the default SSL passthrough configuration.
-- **Ingress annotations**: configure your ingress controller to add CORS headers. This requires TLS termination at the ingress (not SSL passthrough).
+The platform doesn't set CORS headers by default. Since the vCluster Platform is self-hosted, you must configure CORS manually if you expose the API server through an [ingress](../../../../configure/vcluster-yaml/control-plane/deployment/ingress.mdx) or [AccessPoint](../../../../key-features/ingress-access.mdx) and browser-based clients need access. Configure your ingress controller to add CORS headers at the network layer.
 
 :::info When CORS configuration is needed
 Most `kubectl` and in-cluster service-to-service traffic doesn't involve browsers, so CORS headers are irrelevant. Configure CORS only when browser-based clients connect directly to the API server from a different origin.
 :::
 
-## Configure allowed origins
+## Configure ingress-level CORS {#ingress-cors}
 
-Pass the `--cors-allowed-origins` flag through the API server extra arguments in your `vcluster.yaml`:
-
-```yaml title="vcluster.yaml"
-controlPlane:
-  distro:
-    k8s:
-      enabled: true
-      apiServer:
-        extraArgs:
-          # Each entry is a Go regular expression matched against the Origin header
-          - --cors-allowed-origins=https://dashboard\.example\.com,https://monitoring\.example\.com
-```
-
-The flag value is a comma-separated list of [Go regular expressions](https://pkg.go.dev/regexp). A request is allowed if any pattern matches the full `Origin` header value.
-
-:::warning Escape dots in domain names
-Dots (`.`) are regular expression wildcards. Use `\.` to match a literal dot. An unescaped dot in `example.com` also matches `exampleXcom`, which may permit unintended origins.
-:::
-
-### Pattern examples
-
-| Pattern | Matches | Use case |
-|---------|---------|----------|
-| `https://dashboard\.example\.com` | Exact origin | Single known dashboard |
-| `https://.*\.example\.com` | Any subdomain of `example.com` over HTTPS | Multiple internal tools on subdomains |
-| `https://dashboard\.example\.com:\d+` | Any port on a specific host | Development with dynamic ports |
-| `http://localhost:\d+` | Localhost on any port over HTTP | Local development only |
-
-<!-- vale Google.Headings = NO -->
-## Deploy with CORS settings
-<!-- vale Google.Headings = YES -->
-
-<Flow>
-<Step>
-
-Create a `vcluster.yaml` with the allowed origins for your environment:
-
-<InterpolatedCodeBlock
-  code={'controlPlane:\n' +
-'  distro:\n' +
-'    k8s:\n' +
-'      enabled: true\n' +
-'      apiServer:\n' +
-'        extraArgs:\n' +
-'          - --cors-allowed-origins=[[VAR:CORS_ORIGINS:https://dashboard\\.example\\.com]]'}
-  language="yaml"
-/>
-
-</Step>
-<Step>
-
-Deploy or upgrade your virtual cluster with the configuration:
-
-<InterpolatedCodeBlock
-  code={'vcluster create [[VAR:VCLUSTER_NAME:my-vcluster]] \\\n' +
-'  --namespace [[VAR:NAMESPACE:vcluster-cors]] \\\n' +
-'  --values vcluster.yaml'}
-  language="bash"
-/>
-
-</Step>
-<Step>
-
-Verify the flag is present on the running API server process:
-
-```bash
-kubectl exec -n <namespace> <vcluster-name>-0 -c kubernetes -- \
-  ps aux | grep cors-allowed-origins
-```
-
-The output should include your `--cors-allowed-origins` flag value.
-
-</Step>
-</Flow>
-
-## Configuration examples
-
-<Tabs>
-<TabItem value="single" label="Single origin">
-
-Allow one specific dashboard:
-
-```yaml title="vcluster.yaml"
-controlPlane:
-  distro:
-    k8s:
-      enabled: true
-      apiServer:
-        extraArgs:
-          - --cors-allowed-origins=https://dashboard\.example\.com
-```
-
-</TabItem>
-<TabItem value="multi" label="Multiple origins">
-
-Allow several known tools:
-
-```yaml title="vcluster.yaml"
-controlPlane:
-  distro:
-    k8s:
-      enabled: true
-      apiServer:
-        extraArgs:
-          - --cors-allowed-origins=https://dashboard\.example\.com,https://grafana\.example\.com,https://argocd\.example\.com
-```
-
-</TabItem>
-<TabItem value="subdomain" label="Subdomain wildcard">
-
-Allow all subdomains under a parent domain:
-
-```yaml title="vcluster.yaml"
-controlPlane:
-  distro:
-    k8s:
-      enabled: true
-      apiServer:
-        extraArgs:
-          # Matches https://anything.internal.example.com
-          - --cors-allowed-origins=https://.*\.internal\.example\.com
-```
-
-</TabItem>
-<TabItem value="dev" label="Local development">
-
-Allow localhost during development:
-
-```yaml title="vcluster.yaml"
-controlPlane:
-  distro:
-    k8s:
-      enabled: true
-      apiServer:
-        extraArgs:
-          # Matches http://localhost on any port
-          - --cors-allowed-origins=http://localhost:\d+
-```
-
-</TabItem>
-</Tabs>
-
-## Security considerations
-
-### Avoid overly broad patterns
-
-Setting `--cors-allowed-origins=.*` allows every origin and disables CORS protection entirely. This exposes the API server to cross-site request attacks from any website a user visits.
-
-:::danger
-Never use `--cors-allowed-origins=.*` in production. Restrict origins to the specific domains that need access.
-:::
-
-### Principle of least privilege
-
-- List only the exact origins that need browser-based API access.
-- Prefer full domain patterns (`https://dashboard\.example\.com`) over broad wildcards (`https://.*`).
-- Separate development and production configurations. Localhost patterns shouldn't appear in production values.
-
-<!-- vale Google.Headings = NO -->
-### CORS doesn't replace authentication
-<!-- vale Google.Headings = YES -->
-
-CORS headers control which origins a browser permits for cross-origin requests. They don't authenticate or authorize API calls. The virtual cluster's RBAC, authentication tokens, and network policies remain the primary access controls.
-
-<!-- vale Google.Headings = NO -->
-## Troubleshoot CORS issues
-<!-- vale Google.Headings = YES -->
-
-### Browser shows "blocked by CORS policy"
-
-The API server didn't return an `Access-Control-Allow-Origin` header for the requesting origin. Verify the following:
-
-1. The `--cors-allowed-origins` flag is set and the virtual cluster is using the K8s distribution.
-2. The pattern matches the exact origin the browser sends (scheme, host, and port must all match).
-3. Dots in domain names are escaped with `\.` in the regular expression.
-
-### Test with curl
-
-Send a preflight request to confirm the API server returns CORS headers:
-
-```bash
-curl -v -X OPTIONS \
-  -H "Origin: https://dashboard.example.com" \
-  -H "Access-Control-Request-Method: GET" \
-  https://<api-server-url>/api/v1/namespaces
-```
-
-A correct response includes these headers:
-
-```
-Access-Control-Allow-Origin: https://dashboard.example.com
-Access-Control-Allow-Methods: POST, GET, OPTIONS, PUT, DELETE, PATCH
-Access-Control-Allow-Headers: Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, X-Requested-With, If-Modified-Since
-```
-
-If these headers are missing, the origin doesn't match any configured pattern.
-
-### Verify the running configuration
-
-Check that the extra arguments were applied to the API server:
-
-```bash
-kubectl get pods -n <namespace> <vcluster-name>-0 -o jsonpath='{.spec.containers[?(@.name=="kubernetes")].args}' | tr ',' '\n' | grep cors
-```
-
-## Alternative: ingress-level CORS {#ingress-cors}
-
-If you use K3s or prefer to manage CORS at the network layer, configure your ingress controller to add CORS headers. This requires TLS termination at the ingress rather than the default SSL passthrough.
+Configure your ingress controller to add CORS headers. This requires TLS termination at the ingress rather than the default SSL passthrough.
 
 ### ingress-nginx
 
@@ -275,7 +61,7 @@ controlPlane:
 ```
 
 :::warning SSL passthrough must be disabled
-The default vCluster ingress uses `ssl-passthrough: true`, which forwards encrypted traffic directly to the API server. With SSL passthrough, the ingress controller can't read or modify HTTP headers, so CORS annotations are ignored. The configuration above omits `ssl-passthrough` and provides a TLS secret for the ingress to end TLS itself.
+The default vCluster ingress uses `ssl-passthrough: true`, which forwards encrypted traffic directly to the API server. With SSL passthrough, the ingress controller can't read or modify HTTP headers, so CORS annotations are ignored. The configuration above omits `ssl-passthrough` and provides a TLS secret for the ingress to terminate TLS itself.
 :::
 
 ### Annotation reference
@@ -304,15 +90,68 @@ Traefik and Istio support CORS through their own configuration mechanisms:
 - **Istio**: Use the [`corsPolicy` field](https://istio.io/latest/docs/reference/config/networking/virtual-service/) on a VirtualService.
 - **Gateway API**: The experimental CORS filter (Gateway API v1.3+) supports CORS on HTTPRoute resources. See the [Gateway API CORS guide](https://gateway-api.sigs.k8s.io/guides/http-cors/) for details.
 
+## Security considerations
+
+### Avoid overly broad origins
+
+Setting `cors-allow-origin` to `"*"` allows every origin and disables CORS protection entirely. This exposes the API server to cross-site request attacks from any website a user visits.
+
+:::danger
+Never use `cors-allow-origin: "*"` in production. Restrict origins to the specific domains that need access.
+:::
+
+### Principle of least privilege
+
+- List only the exact origins that need browser-based API access.
+- Prefer specific origins (`https://dashboard.example.com`) over wildcards.
+- Separate development and production configurations. Localhost origins shouldn't appear in production values.
+
+<!-- vale Google.Headings = NO -->
+### CORS doesn't replace authentication
+<!-- vale Google.Headings = YES -->
+
+CORS headers control which origins a browser permits for cross-origin requests. They don't authenticate or authorize API calls. The virtual cluster's RBAC, authentication tokens, and network policies remain the primary access controls.
+
+<!-- vale Google.Headings = NO -->
+## Troubleshoot CORS issues
+<!-- vale Google.Headings = YES -->
+
+### Browser shows "blocked by CORS policy"
+
+The ingress didn't return an `Access-Control-Allow-Origin` header for the requesting origin. Verify the following:
+
+1. The `enable-cors` annotation is set to `"true"` on the ingress.
+2. The `cors-allow-origin` value matches the exact origin the browser sends (scheme, host, and port must all match).
+3. SSL passthrough is disabled so the ingress controller can modify response headers.
+
+### Test with curl
+
+Send a preflight request to confirm the ingress returns CORS headers:
+
+```bash
+curl -v -X OPTIONS \
+  -H "Origin: https://dashboard.example.com" \
+  -H "Access-Control-Request-Method: GET" \
+  https://<api-server-url>/api/v1/namespaces
+```
+
+A correct response includes these headers:
+
+```
+Access-Control-Allow-Origin: https://dashboard.example.com
+Access-Control-Allow-Methods: GET, POST, PUT, DELETE, PATCH, OPTIONS
+Access-Control-Allow-Headers: Authorization, Content-Type
+```
+
+If these headers are missing, check the ingress annotations and confirm SSL passthrough is disabled.
+
 ## Limitations
 
-- The API server `--cors-allowed-origins` flag is only available with the K8s distribution. The K3s distribution bundles the API server differently and doesn't expose this flag. Use [ingress-level CORS](#ingress-cors) instead.
-- Changes to `extraArgs` require an upgrade of the virtual cluster (`vcluster create --upgrade` or `helm upgrade`). The API server process must restart for new values to take effect.
-- The `--cors-allowed-origins` flag uses Go regular expressions, not glob patterns. Special regular expression characters (`.*+?()[]{}|^$\`) must be handled accordingly.
 - Ingress-level CORS requires TLS termination at the ingress controller, which changes the TLS certificate presented to clients from the API server certificate to the ingress certificate.
+- Changes to ingress annotations require an upgrade of the virtual cluster (`vcluster create --upgrade` or `helm upgrade`) for the ingress resource to be updated.
 
 ## Related topics
 
-- [K8s distribution configuration](../../../../configure/vcluster-yaml/control-plane/components/distro/k8s.mdx)
+- [Ingress configuration](../../../../configure/vcluster-yaml/control-plane/deployment/ingress.mdx)
 - [Hardening guide](./hardening-guide/overview.mdx)
 - [Deploy vCluster behind a corporate proxy](./corporate-proxy.mdx)
