@@ -360,7 +360,7 @@ const config = {
             target: "_blank",
           },
           {
-            href: "https://regal-pastelito-60936d.netlify.app/docs",
+            href: "https://vml-docs.netlify.app/docs",
             label: "vMetal",
             position: "left",
             target: "_blank",
