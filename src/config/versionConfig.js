@@ -8,8 +8,8 @@
  * `versions` and `onlyIncludeVersions` config.
  */
 
-export const vclusterHiddenVersions = ["0.33.0"];
-export const platformHiddenVersions = ["4.8.0"];
+export const vclusterHiddenVersions = [];
+export const platformHiddenVersions = [];
 
 export const vclusterEOLVersions = [
   { to: "https://vcluster.com/docs/v0.28", label: "v0.28 (EOS)" },
