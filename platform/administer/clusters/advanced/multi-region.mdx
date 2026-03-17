@@ -3,13 +3,18 @@ sidebar_label: Multi-Region Platform
 title: Multi-Region Platform
 ---
 
+import Tabs from "@theme/Tabs";
+import TabItem from "@theme/TabItem";
+
 # Multi-region platform
 
 This document explains how to configure a multi-region platform setup for vCluster Platform that uses a shared database as the backing store and replicates the Platform across different regions.
 
-> **Important:** Converting an existing single-region platform installation to
-> multi-region is not supported. Multi-region must be configured as a fresh
-> installation following the steps below.
+:::warning Important
+Converting an existing single-region platform installation to
+multi-region is not supported. Multi-region must be configured as a fresh
+installation following the steps below.
+:::
 
 ## AWS (EKS)
 
@@ -31,9 +36,9 @@ Before you begin, ensure you have:
 
 ### Step 1 - Create two EKS clusters
 
-> **Important:**\
-> The clusters must use **different VPC CIDR ranges** to allow
-> cross-region VPC peering.
+:::warning Important
+The clusters must use **different VPC CIDR ranges** to allow cross-region VPC peering.
+:::
 
 **U.S. region**
 
@@ -130,10 +135,9 @@ helm install aws-load-balancer-controller eks/aws-load-balancer-controller \
 Create an RDS instance (MariaDB) in the same VPC as one of the clusters with
 IAM database authentication enabled.
 
-> **Important:** For production multi-region deployments, configure RDS in an
-> active-active setup so the database automatically fails over between regions.
-> See [Active-Active Replication on Amazon RDS for MySQL](https://aws.amazon.com/solutions/guidance/active-active-replication-on-amazon-rds-for-mysql/)
-> for guidance on setting this up.
+:::warning Important
+For production multi-region deployments, configure RDS in an active-active setup so the database automatically fails over between regions. See [Active-Active Replication on Amazon RDS for MySQL](https://aws.amazon.com/solutions/guidance/active-active-replication-on-amazon-rds-for-mysql/) for guidance on setting this up.
+:::
 
 ```bash
 aws rds create-db-instance \
@@ -298,6 +302,10 @@ multiRegion:
   host: us.multi-region.mydomain.com
   region: us-east-1
 
+replicaCount: 3
+env:
+  LEADER_ELECTION_ENABLED: "true"
+
 config:
   loftHost: multi-region.mydomain.com
   database:
@@ -312,7 +320,7 @@ config:
     enabled: false
 
 agentValues:
-  replicaCount: 2
+  replicaCount: 3
   env:
     LEADER_ELECTION_ENABLED: "true"
 ```
@@ -328,6 +336,10 @@ multiRegion:
   host: eu.multi-region.mydomain.com
   region: eu-west-1
 
+replicaCount: 3
+env:
+  LEADER_ELECTION_ENABLED: "true"
+
 config:
   loftHost: multi-region.mydomain.com
   database:
@@ -342,12 +354,42 @@ config:
     enabled: false
 
 agentValues:
-  replicaCount: 2
+  replicaCount: 3
   env:
     LEADER_ELECTION_ENABLED: "true"
 ```
 
 Install the platform on each cluster using its values file.
+
+<Tabs
+  defaultValue="cli"
+  values={[
+    { label: "vCluster CLI", value: "cli" },
+    { label: "Helm", value: "helm" },
+  ]}
+>
+  <TabItem value="cli">
+
+**U.S. region**
+
+```bash
+vcluster platform start \
+  --namespace vcluster-platform \
+  --values platform-us-east-1-values.yaml \
+  --no-tunnel
+```
+
+**E.U. region**
+
+```bash
+vcluster platform start \
+  --namespace vcluster-platform \
+  --values platform-eu-west-1-values.yaml \
+  --no-tunnel
+```
+
+  </TabItem>
+  <TabItem value="helm">
 
 **U.S. region**
 
@@ -366,6 +408,9 @@ helm upgrade loft vcluster-platform --install --create-namespace --repository-co
   --repo "https://charts.loft.sh/" \
   -f platform-eu-west-1-values.yaml
 ```
+
+  </TabItem>
+</Tabs>
 
 Setting `multiRegion.enabled=true` automatically configures:
 - Embedded Kubernetes (Kine) with the shared database
@@ -580,26 +625,55 @@ aws route53 get-health-check-status --health-check-id <HEALTH_CHECK_ID> \
   --output table
 ```
 
-> **Important:** Without health checks attached to the latency-based records, Route 53 cannot detect regional failures and continues routing traffic to an unavailable region. Always verify that health checks are healthy before proceeding.
+:::warning Important
+Without health checks attached to the latency-based records, Route 53 cannot detect regional failures and continues routing traffic to an unavailable region. Always verify that health checks are healthy before proceeding.
+:::
 
 ### Step 9 - Deploy the agent on the clusters
 
+The agent must be deployed in a **different namespace** than the platform (for example, `vcluster-agent`). The `agentValues` block in the platform values files (Step 5) controls the agent's replica count, leader election, and other settings.
+
+<Tabs
+  defaultValue="cli"
+  values={[
+    { label: "vCluster CLI", value: "cli" },
+    { label: "Helm", value: "helm" },
+  ]}
+>
+  <TabItem value="cli">
+
+Use the vCluster CLI to add each cluster as a connected cluster:
+
+```bash
+vcluster platform add cluster <CLUSTER_NAME> \
+  --namespace vcluster-agent \
+  --display-name <DISPLAY_NAME> \
+  --values 'https://<PLATFORM_URL>/clusters/agent-values/<CLUSTER_NAME>?token=<ACCESS_TOKEN>'
+```
+
+Repeat on the second cluster with its own `<CLUSTER_NAME>` and `<DISPLAY_NAME>`.
+
+  </TabItem>
+  <TabItem value="helm">
+
 Go to the platform UI and under Infra -> Clusters, add a connected cluster and select the Helm (advanced) option.
 
-You get a Helm command with a `--values` URL that contains agent-specific configuration. The agent must be deployed in a **different namespace** than the platform (for example, `vcluster-agent`). The `agentValues` block in the platform values files (Step 5) controls the agent's replica count, leader election, and other settings.
+You get a Helm command with a `--values` URL that contains agent-specific configuration.
 
 ```bash
 helm upgrade loft vcluster-platform --install --create-namespace --repository-config='' \
   --namespace vcluster-agent \
   --repo "https://charts.loft.sh/" \
   --set agentOnly=true \
-  --set costControl.enabled=false \
   --set url=<LOFT_HOST_URL> \
   --set token=<ACCESS_TOKEN> \
-  --values 'https://<PLATFORM_URL>/clusters/agent-values/<CLUSTER_NAME>?token=<ACCESS_TOKEN>'
+  --values 'https://[PLATFORM_URL]/clusters/agent-values/[CLUSTER_NAME]?token=[ACCESS_TOKEN]'
 ```
 
-Repeat on the second cluster with its own `url` and `token` values.
+Repeat on the second cluster with its own `<LOFT_HOST_URL>` and `<ACCESS_TOKEN>` values.
+
+  </TabItem>
+</Tabs>
 
 
 ## Upgrading a multi-region deployment
