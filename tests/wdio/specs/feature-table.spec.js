@@ -6,7 +6,6 @@
 
 const FEATURE_TABLE_PAGES = [
   '/docs/platform/free-vs-enterprise',
-  '/docs/platform/use-platform/virtual-clusters/key-features/sleep-mode',
 ];
 
 const WRAPPER_SELECTOR = '[class*="featureTableWrapper"]';
