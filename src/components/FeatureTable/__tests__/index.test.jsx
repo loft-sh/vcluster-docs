@@ -81,7 +81,7 @@ describe('FeatureTable Component', () => {
     test('renders table headers correctly with 4 tiers', () => {
       render(<FeatureTable names="test-feature-free" />);
 
-      expect(screen.getByText('Feature')).toBeInTheDocument();
+      expect(screen.getByText('Available in these plans')).toBeInTheDocument();
       expect(screen.getByText('Free')).toBeInTheDocument();
       expect(screen.getByText('Dev')).toBeInTheDocument();
       expect(screen.getByText('Prod')).toBeInTheDocument();
@@ -284,7 +284,7 @@ describe('FeatureTable Component', () => {
   describe('Heading', () => {
     test('displays default heading', () => {
       render(<FeatureTable names="test-feature-free" />);
-      expect(screen.getByText('Feature availability:')).toBeInTheDocument();
+      expect(screen.getByText('Available in these plans')).toBeInTheDocument();
     });
   });
 
