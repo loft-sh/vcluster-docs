@@ -1,20 +1,25 @@
 // Feature Table Mobile Rendering - WebdriverIO version
 // Tests that feature comparison tables are scrollable and readable on iOS Safari
+//
+// These pages contain FeatureTable components. In CI, runs against Netlify deploy
+// preview where paths don't include /next/. Locally against dev server they do.
 
 const FEATURE_TABLE_PAGES = [
   '/docs/platform/free-vs-enterprise',
   '/docs/platform/use-platform/virtual-clusters/key-features/sleep-mode',
 ];
 
+const WRAPPER_SELECTOR = '[class*="featureTableWrapper"]';
+
 describe('Feature Table Mobile Rendering', () => {
   for (const pagePath of FEATURE_TABLE_PAGES) {
     describe(pagePath, () => {
       it('renders feature table with visible headers', async () => {
         await browser.url(pagePath);
-        await browser.pause(2000);
 
-        const wrapper = await $('[class*="featureTableWrapper"]');
-        expect(await wrapper.isDisplayed()).toBe(true);
+        // Wait for the FeatureTable React component to render
+        const wrapper = await $(WRAPPER_SELECTOR);
+        await wrapper.waitForExist({ timeout: 10000 });
 
         const table = await wrapper.$('table');
         expect(await table.isDisplayed()).toBe(true);
@@ -35,16 +40,18 @@ describe('Feature Table Mobile Rendering', () => {
 
       it('is horizontally scrollable on mobile viewport', async () => {
         await browser.url(pagePath);
-        await browser.pause(2000);
+
+        const wrapper = await $(WRAPPER_SELECTOR);
+        await wrapper.waitForExist({ timeout: 10000 });
 
         // Check that the wrapper enables horizontal scrolling
         const scrollData = await browser.execute(() => {
-          const wrapper = document.querySelector('[class*="featureTableWrapper"]');
-          if (!wrapper) return null;
+          const w = document.querySelector('[class*="featureTableWrapper"]');
+          if (!w) return null;
           return {
-            scrollWidth: wrapper.scrollWidth,
-            clientWidth: wrapper.clientWidth,
-            isScrollable: wrapper.scrollWidth > wrapper.clientWidth,
+            scrollWidth: w.scrollWidth,
+            clientWidth: w.clientWidth,
+            isScrollable: w.scrollWidth > w.clientWidth,
           };
         });
 
@@ -59,13 +66,15 @@ describe('Feature Table Mobile Rendering', () => {
 
       it('shows feature names without clipping', async () => {
         await browser.url(pagePath);
-        await browser.pause(2000);
+
+        const wrapper = await $(WRAPPER_SELECTOR);
+        await wrapper.waitForExist({ timeout: 10000 });
 
         // Verify feature name cells are visible and have content
         const featureNames = await browser.execute(() => {
-          const wrapper = document.querySelector('[class*="featureTableWrapper"]');
-          if (!wrapper) return [];
-          const cells = wrapper.querySelectorAll('tbody tr td:first-child');
+          const w = document.querySelector('[class*="featureTableWrapper"]');
+          if (!w) return [];
+          const cells = w.querySelectorAll('tbody tr td:first-child');
           return Array.from(cells).slice(0, 5).map(td => ({
             text: td.textContent.trim(),
             width: td.getBoundingClientRect().width,
@@ -87,13 +96,15 @@ describe('Feature Table Mobile Rendering', () => {
 
       it('shows checkmarks and crosses in tier columns', async () => {
         await browser.url(pagePath);
-        await browser.pause(2000);
+
+        const wrapper = await $(WRAPPER_SELECTOR);
+        await wrapper.waitForExist({ timeout: 10000 });
 
         const iconData = await browser.execute(() => {
-          const wrapper = document.querySelector('[class*="featureTableWrapper"]');
-          if (!wrapper) return null;
-          const checkmarks = wrapper.querySelectorAll('[title*="Available in"]');
-          const crosses = wrapper.querySelectorAll('[title*="Not available in"]');
+          const w = document.querySelector('[class*="featureTableWrapper"]');
+          if (!w) return null;
+          const checkmarks = w.querySelectorAll('[title*="Available in"]');
+          const crosses = w.querySelectorAll('[title*="Not available in"]');
           return {
             checkmarks: checkmarks.length,
             crosses: crosses.length,
