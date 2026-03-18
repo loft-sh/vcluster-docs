@@ -22,6 +22,7 @@ const yaml = require('js-yaml');
 
 // Configuration
 const FEATURES_YAML = path.join(__dirname, '../src/data/features.yaml');
+const PRODUCTS_YAML = path.join(__dirname, '../src/data/products.yaml');
 const PROJECT_ROOT = path.join(__dirname, '..');
 const FEATURE_TABLE_IMPORT = "import FeatureTable from '@site/src/components/FeatureTable';";
 
@@ -37,7 +38,8 @@ const stats = {
   updated: 0,
   skipped: 0,
   errors: 0,
-  noMapping: 0
+  noMapping: 0,
+  orphanedFeatures: 0
 };
 
 /**
@@ -270,6 +272,55 @@ function insertOrUpdateFeatureTable(filePath, featureIds) {
   return true;
 }
 
+// Features intentionally not assigned to any plan tier.
+// These are add-on products, experimental features, or deployment modes
+// that don't fit the Free/Dev/Prod/Scale plan matrix.
+// To add a feature here, it must be a deliberate decision — not a missing assignment.
+const NO_PLAN_REQUIRED = new Set([
+  'vnode-runtime',              // add-on product, separate pricing
+  'vcp-distro-isolated-cp',    // experimental, not GA
+  'air-gapped-mode',           // deployment mode, not a plan-gated feature
+]);
+
+/**
+ * Detect features defined in features.yaml but not assigned to any plan
+ * in products.yaml. These render as all-X-marks in the feature table,
+ * which looks like a bug to end users.
+ */
+function detectOrphanedFeatures() {
+  const featuresData = yaml.load(fs.readFileSync(FEATURES_YAML, 'utf8'));
+  const productsData = yaml.load(fs.readFileSync(PRODUCTS_YAML, 'utf8'));
+
+  // Collect all feature IDs referenced by any plan
+  const assignedFeatures = new Set();
+  for (const product of Object.values(productsData.products || {})) {
+    for (const featureId of (product.features || [])) {
+      assignedFeatures.add(featureId);
+    }
+  }
+
+  // Check each feature in features.yaml
+  const orphaned = [];
+  for (const featureId of Object.keys(featuresData.features || {})) {
+    if (!assignedFeatures.has(featureId) && !NO_PLAN_REQUIRED.has(featureId)) {
+      orphaned.push(featureId);
+    }
+  }
+
+  if (orphaned.length > 0) {
+    console.log(`[ERROR] ${orphaned.length} feature(s) not assigned to any plan in products.yaml:`);
+    for (const id of orphaned) {
+      console.log(`  - ${id}`);
+    }
+    console.log('These will show all X marks in the feature comparison table.');
+    console.log('Fix: add each feature to the appropriate plan(s) in products.yaml');
+    console.log('     or add to NO_PLAN_REQUIRED in this script if intentional\n');
+    stats.orphanedFeatures = orphaned.length;
+  } else if (isVerbose) {
+    console.log('[OK] All features are assigned to at least one plan\n');
+  }
+}
+
 /**
  * Main execution
  */
@@ -279,6 +330,10 @@ function main() {
   if (isDryRun) {
     console.log('[DRY RUN] No files will be modified\n');
   }
+
+  // Detect orphaned features (defined but not in any plan)
+  console.log('Checking for orphaned features...');
+  detectOrphanedFeatures();
 
   // Build mapping
   console.log('Building feature -> document mapping...');
@@ -314,6 +369,9 @@ function main() {
   if (stats.noMapping > 0) {
     console.log(`No file mapping:      ${stats.noMapping}`);
   }
+  if (stats.orphanedFeatures > 0) {
+    console.log(`Orphaned features:    ${stats.orphanedFeatures}`);
+  }
   console.log('='.repeat(60));
 
   if (isDryRun) {
@@ -323,6 +381,11 @@ function main() {
     if (hasChanges) {
       console.log('\n[ERROR] FeatureTables are out of sync!');
       console.log('Run: npm run sync-feature-tables');
+      process.exit(1);
+    }
+    if (stats.orphanedFeatures > 0) {
+      console.log('\n[ERROR] Features defined but not in any plan!');
+      console.log('Fix: add each orphaned feature to the appropriate plan(s) in products.yaml');
       process.exit(1);
     }
   }
