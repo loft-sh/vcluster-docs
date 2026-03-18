@@ -847,6 +847,205 @@ or re-register the clusters from the platform UI to pick up the new
 
 ------------------------------------------------------------------------
 
+## Restoring the Kine database from a snapshot
+
+This runbook describes how to restore the shared Kine database from an RDS
+snapshot to a new instance and update both platform regions to use the restored
+database. Use this procedure for disaster recovery, database migration (for
+example, enabling IAM authentication), or point-in-time recovery.
+
+:::warning Important
+Both platform regions must be scaled down before switching the data source to
+prevent split-brain writes to the old and new databases.
+:::
+
+### Step 1 - Create a snapshot of the current database
+
+Skip this step if you already have a snapshot to restore from.
+
+```bash
+aws rds create-db-snapshot \
+  --db-instance-identifier <CURRENT_DB_INSTANCE_ID> \
+  --db-snapshot-identifier <SNAPSHOT_NAME> \
+  --region <AWS_REGION>
+```
+
+Wait for the snapshot to become available:
+
+```bash
+aws rds wait db-snapshot-available \
+  --db-snapshot-identifier <SNAPSHOT_NAME> \
+  --region <AWS_REGION>
+```
+
+### Step 2 - Restore the snapshot to a new RDS instance
+
+Restore the snapshot to a new instance. Include `--enable-iam-database-authentication`
+if the new instance should use IAM auth.
+
+```bash
+aws rds restore-db-instance-from-db-snapshot \
+  --db-instance-identifier <NEW_DB_INSTANCE_ID> \
+  --db-snapshot-identifier <SNAPSHOT_NAME> \
+  --db-instance-class db.t3.medium \
+  --db-subnet-group-name <DB_SUBNET_GROUP> \
+  --enable-iam-database-authentication \
+  --region <AWS_REGION>
+```
+
+Wait for the new instance to become available:
+
+```bash
+aws rds wait db-instance-available \
+  --db-instance-identifier <NEW_DB_INSTANCE_ID> \
+  --region <AWS_REGION>
+```
+
+Note the new endpoint:
+
+```bash
+aws rds describe-db-instances \
+  --db-instance-identifier <NEW_DB_INSTANCE_ID> \
+  --query 'DBInstances[0].Endpoint.Address' \
+  --output text \
+  --region <AWS_REGION>
+```
+
+If using IAM authentication, also note the `DbiResourceId` and update the
+`RDSIAMAuthKine` IAM policy to include the new instance's resource ID:
+
+```bash
+aws rds describe-db-instances \
+  --db-instance-identifier <NEW_DB_INSTANCE_ID> \
+  --query 'DBInstances[0].DbiResourceId' \
+  --output text \
+  --region <AWS_REGION>
+```
+
+### Step 3 - Scale down both regions
+
+Scale both platform deployments to zero to stop all writes to the old database.
+
+```bash
+kubectl --context <FIRST_REGION_CONTEXT> \
+  scale deployment -n vcluster-platform loft --replicas=0
+
+kubectl --context <SECOND_REGION_CONTEXT> \
+  scale deployment -n vcluster-platform loft --replicas=0
+```
+
+Wait for all pods to terminate:
+
+```bash
+kubectl --context <FIRST_REGION_CONTEXT> \
+  get pods -n vcluster-platform -l app=loft --watch
+
+kubectl --context <SECOND_REGION_CONTEXT> \
+  get pods -n vcluster-platform -l app=loft --watch
+```
+
+### Step 4 - Update the values files
+
+Update the `dataSource` in both region values files to point to the new RDS
+endpoint:
+
+```yaml
+config:
+  database:
+    dataSource: "mysql://kine@tcp(<NEW_DATABASE_URL>:3306)/kine?tls=skip-verify"
+```
+
+### Step 5 - Upgrade both regions
+
+Apply the updated values files to both regions.
+
+<Tabs
+  defaultValue="cli"
+  values={[
+    { label: "vCluster CLI", value: "cli" },
+    { label: "Helm", value: "helm" },
+  ]}
+>
+  <TabItem value="cli">
+
+```bash
+vcluster platform start \
+  --namespace vcluster-platform \
+  --kube-context <FIRST_REGION_CONTEXT> \
+  --values <FIRST_REGION_VALUES_FILE> \
+  --no-tunnel
+
+vcluster platform start \
+  --namespace vcluster-platform \
+  --kube-context <SECOND_REGION_CONTEXT> \
+  --values <SECOND_REGION_VALUES_FILE> \
+  --no-tunnel
+```
+
+  </TabItem>
+  <TabItem value="helm">
+
+```bash
+helm upgrade loft vcluster-platform --install --create-namespace --repository-config='' \
+  --namespace vcluster-platform \
+  --repo "https://charts.loft.sh/" \
+  --version <CHART_VERSION> \
+  --kube-context <FIRST_REGION_CONTEXT> \
+  -f <FIRST_REGION_VALUES_FILE> \
+  --server-side=true --force-conflicts
+
+helm upgrade loft vcluster-platform --install --create-namespace --repository-config='' \
+  --namespace vcluster-platform \
+  --repo "https://charts.loft.sh/" \
+  --version <CHART_VERSION> \
+  --kube-context <SECOND_REGION_CONTEXT> \
+  -f <SECOND_REGION_VALUES_FILE> \
+  --server-side=true --force-conflicts
+```
+
+  </TabItem>
+</Tabs>
+
+### Step 6 - Scale up both regions
+
+The helm upgrade keeps replicas at zero because it does not override the manual
+scale-down. Scale both regions back up.
+
+```bash
+kubectl --context <FIRST_REGION_CONTEXT> \
+  scale deployment -n vcluster-platform loft --replicas=<REPLICA_COUNT>
+
+kubectl --context <SECOND_REGION_CONTEXT> \
+  scale deployment -n vcluster-platform loft --replicas=<REPLICA_COUNT>
+```
+
+Wait for all pods to become ready:
+
+```bash
+kubectl --context <FIRST_REGION_CONTEXT> \
+  rollout status deployment/loft -n vcluster-platform
+
+kubectl --context <SECOND_REGION_CONTEXT> \
+  rollout status deployment/loft -n vcluster-platform
+```
+
+### Step 7 - Verify
+
+Confirm the platform is healthy on both regions:
+
+```bash
+for CTX in <FIRST_REGION_CONTEXT> <SECOND_REGION_CONTEXT>; do
+  echo "=== $CTX ==="
+  kubectl --context "$CTX" get pods -n vcluster-platform -l app=loft
+  echo
+done
+```
+
+Verify the platform UI is accessible through the GeoDNS domain and that both
+Route 53 health checks return healthy.
+
+------------------------------------------------------------------------
+
 ## Result
 
 You now have a fully operational **multi-region vCluster Platform
