@@ -33,6 +33,7 @@ Before you begin, ensure you have:
     -   `kubectl`
     -   `awscli`
     -   `helm`
+    -   `vcluster`
 
 ### Step 1 - Create two EKS clusters
 
@@ -262,9 +263,6 @@ aws eks create-pod-identity-association \
   --region eu-west-1
 ```
 
-After creating the associations, restart the platform pods to pick up the new
-role.
-
 For more details on IAM database authentication with EKS Pod Identity, see
 [IAM database authentication](/docs/platform/administer/connector/iam_database).
 
@@ -438,7 +436,7 @@ aws acm request-certificate \
   --validation-method DNS
 ```
 
-Get the arn code from the command above and describe the certificate
+Get the certificate ARN from the output and describe the certificate
 
 Replace `<ACCOUNT_ID>` with your AWS account ID.
 Replace `<CERTIFICATE_ARN_ID>` with the ARN ID generated from the command above.
@@ -451,8 +449,9 @@ aws acm describe-certificate \
 
 Add DNS validation CNAMEs in Route 53 and wait until certificate status is ISSUED
 
-> **Note:**\
-> You can also do this step by setting up cert-manager in the clusters instead of using AWS ACM
+:::note
+You can also do this step by setting up cert-manager in the clusters instead of using AWS ACM.
+:::
 
 ### Step 7 - Create Ingress (ALB)
 
@@ -472,6 +471,7 @@ metadata:
     alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80},{"HTTPS":443}]'
     alb.ingress.kubernetes.io/certificate-arn: "arn:aws:acm:<AWS_REGION>:<ACCOUNT_ID>:certificate/<CERT_ID>"
     alb.ingress.kubernetes.io/ssl-redirect: "443"
+    alb.ingress.kubernetes.io/idle-timeout: "3600"
     alb.ingress.kubernetes.io/healthcheck-path: /healthz
     alb.ingress.kubernetes.io/success-codes: "200"
 spec:
@@ -597,22 +597,41 @@ aws route53 change-resource-record-sets \
 ```
 
 Also create A records for the region-specific subdomains used by the DERP mesh
-and health checks:
+and health checks. Replace `<US_ALB_HOSTED_ZONE_ID>`, `<EU_ALB_HOSTED_ZONE_ID>`
+with the canonical hosted zone IDs and `<US_ALB_DNS_NAME>`, `<EU_ALB_DNS_NAME>`
+with the DNS names of each ALB.
 
-**U.S. region**
-
-```
-Name: us.multi-region.mydomain.com
-Type: A (Alias)
-Alias target: US ALB
-```
-
-**E.U. region**
-
-```
-Name: eu.multi-region.mydomain.com
-Type: A (Alias)
-Alias target: EU ALB
+```bash
+aws route53 change-resource-record-sets \
+  --hosted-zone-id <HOSTED_ZONE_ID> \
+  --change-batch '{
+    "Changes": [
+      {
+        "Action": "UPSERT",
+        "ResourceRecordSet": {
+          "Name": "us.multi-region.mydomain.com",
+          "Type": "A",
+          "AliasTarget": {
+            "HostedZoneId": "<US_ALB_HOSTED_ZONE_ID>",
+            "DNSName": "<US_ALB_DNS_NAME>",
+            "EvaluateTargetHealth": true
+          }
+        }
+      },
+      {
+        "Action": "UPSERT",
+        "ResourceRecordSet": {
+          "Name": "eu.multi-region.mydomain.com",
+          "Type": "A",
+          "AliasTarget": {
+            "HostedZoneId": "<EU_ALB_HOSTED_ZONE_ID>",
+            "DNSName": "<EU_ALB_DNS_NAME>",
+            "EvaluateTargetHealth": true
+          }
+        }
+      }
+    ]
+  }'
 ```
 
 #### Verify health checks
@@ -665,12 +684,12 @@ helm upgrade loft vcluster-platform --install --create-namespace --repository-co
   --namespace vcluster-agent \
   --repo "https://charts.loft.sh/" \
   --set agentOnly=true \
-  --set url=<LOFT_HOST_URL> \
+  --set url=<PLATFORM_URL> \
   --set token=<ACCESS_TOKEN> \
-  --values 'https://[PLATFORM_URL]/clusters/agent-values/[CLUSTER_NAME]?token=[ACCESS_TOKEN]'
+  --values 'https://<PLATFORM_URL>/clusters/agent-values/<CLUSTER_NAME>?token=<ACCESS_TOKEN>'
 ```
 
-Repeat on the second cluster with its own `<LOFT_HOST_URL>` and `<ACCESS_TOKEN>` values.
+Repeat on the second cluster with its own `<PLATFORM_URL>` and `<ACCESS_TOKEN>` values.
 
   </TabItem>
 </Tabs>
@@ -707,9 +726,29 @@ kubectl --context <FIRST_REGION_CONTEXT> \
 
 ### Step 2 - Upgrade the first region
 
-Run `helm upgrade` with the region's values file. The deployment stays at
-zero replicas after the upgrade because Helm does not override the manual
+Upgrade the first region with the updated values file. The deployment stays at
+zero replicas after the upgrade because the tool does not override the manual
 scale-down.
+
+<Tabs
+  defaultValue="cli"
+  values={[
+    { label: "vCluster CLI", value: "cli" },
+    { label: "Helm", value: "helm" },
+  ]}
+>
+  <TabItem value="cli">
+
+```bash
+vcluster platform start \
+  --namespace vcluster-platform \
+  --kube-context <FIRST_REGION_CONTEXT> \
+  --values <FIRST_REGION_VALUES_FILE> \
+  --no-tunnel
+```
+
+  </TabItem>
+  <TabItem value="helm">
 
 ```bash
 helm upgrade loft vcluster-platform --install --create-namespace --repository-config='' \
@@ -721,10 +760,33 @@ helm upgrade loft vcluster-platform --install --create-namespace --repository-co
   --server-side=true --force-conflicts
 ```
 
+  </TabItem>
+</Tabs>
+
 ### Step 3 - Upgrade the second region (rolling)
 
-Upgrade the second region without scaling down. Helm performs a rolling update
+Upgrade the second region without scaling down. This performs a rolling update
 so the region continues serving traffic during the upgrade.
+
+<Tabs
+  defaultValue="cli"
+  values={[
+    { label: "vCluster CLI", value: "cli" },
+    { label: "Helm", value: "helm" },
+  ]}
+>
+  <TabItem value="cli">
+
+```bash
+vcluster platform start \
+  --namespace vcluster-platform \
+  --kube-context <SECOND_REGION_CONTEXT> \
+  --values <SECOND_REGION_VALUES_FILE> \
+  --no-tunnel
+```
+
+  </TabItem>
+  <TabItem value="helm">
 
 ```bash
 helm upgrade loft vcluster-platform --install --create-namespace --repository-config='' \
@@ -735,6 +797,9 @@ helm upgrade loft vcluster-platform --install --create-namespace --repository-co
   -f <SECOND_REGION_VALUES_FILE> \
   --server-side=true --force-conflicts
 ```
+
+  </TabItem>
+</Tabs>
 
 Wait for the rollout to complete.
 
@@ -747,9 +812,11 @@ kubectl --context <SECOND_REGION_CONTEXT> \
 
 Bring the first region back online.
 
+Replace the replica count with the `replicaCount` value from the region's values file.
+
 ```bash
 kubectl --context <FIRST_REGION_CONTEXT> \
-  scale deployment -n vcluster-platform loft --replicas=3
+  scale deployment -n vcluster-platform loft --replicas=<REPLICA_COUNT>
 ```
 
 Wait for all pods to become ready.
@@ -786,11 +853,12 @@ You now have a fully operational **multi-region vCluster Platform
 deployment** with:
 
 -   Two EKS clusters (US + EU)
--   Shared Kine database
+-   Shared Kine database with IAM-based authentication (Pod Identity)
 -   Cross-region VPC peering
--   Regional ALBs
--   ACM certificates
--   Route 53 latency-based routing with failover
--   Platform deploy on the two clusters and sharing the same Kine database
+-   Regional ALBs with extended idle timeout
+-   ACM wildcard certificates
+-   Route 53 latency-based routing with health checks for automatic failover
+-   DERP mesh networking between platform instances
+-   Platform deployed on both clusters sharing the same Kine database
 
 ------------------------------------------------------------------------
