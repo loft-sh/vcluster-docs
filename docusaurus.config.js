@@ -357,6 +357,12 @@ const config = {
             position: "left",
             target: "_blank",
           },
+          {
+            href: "https://vml-docs.netlify.app/docs",
+            label: "vMetal",
+            position: "left",
+            target: "_blank",
+          },
           // Right-side items
           {
             href: "https://loft.sh/blog",
