@@ -38,7 +38,7 @@ Before you begin, ensure you have:
 ### Step 1 - Create two EKS clusters
 
 :::warning Important
-The clusters must use **different VPC CIDR ranges** to allow cross-region VPC peering.
+All three VPCs (two EKS clusters and one database) must use **different, non-overlapping CIDR ranges** to allow VPC peering.
 :::
 
 **U.S. region**
@@ -133,31 +133,127 @@ helm install aws-load-balancer-controller eks/aws-load-balancer-controller \
 
 ### Step 3 - Create the database (Kine backend)
 
-Create an RDS instance (MariaDB) in the same VPC as one of the clusters with
-IAM database authentication enabled.
+Create an RDS instance (MariaDB) in its own **isolated VPC**, separate from the
+EKS cluster VPCs. This keeps the database network boundary independent from the
+cluster workloads and simplifies security group rules.
 
 :::warning Important
 For production multi-region deployments, configure RDS in an active-active setup so the database automatically fails over between regions. See [Active-Active Replication on Amazon RDS for MySQL](https://aws.amazon.com/solutions/guidance/active-active-replication-on-amazon-rds-for-mysql/) for guidance on setting this up.
 :::
 
+#### Create the database VPC
+
+Create a VPC with a CIDR that does not overlap with either EKS cluster VPC.
+Enable DNS support and DNS hostnames so the RDS endpoint resolves correctly
+across VPC peering connections.
+
+```bash
+aws ec2 create-vpc \
+  --cidr-block 10.1.0.0/16 \
+  --region us-east-1 \
+  --tag-specifications 'ResourceType=vpc,Tags=[{Key=Name,Value=multi-region-db-vpc}]'
+```
+
+Note the `VpcId` from the output, then enable DNS settings:
+
+```bash
+aws ec2 modify-vpc-attribute \
+  --vpc-id <DB_VPC_ID> \
+  --enable-dns-support '{"Value":true}' \
+  --region us-east-1
+
+aws ec2 modify-vpc-attribute \
+  --vpc-id <DB_VPC_ID> \
+  --enable-dns-hostnames '{"Value":true}' \
+  --region us-east-1
+```
+
+#### Create subnets and DB subnet group
+
+Create subnets in at least two availability zones (required by RDS), then create
+a DB subnet group.
+
+```bash
+aws ec2 create-subnet \
+  --vpc-id <DB_VPC_ID> \
+  --cidr-block 10.1.1.0/24 \
+  --availability-zone us-east-1a \
+  --region us-east-1 \
+  --tag-specifications 'ResourceType=subnet,Tags=[{Key=Name,Value=multi-region-db-subnet-1a}]'
+
+aws ec2 create-subnet \
+  --vpc-id <DB_VPC_ID> \
+  --cidr-block 10.1.2.0/24 \
+  --availability-zone us-east-1b \
+  --region us-east-1 \
+  --tag-specifications 'ResourceType=subnet,Tags=[{Key=Name,Value=multi-region-db-subnet-1b}]'
+```
+
+```bash
+aws rds create-db-subnet-group \
+  --db-subnet-group-name multi-region-db-subnet \
+  --db-subnet-group-description "Isolated VPC subnet group for multi-region RDS" \
+  --subnet-ids <DB_SUBNET_1A_ID> <DB_SUBNET_1B_ID> \
+  --region us-east-1
+```
+
+#### Create a security group for the database
+
+Create a security group that allows inbound MariaDB traffic (port 3306) from
+both EKS cluster VPC CIDR ranges.
+
+```bash
+aws ec2 create-security-group \
+  --group-name multi-region-db-sg \
+  --description "Allow MariaDB from EKS VPCs via peering" \
+  --vpc-id <DB_VPC_ID> \
+  --region us-east-1
+```
+
+```bash
+aws ec2 authorize-security-group-ingress \
+  --group-id <DB_SG_ID> \
+  --protocol tcp --port 3306 \
+  --cidr 10.0.0.0/16 \
+  --region us-east-1
+
+aws ec2 authorize-security-group-ingress \
+  --group-id <DB_SG_ID> \
+  --protocol tcp --port 3306 \
+  --cidr 172.21.0.0/16 \
+  --region us-east-1
+```
+
+#### Create the RDS instance
+
 ```bash
 aws rds create-db-instance \
   --engine mariadb \
-  --db-instance-identifier mariadb-us-east-1 \
+  --db-instance-identifier mariadb-multi-region \
   --allocated-storage 20 \
   --region us-east-1 \
   --db-instance-class db.t3.medium \
   --master-username admin \
-  --db-subnet-group-name <EKS_CLUSTER_VPC> \
   --master-user-password <ADMIN_PASSWORD> \
+  --db-subnet-group-name multi-region-db-subnet \
+  --vpc-security-group-ids <DB_SG_ID> \
+  --no-publicly-accessible \
   --enable-iam-database-authentication
+```
+
+Wait for the instance to become available:
+
+```bash
+aws rds wait db-instance-available \
+  --db-instance-identifier mariadb-multi-region \
+  --region us-east-1
 ```
 
 #### Create the Kine database and IAM user
 
-When the database is available, connect to the database instance as the `admin`
-user and create the `kine` database and user. The user authenticates with the
-`AWSAuthenticationPlugin` instead of a password.
+Connect to the database instance as the `admin` user and create the `kine`
+database and user. The user authenticates with the `AWSAuthenticationPlugin`
+instead of a password.
 
 ``` sql
 CREATE DATABASE IF NOT EXISTS kine;
@@ -192,7 +288,8 @@ aws iam create-policy \
 #### Create an IAM role for Pod Identity
 
 Create an IAM role with a trust policy that allows the EKS Pod Identity agent
-to assume it. Replace `<ACCOUNT_ID>` with your AWS account ID.
+to assume it. The `pods.eks.amazonaws.com` trust principal is region-agnostic,
+so a single role works for clusters in any region.
 
 ```bash
 aws iam create-role \
@@ -220,8 +317,9 @@ aws iam attach-role-policy \
 
 #### Install the EKS Pod Identity Agent
 
-Install the Pod Identity Agent add-on on each cluster if it is not already
-present.
+Install the Pod Identity Agent add-on on **every** cluster. Without this
+add-on, the Pod Identity association has no effect and pods cannot obtain
+IAM credentials.
 
 ```bash
 aws eks create-addon \
@@ -235,11 +333,29 @@ aws eks create-addon \
   --region eu-west-1
 ```
 
+Verify the add-on is `ACTIVE` on each cluster before proceeding:
+
+```bash
+aws eks describe-addon \
+  --cluster-name <CLUSTER_NAME> \
+  --addon-name eks-pod-identity-agent \
+  --region <AWS_REGION> \
+  --query 'addon.status'
+```
+
 #### Create Pod Identity associations
 
 Associate the IAM role with the `loft` service account in the
-`vcluster-platform` namespace on each cluster. This allows the platform pods to
-generate temporary IAM authentication tokens for the database connection.
+`vcluster-platform` namespace on **every** cluster. This allows the platform
+pods to generate temporary IAM authentication tokens for the database
+connection.
+
+:::warning Important
+You must create a Pod Identity association on **each** cluster, not just the
+cluster in the same region as the database. Without the association, the
+platform pods in that cluster cannot authenticate with the RDS instance and
+fail with `Access denied` errors.
+:::
 
 **U.S. region**
 
@@ -266,21 +382,148 @@ aws eks create-pod-identity-association \
 For more details on IAM database authentication with EKS Pod Identity, see
 [IAM database authentication](/docs/platform/administer/connector/iam_database).
 
-### Step 4 - Create cross-region VPC peering
+### Step 4 - Create VPC peering to the database
+
+Create VPC peering connections between each EKS cluster VPC and the database
+VPC. This gives both clusters network access to the RDS instance without
+requiring direct cluster-to-cluster peering.
+
+#### Create peering connections
+
+**Database VPC to U.S. cluster VPC** (same region):
 
 ```bash
 aws ec2 create-vpc-peering-connection \
-  --vpc-id <VPC_ID_US_REGION_CLUSTER> \
-  --peer-vpc-id <VPC_ID_EU_REGION_CLUSTER> \
-  --peer-region eu-west-1
+  --vpc-id <DB_VPC_ID> \
+  --peer-vpc-id <VPC_ID_US_REGION_CLUSTER> \
+  --region us-east-1 \
+  --tag-specifications 'ResourceType=vpc-peering-connection,Tags=[{Key=Name,Value=db-vpc-to-eks-us-east-1}]'
 ```
 
-Accept the VPC peering connection
+**Database VPC to E.U. cluster VPC** (cross-region):
+
+```bash
+aws ec2 create-vpc-peering-connection \
+  --vpc-id <DB_VPC_ID> \
+  --peer-vpc-id <VPC_ID_EU_REGION_CLUSTER> \
+  --peer-region eu-west-1 \
+  --region us-east-1 \
+  --tag-specifications 'ResourceType=vpc-peering-connection,Tags=[{Key=Name,Value=db-vpc-to-eks-eu-west-1}]'
+```
+
+#### Accept the peering connections
+
+The same-region peering is accepted in `us-east-1`. The cross-region peering
+must be accepted in `eu-west-1`.
 
 ```bash
 aws ec2 accept-vpc-peering-connection \
-  --vpc-peering-connection-id <VPC_PEERING_ID>
+  --vpc-peering-connection-id <US_PEERING_ID> \
+  --region us-east-1
+
+aws ec2 accept-vpc-peering-connection \
+  --vpc-peering-connection-id <EU_PEERING_ID> \
+  --region eu-west-1
 ```
+
+#### Enable DNS resolution
+
+Enable DNS resolution on both peering connections so the RDS endpoint hostname
+resolves to its private IP from the EKS VPCs.
+
+```bash
+aws ec2 modify-vpc-peering-connection-options \
+  --vpc-peering-connection-id <US_PEERING_ID> \
+  --requester-peering-connection-options AllowDnsResolutionFromRemoteVpc=true \
+  --accepter-peering-connection-options AllowDnsResolutionFromRemoteVpc=true \
+  --region us-east-1
+```
+
+For the cross-region peering, set the requester side (DB VPC) in `us-east-1`
+and the accepter side (E.U. cluster VPC) in `eu-west-1`:
+
+```bash
+aws ec2 modify-vpc-peering-connection-options \
+  --vpc-peering-connection-id <EU_PEERING_ID> \
+  --requester-peering-connection-options AllowDnsResolutionFromRemoteVpc=true \
+  --region us-east-1
+
+aws ec2 modify-vpc-peering-connection-options \
+  --vpc-peering-connection-id <EU_PEERING_ID> \
+  --accepter-peering-connection-options AllowDnsResolutionFromRemoteVpc=true \
+  --region eu-west-1
+```
+
+#### Add routes
+
+Add routes so traffic can flow between each EKS VPC and the database VPC.
+
+:::warning Important
+Add routes to **every** route table whose subnets host EKS nodes, including
+public route tables. If your EKS nodes run in public subnets (the `eksctl`
+default), missing routes on the public route table cause database connection
+timeouts even though VPC peering is active.
+:::
+
+**Database VPC route table** — route to both EKS VPC CIDRs:
+
+```bash
+aws ec2 create-route \
+  --route-table-id <DB_VPC_ROUTE_TABLE_ID> \
+  --destination-cidr-block 10.0.0.0/16 \
+  --vpc-peering-connection-id <US_PEERING_ID> \
+  --region us-east-1
+
+aws ec2 create-route \
+  --route-table-id <DB_VPC_ROUTE_TABLE_ID> \
+  --destination-cidr-block 172.21.0.0/16 \
+  --vpc-peering-connection-id <EU_PEERING_ID> \
+  --region us-east-1
+```
+
+**U.S. EKS VPC route tables** — route to the database VPC CIDR. Repeat for
+every route table associated with subnets that host EKS nodes:
+
+```bash
+aws ec2 create-route \
+  --route-table-id <US_EKS_ROUTE_TABLE_ID> \
+  --destination-cidr-block 10.1.0.0/16 \
+  --vpc-peering-connection-id <US_PEERING_ID> \
+  --region us-east-1
+```
+
+**E.U. EKS VPC route tables** — route to the database VPC CIDR. Repeat for
+every route table associated with subnets that host EKS nodes:
+
+```bash
+aws ec2 create-route \
+  --route-table-id <EU_EKS_ROUTE_TABLE_ID> \
+  --destination-cidr-block 10.1.0.0/16 \
+  --vpc-peering-connection-id <EU_PEERING_ID> \
+  --region eu-west-1
+```
+
+To list all route tables for a VPC and identify which subnets they serve:
+
+```bash
+aws ec2 describe-route-tables \
+  --filters "Name=vpc-id,Values=<VPC_ID>" \
+  --region <AWS_REGION> \
+  --query 'RouteTables[].{RouteTableId:RouteTableId,Name:Tags[?Key==`Name`].Value|[0],Subnets:Associations[].SubnetId}'
+```
+
+#### Verify connectivity
+
+Launch a test pod in each EKS cluster and verify it can reach the RDS endpoint:
+
+```bash
+kubectl run dbtest --image=busybox --restart=Never --rm -it -- \
+  nc -zv <RDS_ENDPOINT> 3306
+```
+
+The connection should report `open`. If it times out, verify that routes exist
+on the correct route tables and that the database security group allows ingress
+from the cluster's VPC CIDR.
 
 ### Step 5 - Deploy vCluster platform
 
@@ -879,15 +1122,18 @@ aws rds wait db-snapshot-available \
 
 ### Step 2 - Restore the snapshot to a new RDS instance
 
-Restore the snapshot to a new instance. Include `--enable-iam-database-authentication`
-if the new instance should use IAM auth.
+Restore the snapshot to a new instance in the database VPC. Use the same DB
+subnet group and security group from the original setup. Include
+`--enable-iam-database-authentication` if the new instance should use IAM auth.
 
 ```bash
 aws rds restore-db-instance-from-db-snapshot \
   --db-instance-identifier <NEW_DB_INSTANCE_ID> \
   --db-snapshot-identifier <SNAPSHOT_NAME> \
   --db-instance-class db.t3.medium \
-  --db-subnet-group-name <DB_SUBNET_GROUP> \
+  --db-subnet-group-name multi-region-db-subnet \
+  --vpc-security-group-ids <DB_SG_ID> \
+  --no-publicly-accessible \
   --enable-iam-database-authentication \
   --region <AWS_REGION>
 ```
@@ -910,8 +1156,10 @@ aws rds describe-db-instances \
   --region <AWS_REGION>
 ```
 
-If using IAM authentication, also note the `DbiResourceId` and update the
-`RDSIAMAuthKine` IAM policy to include the new instance's resource ID:
+If using IAM authentication, note the `DbiResourceId` of the new instance and
+update the `RDSIAMAuthKine` IAM policy to include it. Without this, platform
+pods fail with `Access denied for user 'kine'` errors because the IAM
+`rds-db:connect` permission is scoped to a specific RDS instance resource ID.
 
 ```bash
 aws rds describe-db-instances \
@@ -919,6 +1167,27 @@ aws rds describe-db-instances \
   --query 'DBInstances[0].DbiResourceId' \
   --output text \
   --region <AWS_REGION>
+```
+
+Add the new resource ID to the policy's `Resource` array:
+
+```bash
+aws iam create-policy-version \
+  --policy-arn arn:aws:iam::<ACCOUNT_ID>:policy/RDSIAMAuthKine \
+  --set-as-default \
+  --policy-document '{
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Action": "rds-db:connect",
+        "Resource": [
+          "arn:aws:rds-db:<AWS_REGION>:<ACCOUNT_ID>:dbuser:<OLD_DBI_RESOURCE_ID>/kine",
+          "arn:aws:rds-db:<AWS_REGION>:<ACCOUNT_ID>:dbuser:<NEW_DBI_RESOURCE_ID>/kine"
+        ]
+      }
+    ]
+  }'
 ```
 
 ### Step 3 - Scale down both regions
@@ -1107,8 +1376,10 @@ Common failure causes:
 - **Node failures**: Check `kubectl get nodes` for `NotReady` nodes.
 - **ALB unhealthy**: Verify the ALB target group health in the AWS console or
   with `aws elbv2 describe-target-health`.
-- **Network partition**: Verify VPC peering and security group rules allow
-  traffic to the RDS instance and between regions.
+- **Network partition**: Verify that VPC peering between the cluster VPC and
+  the database VPC is active, that routes exist on the correct route tables
+  (including public route tables if nodes are in public subnets), and that the
+  database security group allows port 3306 from the cluster VPC CIDR.
 
 ### Step 3 - Restore the failed region
 
@@ -1220,8 +1491,8 @@ You now have a fully operational **multi-region vCluster Platform
 deployment** with:
 
 -   Two EKS clusters (US + EU)
--   Shared Kine database with IAM-based authentication (Pod Identity)
--   Cross-region VPC peering
+-   Shared Kine database in an isolated VPC with IAM-based authentication (Pod Identity)
+-   VPC peering between each cluster VPC and the database VPC
 -   Regional ALBs with extended idle timeout
 -   ACM wildcard certificates
 -   Route 53 latency-based routing with health checks for automatic failover
