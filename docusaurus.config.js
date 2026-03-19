@@ -365,7 +365,7 @@ const config = {
           },
           // Right-side items
           {
-            href: "https://loft.sh/blog",
+            href: "https://www.vcluster.com/blog",
             label: "Blog",
             position: "right",
             target: "_blank",
