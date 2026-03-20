@@ -1,16 +1,16 @@
 ---
 sidebar_label: Multi-Region Platform
 title: Multi-Region Platform
-description: Deploy vCluster Platform across multiple AWS regions with shared database, GeoDNS failover, and regional ALB ingress.
-title: Multi-Region Platform
+description: Deploy vCluster Platform across multiple AWS regions with shared database, latency-based DNS failover, and regional ALB ingress.
 ---
 
 import Tabs from "@theme/Tabs";
 import TabItem from "@theme/TabItem";
+import VersionBadge from '@site/src/components/VersionBadge';
 
-# Multi-region platform
+<VersionBadge platformVersion="v4.8.0"/>
 
-This document explains how to configure a multi-region platform setup for vCluster Platform that uses a shared database as the backing store and replicates the Platform across different regions.
+Deploy vCluster Platform across multiple AWS regions using a shared Kine database, with automatic failover through Route 53 latency-based routing.
 
 :::warning Important
 Converting an existing single-region platform installation to
@@ -21,7 +21,7 @@ installation following the steps below.
 ## AWS (EKS)
 
 These steps walk you through setting up vCluster Platform across two AWS regions using EKS, cross-region VPC
-peering, shared database (Kine), ALB ingress, and Route 53 GeoDNS.
+peering, shared database (Kine), ALB ingress, and Route 53 latency-based routing.
 
 ### Prerequisites
 
@@ -278,7 +278,7 @@ Connect to the database instance as the `admin` user and create the `kine`
 database and user. The user authenticates with the `AWSAuthenticationPlugin`
 instead of a password.
 
-``` sql
+```sql
 CREATE DATABASE IF NOT EXISTS kine;
 
 CREATE USER 'kine'@'%' IDENTIFIED WITH AWSAuthenticationPlugin AS 'RDS';
@@ -550,7 +550,7 @@ from the cluster's VPC CIDR.
 
 ### Step 5 - Deploy vCluster platform
 
-Deploy the platform on each cluster using the `multiRegion` Helm values. Each cluster needs a **region-specific** `multiRegion.host` value (used as the custom DERP server endpoint), while `config.loftHost` should be the **shared GeoDNS domain**.
+Deploy the platform on each cluster using the `multiRegion` Helm values. Each cluster needs a **region-specific** `multiRegion.host` value (used as the custom DERP server endpoint), while `config.loftHost` should be the **shared DNS domain**.
 
 Create a values file for each region. The only differences between regions are
 `multiRegion.host` and `multiRegion.region`.
@@ -563,13 +563,13 @@ admin:
 
 multiRegion:
   enabled: true
-  host: us.multi-region.mydomain.com
+  host: us.multi-region.example.com
   region: us-east-1
 
 replicaCount: 3
 
 config:
-  loftHost: multi-region.mydomain.com
+  loftHost: multi-region.example.com
   database:
     enabled: true
     dataSource: "mysql://kine@tcp(<DATABASE_URL>:3306)/kine"
@@ -595,13 +595,13 @@ admin:
 
 multiRegion:
   enabled: true
-  host: eu.multi-region.mydomain.com
+  host: eu.multi-region.example.com
   region: eu-west-1
 
 replicaCount: 3
 
 config:
-  loftHost: multi-region.mydomain.com
+  loftHost: multi-region.example.com
   database:
     enabled: true
     dataSource: "mysql://kine@tcp(<DATABASE_URL>:3306)/kine"
@@ -635,6 +635,7 @@ Install the platform on each cluster using its values file.
 ```bash
 vcluster platform start \
   --namespace vcluster-platform \
+  --kube-context <US_REGION_CONTEXT> \
   --values platform-us-east-1-values.yaml \
   --no-tunnel
 ```
@@ -644,6 +645,7 @@ vcluster platform start \
 ```bash
 vcluster platform start \
   --namespace vcluster-platform \
+  --kube-context <EU_REGION_CONTEXT> \
   --values platform-eu-west-1-values.yaml \
   --no-tunnel
 ```
@@ -677,14 +679,12 @@ Setting `multiRegion.enabled=true` automatically configures:
 - Leader election across regions
 - Multi-region platform license check
 
-------------------------------------------------------------------------
-
 ### Step 6 - Configure HTTPS with AWS Certificate Manager (ACM)
 
-Request a certificate in each region that covers both the shared GeoDNS domain
-and the region-specific subdomain. The wildcard `*.multi-region.mydomain.com`
-covers the regional subdomains (`us.multi-region.mydomain.com`,
-`eu.multi-region.mydomain.com`), and `multi-region.mydomain.com` is added as a
+Request a certificate in each region that covers both the shared DNS domain
+and the region-specific subdomain. The wildcard `*.multi-region.example.com`
+covers the regional subdomains (`us.multi-region.example.com`,
+`eu.multi-region.example.com`), and `multi-region.example.com` is added as a
 SAN to cover the apex.
 
 Run this command in each region, replacing `<AWS_REGION>`.
@@ -692,8 +692,8 @@ Run this command in each region, replacing `<AWS_REGION>`.
 ```bash
 aws acm request-certificate \
   --region <AWS_REGION> \
-  --domain-name "multi-region.mydomain.com" \
-  --subject-alternative-names "*.multi-region.mydomain.com" \
+  --domain-name "multi-region.example.com" \
+  --subject-alternative-names "*.multi-region.example.com" \
   --validation-method DNS
 ```
 
@@ -708,15 +708,15 @@ aws acm describe-certificate \
   --certificate-arn arn:aws:acm:<AWS_REGION>:<ACCOUNT_ID>:certificate/<CERTIFICATE_ARN_ID>
 ```
 
-Add DNS validation CNAMEs in Route 53 and wait until certificate status is ISSUED
+Add DNS validation CNAMEs in Route 53 and wait until certificate status is ISSUED.
 
 :::note
 You can also do this step by setting up cert-manager in the clusters instead of using AWS ACM.
 :::
 
-### Step 7 - Create ingress (ALB)
+### Step 7 - Create Ingress (ALB)
 
-Create the load balancers in each cluster via the kubernetes ingress resource and point to the loft platform service.
+Create the load balancers in each cluster via the Kubernetes Ingress resource and point to the loft platform service.
 
 Apply the Ingress manifest in each cluster to provision an AWS ALB.
 
@@ -738,7 +738,7 @@ metadata:
 spec:
   ingressClassName: alb
   rules:
-    - host: <REGION>.multi-region.mydomain.com
+    - host: <REGION>.multi-region.example.com
       http:
         paths:
           - path: /
@@ -748,7 +748,7 @@ spec:
                 name: loft
                 port:
                   number: 80
-    - host: multi-region.mydomain.com
+    - host: multi-region.example.com
       http:
         paths:
           - path: /
@@ -761,7 +761,7 @@ spec:
 ```
 
 
-### Step 8 - Configure Route 53 GeoDNS
+### Step 8 - Configure Route 53 latency-based routing
 
 #### Create health checks
 
@@ -774,7 +774,7 @@ detect when a region is unavailable and fail over traffic automatically.
 aws route53 create-health-check \
   --caller-reference "us-east-1-platform-healthz" \
   --health-check-config '{
-    "FullyQualifiedDomainName": "us.multi-region.mydomain.com",
+    "FullyQualifiedDomainName": "us.multi-region.example.com",
     "Port": 443,
     "Type": "HTTPS",
     "ResourcePath": "/healthz",
@@ -790,7 +790,7 @@ aws route53 create-health-check \
 aws route53 create-health-check \
   --caller-reference "eu-west-1-platform-healthz" \
   --health-check-config '{
-    "FullyQualifiedDomainName": "eu.multi-region.mydomain.com",
+    "FullyQualifiedDomainName": "eu.multi-region.example.com",
     "Port": 443,
     "Type": "HTTPS",
     "ResourcePath": "/healthz",
@@ -826,7 +826,7 @@ aws route53 change-resource-record-sets \
       {
         "Action": "UPSERT",
         "ResourceRecordSet": {
-          "Name": "multi-region.mydomain.com",
+          "Name": "multi-region.example.com",
           "Type": "A",
           "SetIdentifier": "us-east-1",
           "Region": "us-east-1",
@@ -841,7 +841,7 @@ aws route53 change-resource-record-sets \
       {
         "Action": "UPSERT",
         "ResourceRecordSet": {
-          "Name": "multi-region.mydomain.com",
+          "Name": "multi-region.example.com",
           "Type": "A",
           "SetIdentifier": "eu-west-1",
           "Region": "eu-west-1",
@@ -870,7 +870,7 @@ aws route53 change-resource-record-sets \
       {
         "Action": "UPSERT",
         "ResourceRecordSet": {
-          "Name": "us.multi-region.mydomain.com",
+          "Name": "us.multi-region.example.com",
           "Type": "A",
           "AliasTarget": {
             "HostedZoneId": "<US_ALB_HOSTED_ZONE_ID>",
@@ -882,7 +882,7 @@ aws route53 change-resource-record-sets \
       {
         "Action": "UPSERT",
         "ResourceRecordSet": {
-          "Name": "eu.multi-region.mydomain.com",
+          "Name": "eu.multi-region.example.com",
           "Type": "A",
           "AliasTarget": {
             "HostedZoneId": "<EU_ALB_HOSTED_ZONE_ID>",
@@ -960,7 +960,7 @@ Repeat on the second cluster with its own `<PLATFORM_URL>` and `<ACCESS_TOKEN>` 
 
 This runbook describes how to upgrade vCluster Platform across regions with
 minimal downtime. The process upgrades one region at a time while the other
-continues serving traffic through GeoDNS failover.
+continues serving traffic through Route 53 failover.
 
 ### Prerequisites
 
@@ -973,7 +973,7 @@ continues serving traffic through GeoDNS failover.
 Pick the region to upgrade first and scale its platform deployment to zero.
 Scaling down before upgrading prevents leader election from switching between
 different platform versions during the upgrade, which could cause unexpected
-behavior. GeoDNS routes all traffic to the other region while this one is
+behavior. Route 53 routes all traffic to the other region while this one is
 offline.
 
 ```bash
@@ -1109,8 +1109,6 @@ done
 
 The platform automatically upgrades connected agents after the platform upgrade
 completes.
-
-------------------------------------------------------------------------
 
 ## Restore the Kine database from a snapshot
 
@@ -1334,10 +1332,8 @@ for CTX in <FIRST_REGION_CONTEXT> <SECOND_REGION_CONTEXT>; do
 done
 ```
 
-Verify the platform UI is accessible through the GeoDNS domain and that both
+Verify the platform UI is accessible through the shared DNS domain and that both
 Route 53 health checks return healthy.
-
-------------------------------------------------------------------------
 
 ## Recover from regional failover
 
@@ -1506,19 +1502,15 @@ kubectl --context <FAILED_REGION_CONTEXT> \
 
 Both peers should show `Online: true`.
 
-------------------------------------------------------------------------
-
 ## Result
 
 You now have a fully operational **multi-region vCluster Platform
 deployment** with:
 
--   Two EKS clusters (US + EU)
+-   Two EKS clusters (U.S. + E.U.)
 -   Shared Kine database in an isolated VPC with IAM-based authentication (Pod Identity)
 -   VPC peering between each cluster VPC and the database VPC
 -   Regional ALBs with extended idle timeout
 -   ACM wildcard certificates
 -   Route 53 latency-based routing with health checks for automatic failover
 -   Platform deployed on both clusters sharing the same Kine database
-
-------------------------------------------------------------------------
