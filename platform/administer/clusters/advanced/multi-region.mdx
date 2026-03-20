@@ -21,10 +21,82 @@ import PageVariables from "@site/src/components/PageVariables";
   SECOND_REGION_CONTEXT="arn:aws:eks:eu-west-1:123456789012:cluster/platform-multi-region-eu-west-1"
 />
 
-Deploy vCluster Platform across multiple AWS regions using a shared Kine database, with automatic failover through Route 53 latency-based routing.
+## What is multi-region platform?
+
+A multi-region platform deployment runs vCluster Platform instances in two or more
+regions, all backed by a single shared database. A leader election mechanism ensures that only one platform instance
+writes to the shared database at a time, while a custom DERP server provides
+encrypted relay connectivity between regions. Health-checking DNS configuration ensures that failover occurs seamlessly in the event of a regional outage 
+and clients are routed to the lowest-latency region.
+
+```mermaid
+graph TD
+    subgraph "U.S. region"
+        US_LB[ALB] --> US_P[Platform replicas]
+        US_P --> US_A[Agent]
+    end
+    subgraph "E.U. region"
+        EU_LB[ALB] --> EU_P[Platform replicas]
+        EU_P --> EU_A[Agent]
+    end
+    subgraph "Shared infrastructure"
+        DB[(Kine database)]
+        DNS[Route 53 latency-based routing]
+    end
+
+    US_P -- leader election --> DB
+    EU_P -- leader election --> DB
+    DNS --> US_LB
+    DNS --> EU_LB
+    US_P <-. DERP relay .-> EU_P
+```
+
+## Why deploy multi-region?
+
+A single-region platform works for most deployments. Consider multi-region when
+you need one or more of the following:
+
+- **Low-latency platform access**: Users and CI/CD pipelines in different
+  geographies get routed to the nearest platform instance through latency-based
+  DNS, reducing round-trip time for API calls and UI interactions.
+- **Regional failover**: If a region goes down, Route 53 health checks detect
+  the failure and automatically redirect traffic to a healthy region. The shared
+  database ensures no state is lost during failover.
+- **High availability for the control plane**: Running platform replicas across
+  regions eliminates the platform as a single point of failure. Connected
+  clusters continue operating through the surviving region.
+
+### How it differs from multi-region mode
+
+| | Multi-region platform | [Multi-region mode](multi-region-mode.mdx) |
+|---|---|---|
+| **What is replicated** | The platform itself (full replicas in each region) | Only the agent endpoints (platform stays in one region) |
+| **Shared database** | Yes — all regions share a single Kine-backed database | No — single platform database |
+| **Failover** | Automatic via DNS health checks | No platform failover |
+| **Use case** | Platform HA, low-latency platform API access | Low-latency `kubectl` access to clusters |
+
+Both features can be used together: multi-region platform provides platform-level
+HA, while multi-region mode (direct cluster endpoints) provides low-latency
+`kubectl` access to workloads.
+
+### Trade-offs
+
+- **Operational complexity**: Multi-region requires managing VPC peering,
+  cross-region networking, shared database infrastructure, and coordinated
+  upgrades.
+- **Database latency**: The non-leader region incurs cross-region latency for
+  database writes, since all writes go through the leader to a single database.
+  Read-heavy workloads are less affected.
+- **Cost control unavailable**: The cost control feature requires a single-region
+  database and is not compatible with the shared Kine backend.
+- **Fresh install only**: Converting an existing single-region installation to
+  multi-region is not supported.
 
 :::info Related docs
-This guide covers replicating the platform itself across regions with a shared database. For routing traffic directly to clusters in different regions without replicating the platform, see [Multi-region mode](multi-region-mode.mdx). Multi-region platform uses a custom DERP server for cross-region connectivity — see [DERP relay](derp-relay.mdx) for details on how DERP relays work.
+For routing `kubectl` traffic directly to clusters without replicating the
+platform, see [Multi-region mode](multi-region-mode.mdx). For details on how
+DERP relays provide cross-region connectivity, see
+[DERP relay](derp-relay.mdx).
 :::
 
 :::warning Important
