@@ -1,0 +1,1829 @@
+---
+sidebar_label: Multi-Region Platform
+title: Multi-Region Platform
+description: Deploy vCluster Platform across multiple AWS regions with shared database, latency-based DNS failover, and regional ALB ingress.
+---
+
+import Tabs from "@theme/Tabs";
+import TabItem from "@theme/TabItem";
+import VersionBadge from '@site/src/components/VersionBadge';
+import InterpolatedCodeBlock from "@site/src/components/InterpolatedCodeBlock";
+import PageVariables from "@site/src/components/PageVariables";
+
+<VersionBadge platformVersion="v4.8.0"/>
+
+<PageVariables
+  ACCOUNT_ID="123456789012"
+  AWS_REGION="us-east-1"
+  DB_VPC_ID="vpc-xxxxxxxxx"
+  DB_SG_ID="sg-xxxxxxxxx"
+  FIRST_REGION_CONTEXT="arn:aws:eks:us-east-1:123456789012:cluster/platform-multi-region-us-east-1"
+  SECOND_REGION_CONTEXT="arn:aws:eks:eu-west-1:123456789012:cluster/platform-multi-region-eu-west-1"
+/>
+
+## What is multi-region platform?
+
+A multi-region platform deployment runs vCluster Platform instances in two or more
+regions, all backed by a single shared database. A leader election mechanism ensures that only one platform instance
+writes to the shared database at a time, while a custom DERP server provides
+encrypted relay connectivity between regions. Health-checking DNS configuration ensures that failover occurs seamlessly in the event of a regional outage 
+and clients are routed to the lowest-latency region.
+
+<figure class="frame">
+  <img
+    src="/docs/media/platform/diagrams/multi-region-architecture.png"
+    alt="Multi-region platform architecture"
+  />
+  <figcaption>Multi-region platform architecture with shared Kine database and latency-based routing</figcaption>
+</figure>
+
+## Why deploy multi-region?
+
+A single-region platform works for most deployments. Consider multi-region when
+you need one or more of the following:
+
+- **Low-latency platform access**: Users and CI/CD pipelines in different
+  geographies get routed to the nearest platform instance through latency-based
+  DNS, reducing round-trip time for API calls and UI interactions.
+- **Regional failover**: If a region goes down, Route 53 health checks detect
+  the failure and automatically redirect traffic to a healthy region. The shared
+  database ensures no state is lost during failover.
+- **High availability for the control plane**: Running platform replicas across
+  regions eliminates the platform as a single point of failure. Connected
+  clusters continue operating through the surviving region.
+
+### How it differs from multi-region mode
+
+| | Multi-region platform | [Multi-region mode](multi-region-mode.mdx) |
+|---|---|---|
+| **What is replicated** | The platform itself (full replicas in each region) | Only the agent endpoints (platform stays in one region) |
+| **Shared database** | Yes — all regions share a single Kine-backed database | No — single platform database |
+| **Failover** | Automatic via DNS health checks | No platform failover |
+| **Use case** | Platform HA, low-latency platform API access | Low-latency `kubectl` access to clusters |
+
+Both features can be used together: multi-region platform provides platform-level
+HA, while multi-region mode (direct cluster endpoints) provides low-latency
+`kubectl` access to workloads.
+
+### Trade-offs
+
+- **Operational complexity**: Multi-region requires managing VPC peering,
+  cross-region networking, shared database infrastructure, and coordinated
+  upgrades.
+- **Database latency**: The non-leader region incurs cross-region latency for
+  database writes, since all writes go through the leader to a single database.
+  Read-heavy workloads are less affected.
+- **Cost control unavailable**: The cost control feature requires a single-region
+  database and is not compatible with the shared Kine backend.
+- **Fresh install only**: Converting an existing single-region installation to
+  multi-region is not supported.
+
+:::info Related docs
+For routing `kubectl` traffic directly to clusters without replicating the
+platform, see [Multi-region mode](multi-region-mode.mdx). For details on how
+DERP relays provide cross-region connectivity, see
+[DERP relay](derp-relay.mdx).
+:::
+
+:::warning Important
+Converting an existing single-region platform installation to
+multi-region is not supported. Multi-region must be configured as a fresh
+installation following the steps below.
+:::
+
+## AWS (EKS)
+
+These steps walk you through setting up vCluster Platform across two AWS regions using EKS, cross-region VPC
+peering, shared database (Kine), ALB ingress, and Route 53 latency-based routing.
+
+### Prerequisites
+
+Before you begin, ensure you have:
+
+-   An **AWS account** with sufficient IAM permissions
+-   A **registered domain** (example: `multi-region.example.com`)
+-   A **public Route 53 hosted zone**
+-   The following tools installed:
+    -   `eksctl`
+    -   `kubectl`
+    -   `awscli`
+    -   `helm`
+    -   `vcluster`
+
+### Step 1 - Create two EKS clusters
+
+:::warning Important
+All three VPCs (two EKS clusters and one database) must use **different, non-overlapping CIDR ranges** to allow VPC peering.
+:::
+
+**U.S. region**
+
+```bash
+eksctl create cluster \
+  --name platform-multi-region-us-east-1 \
+  --region us-east-1 \
+  --nodes 2 \
+  --managed \
+  --vpc-cidr 10.0.0.0/16 \
+  --with-oidc
+```
+
+**E.U. region**
+
+```bash
+eksctl create cluster \
+  --name platform-multi-region-eu-west-1 \
+  --region eu-west-1 \
+  --nodes 2 \
+  --managed \
+  --vpc-cidr 172.21.0.0/16 \
+  --with-oidc
+```
+
+#### Install the Amazon EBS CSI driver
+
+The EBS CSI driver is required for dynamic provisioning of persistent volumes
+on EKS. Without it, virtual cluster StatefulSet pods remain in `Pending` state
+because the `gp2` storage class cannot provision volumes.
+
+Install the driver as an EKS managed add-on on **each** cluster:
+
+```bash
+eksctl create addon --name aws-ebs-csi-driver \
+  --cluster platform-multi-region-us-east-1 \
+  --region us-east-1
+
+eksctl create addon --name aws-ebs-csi-driver \
+  --cluster platform-multi-region-eu-west-1 \
+  --region eu-west-1
+```
+
+For more details on EKS prerequisites for running virtual clusters, see the
+[EKS environment setup guide](/docs/vcluster/next/deploy/control-plane/kubernetes-pod/environment/eks).
+
+### Step 2 - Install AWS load balancer controller
+
+#### Create IAM policy
+
+```bash
+curl -o iam_policy.json \
+https://raw.githubusercontent.com/kubernetes-sigs/aws-load-balancer-controller/main/docs/install/iam_policy.json
+
+aws iam create-policy \
+  --policy-name AWSLoadBalancerControllerIAMPolicy \
+  --policy-document file://iam_policy.json
+```
+
+#### Create IAM service account (IRSA)
+
+Replace `<ACCOUNT_ID>` with your AWS account ID.
+
+**U.S. region**
+
+<InterpolatedCodeBlock
+  code={
+`eksctl create iamserviceaccount \\
+  --cluster platform-multi-region-us-east-1 \\
+  --namespace kube-system \\
+  --name aws-load-balancer-controller \\
+  --attach-policy-arn arn:aws:iam::[[GLOBAL:ACCOUNT_ID]]:policy/AWSLoadBalancerControllerIAMPolicy \\
+  --approve`
+  }
+  language="bash"
+/>
+
+**E.U. region**
+
+<InterpolatedCodeBlock
+  code={
+`eksctl create iamserviceaccount \\
+  --cluster platform-multi-region-eu-west-1 \\
+  --namespace kube-system \\
+  --name aws-load-balancer-controller \\
+  --attach-policy-arn arn:aws:iam::[[GLOBAL:ACCOUNT_ID]]:policy/AWSLoadBalancerControllerIAMPolicy \\
+  --approve`
+  }
+  language="bash"
+/>
+
+#### Install via Helm
+
+```bash
+helm repo add eks https://aws.github.io/eks-charts
+helm repo update
+```
+
+**U.S. region**
+
+```bash
+helm install aws-load-balancer-controller eks/aws-load-balancer-controller \
+  -n kube-system \
+  --set clusterName=platform-multi-region-us-east-1 \
+  --set serviceAccount.create=false \
+  --set serviceAccount.name=aws-load-balancer-controller
+```
+
+**E.U. region**
+
+```bash
+helm install aws-load-balancer-controller eks/aws-load-balancer-controller \
+  -n kube-system \
+  --set clusterName=platform-multi-region-eu-west-1 \
+  --set serviceAccount.create=false \
+  --set serviceAccount.name=aws-load-balancer-controller
+```
+
+### Step 3 - Create the database (Kine backend)
+
+Create an RDS instance (MariaDB) in its own **isolated VPC**, separate from the
+EKS cluster VPCs. This keeps the database network boundary independent from the
+cluster workloads and simplifies security group rules.
+
+:::warning Important
+For production multi-region deployments, configure RDS in an active-active setup so the database automatically fails over between regions. See [Active-Active Replication on Amazon RDS for MySQL](https://aws.amazon.com/solutions/guidance/active-active-replication-on-amazon-rds-for-mysql/) for guidance on setting this up.
+:::
+
+#### Create the database VPC
+
+Create a VPC with a CIDR that does not overlap with either EKS cluster VPC.
+Enable DNS support and DNS hostnames so the RDS endpoint resolves correctly
+across VPC peering connections.
+
+```bash
+aws ec2 create-vpc \
+  --cidr-block 10.1.0.0/16 \
+  --region us-east-1 \
+  --tag-specifications 'ResourceType=vpc,Tags=[{Key=Name,Value=multi-region-db-vpc}]'
+```
+
+Note the `VpcId` from the output, then enable DNS settings:
+
+<InterpolatedCodeBlock
+  code={
+`aws ec2 modify-vpc-attribute \\
+  --vpc-id [[GLOBAL:DB_VPC_ID]] \\
+  --enable-dns-support '{"Value":true}' \\
+  --region us-east-1
+
+aws ec2 modify-vpc-attribute \\
+  --vpc-id [[GLOBAL:DB_VPC_ID]] \\
+  --enable-dns-hostnames '{"Value":true}' \\
+  --region us-east-1`
+  }
+  language="bash"
+/>
+
+#### Create subnets and DB subnet group
+
+Create subnets in at least two availability zones (required by RDS), then create
+a DB subnet group.
+
+<InterpolatedCodeBlock
+  code={
+`aws ec2 create-subnet \\
+  --vpc-id [[GLOBAL:DB_VPC_ID]] \\
+  --cidr-block 10.1.1.0/24 \\
+  --availability-zone us-east-1a \\
+  --region us-east-1 \\
+  --tag-specifications 'ResourceType=subnet,Tags=[{Key=Name,Value=multi-region-db-subnet-1a}]'
+
+aws ec2 create-subnet \\
+  --vpc-id [[GLOBAL:DB_VPC_ID]] \\
+  --cidr-block 10.1.2.0/24 \\
+  --availability-zone us-east-1b \\
+  --region us-east-1 \\
+  --tag-specifications 'ResourceType=subnet,Tags=[{Key=Name,Value=multi-region-db-subnet-1b}]'`
+  }
+  language="bash"
+/>
+
+<InterpolatedCodeBlock
+  code={
+`aws rds create-db-subnet-group \\
+  --db-subnet-group-name multi-region-db-subnet \\
+  --db-subnet-group-description "Isolated VPC subnet group for multi-region RDS" \\
+  --subnet-ids [[VAR:DB_SUBNET_1A_ID:subnet-xxxxxxxxx]] [[VAR:DB_SUBNET_1B_ID:subnet-yyyyyyyyy]] \\
+  --region us-east-1`
+  }
+  language="bash"
+/>
+
+#### Create a security group for the database
+
+Create a security group that allows inbound MariaDB traffic (port 3306) from
+both EKS cluster VPC CIDR ranges.
+
+<InterpolatedCodeBlock
+  code={
+`aws ec2 create-security-group \\
+  --group-name multi-region-db-sg \\
+  --description "Allow MariaDB from EKS VPCs via peering" \\
+  --vpc-id [[GLOBAL:DB_VPC_ID]] \\
+  --region us-east-1`
+  }
+  language="bash"
+/>
+
+<InterpolatedCodeBlock
+  code={
+`aws ec2 authorize-security-group-ingress \\
+  --group-id [[GLOBAL:DB_SG_ID]] \\
+  --protocol tcp --port 3306 \\
+  --cidr 10.0.0.0/16 \\
+  --region us-east-1
+
+aws ec2 authorize-security-group-ingress \\
+  --group-id [[GLOBAL:DB_SG_ID]] \\
+  --protocol tcp --port 3306 \\
+  --cidr 172.21.0.0/16 \\
+  --region us-east-1`
+  }
+  language="bash"
+/>
+
+#### Create the RDS instance
+
+<InterpolatedCodeBlock
+  code={
+`aws rds create-db-instance \\
+  --engine mariadb \\
+  --db-instance-identifier mariadb-multi-region \\
+  --allocated-storage 20 \\
+  --region us-east-1 \\
+  --db-instance-class db.t3.medium \\
+  --master-username admin \\
+  --master-user-password [[VAR:ADMIN_PASSWORD:your-password]] \\
+  --db-subnet-group-name multi-region-db-subnet \\
+  --vpc-security-group-ids [[GLOBAL:DB_SG_ID]] \\
+  --no-publicly-accessible \\
+  --enable-iam-database-authentication`
+  }
+  language="bash"
+/>
+
+Wait for the instance to become available:
+
+```bash
+aws rds wait db-instance-available \
+  --db-instance-identifier mariadb-multi-region \
+  --region us-east-1
+```
+
+#### Create the Kine database and IAM user
+
+Connect to the database instance as the `admin` user and create the `kine`
+database and user. The user authenticates with the `AWSAuthenticationPlugin`
+instead of a password.
+
+```sql
+CREATE DATABASE IF NOT EXISTS kine;
+
+CREATE USER 'kine'@'%' IDENTIFIED WITH AWSAuthenticationPlugin AS 'RDS';
+GRANT ALL PRIVILEGES ON kine.* TO 'kine'@'%';
+FLUSH PRIVILEGES;
+```
+
+#### Create an IAM policy for RDS access
+
+Create an IAM policy that grants the `rds-db:connect` permission for the `kine`
+database user. Replace `<ACCOUNT_ID>` with your AWS account ID and
+`<DBI_RESOURCE_ID>` with the RDS instance resource ID (found via
+`aws rds describe-db-instances --query 'DBInstances[0].DbiResourceId'`).
+
+<InterpolatedCodeBlock
+  code={
+`aws iam create-policy \\
+  --policy-name RDSIAMAuthKine \\
+  --policy-document '{
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Action": "rds-db:connect",
+        "Resource": "arn:aws:rds-db:[[GLOBAL:AWS_REGION]]:[[GLOBAL:ACCOUNT_ID]]:dbuser:[[VAR:DBI_RESOURCE_ID:db-XXXXXXXXXXXXXXXXXXXXXXXXXX]]/kine"
+      }
+    ]
+  }'`
+  }
+  language="bash"
+/>
+
+#### Create an IAM role for Pod Identity
+
+Create an IAM role with a trust policy that allows the EKS Pod Identity agent
+to assume it. The `pods.eks.amazonaws.com` trust principal is region-agnostic,
+so a single role works for clusters in any region.
+
+<InterpolatedCodeBlock
+  code={
+`aws iam create-role \\
+  --role-name PlatformKineRDSRole \\
+  --assume-role-policy-document '{
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Principal": {
+          "Service": "pods.eks.amazonaws.com"
+        },
+        "Action": [
+          "sts:AssumeRole",
+          "sts:TagSession"
+        ]
+      }
+    ]
+  }'
+
+aws iam attach-role-policy \\
+  --role-name PlatformKineRDSRole \\
+  --policy-arn arn:aws:iam::[[GLOBAL:ACCOUNT_ID]]:policy/RDSIAMAuthKine`
+  }
+  language="bash"
+/>
+
+#### Install the EKS Pod Identity Agent
+
+Install the Pod Identity Agent add-on on **every** cluster. Without this
+add-on, the Pod Identity association has no effect and pods cannot obtain
+IAM credentials.
+
+```bash
+aws eks create-addon \
+  --cluster-name platform-multi-region-us-east-1 \
+  --addon-name eks-pod-identity-agent \
+  --region us-east-1
+
+aws eks create-addon \
+  --cluster-name platform-multi-region-eu-west-1 \
+  --addon-name eks-pod-identity-agent \
+  --region eu-west-1
+```
+
+Verify the add-on is `ACTIVE` on each cluster before proceeding:
+
+<InterpolatedCodeBlock
+  code={
+`aws eks describe-addon \\
+  --cluster-name [[VAR:CLUSTER_NAME:platform-multi-region-us-east-1]] \\
+  --addon-name eks-pod-identity-agent \\
+  --region [[GLOBAL:AWS_REGION]] \\
+  --query 'addon.status'`
+  }
+  language="bash"
+/>
+
+#### Create Pod Identity associations
+
+Associate the IAM role with the `loft` service account in the
+`vcluster-platform` namespace on **every** cluster. This allows the platform
+pods to generate temporary IAM authentication tokens for the database
+connection.
+
+:::warning Important
+You must create a Pod Identity association on **each** cluster, not just the
+cluster in the same region as the database. Without the association, the
+platform pods in that cluster cannot authenticate with the RDS instance and
+fail with `Access denied` errors.
+:::
+
+**U.S. region**
+
+<InterpolatedCodeBlock
+  code={
+`aws eks create-pod-identity-association \\
+  --cluster-name platform-multi-region-us-east-1 \\
+  --role-arn arn:aws:iam::[[GLOBAL:ACCOUNT_ID]]:role/PlatformKineRDSRole \\
+  --namespace vcluster-platform \\
+  --service-account loft \\
+  --region us-east-1`
+  }
+  language="bash"
+/>
+
+**E.U. region**
+
+<InterpolatedCodeBlock
+  code={
+`aws eks create-pod-identity-association \\
+  --cluster-name platform-multi-region-eu-west-1 \\
+  --role-arn arn:aws:iam::[[GLOBAL:ACCOUNT_ID]]:role/PlatformKineRDSRole \\
+  --namespace vcluster-platform \\
+  --service-account loft \\
+  --region eu-west-1`
+  }
+  language="bash"
+/>
+
+For more details on IAM database authentication with EKS Pod Identity, see
+[IAM database authentication](/docs/platform/administer/connector/iam_database).
+
+### Step 4 - Create VPC peering to the database
+
+Create VPC peering connections between each EKS cluster VPC and the database
+VPC. This gives both clusters network access to the RDS instance without
+requiring direct cluster-to-cluster peering.
+
+#### Create peering connections
+
+**Database VPC to U.S. cluster VPC** (same region):
+
+<InterpolatedCodeBlock
+  code={
+`aws ec2 create-vpc-peering-connection \\
+  --vpc-id [[GLOBAL:DB_VPC_ID]] \\
+  --peer-vpc-id [[VAR:VPC_ID_US_CLUSTER:vpc-yyyyyyyyy]] \\
+  --region us-east-1 \\
+  --tag-specifications 'ResourceType=vpc-peering-connection,Tags=[{Key=Name,Value=db-vpc-to-eks-us-east-1}]'`
+  }
+  language="bash"
+/>
+
+**Database VPC to E.U. cluster VPC** (cross-region):
+
+<InterpolatedCodeBlock
+  code={
+`aws ec2 create-vpc-peering-connection \\
+  --vpc-id [[GLOBAL:DB_VPC_ID]] \\
+  --peer-vpc-id [[VAR:VPC_ID_EU_CLUSTER:vpc-zzzzzzzzz]] \\
+  --peer-region eu-west-1 \\
+  --region us-east-1 \\
+  --tag-specifications 'ResourceType=vpc-peering-connection,Tags=[{Key=Name,Value=db-vpc-to-eks-eu-west-1}]'`
+  }
+  language="bash"
+/>
+
+#### Accept the peering connections
+
+The same-region peering is accepted in `us-east-1`. The cross-region peering
+must be accepted in `eu-west-1`.
+
+<InterpolatedCodeBlock
+  code={
+`aws ec2 accept-vpc-peering-connection \\
+  --vpc-peering-connection-id [[VAR:US_PEERING_ID:pcx-xxxxxxxxx]] \\
+  --region us-east-1
+
+aws ec2 accept-vpc-peering-connection \\
+  --vpc-peering-connection-id [[VAR:EU_PEERING_ID:pcx-yyyyyyyyy]] \\
+  --region eu-west-1`
+  }
+  language="bash"
+/>
+
+#### Enable DNS resolution
+
+Enable DNS resolution on both peering connections so the RDS endpoint hostname
+resolves to its private IP from the EKS VPCs.
+
+<InterpolatedCodeBlock
+  code={
+`aws ec2 modify-vpc-peering-connection-options \\
+  --vpc-peering-connection-id [[VAR:US_PEERING_ID:pcx-xxxxxxxxx]] \\
+  --requester-peering-connection-options AllowDnsResolutionFromRemoteVpc=true \\
+  --accepter-peering-connection-options AllowDnsResolutionFromRemoteVpc=true \\
+  --region us-east-1`
+  }
+  language="bash"
+/>
+
+For the cross-region peering, set the requester side (DB VPC) in `us-east-1`
+and the accepter side (E.U. cluster VPC) in `eu-west-1`:
+
+<InterpolatedCodeBlock
+  code={
+`aws ec2 modify-vpc-peering-connection-options \\
+  --vpc-peering-connection-id [[VAR:EU_PEERING_ID:pcx-yyyyyyyyy]] \\
+  --requester-peering-connection-options AllowDnsResolutionFromRemoteVpc=true \\
+  --region us-east-1
+
+aws ec2 modify-vpc-peering-connection-options \\
+  --vpc-peering-connection-id [[VAR:EU_PEERING_ID:pcx-yyyyyyyyy]] \\
+  --accepter-peering-connection-options AllowDnsResolutionFromRemoteVpc=true \\
+  --region eu-west-1`
+  }
+  language="bash"
+/>
+
+#### Add routes
+
+Add routes so traffic can flow between each EKS VPC and the database VPC.
+
+:::warning Important
+Add routes to **every** route table whose subnets host EKS nodes, including
+public route tables. If your EKS nodes run in public subnets (the `eksctl`
+default), missing routes on the public route table cause database connection
+timeouts even though VPC peering is active.
+:::
+
+**Database VPC route table** — route to both EKS VPC CIDRs:
+
+<InterpolatedCodeBlock
+  code={
+`aws ec2 create-route \\
+  --route-table-id [[VAR:DB_VPC_ROUTE_TABLE_ID:rtb-xxxxxxxxx]] \\
+  --destination-cidr-block 10.0.0.0/16 \\
+  --vpc-peering-connection-id [[VAR:US_PEERING_ID:pcx-xxxxxxxxx]] \\
+  --region us-east-1
+
+aws ec2 create-route \\
+  --route-table-id [[VAR:DB_VPC_ROUTE_TABLE_ID:rtb-xxxxxxxxx]] \\
+  --destination-cidr-block 172.21.0.0/16 \\
+  --vpc-peering-connection-id [[VAR:EU_PEERING_ID:pcx-yyyyyyyyy]] \\
+  --region us-east-1`
+  }
+  language="bash"
+/>
+
+**U.S. EKS VPC route tables** — route to the database VPC CIDR. Repeat for
+every route table associated with subnets that host EKS nodes:
+
+<InterpolatedCodeBlock
+  code={
+`aws ec2 create-route \\
+  --route-table-id [[VAR:US_EKS_ROUTE_TABLE_ID:rtb-yyyyyyyyy]] \\
+  --destination-cidr-block 10.1.0.0/16 \\
+  --vpc-peering-connection-id [[VAR:US_PEERING_ID:pcx-xxxxxxxxx]] \\
+  --region us-east-1`
+  }
+  language="bash"
+/>
+
+**E.U. EKS VPC route tables** — route to the database VPC CIDR. Repeat for
+every route table associated with subnets that host EKS nodes:
+
+<InterpolatedCodeBlock
+  code={
+`aws ec2 create-route \\
+  --route-table-id [[VAR:EU_EKS_ROUTE_TABLE_ID:rtb-zzzzzzzzz]] \\
+  --destination-cidr-block 10.1.0.0/16 \\
+  --vpc-peering-connection-id [[VAR:EU_PEERING_ID:pcx-yyyyyyyyy]] \\
+  --region eu-west-1`
+  }
+  language="bash"
+/>
+
+To list all route tables for a VPC and identify which subnets they serve:
+
+<InterpolatedCodeBlock
+  code={
+`aws ec2 describe-route-tables \\
+  --filters "Name=vpc-id,Values=[[VAR:VPC_ID:vpc-xxxxxxxxx]]" \\
+  --region [[GLOBAL:AWS_REGION]] \\
+  --query 'RouteTables[].{RouteTableId:RouteTableId,Name:Tags[?Key==\`Name\`].Value|[0],Subnets:Associations[].SubnetId}'`
+  }
+  language="bash"
+/>
+
+#### Verify connectivity
+
+Launch a test pod in each EKS cluster and verify it can reach the RDS endpoint:
+
+<InterpolatedCodeBlock
+  code={
+`kubectl run dbtest --image=busybox --restart=Never --rm -it -- \\
+  nc -zv [[VAR:RDS_ENDPOINT:mariadb-multi-region.xxxxxxxxxxxx.us-east-1.rds.amazonaws.com]] 3306`
+  }
+  language="bash"
+/>
+
+The connection should report `open`. If it times out, verify that routes exist
+on the correct route tables and that the database security group allows ingress
+from the cluster's VPC CIDR.
+
+### Step 5 - Deploy vCluster platform
+
+Deploy the platform on each cluster using the `multiRegion` Helm values. Each cluster needs a **region-specific** `multiRegion.host` value (used as the custom DERP server endpoint), while `config.loftHost` should be the **shared DNS domain**.
+
+Create a values file for each region. The only differences between regions are
+`multiRegion.host` and `multiRegion.region`.
+
+**U.S. region** (`platform-us-east-1-values.yaml`)
+
+<InterpolatedCodeBlock
+  code={
+`admin:
+  email: [[VAR:ADMIN_EMAIL:admin@example.com]]
+
+multiRegion:
+  enabled: true
+  host: us.multi-region.example.com
+  region: us-east-1
+
+replicaCount: 3
+
+config:
+  loftHost: multi-region.example.com
+  database:
+    enabled: true
+    dataSource: "mysql://kine@tcp([[VAR:DATABASE_URL:mariadb-multi-region.xxxxxxxxxxxx.us-east-1.rds.amazonaws.com]]:3306)/kine"
+    identityProvider: "aws"
+    extraArgs:
+      - --datastore-max-open-connections=20
+      - --datastore-max-idle-connections=0
+
+  # Cost control requires a single-region database and is not compatible
+  # with the shared Kine backend used in multi-region deployments.
+  costControl:
+    enabled: false
+
+agentValues:
+  replicaCount: 3
+  env:
+    LEADER_ELECTION_ENABLED: "true"`
+  }
+  language="yaml"
+/>
+
+**E.U. region** (`platform-eu-west-1-values.yaml`)
+
+<InterpolatedCodeBlock
+  code={
+`admin:
+  email: [[VAR:ADMIN_EMAIL:admin@example.com]]
+
+multiRegion:
+  enabled: true
+  host: eu.multi-region.example.com
+  region: eu-west-1
+
+replicaCount: 3
+
+config:
+  loftHost: multi-region.example.com
+  database:
+    enabled: true
+    dataSource: "mysql://kine@tcp([[VAR:DATABASE_URL:mariadb-multi-region.xxxxxxxxxxxx.us-east-1.rds.amazonaws.com]]:3306)/kine"
+    identityProvider: "aws"
+    extraArgs:
+      - --datastore-max-open-connections=20
+      - --datastore-max-idle-connections=0
+
+  # Cost control requires a single-region database and is not compatible
+  # with the shared Kine backend used in multi-region deployments.
+  costControl:
+    enabled: false
+
+agentValues:
+  replicaCount: 3
+  env:
+    LEADER_ELECTION_ENABLED: "true"`
+  }
+  language="yaml"
+/>
+
+Install the platform on each cluster using its values file.
+
+<Tabs
+  defaultValue="cli"
+  values={[
+    { label: "vCluster CLI", value: "cli" },
+    { label: "Helm", value: "helm" },
+  ]}
+>
+  <TabItem value="cli">
+
+**U.S. region**
+
+<InterpolatedCodeBlock
+  code={
+`vcluster platform start \\
+  --namespace vcluster-platform \\
+  --kube-context [[VAR:US_REGION_CONTEXT:arn:aws:eks:us-east-1:123456789012:cluster/platform-multi-region-us-east-1]] \\
+  --values platform-us-east-1-values.yaml \\
+  --no-tunnel`
+  }
+  language="bash"
+/>
+
+**E.U. region**
+
+<InterpolatedCodeBlock
+  code={
+`vcluster platform start \\
+  --namespace vcluster-platform \\
+  --kube-context [[VAR:EU_REGION_CONTEXT:arn:aws:eks:eu-west-1:123456789012:cluster/platform-multi-region-eu-west-1]] \\
+  --values platform-eu-west-1-values.yaml \\
+  --no-tunnel`
+  }
+  language="bash"
+/>
+
+  </TabItem>
+  <TabItem value="helm">
+
+**U.S. region**
+
+```bash
+helm upgrade loft vcluster-platform --install --create-namespace --repository-config='' \
+  --namespace vcluster-platform \
+  --repo "https://charts.loft.sh/" \
+  -f platform-us-east-1-values.yaml
+```
+
+**E.U. region**
+
+```bash
+helm upgrade loft vcluster-platform --install --create-namespace --repository-config='' \
+  --namespace vcluster-platform \
+  --repo "https://charts.loft.sh/" \
+  -f platform-eu-west-1-values.yaml
+```
+
+  </TabItem>
+</Tabs>
+
+Setting `multiRegion.enabled=true` automatically configures:
+- Embedded Kubernetes (Kine) with the shared database
+- Leader election across regions
+- Multi-region platform license check
+
+### Step 6 - Configure HTTPS with AWS Certificate Manager (ACM)
+
+Request a certificate in each region that covers both the shared DNS domain
+and the region-specific subdomain. The wildcard `*.multi-region.example.com`
+covers the regional subdomains (`us.multi-region.example.com`,
+`eu.multi-region.example.com`), and `multi-region.example.com` is added as a
+SAN to cover the apex.
+
+Run this command in each region, replacing `<AWS_REGION>`.
+
+<InterpolatedCodeBlock
+  code={
+`aws acm request-certificate \\
+  --region [[GLOBAL:AWS_REGION]] \\
+  --domain-name "multi-region.example.com" \\
+  --subject-alternative-names "*.multi-region.example.com" \\
+  --validation-method DNS`
+  }
+  language="bash"
+/>
+
+Get the certificate ARN from the output and describe the certificate
+
+Replace `<ACCOUNT_ID>` with your AWS account ID.
+Replace `<CERTIFICATE_ARN_ID>` with the ARN ID generated from the command above.
+
+<InterpolatedCodeBlock
+  code={
+`aws acm describe-certificate \\
+  --region [[GLOBAL:AWS_REGION]] \\
+  --certificate-arn arn:aws:acm:[[GLOBAL:AWS_REGION]]:[[GLOBAL:ACCOUNT_ID]]:certificate/[[VAR:CERTIFICATE_ARN_ID:xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx]]`
+  }
+  language="bash"
+/>
+
+Add DNS validation CNAMEs in Route 53 and wait until certificate status is ISSUED.
+
+:::note
+You can also do this step by setting up cert-manager in the clusters instead of using AWS ACM.
+:::
+
+### Step 7 - Create Ingress (ALB)
+
+Create the load balancers in each cluster via the Kubernetes Ingress resource and point to the loft platform service.
+
+Apply the Ingress manifest in each cluster to provision an AWS ALB.
+
+<InterpolatedCodeBlock
+  code={
+`apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: loft
+  namespace: vcluster-platform
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80},{"HTTPS":443}]'
+    alb.ingress.kubernetes.io/certificate-arn: "arn:aws:acm:[[GLOBAL:AWS_REGION]]:[[GLOBAL:ACCOUNT_ID]]:certificate/[[VAR:CERT_ID:xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx]]"
+    alb.ingress.kubernetes.io/ssl-redirect: "443"
+    alb.ingress.kubernetes.io/idle-timeout: "3600"
+    alb.ingress.kubernetes.io/healthcheck-path: /healthz
+    alb.ingress.kubernetes.io/success-codes: "200"
+spec:
+  ingressClassName: alb
+  rules:
+    - host: [[VAR:REGION:us]].multi-region.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: loft
+                port:
+                  number: 80
+    - host: multi-region.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: loft
+                port:
+                  number: 80`
+  }
+  language="yaml"
+/>
+
+
+### Step 8 - Configure Route 53 latency-based routing
+
+#### Create health checks
+
+Create an HTTPS health check for each regional ALB. Route 53 uses these to
+detect when a region is unavailable and fail over traffic automatically.
+
+**U.S. region**
+
+```bash
+aws route53 create-health-check \
+  --caller-reference "us-east-1-platform-healthz" \
+  --health-check-config '{
+    "FullyQualifiedDomainName": "us.multi-region.example.com",
+    "Port": 443,
+    "Type": "HTTPS",
+    "ResourcePath": "/healthz",
+    "RequestInterval": 10,
+    "FailureThreshold": 3,
+    "EnableSNI": true
+  }'
+```
+
+**E.U. region**
+
+```bash
+aws route53 create-health-check \
+  --caller-reference "eu-west-1-platform-healthz" \
+  --health-check-config '{
+    "FullyQualifiedDomainName": "eu.multi-region.example.com",
+    "Port": 443,
+    "Type": "HTTPS",
+    "ResourcePath": "/healthz",
+    "RequestInterval": 10,
+    "FailureThreshold": 3,
+    "EnableSNI": true
+  }'
+```
+
+Note the health check IDs from the output. You can tag them for easier identification:
+
+<InterpolatedCodeBlock
+  code={
+`aws route53 change-tags-for-resource \\
+  --resource-type healthcheck --resource-id [[VAR:HEALTH_CHECK_ID:xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx]] \\
+  --add-tags Key=Name,Value=[[VAR:REGION:us]]-platform-healthz`
+  }
+  language="bash"
+/>
+
+#### Create DNS records
+
+Create latency-based A (Alias) records in Route 53 pointing to each
+regional ALB. Attach the health checks created above so that Route 53 can
+fail over traffic when a region becomes unavailable.
+
+Replace `<US_HEALTH_CHECK_ID>` and `<EU_HEALTH_CHECK_ID>` with the IDs from the
+previous step, and `<US_ALB_HOSTED_ZONE_ID>`, `<EU_ALB_HOSTED_ZONE_ID>` with the
+canonical hosted zone IDs of each ALB.
+
+<InterpolatedCodeBlock
+  code={
+`aws route53 change-resource-record-sets \\
+  --hosted-zone-id [[VAR:HOSTED_ZONE_ID:Z1234567890ABC]] \\
+  --change-batch '{
+    "Changes": [
+      {
+        "Action": "UPSERT",
+        "ResourceRecordSet": {
+          "Name": "multi-region.example.com",
+          "Type": "A",
+          "SetIdentifier": "us-east-1",
+          "Region": "us-east-1",
+          "HealthCheckId": "[[VAR:US_HEALTH_CHECK_ID:xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx]]",
+          "AliasTarget": {
+            "HostedZoneId": "[[VAR:US_ALB_HOSTED_ZONE_ID:Z35SXDOTRQ7X7K]]",
+            "DNSName": "[[VAR:US_ALB_DNS_NAME:k8s-vcluster-loft-xxxxxxxxxx-xxxxxxxxx.us-east-1.elb.amazonaws.com]]",
+            "EvaluateTargetHealth": true
+          }
+        }
+      },
+      {
+        "Action": "UPSERT",
+        "ResourceRecordSet": {
+          "Name": "multi-region.example.com",
+          "Type": "A",
+          "SetIdentifier": "eu-west-1",
+          "Region": "eu-west-1",
+          "HealthCheckId": "[[VAR:EU_HEALTH_CHECK_ID:yyyyyyyy-yyyy-yyyy-yyyy-yyyyyyyyyyyy]]",
+          "AliasTarget": {
+            "HostedZoneId": "[[VAR:EU_ALB_HOSTED_ZONE_ID:Z32O12XQLNTSW2]]",
+            "DNSName": "[[VAR:EU_ALB_DNS_NAME:k8s-vcluster-loft-xxxxxxxxxx-xxxxxxxxx.eu-west-1.elb.amazonaws.com]]",
+            "EvaluateTargetHealth": true
+          }
+        }
+      }
+    ]
+  }'`
+  }
+  language="bash"
+/>
+
+Also create A records for the region-specific subdomains used by the custom DERP server
+and health checks. Replace `<US_ALB_HOSTED_ZONE_ID>`, `<EU_ALB_HOSTED_ZONE_ID>`
+with the canonical hosted zone IDs and `<US_ALB_DNS_NAME>`, `<EU_ALB_DNS_NAME>`
+with the DNS names of each ALB.
+
+<InterpolatedCodeBlock
+  code={
+`aws route53 change-resource-record-sets \\
+  --hosted-zone-id [[VAR:HOSTED_ZONE_ID:Z1234567890ABC]] \\
+  --change-batch '{
+    "Changes": [
+      {
+        "Action": "UPSERT",
+        "ResourceRecordSet": {
+          "Name": "us.multi-region.example.com",
+          "Type": "A",
+          "AliasTarget": {
+            "HostedZoneId": "[[VAR:US_ALB_HOSTED_ZONE_ID:Z35SXDOTRQ7X7K]]",
+            "DNSName": "[[VAR:US_ALB_DNS_NAME:k8s-vcluster-loft-xxxxxxxxxx-xxxxxxxxx.us-east-1.elb.amazonaws.com]]",
+            "EvaluateTargetHealth": true
+          }
+        }
+      },
+      {
+        "Action": "UPSERT",
+        "ResourceRecordSet": {
+          "Name": "eu.multi-region.example.com",
+          "Type": "A",
+          "AliasTarget": {
+            "HostedZoneId": "[[VAR:EU_ALB_HOSTED_ZONE_ID:Z32O12XQLNTSW2]]",
+            "DNSName": "[[VAR:EU_ALB_DNS_NAME:k8s-vcluster-loft-xxxxxxxxxx-xxxxxxxxx.eu-west-1.elb.amazonaws.com]]",
+            "EvaluateTargetHealth": true
+          }
+        }
+      }
+    ]
+  }'`
+  }
+  language="bash"
+/>
+
+#### Verify health checks
+
+Confirm both health checks are healthy before proceeding:
+
+<InterpolatedCodeBlock
+  code={
+`aws route53 get-health-check-status --health-check-id [[VAR:HEALTH_CHECK_ID:xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx]] \\
+  --query 'HealthCheckObservations[].{Region:Region,Status:StatusReport.Status}' \\
+  --output table`
+  }
+  language="bash"
+/>
+
+:::warning Important
+Without health checks attached to the latency-based records, Route 53 cannot detect regional failures and continues routing traffic to an unavailable region. Always verify that health checks are healthy before proceeding.
+:::
+
+### Step 9 - Deploy the agent on the clusters
+
+The agent must be deployed in a **different namespace** than the platform (for example, `vcluster-agent`). The `agentValues` block in the platform values files (Step 5) controls the agent's replica count, leader election, and other settings.
+
+<Tabs
+  defaultValue="cli"
+  values={[
+    { label: "vCluster CLI", value: "cli" },
+    { label: "Helm", value: "helm" },
+  ]}
+>
+  <TabItem value="cli">
+
+Use the vCluster CLI to add each cluster as a connected cluster. Generate an access token from the platform UI under **Users & Teams > Access Keys**, or by running `vcluster platform get token`.
+
+<InterpolatedCodeBlock
+  code={
+`vcluster platform add cluster [[VAR:CLUSTER_NAME:platform-multi-region-us-east-1]] \\
+  --namespace vcluster-agent \\
+  --display-name [[VAR:DISPLAY_NAME:my-cluster]] \\
+  --values 'https://[[VAR:PLATFORM_URL:multi-region.example.com]]/clusters/agent-values/[[VAR:CLUSTER_NAME:platform-multi-region-us-east-1]]?token=[[VAR:ACCESS_TOKEN:your-access-token]]'`
+  }
+  language="bash"
+/>
+
+Repeat on the second cluster with its own `<CLUSTER_NAME>` and `<DISPLAY_NAME>`.
+
+  </TabItem>
+  <TabItem value="helm">
+
+Go to the platform UI and under Infra -> Clusters, add a connected cluster and select the Helm (advanced) option.
+
+You get a Helm command with a `--values` URL that contains agent-specific configuration.
+
+<InterpolatedCodeBlock
+  code={
+`helm upgrade loft vcluster-platform --install --create-namespace --repository-config='' \\
+  --namespace vcluster-agent \\
+  --repo "https://charts.loft.sh/" \\
+  --set agentOnly=true \\
+  --set url=[[VAR:PLATFORM_URL:multi-region.example.com]] \\
+  --set token=[[VAR:ACCESS_TOKEN:your-access-token]] \\
+  --values 'https://[[VAR:PLATFORM_URL:multi-region.example.com]]/clusters/agent-values/[[VAR:CLUSTER_NAME:platform-multi-region-us-east-1]]?token=[[VAR:ACCESS_TOKEN:your-access-token]]'`
+  }
+  language="bash"
+/>
+
+Repeat on the second cluster with its own `<PLATFORM_URL>` and `<ACCESS_TOKEN>` values.
+
+  </TabItem>
+</Tabs>
+
+
+## Upgrade a multi-region deployment
+
+This runbook describes how to upgrade vCluster Platform across regions with
+minimal downtime. The process upgrades one region at a time while the other
+continues serving traffic through Route 53 failover.
+
+### Prerequisites
+
+- Updated values files for each region (for example, `platform-us-east-1-values.yaml` and `platform-eu-west-1-values.yaml`)
+- `kubectl` contexts configured for both clusters
+- The target chart version available in the Helm repository
+
+### Step 1 - Scale down the first region
+
+Pick the region to upgrade first and scale its platform deployment to zero.
+Scaling down before upgrading prevents leader election from switching between
+different platform versions during the upgrade, which could cause unexpected
+behavior. Route 53 routes all traffic to the other region while this one is
+offline.
+
+Optionally, identify which region currently holds the leader lease so you can
+choose to upgrade the non-leader region first, minimizing leader re-elections:
+
+<InterpolatedCodeBlock
+  code={
+`for CTX in [[GLOBAL:FIRST_REGION_CONTEXT]] [[GLOBAL:SECOND_REGION_CONTEXT]]; do
+  echo "=== $CTX ==="
+  kubectl --context "$CTX" get lease -n vcluster-platform -o wide
+  echo
+done`
+  }
+  language="bash"
+/>
+
+<InterpolatedCodeBlock
+  code={
+`kubectl --context [[GLOBAL:FIRST_REGION_CONTEXT]] \\
+  scale deployment -n vcluster-platform loft --replicas=0`
+  }
+  language="bash"
+/>
+
+Wait for all pods to stop before proceeding.
+
+<InterpolatedCodeBlock
+  code={
+`kubectl --context [[GLOBAL:FIRST_REGION_CONTEXT]] \\
+  get pods -n vcluster-platform -l app=loft --watch`
+  }
+  language="bash"
+/>
+
+### Step 2 - Upgrade the first region
+
+Upgrade the first region with the updated values file. The deployment stays at
+zero replicas after the upgrade because the tool does not override the manual
+scale-down.
+
+<Tabs
+  defaultValue="cli"
+  values={[
+    { label: "vCluster CLI", value: "cli" },
+    { label: "Helm", value: "helm" },
+  ]}
+>
+  <TabItem value="cli">
+
+<InterpolatedCodeBlock
+  code={
+`vcluster platform start \\
+  --namespace vcluster-platform \\
+  --kube-context [[GLOBAL:FIRST_REGION_CONTEXT]] \\
+  --values [[VAR:FIRST_REGION_VALUES_FILE:platform-us-east-1-values.yaml]] \\
+  --upgrade \\
+  --no-tunnel`
+  }
+  language="bash"
+/>
+
+  </TabItem>
+  <TabItem value="helm">
+
+<InterpolatedCodeBlock
+  code={
+`helm upgrade loft vcluster-platform --install --create-namespace --repository-config='' \\
+  --namespace vcluster-platform \\
+  --repo "https://charts.loft.sh/" \\
+  --version [[VAR:CHART_VERSION:4.8.0]] \\
+  --kube-context [[GLOBAL:FIRST_REGION_CONTEXT]] \\
+  -f [[VAR:FIRST_REGION_VALUES_FILE:platform-us-east-1-values.yaml]] \\
+  --server-side=true --force-conflicts`
+  }
+  language="bash"
+/>
+
+  </TabItem>
+</Tabs>
+
+### Step 3 - Upgrade the second region (rolling)
+
+Upgrade the second region without scaling down. This performs a rolling update
+so the region continues serving traffic during the upgrade.
+
+<Tabs
+  defaultValue="cli"
+  values={[
+    { label: "vCluster CLI", value: "cli" },
+    { label: "Helm", value: "helm" },
+  ]}
+>
+  <TabItem value="cli">
+
+<InterpolatedCodeBlock
+  code={
+`vcluster platform start \\
+  --namespace vcluster-platform \\
+  --kube-context [[GLOBAL:SECOND_REGION_CONTEXT]] \\
+  --values [[VAR:SECOND_REGION_VALUES_FILE:platform-eu-west-1-values.yaml]] \\
+  --upgrade \\
+  --no-tunnel`
+  }
+  language="bash"
+/>
+
+  </TabItem>
+  <TabItem value="helm">
+
+<InterpolatedCodeBlock
+  code={
+`helm upgrade loft vcluster-platform --install --create-namespace --repository-config='' \\
+  --namespace vcluster-platform \\
+  --repo "https://charts.loft.sh/" \\
+  --version [[VAR:CHART_VERSION:4.8.0]] \\
+  --kube-context [[GLOBAL:SECOND_REGION_CONTEXT]] \\
+  -f [[VAR:SECOND_REGION_VALUES_FILE:platform-eu-west-1-values.yaml]] \\
+  --server-side=true --force-conflicts`
+  }
+  language="bash"
+/>
+
+  </TabItem>
+</Tabs>
+
+Wait for the rollout to complete.
+
+<InterpolatedCodeBlock
+  code={
+`kubectl --context [[GLOBAL:SECOND_REGION_CONTEXT]] \\
+  rollout status deployment/loft -n vcluster-platform`
+  }
+  language="bash"
+/>
+
+### Step 4 - Scale up the first region
+
+Bring the first region back online.
+
+Replace the replica count with the `replicaCount` value from the region's values file.
+
+<InterpolatedCodeBlock
+  code={
+`kubectl --context [[GLOBAL:FIRST_REGION_CONTEXT]] \\
+  scale deployment -n vcluster-platform loft --replicas=[[VAR:REPLICA_COUNT:3]]`
+  }
+  language="bash"
+/>
+
+Wait for all pods to become ready.
+
+<InterpolatedCodeBlock
+  code={
+`kubectl --context [[GLOBAL:FIRST_REGION_CONTEXT]] \\
+  rollout status deployment/loft -n vcluster-platform`
+  }
+  language="bash"
+/>
+
+### Step 5 - Verify all deployments
+
+Confirm that both platform and agent deployments are running the expected image.
+
+<InterpolatedCodeBlock
+  code={
+`for CTX in [[GLOBAL:FIRST_REGION_CONTEXT]] [[GLOBAL:SECOND_REGION_CONTEXT]]; do
+  echo "=== $CTX ==="
+  echo -n "Platform: " && kubectl --context "$CTX" get deployment -n vcluster-platform loft \\
+    -o jsonpath='{.spec.template.spec.containers[0].image}' && echo
+  echo -n "Agent:    " && kubectl --context "$CTX" get deployment -n vcluster-agent loft \\
+    -o jsonpath='{.spec.template.spec.containers[0].image}' && echo
+  echo
+done`
+  }
+  language="bash"
+/>
+
+The platform automatically upgrades connected agents after the platform upgrade
+completes.
+
+## Restore the Kine database from a snapshot
+
+This runbook describes how to restore the shared Kine database from an RDS
+snapshot to a new instance and update both platform regions to use the restored
+database. Use this procedure for disaster recovery, database migration (for
+example, enabling IAM authentication), or point-in-time recovery.
+
+:::warning Important
+Both platform regions must be scaled down before switching the data source to
+prevent split-brain writes to the old and new databases.
+:::
+
+### Step 1 - Create a snapshot of the current database
+
+Skip this step if you already have a snapshot to restore from.
+
+<InterpolatedCodeBlock
+  code={
+`aws rds create-db-snapshot \\
+  --db-instance-identifier [[VAR:CURRENT_DB_INSTANCE_ID:mariadb-multi-region]] \\
+  --db-snapshot-identifier [[VAR:SNAPSHOT_NAME:kine-backup-YYYY-MM-DD]] \\
+  --region [[GLOBAL:AWS_REGION]]`
+  }
+  language="bash"
+/>
+
+Wait for the snapshot to become available:
+
+<InterpolatedCodeBlock
+  code={
+`aws rds wait db-snapshot-available \\
+  --db-snapshot-identifier [[VAR:SNAPSHOT_NAME:kine-backup-YYYY-MM-DD]] \\
+  --region [[GLOBAL:AWS_REGION]]`
+  }
+  language="bash"
+/>
+
+### Step 2 - Restore the snapshot to a new RDS instance
+
+Restore the snapshot to a new instance in the database VPC. Use the same DB
+subnet group and security group from the original setup. Include
+`--enable-iam-database-authentication` if the new instance should use IAM auth.
+
+<InterpolatedCodeBlock
+  code={
+`aws rds restore-db-instance-from-db-snapshot \\
+  --db-instance-identifier [[VAR:NEW_DB_INSTANCE_ID:mariadb-multi-region-restored]] \\
+  --db-snapshot-identifier [[VAR:SNAPSHOT_NAME:kine-backup-YYYY-MM-DD]] \\
+  --db-instance-class db.t3.medium \\
+  --db-subnet-group-name multi-region-db-subnet \\
+  --vpc-security-group-ids [[GLOBAL:DB_SG_ID]] \\
+  --no-publicly-accessible \\
+  --enable-iam-database-authentication \\
+  --region [[GLOBAL:AWS_REGION]]`
+  }
+  language="bash"
+/>
+
+Wait for the new instance to become available:
+
+<InterpolatedCodeBlock
+  code={
+`aws rds wait db-instance-available \\
+  --db-instance-identifier [[VAR:NEW_DB_INSTANCE_ID:mariadb-multi-region-restored]] \\
+  --region [[GLOBAL:AWS_REGION]]`
+  }
+  language="bash"
+/>
+
+Note the new endpoint:
+
+<InterpolatedCodeBlock
+  code={
+`aws rds describe-db-instances \\
+  --db-instance-identifier [[VAR:NEW_DB_INSTANCE_ID:mariadb-multi-region-restored]] \\
+  --query 'DBInstances[0].Endpoint.Address' \\
+  --output text \\
+  --region [[GLOBAL:AWS_REGION]]`
+  }
+  language="bash"
+/>
+
+If using IAM authentication, note the `DbiResourceId` of the new instance and
+update the `RDSIAMAuthKine` IAM policy to include it. Without this, platform
+pods fail with `Access denied for user 'kine'` errors because the IAM
+`rds-db:connect` permission is scoped to a specific RDS instance resource ID.
+
+<InterpolatedCodeBlock
+  code={
+`aws rds describe-db-instances \\
+  --db-instance-identifier [[VAR:NEW_DB_INSTANCE_ID:mariadb-multi-region-restored]] \\
+  --query 'DBInstances[0].DbiResourceId' \\
+  --output text \\
+  --region [[GLOBAL:AWS_REGION]]`
+  }
+  language="bash"
+/>
+
+Add the new resource ID to the policy's `Resource` array:
+
+<InterpolatedCodeBlock
+  code={
+`aws iam create-policy-version \\
+  --policy-arn arn:aws:iam::[[GLOBAL:ACCOUNT_ID]]:policy/RDSIAMAuthKine \\
+  --set-as-default \\
+  --policy-document '{
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Action": "rds-db:connect",
+        "Resource": [
+          "arn:aws:rds-db:[[GLOBAL:AWS_REGION]]:[[GLOBAL:ACCOUNT_ID]]:dbuser:[[VAR:OLD_DBI_RESOURCE_ID:db-OLDXXXXXXXXXXXXXXXXXXXXXXXXXX]]/kine",
+          "arn:aws:rds-db:[[GLOBAL:AWS_REGION]]:[[GLOBAL:ACCOUNT_ID]]:dbuser:[[VAR:NEW_DBI_RESOURCE_ID:db-NEWXXXXXXXXXXXXXXXXXXXXXXXXXX]]/kine"
+        ]
+      }
+    ]
+  }'`
+  }
+  language="bash"
+/>
+
+### Step 3 - Scale down both regions
+
+Scale both platform deployments to zero to stop all writes to the old database.
+
+<InterpolatedCodeBlock
+  code={
+`kubectl --context [[GLOBAL:FIRST_REGION_CONTEXT]] \\
+  scale deployment -n vcluster-platform loft --replicas=0
+
+kubectl --context [[GLOBAL:SECOND_REGION_CONTEXT]] \\
+  scale deployment -n vcluster-platform loft --replicas=0`
+  }
+  language="bash"
+/>
+
+Wait for all pods to stop:
+
+<InterpolatedCodeBlock
+  code={
+`kubectl --context [[GLOBAL:FIRST_REGION_CONTEXT]] \\
+  get pods -n vcluster-platform -l app=loft --watch
+
+kubectl --context [[GLOBAL:SECOND_REGION_CONTEXT]] \\
+  get pods -n vcluster-platform -l app=loft --watch`
+  }
+  language="bash"
+/>
+
+### Step 4 - Update the values files
+
+Update the `dataSource` in both region values files to point to the new RDS
+endpoint:
+
+<InterpolatedCodeBlock
+  code={
+`config:
+  database:
+    dataSource: "mysql://kine@tcp([[VAR:NEW_DATABASE_URL:mariadb-multi-region-restored.xxxxxxxxxxxx.us-east-1.rds.amazonaws.com]]:3306)/kine"`
+  }
+  language="yaml"
+/>
+
+### Step 5 - Upgrade both regions
+
+Apply the updated values files to both regions.
+
+<Tabs
+  defaultValue="cli"
+  values={[
+    { label: "vCluster CLI", value: "cli" },
+    { label: "Helm", value: "helm" },
+  ]}
+>
+  <TabItem value="cli">
+
+<InterpolatedCodeBlock
+  code={
+`vcluster platform start \\
+  --namespace vcluster-platform \\
+  --kube-context [[GLOBAL:FIRST_REGION_CONTEXT]] \\
+  --values [[VAR:FIRST_REGION_VALUES_FILE:platform-us-east-1-values.yaml]] \\
+  --upgrade \\
+  --no-tunnel
+
+vcluster platform start \\
+  --namespace vcluster-platform \\
+  --kube-context [[GLOBAL:SECOND_REGION_CONTEXT]] \\
+  --values [[VAR:SECOND_REGION_VALUES_FILE:platform-eu-west-1-values.yaml]] \\
+  --upgrade \\
+  --no-tunnel`
+  }
+  language="bash"
+/>
+
+  </TabItem>
+  <TabItem value="helm">
+
+<InterpolatedCodeBlock
+  code={
+`helm upgrade loft vcluster-platform --install --create-namespace --repository-config='' \\
+  --namespace vcluster-platform \\
+  --repo "https://charts.loft.sh/" \\
+  --version [[VAR:CHART_VERSION:4.8.0]] \\
+  --kube-context [[GLOBAL:FIRST_REGION_CONTEXT]] \\
+  -f [[VAR:FIRST_REGION_VALUES_FILE:platform-us-east-1-values.yaml]] \\
+  --server-side=true --force-conflicts
+
+helm upgrade loft vcluster-platform --install --create-namespace --repository-config='' \\
+  --namespace vcluster-platform \\
+  --repo "https://charts.loft.sh/" \\
+  --version [[VAR:CHART_VERSION:4.8.0]] \\
+  --kube-context [[GLOBAL:SECOND_REGION_CONTEXT]] \\
+  -f [[VAR:SECOND_REGION_VALUES_FILE:platform-eu-west-1-values.yaml]] \\
+  --server-side=true --force-conflicts`
+  }
+  language="bash"
+/>
+
+  </TabItem>
+</Tabs>
+
+### Step 6 - Scale up both regions
+
+The Helm upgrade keeps replicas at zero because it does not override the manual
+scale-down. Scale both regions back up.
+
+<InterpolatedCodeBlock
+  code={
+`kubectl --context [[GLOBAL:FIRST_REGION_CONTEXT]] \\
+  scale deployment -n vcluster-platform loft --replicas=[[VAR:REPLICA_COUNT:3]]
+
+kubectl --context [[GLOBAL:SECOND_REGION_CONTEXT]] \\
+  scale deployment -n vcluster-platform loft --replicas=[[VAR:REPLICA_COUNT:3]]`
+  }
+  language="bash"
+/>
+
+Wait for all pods to become ready:
+
+<InterpolatedCodeBlock
+  code={
+`kubectl --context [[GLOBAL:FIRST_REGION_CONTEXT]] \\
+  rollout status deployment/loft -n vcluster-platform
+
+kubectl --context [[GLOBAL:SECOND_REGION_CONTEXT]] \\
+  rollout status deployment/loft -n vcluster-platform`
+  }
+  language="bash"
+/>
+
+### Step 7 - Verify the restore
+
+Confirm the platform is healthy on both regions:
+
+<InterpolatedCodeBlock
+  code={
+`for CTX in [[GLOBAL:FIRST_REGION_CONTEXT]] [[GLOBAL:SECOND_REGION_CONTEXT]]; do
+  echo "=== $CTX ==="
+  kubectl --context "$CTX" get pods -n vcluster-platform -l app=loft
+  echo
+done`
+  }
+  language="bash"
+/>
+
+Verify the platform UI is accessible through the shared DNS domain and that both
+Route 53 health checks return healthy.
+
+## Recover from regional failover
+
+When a region goes down, Route 53 health checks detect the failure and
+automatically redirect traffic to the healthy region. This runbook describes how
+to diagnose the failed region, restore it, and confirm that both regions are
+serving traffic again.
+
+### Step 1 - Confirm failover is active
+
+Verify which health check is failing:
+
+<InterpolatedCodeBlock
+  code={
+`aws route53 get-health-check-status --health-check-id [[VAR:FAILED_REGION_HEALTH_CHECK_ID:xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx]] \\
+  --query 'HealthCheckObservations[].{Region:Region,Status:StatusReport.Status}' \\
+  --output table`
+  }
+  language="bash"
+/>
+
+Confirm the healthy region is still passing:
+
+<InterpolatedCodeBlock
+  code={
+`aws route53 get-health-check-status --health-check-id [[VAR:HEALTHY_REGION_HEALTH_CHECK_ID:yyyyyyyy-yyyy-yyyy-yyyy-yyyyyyyyyyyy]] \\
+  --query 'HealthCheckObservations[].{Region:Region,Status:StatusReport.Status}' \\
+  --output table`
+  }
+  language="bash"
+/>
+
+:::note
+During failover, the platform continues to operate normally through the healthy
+region. Users may experience slightly higher latency if they are geographically
+closer to the failed region.
+:::
+
+### Step 2 - Diagnose the failed region
+
+Check the state of the platform pods in the failed region:
+
+<InterpolatedCodeBlock
+  code={
+`kubectl --context [[VAR:FAILED_REGION_CONTEXT:arn:aws:eks:us-east-1:123456789012:cluster/platform-multi-region-us-east-1]] \\
+  get pods -n vcluster-platform -l app=loft`
+  }
+  language="bash"
+/>
+
+Check pod logs for errors:
+
+<InterpolatedCodeBlock
+  code={
+`kubectl --context [[VAR:FAILED_REGION_CONTEXT:arn:aws:eks:us-east-1:123456789012:cluster/platform-multi-region-us-east-1]] \\
+  logs -n vcluster-platform -l app=loft --tail=50`
+  }
+  language="bash"
+/>
+
+Check the ALB and ingress status:
+
+<InterpolatedCodeBlock
+  code={
+`kubectl --context [[VAR:FAILED_REGION_CONTEXT:arn:aws:eks:us-east-1:123456789012:cluster/platform-multi-region-us-east-1]] \\
+  get ingress -n vcluster-platform loft`
+  }
+  language="bash"
+/>
+
+Common failure causes:
+- **Pod crashes (CrashLoopBackOff)**: Check logs for database connectivity
+  errors or resource exhaustion.
+- **Node failures**: Check `kubectl get nodes` for `NotReady` nodes.
+- **ALB unhealthy**: Verify the ALB target group health in the AWS console or
+  with `aws elbv2 describe-target-health`.
+- **Network partition**: Verify that VPC peering between the cluster VPC and
+  the database VPC is active, that routes exist on the correct route tables
+  (including public route tables if nodes are in public subnets), and that the
+  database security group allows port 3306 from the cluster VPC CIDR.
+
+### Step 3 - Restore the failed region
+
+The recovery steps depend on the failure cause.
+
+**If pods are crashlooping or unhealthy**, restart the deployment:
+
+<InterpolatedCodeBlock
+  code={
+`kubectl --context [[VAR:FAILED_REGION_CONTEXT:arn:aws:eks:us-east-1:123456789012:cluster/platform-multi-region-us-east-1]] \\
+  rollout restart deployment/loft -n vcluster-platform`
+  }
+  language="bash"
+/>
+
+**If the deployment is scaled to zero or missing**, re-apply the values file:
+
+<Tabs
+  defaultValue="cli"
+  values={[
+    { label: "vCluster CLI", value: "cli" },
+    { label: "Helm", value: "helm" },
+  ]}
+>
+  <TabItem value="cli">
+
+<InterpolatedCodeBlock
+  code={
+`vcluster platform start \\
+  --namespace vcluster-platform \\
+  --kube-context [[VAR:FAILED_REGION_CONTEXT:arn:aws:eks:us-east-1:123456789012:cluster/platform-multi-region-us-east-1]] \\
+  --values [[VAR:FAILED_REGION_VALUES_FILE:platform-us-east-1-values.yaml]] \\
+  --upgrade \\
+  --no-tunnel`
+  }
+  language="bash"
+/>
+
+  </TabItem>
+  <TabItem value="helm">
+
+<InterpolatedCodeBlock
+  code={
+`helm upgrade loft vcluster-platform --install --create-namespace --repository-config='' \\
+  --namespace vcluster-platform \\
+  --repo "https://charts.loft.sh/" \\
+  --version [[VAR:CHART_VERSION:4.8.0]] \\
+  --kube-context [[VAR:FAILED_REGION_CONTEXT:arn:aws:eks:us-east-1:123456789012:cluster/platform-multi-region-us-east-1]] \\
+  -f [[VAR:FAILED_REGION_VALUES_FILE:platform-us-east-1-values.yaml]] \\
+  --server-side=true --force-conflicts`
+  }
+  language="bash"
+/>
+
+  </TabItem>
+</Tabs>
+
+Then scale up if needed:
+
+<InterpolatedCodeBlock
+  code={
+`kubectl --context [[VAR:FAILED_REGION_CONTEXT:arn:aws:eks:us-east-1:123456789012:cluster/platform-multi-region-us-east-1]] \\
+  scale deployment -n vcluster-platform loft --replicas=[[VAR:REPLICA_COUNT:3]]`
+  }
+  language="bash"
+/>
+
+**If the EKS cluster itself is down**, follow the AWS documentation to restore
+the cluster or create a replacement, then redeploy the platform using the
+region's values file.
+
+### Step 4 - Wait for the rollout to complete
+
+<InterpolatedCodeBlock
+  code={
+`kubectl --context [[VAR:FAILED_REGION_CONTEXT:arn:aws:eks:us-east-1:123456789012:cluster/platform-multi-region-us-east-1]] \\
+  rollout status deployment/loft -n vcluster-platform`
+  }
+  language="bash"
+/>
+
+### Step 5 - Verify recovery
+
+Confirm the Route 53 health check for the restored region returns healthy:
+
+<InterpolatedCodeBlock
+  code={
+`aws route53 get-health-check-status --health-check-id [[VAR:FAILED_REGION_HEALTH_CHECK_ID:xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx]] \\
+  --query 'HealthCheckObservations[].{Region:Region,Status:StatusReport.Status}' \\
+  --output table`
+  }
+  language="bash"
+/>
+
+:::note
+Route 53 health checks run every 10 seconds with a failure threshold of 3.
+After the platform becomes healthy, expect up to 30 seconds before the health
+check status updates. DNS clients with cached responses may take an additional
+60 seconds (the ALB alias record TTL) to start resolving to the restored region.
+:::
+
+Verify both regions are serving traffic:
+
+<InterpolatedCodeBlock
+  code={
+`for CTX in [[GLOBAL:FIRST_REGION_CONTEXT]] [[GLOBAL:SECOND_REGION_CONTEXT]]; do
+  echo "=== $CTX ==="
+  kubectl --context "$CTX" get pods -n vcluster-platform -l app=loft
+  echo
+done`
+  }
+  language="bash"
+/>
+
+Confirm the custom DERP server is operational by checking for `NetworkPeer`
+resources:
+
+<InterpolatedCodeBlock
+  code={
+`kubectl --context [[VAR:FAILED_REGION_CONTEXT:arn:aws:eks:us-east-1:123456789012:cluster/platform-multi-region-us-east-1]] \\
+  get networkpeers.storage.loft.sh -A`
+  }
+  language="bash"
+/>
+
+Both peers should show `Online: true`.
+
+## Result
+
+You now have a fully operational **multi-region vCluster Platform
+deployment** with:
+
+-   Two EKS clusters (U.S. + E.U.)
+-   Shared Kine database in an isolated VPC with IAM-based authentication (Pod Identity)
+-   VPC peering between each cluster VPC and the database VPC
+-   Regional ALBs with extended idle timeout
+-   ACM wildcard certificates
+-   Route 53 latency-based routing with health checks for automatic failover
+-   Platform deployed on both clusters sharing the same Kine database
