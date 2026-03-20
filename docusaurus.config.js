@@ -358,7 +358,7 @@ const config = {
             target: "_blank",
           },
           {
-            href: "https://vml-docs.netlify.app/docs",
+            href: "https://www.vmetal.ai/docs",
             label: "vMetal",
             position: "left",
             target: "_blank",
