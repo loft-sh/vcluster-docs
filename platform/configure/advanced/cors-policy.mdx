@@ -5,11 +5,14 @@ sidebar_position: 1
 description: Configure Cross-Origin Resource Sharing (CORS) headers on the vCluster Platform ingress so external browser-based clients can make cross-origin API requests.
 ---
 
+import Flow, { Step } from "@site/src/components/Flow";
+import InterpolatedCodeBlock from "@site/src/components/InterpolatedCodeBlock";
+
 <!-- vale Google.Headings = NO -->
 # Configure CORS policy
 <!-- vale Google.Headings = YES -->
 
-Control which browser-based origins can make cross-origin requests to the vCluster Platform API by configuring CORS headers at the ingress level.
+Configure Cross-Origin Resource Sharing (CORS) headers at the ingress level so external browser-based clients can make API requests to vCluster Platform.
 
 ## Prerequisites
 
@@ -19,50 +22,91 @@ Control which browser-based origins can make cross-origin requests to the vClust
 
 ## Overview
 
-The Platform UI and API are served from the same origin, so normal browser access doesn't require CORS. CORS becomes relevant when external browser-based clients at a different origin, such as custom dashboards, monitoring tools, or CI interfaces, need to make API requests to the Platform.
+If you build browser-based tools, such as a custom operations dashboard, a monitoring UI, or a CI interface, that call the Platform API from a different domain, browsers block those requests by default. This is the [same-origin policy](https://developer.mozilla.org/en-US/docs/Web/Security/Same-origin_policy). CORS headers tell the browser which external origins are allowed.
 
-Browsers enforce the [same-origin policy](https://developer.mozilla.org/en-US/docs/Web/Security/Same-origin_policy) for cross-origin requests. When a browser-based application at `https://dashboard.example.com` sends requests to the Platform API at `https://platform.example.com`, the browser blocks the response unless the Platform returns the correct CORS headers.
-
-The Platform doesn't set CORS headers by default. Configure your ingress controller to add CORS headers at the network layer.
+For example, a dashboard at `https://dashboard.example.com` that fetches data from the Platform API at `https://platform.example.com` fails unless the Platform ingress returns the correct CORS headers.
 
 :::info When CORS configuration is needed
-Most Platform access, including the built-in UI, `kubectl` commands, and in-cluster service-to-service traffic, doesn't involve cross-origin browser requests. Configure CORS only when an external browser-based application at a different origin needs to call the Platform API directly.
+The Platform UI and API share the same origin. Normal Platform access, `kubectl` commands, and in-cluster service-to-service traffic don't require CORS. Configure CORS only when a browser-based application at a different origin calls the Platform API.
 :::
+
+The Platform doesn't set CORS headers by default. Add them through your ingress controller.
 
 ## Configure ingress-level CORS {#ingress-cors}
 
-Add CORS annotations to the Platform ingress through the Helm values file.
-
 ### ingress-nginx
 
-Add the CORS annotations to your `vcluster-platform.yaml`:
+<Flow>
+<Step>
 
-```yaml title="vcluster-platform.yaml"
-ingress:
-  enabled: true
-  host: "platform.example.com"
-  annotations:
-    # CORS
-    nginx.ingress.kubernetes.io/enable-cors: "true"
-    nginx.ingress.kubernetes.io/cors-allow-origin: "https://dashboard.example.com"
-    nginx.ingress.kubernetes.io/cors-allow-methods: "GET, POST, PUT, DELETE, PATCH, OPTIONS"
-    nginx.ingress.kubernetes.io/cors-allow-headers: "Authorization, Content-Type"
-    nginx.ingress.kubernetes.io/cors-allow-credentials: "true"
-    nginx.ingress.kubernetes.io/cors-max-age: "3600"
-  tls:
-    enabled: true
-    secret: tls-vcluster-platform
-```
+Create or update your `vcluster-platform.yaml` with CORS annotations on the Platform ingress:
+
+<InterpolatedCodeBlock
+  code={
+'ingress:\n' +
+'  enabled: true\n' +
+'  host: "[[VAR:PLATFORM_HOST:platform.example.com]]"\n' +
+'  annotations:\n' +
+'    # CORS\n' +
+'    nginx.ingress.kubernetes.io/enable-cors: "true"\n' +
+'    nginx.ingress.kubernetes.io/cors-allow-origin: "[[VAR:ALLOWED_ORIGIN:https://dashboard.example.com]]"\n' +
+'    nginx.ingress.kubernetes.io/cors-allow-methods: "GET, POST, PUT, DELETE, PATCH, OPTIONS"\n' +
+'    nginx.ingress.kubernetes.io/cors-allow-headers: "Authorization, Content-Type"\n' +
+'    nginx.ingress.kubernetes.io/cors-allow-credentials: "true"\n' +
+'    nginx.ingress.kubernetes.io/cors-max-age: "3600"\n' +
+'  tls:\n' +
+'    enabled: true\n' +
+'    secret: [[VAR:TLS_SECRET:tls-vcluster-platform]]'
+  }
+  language="yaml"
+  title="vcluster-platform.yaml"
+/>
+
+</Step>
+<Step>
 
 Apply the configuration:
 
-```bash
-helm upgrade vcluster-platform vcluster-platform \
-  --repo https://charts.loft.sh \
-  --namespace vcluster-platform \
-  --reuse-values \
-  -f vcluster-platform.yaml
+<InterpolatedCodeBlock
+  code={
+'helm upgrade [[VAR:RELEASE_NAME:vcluster-platform]] vcluster-platform \\\n' +
+'  --repo https://charts.loft.sh/ \\\n' +
+'  --namespace [[VAR:RELEASE_NAMESPACE:vcluster-platform]] \\\n' +
+'  --reuse-values \\\n' +
+'  -f vcluster-platform.yaml'
+  }
+  language="bash"
+  title="Upgrade the Platform with CORS annotations"
+/>
+
+</Step>
+<Step>
+
+Verify the ingress returns CORS headers by sending a preflight request:
+
+<InterpolatedCodeBlock
+  code={
+'curl -v -X OPTIONS \\\n' +
+'  -H "Origin: [[VAR:ALLOWED_ORIGIN:https://dashboard.example.com]]" \\\n' +
+'  -H "Access-Control-Request-Method: GET" \\\n' +
+'  https://[[VAR:PLATFORM_HOST:platform.example.com]]/kubernetes/management/apis'
+  }
+  language="bash"
+  title="Test CORS preflight"
+/>
+
+A correct response includes these headers:
+
 ```
+Access-Control-Allow-Origin: https://dashboard.example.com
+Access-Control-Allow-Methods: GET, POST, PUT, DELETE, PATCH, OPTIONS
+Access-Control-Allow-Headers: Authorization, Content-Type
+```
+
+If these headers are missing, check the ingress annotations and confirm the ingress controller processes them.
+
+</Step>
+</Flow>
 
 ### Annotation reference
 
@@ -84,7 +128,7 @@ Don't set `cors-allow-origin` to `"*"` when `cors-allow-credentials` is `"true"`
 
 ### Other ingress controllers
 
-Traefik, Istio, and Gateway API support CORS through their own configuration mechanisms:
+Traefik, Istio, and Gateway API support CORS through their own configuration:
 
 - **Traefik**: Use the [headers middleware](https://doc.traefik.io/traefik/middlewares/http/headers/) with `accessControlAllowOriginList` on an IngressRoute.
 - **Istio**: Use the [`corsPolicy` field](https://istio.io/latest/docs/reference/config/networking/virtual-service/) on a VirtualService. See [Expose vCluster Platform with Istio](/docs/platform/how-to/exposing-vCluster-platform-with-Istio) for a related setup guide.
@@ -92,19 +136,16 @@ Traefik, Istio, and Gateway API support CORS through their own configuration mec
 
 ## Security considerations
 
-### Avoid overly broad origins
+### Restrict allowed origins
 
-Setting `cors-allow-origin` to `"*"` allows every origin and disables CORS protection entirely. This exposes the Platform API to cross-site request attacks from any website a user visits.
+Setting `cors-allow-origin` to `"*"` disables CORS protection. Any website a user visits can make cross-origin requests to the Platform API.
 
 :::danger
-Never use `cors-allow-origin: "*"` in production. Restrict origins to the specific domains that need access.
+Never use `cors-allow-origin: "*"` in production. List only the specific domains that need access.
 :::
 
-### Principle of least privilege
-
-- List only the exact origins that need browser-based API access.
-- Prefer specific origins (`https://dashboard.example.com`) over wildcards.
-- Separate development and production configurations. Localhost origins shouldn't appear in production values.
+- Prefer explicit origins (`https://dashboard.example.com`) over wildcards.
+- Separate development and production configurations. Don't include localhost origins in production values.
 
 <!-- vale Google.Headings = NO -->
 ### CORS doesn't replace authentication
@@ -120,34 +161,13 @@ CORS headers control which origins a browser permits for cross-origin requests. 
 
 The ingress didn't return an `Access-Control-Allow-Origin` header for the requesting origin. Verify the following:
 
-1. The `enable-cors` annotation is set to `"true"` on the Platform ingress.
-2. The `cors-allow-origin` value matches the exact origin the browser sends (scheme, host, and port must all match).
-3. The ingress controller is terminating TLS (check the Platform's TLS configuration).
-
-### Test with curl
-
-Send a preflight request to confirm the ingress returns CORS headers:
-
-```bash
-curl -v -X OPTIONS \
-  -H "Origin: https://dashboard.example.com" \
-  -H "Access-Control-Request-Method: GET" \
-  https://platform.example.com/kubernetes/management/apis
-```
-
-A correct response includes these headers:
-
-```
-Access-Control-Allow-Origin: https://dashboard.example.com
-Access-Control-Allow-Methods: GET, POST, PUT, DELETE, PATCH, OPTIONS
-Access-Control-Allow-Headers: Authorization, Content-Type
-```
-
-If these headers are missing, check the ingress annotations and confirm the ingress controller is processing the annotations correctly.
+1. The `enable-cors` annotation is `"true"` on the Platform ingress.
+2. The `cors-allow-origin` value matches the exact origin the browser sends. Scheme, host, and port must all match.
+3. The ingress controller terminates TLS. Check the Platform's [TLS configuration](../installation-options/domain.mdx).
 
 ## Limitations
 
-- Changes to ingress annotations require a `helm upgrade` of the Platform for the ingress resource to be updated.
+- Changes to ingress annotations require a `helm upgrade` of the Platform to update the ingress resource.
 
 ## Related topics
 
