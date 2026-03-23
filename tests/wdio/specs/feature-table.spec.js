@@ -5,7 +5,6 @@
 // preview where paths don't include /next/. Locally against dev server they do.
 
 const FEATURE_TABLE_PAGES = [
-  '/docs/platform/free-vs-enterprise',
 ];
 
 const WRAPPER_SELECTOR = '[class*="featureTableWrapper"]';
