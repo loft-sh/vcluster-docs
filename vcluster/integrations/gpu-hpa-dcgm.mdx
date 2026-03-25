@@ -1,0 +1,204 @@
+---
+title: GPU Autoscaling with DCGM Exporter
+sidebar_label: GPU Autoscaling (DCGM)
+sidebar_position: 8
+sidebar_class_name: pro private-nodes
+description: Configure HPA driven by GPU utilization metrics using NVIDIA DCGM Exporter and Prometheus Adapter inside a vCluster with Private Nodes.
+---
+
+import TenancySupport from '../_fragments/tenancy-support.mdx';
+
+<TenancySupport privateNodes="true" />
+
+This guide shows how to configure **Horizontal Pod Autoscaler (HPA)** driven by GPU utilization metrics inside a vCluster with [Private Nodes](../deploy/worker-nodes/private-nodes/overview.mdx).
+
+Private Nodes attach real physical nodes—including GPU hardware—exclusively to a vCluster. This means NVIDIA DCGM Exporter can run as a DaemonSet inside the vCluster and collect per-GPU metrics directly from the hardware, which are then exposed via the Kubernetes custom metrics API for HPA to consume.
+
+## Prerequisites
+
+- A vCluster with Private Nodes enabled and at least one GPU node attached
+- NVIDIA GPU drivers installed on the host nodes
+- [`metrics-server` integration enabled](../configure/vcluster-yaml/integrations/metricsServer.mdx) in your `vcluster.yaml`
+- `helm` and `kubectl` connected to the vCluster
+
+## Architecture
+
+```
+GPU Node (Private)
+  └── DCGM Exporter DaemonSet    ← scrapes GPU hardware metrics
+        └── Prometheus             ← collects via ServiceMonitor
+              └── Prometheus Adapter  ← exposes as custom metrics API
+                    └── HPA            ← scales pods on GPU utilization
+```
+
+## Step 1: Install DCGM Exporter
+
+Install the [NVIDIA DCGM Exporter](https://github.com/NVIDIA/dcgm-exporter) inside the vCluster using its official Helm chart. It runs as a DaemonSet on the private GPU nodes and exposes per-GPU metrics in Prometheus format at port `9400/metrics`.
+
+```bash
+helm repo add gpu-helm-charts https://nvidia.github.io/dcgm-exporter/helm-charts
+helm repo update
+
+helm install dcgm-exporter gpu-helm-charts/dcgm-exporter \
+  --namespace monitoring \
+  --create-namespace
+```
+
+Verify the DaemonSet is running on your GPU node:
+
+```bash
+kubectl get daemonset dcgm-exporter -n monitoring
+kubectl logs -l app.kubernetes.io/name=dcgm-exporter -n monitoring | head -20
+```
+
+You should see metrics like `DCGM_FI_DEV_GPU_UTIL`, `DCGM_FI_DEV_FB_USED`, and `DCGM_FI_DEV_POWER_USAGE` in the logs.
+
+## Step 2: Install Prometheus with Prometheus Operator
+
+Install the `kube-prometheus-stack` Helm chart inside the vCluster. This installs Prometheus, Prometheus Operator, and Alertmanager.
+
+```bash
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+helm repo update
+
+helm install kube-prometheus prometheus-community/kube-prometheus-stack \
+  --namespace monitoring \
+  --create-namespace \
+  --set prometheus.prometheusSpec.serviceMonitorSelectorNilUsesHelmValues=false
+```
+
+## Step 3: Configure a ServiceMonitor for DCGM Exporter
+
+Create a `ServiceMonitor` so Prometheus automatically discovers and scrapes the DCGM Exporter:
+
+```yaml
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: dcgm-exporter
+  namespace: monitoring
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: dcgm-exporter
+  endpoints:
+    - port: metrics
+      interval: 15s
+      path: /metrics
+```
+
+Apply it:
+
+```bash
+kubectl apply -f servicemonitor-dcgm.yaml
+```
+
+Confirm Prometheus is scraping DCGM by checking the Prometheus targets UI or running:
+
+```bash
+kubectl port-forward svc/kube-prometheus-kube-prome-prometheus 9090:9090 -n monitoring
+# Open http://localhost:9090/targets and verify dcgm-exporter shows State: UP
+```
+
+## Step 4: Install Prometheus Adapter
+
+The Prometheus Adapter translates Prometheus metrics into the Kubernetes [Custom Metrics API](https://github.com/kubernetes/metrics), which HPA can query.
+
+Create a `values.yaml` for the adapter that maps `DCGM_FI_DEV_GPU_UTIL` to a custom metric named `gpu_utilization`:
+
+```yaml
+# prometheus-adapter-values.yaml
+prometheus:
+  url: http://kube-prometheus-kube-prome-prometheus.monitoring.svc
+  port: 9090
+
+rules:
+  custom:
+    - seriesQuery: 'DCGM_FI_DEV_GPU_UTIL{namespace!="",pod!=""}'
+      resources:
+        overrides:
+          namespace:
+            resource: namespace
+          pod:
+            resource: pod
+      name:
+        matches: "DCGM_FI_DEV_GPU_UTIL"
+        as: "gpu_utilization"
+      metricsQuery: 'avg(DCGM_FI_DEV_GPU_UTIL{<<.LabelMatchers>>}) by (<<.GroupBy>>)'
+```
+
+Install the adapter:
+
+```bash
+helm install prometheus-adapter prometheus-community/prometheus-adapter \
+  --namespace monitoring \
+  -f prometheus-adapter-values.yaml
+```
+
+Verify the custom metric is available:
+
+```bash
+kubectl get --raw "/apis/custom.metrics.k8s.io/v1beta1" | jq '.resources[].name' | grep gpu
+# Expected: "pods/gpu_utilization"
+```
+
+## Step 5: Create an HPA targeting GPU utilization
+
+Create an HPA that scales your GPU workload when average GPU utilization exceeds 50%:
+
+```yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: gpu-workload-hpa
+  namespace: default
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: gpu-workload
+  minReplicas: 1
+  maxReplicas: 4
+  metrics:
+    - type: Pods
+      pods:
+        metric:
+          name: gpu_utilization
+        target:
+          type: AverageValue
+          averageValue: "50"
+```
+
+Apply the HPA:
+
+```bash
+kubectl apply -f gpu-hpa.yaml
+```
+
+Monitor scaling behavior:
+
+```bash
+kubectl get hpa gpu-workload-hpa -w
+# NAME               REFERENCE                  TARGETS        MINPODS   MAXPODS   REPLICAS
+# gpu-workload-hpa   Deployment/gpu-workload    42/50 (avg)    1         4         1
+```
+
+## Available GPU Metrics
+
+The following DCGM metrics can be used as HPA targets by adding additional entries under `rules.custom` in the Prometheus Adapter config:
+
+| Metric | Description |
+|--------|-------------|
+| `DCGM_FI_DEV_GPU_UTIL` | GPU core utilization (%) |
+| `DCGM_FI_DEV_FB_USED` | GPU framebuffer memory used (MiB) |
+| `DCGM_FI_DEV_POWER_USAGE` | GPU power draw (W) |
+| `DCGM_FI_DEV_SM_CLOCK` | Streaming multiprocessor clock (MHz) |
+| `DCGM_FI_DEV_MEM_CLOCK` | Memory clock (MHz) |
+
+## How It Works
+
+With Private Nodes, vCluster workloads run directly on dedicated physical nodes rather than inside host cluster pods. This means:
+
+- DCGM Exporter DaemonSet pods are scheduled directly on the private GPU nodes and have access to real GPU hardware via the NVIDIA Management Library (NVML).
+- GPU metrics reflect actual hardware utilization — not virtualized or approximated values.
+- HPA scaling decisions are based on real hardware load, making autoscaling reliable for GPU-intensive AI/ML workloads.
