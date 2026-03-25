@@ -34,23 +34,32 @@ GPU Node (Private)
 
 Install the [NVIDIA DCGM Exporter](https://github.com/NVIDIA/dcgm-exporter) inside the vCluster using its official Helm chart. It runs as a DaemonSet on the private GPU nodes and exposes per-GPU metrics in Prometheus format at port `9400/metrics`.
 
+`kubernetes.enablePodLabels=true` instructs DCGM Exporter to attach `pod`, `namespace`, and `container` labels to each metric by mapping GPU usage to the pod consuming it. This is required for the Prometheus Adapter to expose per-pod custom metrics that HPA can query.
+
 ```bash
 helm repo add gpu-helm-charts https://nvidia.github.io/dcgm-exporter/helm-charts
 helm repo update
 
 helm install dcgm-exporter gpu-helm-charts/dcgm-exporter \
   --namespace monitoring \
-  --create-namespace
+  --create-namespace \
+  --set kubernetes.enablePodLabels=true
 ```
 
 Verify the DaemonSet is running on your GPU node:
 
 ```bash
 kubectl get daemonset dcgm-exporter -n monitoring
-kubectl logs -l app.kubernetes.io/name=dcgm-exporter -n monitoring | head -20
 ```
 
-You should see metrics like `DCGM_FI_DEV_GPU_UTIL`, `DCGM_FI_DEV_FB_USED`, and `DCGM_FI_DEV_POWER_USAGE` in the logs.
+Confirm the metrics endpoint is reachable and returning GPU data:
+
+```bash
+DCGM_POD=$(kubectl get pods -l app.kubernetes.io/name=dcgm-exporter -n monitoring -o jsonpath='{.items[0].metadata.name}')
+kubectl port-forward $DCGM_POD 9400:9400 -n monitoring &
+curl -s http://localhost:9400/metrics | grep DCGM_FI_DEV_GPU_UTIL
+# Expected: DCGM_FI_DEV_GPU_UTIL{gpu="0",...,pod="<your-pod>",namespace="<your-ns>",...} 42
+```
 
 ## Step 2: Install Prometheus with Prometheus Operator
 
@@ -147,7 +156,7 @@ kubectl get --raw "/apis/custom.metrics.k8s.io/v1beta1" | jq '.resources[].name'
 
 ## Step 5: Create an HPA targeting GPU utilization
 
-Create an HPA that scales your GPU workload when average GPU utilization exceeds 50%:
+Create an HPA that scales your GPU workload when average GPU utilization exceeds 50%. Replace `gpu-workload` with the name of your Deployment:
 
 ```yaml
 apiVersion: autoscaling/v2
@@ -169,7 +178,7 @@ spec:
           name: gpu_utilization
         target:
           type: AverageValue
-          averageValue: "50"
+          averageValue: "50"   # DCGM_FI_DEV_GPU_UTIL is 0–100; this targets 50% utilization
 ```
 
 Apply the HPA:
