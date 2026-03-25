@@ -172,3 +172,47 @@ HTTP 301
 [Asserts]
 header "Location" contains "/docs/vcluster/configure/vcluster-yaml/snapshots"
 
+# =====================================================
+# Removed vCluster versions — redirect to latest
+# =====================================================
+
+# Test: 0.20.0 version redirect
+GET {{BASE_URL}}/docs/vcluster/0.20.0/configure/vcluster-yaml/export-kube-config
+HTTP 301
+[Asserts]
+header "Location" contains "/docs/vcluster/configure/vcluster-yaml/export-kube-config"
+
+# Test: 0.21.0 version redirect
+GET {{BASE_URL}}/docs/vcluster/0.21.0/manage/accessing-vcluster
+HTTP 301
+[Asserts]
+header "Location" contains "/docs/vcluster/manage/accessing-vcluster"
+
+# Test: 0.25.0 version redirect
+GET {{BASE_URL}}/docs/vcluster/0.25.0/configure/vcluster-yaml/
+HTTP 301
+[Asserts]
+header "Location" contains "/docs/vcluster/configure/vcluster-yaml/"
+
+# Test: 0.27.0 version redirect
+GET {{BASE_URL}}/docs/vcluster/0.27.0/configure/vcluster-yaml/export-kube-config
+HTTP 301
+[Asserts]
+header "Location" contains "/docs/vcluster/configure/vcluster-yaml/export-kube-config"
+
+# =====================================================
+# Unversioned sleep-mode redirect
+# =====================================================
+
+# Test: unversioned sleep-mode -> sleep
+GET {{BASE_URL}}/docs/vcluster/configure/vcluster-yaml/sleep-mode
+HTTP 301
+[Asserts]
+header "Location" contains "/docs/vcluster/configure/vcluster-yaml/sleep"
+
+# Test: unversioned sleep-mode/ -> sleep (trailing slash)
+GET {{BASE_URL}}/docs/vcluster/configure/vcluster-yaml/sleep-mode/
+HTTP 301
+[Asserts]
+header "Location" contains "/docs/vcluster/configure/vcluster-yaml/sleep"
+

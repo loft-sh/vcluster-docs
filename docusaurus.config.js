@@ -109,9 +109,9 @@ const config = {
                 return { ...item, priority: 1.0, changefreq: 'daily' };
               }
 
-              // Latest stable versions get highest priority (0.32.0 for vCluster, 4.7.0 for platform)
-              if (item.url.match(/\/vcluster\/0\.32\.0\//) ||
-                  item.url.match(/\/platform\/4\.7\.0\//)) {
+              // Latest stable versions get highest priority (0.33.0 for vCluster, 4.8.0 for platform)
+              if (item.url.match(/\/vcluster\/0\.33\.0\//) ||
+                  item.url.match(/\/platform\/4\.8\.0\//)) {
                 return { ...item, priority: 1.0, changefreq: 'daily' };
               }
 
@@ -165,6 +165,26 @@ const config = {
   plugins: [
     "docusaurus-plugin-sass",
     "plugin-image-zoom",
+    [
+      "@signalwire/docusaurus-plugin-llms-txt",
+      {
+        content: {
+          enableLlmsFullTxt: true,
+          includeDocs: true,
+          includeBlog: false,
+          includePages: false,
+          includeVersionedDocs: false,
+          excludeRoutes: [
+            '/search/**',
+            '/tags/**',
+          ],
+        },
+        siteTitle: 'vCluster Documentation',
+        siteDescription: 'Documentation for vCluster (virtual Kubernetes clusters) and vCluster Platform (multi-cluster management)',
+        enableDescriptions: true,
+        depth: 2,
+      },
+    ],
     function(context, options) {
       return {
         name: 'yaml-loader',
@@ -196,14 +216,19 @@ const config = {
         beforeDefaultRemarkPlugins: [
           [remarkVersionTokens, { siteDir: __dirname }],
         ],
-        lastVersion: "0.32.0",
-        onlyIncludeVersions: ["current", "0.32.0", "0.31.0", "0.30.0", "0.29.0", "0.28.0"],
+        lastVersion: "0.33.0",
+        onlyIncludeVersions: ["current", "0.33.0", "0.32.0", "0.31.0", "0.30.0", "0.29.0"],
         versions: {
           current: {
             label: "main 🚧",
           },
+          "0.33.0": {
+            label: "v0.33 Stable",
+            banner: "none",
+            badge: true,
+          },
           "0.32.0": {
-            label: "v0.32 Stable",
+            label: "v0.32",
             banner: "none",
             badge: true,
           },
@@ -213,17 +238,12 @@ const config = {
             badge: true,
           },
           "0.30.0": {
-            label: "v0.30",
+            label: "v0.30 (EOS)",
             banner: "none",
             badge: true,
           },
           "0.29.0": {
-            label: "v0.29",
-            banner: "none",
-            badge: true,
-          },
-          "0.28.0": {
-            label: "v0.28",
+            label: "v0.29 (EOS)",
             banner: "none",
             badge: true,
           },
@@ -243,24 +263,24 @@ const config = {
         beforeDefaultRemarkPlugins: [
           [remarkVersionTokens, { siteDir: __dirname }],
         ],
-        lastVersion: "4.7.0",
-        onlyIncludeVersions: ["current", "4.7.0", "4.6.0", "4.5.0"],
+        lastVersion: "4.8.0",
+        onlyIncludeVersions: ["current", "4.8.0", "4.7.0", "4.6.0"],
         versions: {
           current: {
             label: "main 🚧",
           },
+          "4.8.0": {
+            label: "v4.8 Stable",
+            banner: "none",
+            badge: true,
+          },
           "4.7.0": {
-            label: "v4.7 Stable",
+            label: "v4.7",
             banner: "none",
             badge: true,
           },
           "4.6.0": {
             label: "v4.6",
-            banner: "none",
-            badge: true,
-          },
-          "4.5.0": {
-            label: "v4.5",
             banner: "none",
             badge: true,
           },
@@ -337,9 +357,15 @@ const config = {
             position: "left",
             target: "_blank",
           },
+          {
+            href: "https://www.vmetal.ai/docs",
+            label: "vMetal",
+            position: "left",
+            target: "_blank",
+          },
           // Right-side items
           {
-            href: "https://loft.sh/blog",
+            href: "https://www.vcluster.com/blog",
             label: "Blog",
             position: "right",
             target: "_blank",
@@ -366,7 +392,7 @@ const config = {
       },
       algolia: {
         appId: "K85RIQNFGF",
-        apiKey: "057a9f939df7215d92c8171d47352c54",
+        apiKey: "7c88fbdab6aea75d67f1f52e41b5d456",
         indexName: "vcluster",
         placeholder: "Search...",
         externalUrlRegex: "vcluster\\.com\/docs\/v0\\.19",
@@ -389,16 +415,16 @@ const config = {
             ]
           },
         ],
-        copyright: `Copyright © ${new Date().getFullYear()}<span class="footer-space-before"><a href="https://loft.sh/">LoftLabs</a></span><span class="footer-separator">|</span>Documentation released under<span class="footer-space-before"><a href="https://creativecommons.org/publicdomain/zero/1.0/">CC0 1.0 Universal</a></span>.`,
+        copyright: `Copyright © ${new Date().getFullYear()}<span class="footer-space-before"><a href="https://www.vcluster.com/">vCluster Labs</a></span><span class="footer-separator">|</span>Documentation released under<span class="footer-space-before"><a href="https://creativecommons.org/publicdomain/zero/1.0/">CC0 1.0 Universal</a></span>.`,
       },
       prism: {
         theme: prismThemes.dracula,
         additionalLanguages: ["bash", "hcl"],
       },
       announcementBar: {
-        id: "vcluster-0-32-release",
+        id: "vcluster-0-33-platform-4-8-release",
         content:
-          '🚀 <strong>New releases: <a href="https://www.vcluster.com/releases/en/changelog?hideLogo=true&hideMenu=true&theme=dark&embed=true&c=vCluster" target="_blank">vCluster Platform 4.7 and vCluster 0.32</a></strong>',
+          '🚀 <strong>New releases: <a href="https://www.vcluster.com/releases/en/changelog?hideLogo=true&hideMenu=true&theme=dark&embed=true&c=vCluster" target="_blank">vCluster Platform 4.8 and vCluster 0.33</a></strong>',
         backgroundColor: "#4a90e2",
         textColor: "#ffffff",
         isCloseable: true,

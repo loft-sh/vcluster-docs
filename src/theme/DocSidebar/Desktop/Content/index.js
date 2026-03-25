@@ -1,11 +1,17 @@
 import React from 'react';
 import {useLocation} from '@docusaurus/router';
+import {useVersions} from '@docusaurus/plugin-content-docs/client';
 import Content from '@theme-original/DocSidebar/Desktop/Content';
 import DocsVersionDropdownNavbarItem from '@theme-original/NavbarItem/DocsVersionDropdownNavbarItem';
-import {vclusterEOLVersions, platformEOLVersions, getDesktopVersions} from '@site/src/config/versionConfig';
+import {vclusterEOLVersions, platformEOLVersions, vclusterHiddenVersions, platformHiddenVersions, getDesktopVersions} from '@site/src/config/versionConfig';
 import styles from "./styles.module.css";
 
-function VersionSelector({docsPluginId, dropdownItemsAfter}) {
+function VersionSelector({docsPluginId, dropdownItemsAfter, hiddenVersions = []}) {
+  const allVersions = useVersions(docsPluginId);
+  const visibleVersions = hiddenVersions.length > 0
+    ? allVersions.filter(v => !hiddenVersions.includes(v.name)).map(v => v.name)
+    : undefined;
+
   return (
     <div className={styles["version-selector-wrapper"]}>
       <div className={styles["version-selector"]}>
@@ -13,6 +19,7 @@ function VersionSelector({docsPluginId, dropdownItemsAfter}) {
           docsPluginId={docsPluginId}
           dropdownItemsBefore={[]}
           dropdownItemsAfter={dropdownItemsAfter}
+          versions={visibleVersions}
         />
       </div>
     </div>
@@ -30,12 +37,14 @@ export default function ContentWrapper(props) {
         <VersionSelector
           docsPluginId="vcluster"
           dropdownItemsAfter={getDesktopVersions(vclusterEOLVersions)}
+          hiddenVersions={vclusterHiddenVersions}
         />
       )}
       {shouldShowPlatformVersioning && (
         <VersionSelector
           docsPluginId="platform"
           dropdownItemsAfter={getDesktopVersions(platformEOLVersions)}
+          hiddenVersions={platformHiddenVersions}
         />
       )}
       <Content {...props} />

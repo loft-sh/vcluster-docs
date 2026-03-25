@@ -2,9 +2,12 @@
 
 Complete checklist for vCluster documentation releases based on Linear issue template (ENG-XXXX pattern).
 
-## Pre-Release
+Starting with v0.33, docs versioning happens at rc-1, not on release day.
+The version is deployed hidden, then exposed via a config flip PR on release day.
 
-- [ ] New vCluster version released (e.g., 0.30.0)
+## Pre-Release (rc-1 day)
+
+- [ ] rc-1 for new vCluster version cut (e.g., 0.33.0)
 - [ ] Version number confirmed with user
 - [ ] Working directory: `/home/decoder/loft/vcluster-docs`
 - [ ] On `main` branch and up to date
@@ -99,7 +102,7 @@ Complete checklist for vCluster documentation releases based on Linear issue tem
 
 ### Item 8: Update Release Support Dates
 
-- [ ] File: `vcluster/deploy/upgrade/supported_versions.mdx`
+- [ ] File: `vcluster/manage/upgrade/supported_versions.mdx`
 - [ ] Update: Release date for new version
 - [ ] Update: End of support dates for older versions
 - [ ] Update: End of life dates
@@ -107,15 +110,15 @@ Complete checklist for vCluster documentation releases based on Linear issue tem
 
 ### Item 9: Update Compatibility Matrix
 
-- [ ] File: `vcluster/deploy/upgrade/supported_versions.mdx`
+- [ ] File: `vcluster/manage/upgrade/supported_versions.mdx`
 - [ ] Update: Kubernetes version support matrix
 - [ ] Add: New K8s versions if released
 - [ ] Verify: Host cluster compatibility
 - [ ] Check: vCluster version compatibility
 
-## Part 5: Build & Test
+## Part 5: Build & Test (rc-1 window)
 
-**User Responsibility:**
+User Responsibility:
 
 ### Build Check
 
@@ -123,6 +126,7 @@ Complete checklist for vCluster documentation releases based on Linear issue tem
 - [ ] Run build: `npm run build`
 - [ ] Check for errors: Build should complete successfully
 - [ ] Fix any broken links or issues
+- [ ] Verify hidden version is accessible via direct URL but not in dropdown
 
 ### Hurl Test (After PR Deployed)
 
@@ -137,14 +141,33 @@ Complete checklist for vCluster documentation releases based on Linear issue tem
 - [ ] Verify: All tests pass
 - [ ] Fix: Any failing redirects
 
-## Part 6: Final Review & Merge
+## Part 5.5: Backport Window (rc-1 to release day)
 
-- [ ] Review all changes in PR
-- [ ] Verify checklist complete
-- [ ] Get approval if required
-- [ ] Merge PR to main
+- [ ] Contributors add `backport-v0.XX` label to PRs that must land in the release
+- [ ] Backported content is merged to main and picked into the versioned docs
+- [ ] Team validates content against real deployed (hidden) docs
+
+## Part 6: Config Flip PR (Release Day)
+
+This is the release-day action. All heavy work was done at rc-1.
+
+- [ ] Create config flip PR with title: `docs: expose vCluster 0.XX docs in version dropdown`
+- [ ] Update `lastVersion` in `docusaurus.config.js`
+- [ ] Update `onlyIncludeVersions` (add new, remove oldest)
+- [ ] Update versions object (add new with "Stable", demote previous)
+- [ ] Update SEO sitemap priorities
+- [ ] Update announcement bar
+- [ ] Update netlify redirect
+- [ ] Create/update hurl test file
+- [ ] PR is small, reviewable, safe to merge by anyone with merge rights
+- [ ] Merge config flip PR
 - [ ] Monitor production deployment
+- [ ] Verify version appears in dropdown
+
+## Part 7: Final Review
+
 - [ ] Verify site loads correctly
+- [ ] Version dropdown shows new version as stable
 
 ## Post-Release
 
@@ -183,7 +206,7 @@ Ready for: Build & Test
 | `docusaurus.config.js` | Version config, labels, SEO | AI |
 | `netlify.toml` | Redirect config | AI |
 | `hack/test-vcluster-0.XX.hurl` | SEO/redirect tests | AI |
-| `vcluster/deploy/upgrade/supported_versions.mdx` | Support dates & compat | User |
+| `vcluster/manage/upgrade/supported_versions.mdx` | Support dates & compat | User |
 | `vcluster_versioned_docs/version-0.XX.0/` | Versioned docs | User |
 | `vcluster_versions.json` | Version list | Auto |
 
