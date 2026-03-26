@@ -1,0 +1,1101 @@
+---
+sidebar_label: External Database
+title: External Database
+description: Deploy vCluster Platform with an external database for high availability and multiple replicas.
+---
+
+import Tabs from "@theme/Tabs";
+import TabItem from "@theme/TabItem";
+import VersionBadge from '@site/src/components/VersionBadge';
+import InterpolatedCodeBlock from "@site/src/components/InterpolatedCodeBlock";
+import PageVariables from "@site/src/components/PageVariables";
+
+<VersionBadge platformVersion="v4.8.0"/>
+
+<PageVariables
+  ACCOUNT_ID="123456789012"
+  AWS_REGION="us-east-1"
+  DB_VPC_ID="vpc-xxxxxxxxx"
+  DB_SG_ID="sg-xxxxxxxxx"
+  CLUSTER_CONTEXT="arn:aws:eks:us-east-1:123456789012:cluster/platform-ha"
+/>
+
+## What is an external database deployment?
+
+An external database deployment runs multiple vCluster Platform replicas in a
+single Kubernetes cluster, all backed by an external database. Leader election
+ensures that only one replica writes to the database at a time, while the
+remaining replicas serve read traffic and stand ready to take over if the leader
+fails. This eliminates the platform as a single point of failure within the
+region.
+
+## Why deploy with an external database?
+
+The default single-replica platform deployment works for most environments.
+Consider an external database deployment when you need one or more of the following:
+
+- **Control plane resilience**: If the platform pod or its node goes down,
+  another replica takes over leadership automatically. Connected clusters
+  continue operating through the surviving replicas.
+- **Zero-downtime upgrades**: Rolling updates replace pods one at a time while
+  the remaining replicas continue serving traffic.
+- **Protection against node failures**: Spreading replicas across nodes (using
+  pod anti-affinity or topology spread constraints) ensures that a single node
+  failure does not take down the platform.
+
+### How it differs from other deployment modes
+
+| | External database | Default (single replica) | [Multi-region platform](../administer/clusters/advanced/multi-region.mdx) |
+|---|---|---|---|
+| **Replicas** | Multiple replicas in one cluster | One replica | Multiple replicas across regions |
+| **External database** | Yes — all replicas share a single Kine-backed database | No — uses embedded SQLite | Yes — all regions share a single Kine-backed database |
+| **Failover** | Automatic via leader election within the cluster | No failover | Automatic via DNS health checks across regions |
+| **Cross-region networking** | Not required | Not required | VPC peering, latency-based DNS |
+| **Use case** | Platform HA within a single region | Development, non-critical environments | Platform HA across regions |
+
+### Trade-offs
+
+- **External database operations**: An external database deployment requires provisioning and
+  managing a database (RDS or equivalent), adding operational overhead
+  compared to the default embedded SQLite.
+- **Cost control unavailable**: The cost control feature requires the embedded
+  single-region database and is not compatible with the external Kine backend.
+- **Fresh install only**: Converting an existing single-replica installation to
+  an external database deployment is not supported.
+
+:::warning Important
+Converting an existing single-replica platform installation to an external
+database deployment is not supported. An external database deployment must be
+configured as a fresh installation following the steps below.
+:::
+
+## AWS (EKS)
+
+:::note
+These instructions are tested on AWS. An external database deployment can run on other cloud providers with comparable capabilities (managed Kubernetes, a managed database, and a load balancer).
+:::
+
+These steps walk you through setting up a high-availability vCluster Platform in
+a single AWS region using EKS, an external RDS database (Kine), ALB ingress,
+and multiple platform replicas.
+
+### Prerequisites
+
+Before you begin, ensure you have:
+
+-   An **AWS account** with sufficient IAM permissions
+-   A **registered domain** (example: `platform.example.com`)
+-   A **public Route 53 hosted zone** (or equivalent DNS)
+-   The following tools installed:
+    -   `eksctl`
+    -   `kubectl`
+    -   `awscli`
+    -   `helm`
+    -   `vcluster`
+
+### Step 1 - Create an EKS cluster
+
+Create an EKS cluster with at least three nodes to spread platform replicas
+across failure domains.
+
+<InterpolatedCodeBlock
+  code={
+`eksctl create cluster \\
+  --name platform-ha \\
+  --region [[GLOBAL:AWS_REGION]] \\
+  --nodes 3 \\
+  --managed \\
+  --with-oidc`
+  }
+  language="bash"
+/>
+
+#### Install the Amazon EBS CSI driver
+
+The EBS CSI driver is required for dynamic provisioning of persistent volumes
+on EKS. Without it, virtual cluster StatefulSet pods remain in `Pending` state
+because the `gp2` storage class cannot provision volumes.
+
+<InterpolatedCodeBlock
+  code={
+`eksctl create addon --name aws-ebs-csi-driver \\
+  --cluster platform-ha \\
+  --region [[GLOBAL:AWS_REGION]]`
+  }
+  language="bash"
+/>
+
+For more details on EKS prerequisites for running virtual clusters, see the
+[EKS environment setup guide](/docs/vcluster/next/deploy/control-plane/kubernetes-pod/environment/eks).
+
+### Step 2 - Install AWS load balancer controller
+
+#### Create IAM policy
+
+```bash
+curl -o iam_policy.json \
+https://raw.githubusercontent.com/kubernetes-sigs/aws-load-balancer-controller/main/docs/install/iam_policy.json
+
+aws iam create-policy \
+  --policy-name AWSLoadBalancerControllerIAMPolicy \
+  --policy-document file://iam_policy.json
+```
+
+#### Create IAM service account (IRSA)
+
+<InterpolatedCodeBlock
+  code={
+`eksctl create iamserviceaccount \\
+  --cluster platform-ha \\
+  --namespace kube-system \\
+  --name aws-load-balancer-controller \\
+  --attach-policy-arn arn:aws:iam::[[GLOBAL:ACCOUNT_ID]]:policy/AWSLoadBalancerControllerIAMPolicy \\
+  --approve`
+  }
+  language="bash"
+/>
+
+#### Install via Helm
+
+```bash
+helm repo add eks https://aws.github.io/eks-charts
+helm repo update
+```
+
+```bash
+helm install aws-load-balancer-controller eks/aws-load-balancer-controller \
+  -n kube-system \
+  --set clusterName=platform-ha \
+  --set serviceAccount.create=false \
+  --set serviceAccount.name=aws-load-balancer-controller
+```
+
+### Step 3 - Create the database (Kine backend)
+
+Create an RDS instance (MariaDB) in its own **isolated VPC**, separate from the
+EKS cluster VPC. This keeps the database network boundary independent from the
+cluster workloads and simplifies security group rules.
+
+#### Create the database VPC
+
+Create a VPC with a CIDR that does not overlap with the EKS cluster VPC.
+Enable DNS support and DNS hostnames so the RDS endpoint resolves correctly
+across the VPC peering connection.
+
+```bash
+aws ec2 create-vpc \
+  --cidr-block 10.1.0.0/16 \
+  --region us-east-1 \
+  --tag-specifications 'ResourceType=vpc,Tags=[{Key=Name,Value=ha-platform-db-vpc}]'
+```
+
+Note the `VpcId` from the output, then enable DNS settings:
+
+<InterpolatedCodeBlock
+  code={
+`aws ec2 modify-vpc-attribute \\
+  --vpc-id [[GLOBAL:DB_VPC_ID]] \\
+  --enable-dns-support '{"Value":true}' \\
+  --region [[GLOBAL:AWS_REGION]]
+
+aws ec2 modify-vpc-attribute \\
+  --vpc-id [[GLOBAL:DB_VPC_ID]] \\
+  --enable-dns-hostnames '{"Value":true}' \\
+  --region [[GLOBAL:AWS_REGION]]`
+  }
+  language="bash"
+/>
+
+#### Create subnets and DB subnet group
+
+Create subnets in at least two availability zones (required by RDS), then create
+a DB subnet group.
+
+<InterpolatedCodeBlock
+  code={
+`aws ec2 create-subnet \\
+  --vpc-id [[GLOBAL:DB_VPC_ID]] \\
+  --cidr-block 10.1.1.0/24 \\
+  --availability-zone [[GLOBAL:AWS_REGION]]a \\
+  --region [[GLOBAL:AWS_REGION]] \\
+  --tag-specifications 'ResourceType=subnet,Tags=[{Key=Name,Value=ha-platform-db-subnet-1a}]'
+
+aws ec2 create-subnet \\
+  --vpc-id [[GLOBAL:DB_VPC_ID]] \\
+  --cidr-block 10.1.2.0/24 \\
+  --availability-zone [[GLOBAL:AWS_REGION]]b \\
+  --region [[GLOBAL:AWS_REGION]] \\
+  --tag-specifications 'ResourceType=subnet,Tags=[{Key=Name,Value=ha-platform-db-subnet-1b}]'`
+  }
+  language="bash"
+/>
+
+<InterpolatedCodeBlock
+  code={
+`aws rds create-db-subnet-group \\
+  --db-subnet-group-name ha-platform-db-subnet \\
+  --db-subnet-group-description "Isolated VPC subnet group for platform RDS" \\
+  --subnet-ids [[VAR:DB_SUBNET_1A_ID:subnet-xxxxxxxxx]] [[VAR:DB_SUBNET_1B_ID:subnet-yyyyyyyyy]] \\
+  --region [[GLOBAL:AWS_REGION]]`
+  }
+  language="bash"
+/>
+
+#### Create a security group for the database
+
+Create a security group that allows inbound MariaDB traffic (port 3306) from
+the EKS cluster VPC CIDR range.
+
+<InterpolatedCodeBlock
+  code={
+`aws ec2 create-security-group \\
+  --group-name ha-platform-db-sg \\
+  --description "Allow MariaDB from EKS VPC via peering" \\
+  --vpc-id [[GLOBAL:DB_VPC_ID]] \\
+  --region [[GLOBAL:AWS_REGION]]`
+  }
+  language="bash"
+/>
+
+<InterpolatedCodeBlock
+  code={
+`aws ec2 authorize-security-group-ingress \\
+  --group-id [[GLOBAL:DB_SG_ID]] \\
+  --protocol tcp --port 3306 \\
+  --cidr [[VAR:EKS_VPC_CIDR:10.0.0.0/16]] \\
+  --region [[GLOBAL:AWS_REGION]]`
+  }
+  language="bash"
+/>
+
+#### Create the RDS instance
+
+<InterpolatedCodeBlock
+  code={
+`aws rds create-db-instance \\
+  --engine mariadb \\
+  --db-instance-identifier mariadb-ha-platform \\
+  --allocated-storage 20 \\
+  --region [[GLOBAL:AWS_REGION]] \\
+  --db-instance-class db.t3.medium \\
+  --master-username admin \\
+  --master-user-password [[VAR:ADMIN_PASSWORD:your-password]] \\
+  --db-subnet-group-name ha-platform-db-subnet \\
+  --vpc-security-group-ids [[GLOBAL:DB_SG_ID]] \\
+  --no-publicly-accessible \\
+  --enable-iam-database-authentication`
+  }
+  language="bash"
+/>
+
+Wait for the instance to become available:
+
+<InterpolatedCodeBlock
+  code={
+`aws rds wait db-instance-available \\
+  --db-instance-identifier mariadb-ha-platform \\
+  --region [[GLOBAL:AWS_REGION]]`
+  }
+  language="bash"
+/>
+
+#### Create the Kine database and IAM user
+
+Connect to the database instance as the `admin` user and create the `kine`
+database and user. The user authenticates with the `AWSAuthenticationPlugin`
+instead of a password.
+
+```sql
+CREATE DATABASE IF NOT EXISTS kine;
+
+CREATE USER 'kine'@'%' IDENTIFIED WITH AWSAuthenticationPlugin AS 'RDS';
+GRANT ALL PRIVILEGES ON kine.* TO 'kine'@'%';
+FLUSH PRIVILEGES;
+```
+
+#### Create an IAM policy for RDS access
+
+Create an IAM policy that grants the `rds-db:connect` permission for the `kine`
+database user. Replace `<DBI_RESOURCE_ID>` with the RDS instance resource ID
+(found via `aws rds describe-db-instances --query 'DBInstances[0].DbiResourceId'`).
+
+<InterpolatedCodeBlock
+  code={
+`aws iam create-policy \\
+  --policy-name RDSIAMAuthKine \\
+  --policy-document '{
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Action": "rds-db:connect",
+        "Resource": "arn:aws:rds-db:[[GLOBAL:AWS_REGION]]:[[GLOBAL:ACCOUNT_ID]]:dbuser:[[VAR:DBI_RESOURCE_ID:db-XXXXXXXXXXXXXXXXXXXXXXXXXX]]/kine"
+      }
+    ]
+  }'`
+  }
+  language="bash"
+/>
+
+#### Create an IAM role for Pod Identity
+
+Create an IAM role with a trust policy that allows the EKS Pod Identity agent
+to assume it.
+
+<InterpolatedCodeBlock
+  code={
+`aws iam create-role \\
+  --role-name PlatformKineRDSRole \\
+  --assume-role-policy-document '{
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Principal": {
+          "Service": "pods.eks.amazonaws.com"
+        },
+        "Action": [
+          "sts:AssumeRole",
+          "sts:TagSession"
+        ]
+      }
+    ]
+  }'
+
+aws iam attach-role-policy \\
+  --role-name PlatformKineRDSRole \\
+  --policy-arn arn:aws:iam::[[GLOBAL:ACCOUNT_ID]]:policy/RDSIAMAuthKine`
+  }
+  language="bash"
+/>
+
+#### Install the EKS Pod Identity Agent
+
+Install the Pod Identity Agent add-on. Without this add-on, the Pod Identity
+association has no effect and pods cannot obtain IAM credentials.
+
+<InterpolatedCodeBlock
+  code={
+`aws eks create-addon \\
+  --cluster-name platform-ha \\
+  --addon-name eks-pod-identity-agent \\
+  --region [[GLOBAL:AWS_REGION]]`
+  }
+  language="bash"
+/>
+
+Verify the add-on is `ACTIVE` before proceeding:
+
+<InterpolatedCodeBlock
+  code={
+`aws eks describe-addon \\
+  --cluster-name platform-ha \\
+  --addon-name eks-pod-identity-agent \\
+  --region [[GLOBAL:AWS_REGION]] \\
+  --query 'addon.status'`
+  }
+  language="bash"
+/>
+
+#### Create Pod Identity association
+
+Associate the IAM role with the `loft` service account in the
+`vcluster-platform` namespace. This allows the platform pods to generate
+temporary IAM authentication tokens for the database connection.
+
+<InterpolatedCodeBlock
+  code={
+`aws eks create-pod-identity-association \\
+  --cluster-name platform-ha \\
+  --role-arn arn:aws:iam::[[GLOBAL:ACCOUNT_ID]]:role/PlatformKineRDSRole \\
+  --namespace vcluster-platform \\
+  --service-account loft \\
+  --region [[GLOBAL:AWS_REGION]]`
+  }
+  language="bash"
+/>
+
+For more details on IAM database authentication with EKS Pod Identity, see
+[IAM database authentication](../administer/connector/iam_database.mdx).
+
+### Step 4 - Create VPC peering to the database
+
+Create a VPC peering connection between the EKS cluster VPC and the database
+VPC. This gives the cluster network access to the RDS instance.
+
+#### Create peering connection
+
+<InterpolatedCodeBlock
+  code={
+`aws ec2 create-vpc-peering-connection \\
+  --vpc-id [[GLOBAL:DB_VPC_ID]] \\
+  --peer-vpc-id [[VAR:EKS_VPC_ID:vpc-yyyyyyyyy]] \\
+  --region [[GLOBAL:AWS_REGION]] \\
+  --tag-specifications 'ResourceType=vpc-peering-connection,Tags=[{Key=Name,Value=db-vpc-to-eks-ha-platform}]'`
+  }
+  language="bash"
+/>
+
+#### Accept the peering connection
+
+<InterpolatedCodeBlock
+  code={
+`aws ec2 accept-vpc-peering-connection \\
+  --vpc-peering-connection-id [[VAR:PEERING_ID:pcx-xxxxxxxxx]] \\
+  --region [[GLOBAL:AWS_REGION]]`
+  }
+  language="bash"
+/>
+
+#### Enable DNS resolution
+
+Enable DNS resolution on the peering connection so the RDS endpoint hostname
+resolves to its private IP from the EKS VPC.
+
+<InterpolatedCodeBlock
+  code={
+`aws ec2 modify-vpc-peering-connection-options \\
+  --vpc-peering-connection-id [[VAR:PEERING_ID:pcx-xxxxxxxxx]] \\
+  --requester-peering-connection-options AllowDnsResolutionFromRemoteVpc=true \\
+  --accepter-peering-connection-options AllowDnsResolutionFromRemoteVpc=true \\
+  --region [[GLOBAL:AWS_REGION]]`
+  }
+  language="bash"
+/>
+
+#### Add routes
+
+Add routes so traffic can flow between the EKS VPC and the database VPC.
+
+:::warning Important
+Add routes to **every** route table whose subnets host EKS nodes, including
+public route tables. If your EKS nodes run in public subnets (the `eksctl`
+default), missing routes on the public route table cause database connection
+timeouts even though VPC peering is active.
+:::
+
+**Database VPC route table** — route to the EKS VPC CIDR:
+
+<InterpolatedCodeBlock
+  code={
+`aws ec2 create-route \\
+  --route-table-id [[VAR:DB_VPC_ROUTE_TABLE_ID:rtb-xxxxxxxxx]] \\
+  --destination-cidr-block [[VAR:EKS_VPC_CIDR:10.0.0.0/16]] \\
+  --vpc-peering-connection-id [[VAR:PEERING_ID:pcx-xxxxxxxxx]] \\
+  --region [[GLOBAL:AWS_REGION]]`
+  }
+  language="bash"
+/>
+
+**EKS VPC route tables** — route to the database VPC CIDR. Repeat for every
+route table associated with subnets that host EKS nodes:
+
+<InterpolatedCodeBlock
+  code={
+`aws ec2 create-route \\
+  --route-table-id [[VAR:EKS_ROUTE_TABLE_ID:rtb-yyyyyyyyy]] \\
+  --destination-cidr-block 10.1.0.0/16 \\
+  --vpc-peering-connection-id [[VAR:PEERING_ID:pcx-xxxxxxxxx]] \\
+  --region [[GLOBAL:AWS_REGION]]`
+  }
+  language="bash"
+/>
+
+To list all route tables for a VPC and identify which subnets they serve:
+
+<InterpolatedCodeBlock
+  code={
+`aws ec2 describe-route-tables \\
+  --filters "Name=vpc-id,Values=[[VAR:VPC_ID:vpc-xxxxxxxxx]]" \\
+  --region [[GLOBAL:AWS_REGION]] \\
+  --query 'RouteTables[].{RouteTableId:RouteTableId,Name:Tags[?Key==\`Name\`].Value|[0],Subnets:Associations[].SubnetId}'`
+  }
+  language="bash"
+/>
+
+#### Verify connectivity
+
+Launch a test pod in the EKS cluster and verify it can reach the RDS endpoint:
+
+<InterpolatedCodeBlock
+  code={
+`kubectl run dbtest --image=busybox --restart=Never --rm -it -- \\
+  nc -zv [[VAR:RDS_ENDPOINT:mariadb-ha-platform.xxxxxxxxxxxx.us-east-1.rds.amazonaws.com]] 3306`
+  }
+  language="bash"
+/>
+
+The connection should report `open`. If it times out, verify that routes exist
+on the correct route tables and that the database security group allows ingress
+from the cluster's VPC CIDR.
+
+### Step 5 - Deploy vCluster platform
+
+Deploy the platform with multiple replicas and the external database
+configuration. Unlike multi-region, no `multiRegion` block is needed — only
+`config.database` and `replicaCount`.
+
+Create a values file (`platform-ha-values.yaml`):
+
+<InterpolatedCodeBlock
+  code={"admin:\n  email: [[VAR:ADMIN_EMAIL:admin@example.com]]\n\nreplicaCount: 3\n\nconfig:\n  loftHost: platform.example.com\n  database:\n    enabled: true\n    dataSource: \"mysql://kine@tcp([[VAR:DATABASE_URL:mariadb-ha-platform.xxxxxxxxxxxx.us-east-1.rds.amazonaws.com]]:3306)/kine\"\n    identityProvider: \"aws\"\n    extraArgs:\n      - --datastore-max-open-connections=20\n      - --datastore-max-idle-connections=0\n\n  # Cost control requires the embedded single-region database and is not\n  # compatible with the external Kine backend.\n  costControl:\n    enabled: false\n\nagentValues:\n  replicaCount: 3"}
+  language="yaml"
+/>
+
+Setting `config.database.enabled=true` with `replicaCount > 1` automatically
+configures:
+- Embedded Kubernetes (Kine) with the external database
+- Leader election across replicas
+- `RollingUpdate` deployment strategy
+
+Install the platform:
+
+<Tabs
+  defaultValue="cli"
+  values={[
+    { label: "vCluster CLI", value: "cli" },
+    { label: "Helm", value: "helm" },
+  ]}
+>
+  <TabItem value="cli">
+
+<InterpolatedCodeBlock
+  code={
+`vcluster platform start \\
+  --namespace vcluster-platform \\
+  --kube-context [[GLOBAL:CLUSTER_CONTEXT]] \\
+  --values platform-ha-values.yaml \\
+  --no-tunnel`
+  }
+  language="bash"
+/>
+
+  </TabItem>
+  <TabItem value="helm">
+
+```bash
+helm upgrade loft vcluster-platform --install --create-namespace --repository-config='' \
+  --namespace vcluster-platform \
+  --repo "https://charts.loft.sh/" \
+  -f platform-ha-values.yaml
+```
+
+  </TabItem>
+</Tabs>
+
+Wait for all replicas to become ready:
+
+<InterpolatedCodeBlock
+  code={
+`kubectl --context [[GLOBAL:CLUSTER_CONTEXT]] \\
+  rollout status deployment/loft -n vcluster-platform`
+  }
+  language="bash"
+/>
+
+### Step 6 - Configure HTTPS and Ingress
+
+#### Request an ACM certificate
+
+<InterpolatedCodeBlock
+  code={
+`aws acm request-certificate \\
+  --region [[GLOBAL:AWS_REGION]] \\
+  --domain-name "platform.example.com" \\
+  --validation-method DNS`
+  }
+  language="bash"
+/>
+
+Get the certificate ARN from the output and describe the certificate to obtain
+DNS validation records:
+
+<InterpolatedCodeBlock
+  code={
+`aws acm describe-certificate \\
+  --region [[GLOBAL:AWS_REGION]] \\
+  --certificate-arn arn:aws:acm:[[GLOBAL:AWS_REGION]]:[[GLOBAL:ACCOUNT_ID]]:certificate/[[VAR:CERTIFICATE_ARN_ID:xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx]]`
+  }
+  language="bash"
+/>
+
+Add DNS validation CNAMEs in Route 53 and wait until certificate status is ISSUED.
+
+:::note
+You can also do this step by setting up cert-manager in the cluster instead of using AWS ACM.
+:::
+
+#### Create the Ingress (ALB)
+
+Apply the Ingress manifest to provision an AWS ALB:
+
+<InterpolatedCodeBlock
+  code={"apiVersion: networking.k8s.io/v1\nkind: Ingress\nmetadata:\n  name: loft\n  namespace: vcluster-platform\n  annotations:\n    alb.ingress.kubernetes.io/scheme: internet-facing\n    alb.ingress.kubernetes.io/target-type: ip\n    alb.ingress.kubernetes.io/listen-ports: '[{\"HTTP\":80},{\"HTTPS\":443}]'\n    alb.ingress.kubernetes.io/certificate-arn: \"arn:aws:acm:[[GLOBAL:AWS_REGION]]:[[GLOBAL:ACCOUNT_ID]]:certificate/[[VAR:CERT_ID:xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx]]\"\n    alb.ingress.kubernetes.io/ssl-redirect: \"443\"\n    alb.ingress.kubernetes.io/idle-timeout: \"3600\"\n    alb.ingress.kubernetes.io/healthcheck-path: /healthz\n    alb.ingress.kubernetes.io/success-codes: \"200\"\nspec:\n  ingressClassName: alb\n  rules:\n    - host: platform.example.com\n      http:\n        paths:\n          - path: /\n            pathType: Prefix\n            backend:\n              service:\n                name: loft\n                port:\n                  number: 80"}
+  language="yaml"
+/>
+
+#### Create a DNS record
+
+Create an A (Alias) record pointing your domain to the ALB:
+
+<InterpolatedCodeBlock
+  code={
+`aws route53 change-resource-record-sets \\
+  --hosted-zone-id [[VAR:HOSTED_ZONE_ID:Z1234567890ABC]] \\
+  --change-batch '{
+    "Changes": [
+      {
+        "Action": "UPSERT",
+        "ResourceRecordSet": {
+          "Name": "platform.example.com",
+          "Type": "A",
+          "AliasTarget": {
+            "HostedZoneId": "[[VAR:ALB_HOSTED_ZONE_ID:ZXXXXXXXXXX]]",
+            "DNSName": "[[VAR:ALB_DNS_NAME:k8s-vcluster-loft-xxxxxxxxxx-xxxxxxxxx.us-east-1.elb.amazonaws.com]]",
+            "EvaluateTargetHealth": true
+          }
+        }
+      }
+    ]
+  }'`
+  }
+  language="bash"
+/>
+
+### Result
+
+You now have a fully operational **vCluster Platform external database
+deployment** with:
+
+-   One EKS cluster with three nodes
+-   Three platform replicas with leader election
+-   External Kine database (RDS MariaDB) in an isolated VPC with IAM-based authentication (Pod Identity)
+-   VPC peering between the cluster VPC and the database VPC
+-   ALB with extended idle timeout and ACM certificate
+-   `RollingUpdate` deployment strategy for zero-downtime upgrades
+-   PodDisruptionBudget ensuring at least one replica is always available
+
+## Upgrade an external database deployment
+
+This runbook describes how to upgrade vCluster Platform with minimal downtime.
+Because all replicas run in a single cluster, a standard rolling upgrade handles
+the transition automatically.
+
+### Prerequisites
+
+- Updated values file (`platform-ha-values.yaml`)
+- `kubectl` context configured for the cluster
+- The target chart version available in the Helm repository
+
+### Step 1 - Upgrade the deployment
+
+<Tabs
+  defaultValue="cli"
+  values={[
+    { label: "vCluster CLI", value: "cli" },
+    { label: "Helm", value: "helm" },
+  ]}
+>
+  <TabItem value="cli">
+
+<InterpolatedCodeBlock
+  code={
+`vcluster platform start \\
+  --namespace vcluster-platform \\
+  --kube-context [[GLOBAL:CLUSTER_CONTEXT]] \\
+  --values platform-ha-values.yaml \\
+  --upgrade \\
+  --no-tunnel`
+  }
+  language="bash"
+/>
+
+  </TabItem>
+  <TabItem value="helm">
+
+<InterpolatedCodeBlock
+  code={
+`helm upgrade loft vcluster-platform --install --create-namespace --repository-config='' \\
+  --namespace vcluster-platform \\
+  --repo "https://charts.loft.sh/" \\
+  --version [[VAR:CHART_VERSION:4.8.0]] \\
+  --kube-context [[GLOBAL:CLUSTER_CONTEXT]] \\
+  -f platform-ha-values.yaml \\
+  --server-side=true --force-conflicts`
+  }
+  language="bash"
+/>
+
+  </TabItem>
+</Tabs>
+
+### Step 2 - Wait for the rollout to complete
+
+<InterpolatedCodeBlock
+  code={
+`kubectl --context [[GLOBAL:CLUSTER_CONTEXT]] \\
+  rollout status deployment/loft -n vcluster-platform`
+  }
+  language="bash"
+/>
+
+### Step 3 - Verify the deployment
+
+Confirm that all platform and agent deployments are running the expected image:
+
+<InterpolatedCodeBlock
+  code={
+`echo -n "Platform: " && kubectl --context [[GLOBAL:CLUSTER_CONTEXT]] get deployment -n vcluster-platform loft \\
+  -o jsonpath='{.spec.template.spec.containers[0].image}' && echo`
+  }
+  language="bash"
+/>
+
+The platform automatically upgrades connected agents after the platform upgrade
+completes.
+
+## Restore the Kine database from a snapshot
+
+This runbook describes how to restore the Kine database from an RDS snapshot to
+a new instance and update the platform to use the restored database. Use this
+procedure for disaster recovery, database migration (for example, enabling IAM
+authentication), or point-in-time recovery.
+
+:::warning Important
+The platform deployment must be scaled down before switching the data source to
+prevent split-brain writes to the old and new databases.
+:::
+
+### Step 1 - Create a snapshot of the current database
+
+Skip this step if you already have a snapshot to restore from.
+
+<InterpolatedCodeBlock
+  code={
+`aws rds create-db-snapshot \\
+  --db-instance-identifier [[VAR:CURRENT_DB_INSTANCE_ID:mariadb-ha-platform]] \\
+  --db-snapshot-identifier [[VAR:SNAPSHOT_NAME:kine-backup-YYYY-MM-DD]] \\
+  --region [[GLOBAL:AWS_REGION]]`
+  }
+  language="bash"
+/>
+
+Wait for the snapshot to become available:
+
+<InterpolatedCodeBlock
+  code={
+`aws rds wait db-snapshot-available \\
+  --db-snapshot-identifier [[VAR:SNAPSHOT_NAME:kine-backup-YYYY-MM-DD]] \\
+  --region [[GLOBAL:AWS_REGION]]`
+  }
+  language="bash"
+/>
+
+### Step 2 - Restore the snapshot to a new RDS instance
+
+Restore the snapshot to a new instance in the database VPC. Use the same DB
+subnet group and security group from the original setup. Include
+`--enable-iam-database-authentication` if the new instance should use IAM auth.
+
+<InterpolatedCodeBlock
+  code={
+`aws rds restore-db-instance-from-db-snapshot \\
+  --db-instance-identifier [[VAR:NEW_DB_INSTANCE_ID:mariadb-ha-platform-restored]] \\
+  --db-snapshot-identifier [[VAR:SNAPSHOT_NAME:kine-backup-YYYY-MM-DD]] \\
+  --db-instance-class db.t3.medium \\
+  --db-subnet-group-name ha-platform-db-subnet \\
+  --vpc-security-group-ids [[GLOBAL:DB_SG_ID]] \\
+  --no-publicly-accessible \\
+  --enable-iam-database-authentication \\
+  --region [[GLOBAL:AWS_REGION]]`
+  }
+  language="bash"
+/>
+
+Wait for the new instance to become available:
+
+<InterpolatedCodeBlock
+  code={
+`aws rds wait db-instance-available \\
+  --db-instance-identifier [[VAR:NEW_DB_INSTANCE_ID:mariadb-ha-platform-restored]] \\
+  --region [[GLOBAL:AWS_REGION]]`
+  }
+  language="bash"
+/>
+
+Note the new endpoint:
+
+<InterpolatedCodeBlock
+  code={
+`aws rds describe-db-instances \\
+  --db-instance-identifier [[VAR:NEW_DB_INSTANCE_ID:mariadb-ha-platform-restored]] \\
+  --query 'DBInstances[0].Endpoint.Address' \\
+  --output text \\
+  --region [[GLOBAL:AWS_REGION]]`
+  }
+  language="bash"
+/>
+
+If using IAM authentication, note the `DbiResourceId` of the new instance and
+update the `RDSIAMAuthKine` IAM policy to include it. Without this, platform
+pods fail with `Access denied for user 'kine'` errors because the IAM
+`rds-db:connect` permission is scoped to a specific RDS instance resource ID.
+
+<InterpolatedCodeBlock
+  code={
+`aws rds describe-db-instances \\
+  --db-instance-identifier [[VAR:NEW_DB_INSTANCE_ID:mariadb-ha-platform-restored]] \\
+  --query 'DBInstances[0].DbiResourceId' \\
+  --output text \\
+  --region [[GLOBAL:AWS_REGION]]`
+  }
+  language="bash"
+/>
+
+Add the new resource ID to the policy's `Resource` array:
+
+<InterpolatedCodeBlock
+  code={
+`aws iam create-policy-version \\
+  --policy-arn arn:aws:iam::[[GLOBAL:ACCOUNT_ID]]:policy/RDSIAMAuthKine \\
+  --set-as-default \\
+  --policy-document '{
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Action": "rds-db:connect",
+        "Resource": [
+          "arn:aws:rds-db:[[GLOBAL:AWS_REGION]]:[[GLOBAL:ACCOUNT_ID]]:dbuser:[[VAR:OLD_DBI_RESOURCE_ID:db-OLDXXXXXXXXXXXXXXXXXXXXXXXXXX]]/kine",
+          "arn:aws:rds-db:[[GLOBAL:AWS_REGION]]:[[GLOBAL:ACCOUNT_ID]]:dbuser:[[VAR:NEW_DBI_RESOURCE_ID:db-NEWXXXXXXXXXXXXXXXXXXXXXXXXXX]]/kine"
+        ]
+      }
+    ]
+  }'`
+  }
+  language="bash"
+/>
+
+### Step 3 - Scale down the platform
+
+Scale the deployment to zero to stop all writes to the old database.
+
+<InterpolatedCodeBlock
+  code={
+`kubectl --context [[GLOBAL:CLUSTER_CONTEXT]] \\
+  scale deployment -n vcluster-platform loft --replicas=0`
+  }
+  language="bash"
+/>
+
+Wait for all pods to stop:
+
+<InterpolatedCodeBlock
+  code={
+`kubectl --context [[GLOBAL:CLUSTER_CONTEXT]] \\
+  get pods -n vcluster-platform -l app=loft --watch`
+  }
+  language="bash"
+/>
+
+### Step 4 - Update the values file
+
+Update the `dataSource` in the values file to point to the new RDS endpoint:
+
+<InterpolatedCodeBlock
+  code={"config:\n  database:\n    dataSource: \"mysql://kine@tcp([[VAR:NEW_DATABASE_URL:mariadb-ha-platform-restored.xxxxxxxxxxxx.us-east-1.rds.amazonaws.com]]:3306)/kine\""}
+  language="yaml"
+/>
+
+### Step 5 - Upgrade the platform
+
+Apply the updated values file.
+
+<Tabs
+  defaultValue="cli"
+  values={[
+    { label: "vCluster CLI", value: "cli" },
+    { label: "Helm", value: "helm" },
+  ]}
+>
+  <TabItem value="cli">
+
+<InterpolatedCodeBlock
+  code={
+`vcluster platform start \\
+  --namespace vcluster-platform \\
+  --kube-context [[GLOBAL:CLUSTER_CONTEXT]] \\
+  --values platform-ha-values.yaml \\
+  --upgrade \\
+  --no-tunnel`
+  }
+  language="bash"
+/>
+
+  </TabItem>
+  <TabItem value="helm">
+
+<InterpolatedCodeBlock
+  code={
+`helm upgrade loft vcluster-platform --install --create-namespace --repository-config='' \\
+  --namespace vcluster-platform \\
+  --repo "https://charts.loft.sh/" \\
+  --version [[VAR:CHART_VERSION:4.8.0]] \\
+  --kube-context [[GLOBAL:CLUSTER_CONTEXT]] \\
+  -f platform-ha-values.yaml \\
+  --server-side=true --force-conflicts`
+  }
+  language="bash"
+/>
+
+  </TabItem>
+</Tabs>
+
+### Step 6 - Scale up the platform
+
+The Helm upgrade keeps replicas at zero because it does not override the manual
+scale-down. Scale the deployment back up.
+
+<InterpolatedCodeBlock
+  code={
+`kubectl --context [[GLOBAL:CLUSTER_CONTEXT]] \\
+  scale deployment -n vcluster-platform loft --replicas=3`
+  }
+  language="bash"
+/>
+
+Wait for all pods to become ready:
+
+<InterpolatedCodeBlock
+  code={
+`kubectl --context [[GLOBAL:CLUSTER_CONTEXT]] \\
+  rollout status deployment/loft -n vcluster-platform`
+  }
+  language="bash"
+/>
+
+### Step 7 - Verify the restore
+
+Confirm the platform is healthy:
+
+<InterpolatedCodeBlock
+  code={
+`kubectl --context [[GLOBAL:CLUSTER_CONTEXT]] \\
+  get pods -n vcluster-platform -l app=loft`
+  }
+  language="bash"
+/>
+
+Verify the platform UI is accessible through the domain and that all replicas
+are running.
+
+## Troubleshoot common issues
+
+### Platform pods are crashlooping
+
+Check pod logs for errors:
+
+<InterpolatedCodeBlock
+  code={
+`kubectl --context [[GLOBAL:CLUSTER_CONTEXT]] \\
+  logs -n vcluster-platform -l app=loft --tail=50`
+  }
+  language="bash"
+/>
+
+Common causes:
+- **Database connectivity errors**: Verify that VPC peering is active, routes
+  exist on the correct route tables (including public route tables if nodes are
+  in public subnets), and the database security group allows port 3306 from the
+  cluster VPC CIDR.
+- **IAM authentication failures**: Confirm the Pod Identity association exists,
+  the Pod Identity Agent add-on is `ACTIVE`, and the `RDSIAMAuthKine` IAM
+  policy contains the correct `DbiResourceId`.
+- **Resource exhaustion**: Check node resource usage with
+  `kubectl top nodes` and pod resource usage with `kubectl top pods -n vcluster-platform`.
+
+### Leader election is stuck
+
+If the platform is unresponsive but pods are running, the leader lease may be
+stuck. Check the lease status:
+
+<InterpolatedCodeBlock
+  code={
+`kubectl --context [[GLOBAL:CLUSTER_CONTEXT]] \\
+  get lease -n vcluster-platform -o wide`
+  }
+  language="bash"
+/>
+
+If the lease holder is a pod that no longer exists, restart the deployment to
+force a new leader election:
+
+<InterpolatedCodeBlock
+  code={
+`kubectl --context [[GLOBAL:CLUSTER_CONTEXT]] \\
+  rollout restart deployment/loft -n vcluster-platform`
+  }
+  language="bash"
+/>
+
+### ALB health checks failing
+
+Check the ingress status:
+
+<InterpolatedCodeBlock
+  code={
+`kubectl --context [[GLOBAL:CLUSTER_CONTEXT]] \\
+  get ingress -n vcluster-platform loft`
+  }
+  language="bash"
+/>
+
+Verify the ALB target group health in the AWS console or with:
+
+```bash
+aws elbv2 describe-target-health \
+  --target-group-arn <TARGET_GROUP_ARN>
+```
+
+Common causes:
+- The platform pods are not ready (check `kubectl get pods`).
+- The `/healthz` endpoint is not reachable from the ALB (check security groups
+  and the ALB target type matches the service configuration).
+
+### Database connection timeouts
+
+If pods start but log database connection errors:
+
+1. Verify VPC peering is active:
+
+<InterpolatedCodeBlock
+  code={
+`aws ec2 describe-vpc-peering-connections \\
+  --filters "Name=status-code,Values=active" \\
+  --region [[GLOBAL:AWS_REGION]] \\
+  --query 'VpcPeeringConnections[].{ID:VpcPeeringConnectionId,Requester:RequesterVpcInfo.VpcId,Accepter:AccepterVpcInfo.VpcId}'`
+  }
+  language="bash"
+/>
+
+2. Verify routes from the EKS VPC to the database VPC exist:
+
+<InterpolatedCodeBlock
+  code={
+`aws ec2 describe-route-tables \\
+  --filters "Name=vpc-id,Values=[[VAR:EKS_VPC_ID:vpc-yyyyyyyyy]]" \\
+  --region [[GLOBAL:AWS_REGION]] \\
+  --query 'RouteTables[].Routes[?DestinationCidrBlock==\`10.1.0.0/16\`]'`
+  }
+  language="bash"
+/>
+
+3. Test connectivity from within the cluster:
+
+<InterpolatedCodeBlock
+  code={
+`kubectl run dbtest --image=busybox --restart=Never --rm -it -- \\
+  nc -zv [[VAR:RDS_ENDPOINT:mariadb-ha-platform.xxxxxxxxxxxx.us-east-1.rds.amazonaws.com]] 3306`
+  }
+  language="bash"
+/>
