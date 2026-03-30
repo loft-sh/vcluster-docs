@@ -128,6 +128,38 @@ because the `gp2` storage class cannot provision volumes.
 For more details on EKS prerequisites for running virtual clusters, see the
 [EKS environment setup guide](/docs/vcluster/next/deploy/control-plane/kubernetes-pod/environment/eks).
 
+#### Note the EKS VPC ID and CIDR
+
+`eksctl` creates a VPC automatically. Note the VPC ID and CIDR — you need these
+when creating the database security group (Step 3) and VPC peering (Step 4).
+
+<InterpolatedCodeBlock
+  code={
+`aws eks describe-cluster \\
+  --name platform-ha \\
+  --region [[GLOBAL:AWS_REGION]] \\
+  --query 'cluster.resourcesVpcConfig.vpcId' \\
+  --output text`
+  }
+  language="bash"
+/>
+
+To find the CIDR range:
+
+<InterpolatedCodeBlock
+  code={
+`aws ec2 describe-vpcs \\
+  --vpc-ids [[VAR:EKS_VPC_ID:vpc-yyyyyyyyy]] \\
+  --region [[GLOBAL:AWS_REGION]] \\
+  --query 'Vpcs[0].CidrBlock' \\
+  --output text`
+  }
+  language="bash"
+/>
+
+The default `eksctl` CIDR is `192.168.0.0/16`. Use the actual value from the
+output above in subsequent steps.
+
 ### Step 2 - Install AWS load balancer controller
 
 #### Create IAM policy
@@ -304,17 +336,29 @@ Wait for the instance to become available:
 
 #### Create the Kine database and IAM user
 
-Connect to the database instance as the `admin` user and create the `kine`
-database and user. The user authenticates with the `AWSAuthenticationPlugin`
-instead of a password.
+Since the RDS instance is in an isolated VPC with no public access, connect
+through a temporary pod in the EKS cluster. VPC peering must be configured
+first (Step 4), or you can run this step after completing Step 4.
 
-```sql
-CREATE DATABASE IF NOT EXISTS kine;
+<InterpolatedCodeBlock
+  code={
+`kubectl run mariadb-client --image=mariadb:latest --restart=Never --rm -i -- \\
+  mariadb -h [[VAR:RDS_ENDPOINT:mariadb-ha-platform.xxxxxxxxxxxx.us-east-1.rds.amazonaws.com]] \\
+  -u admin -p[[VAR:ADMIN_PASSWORD:your-password]] -e "
+    CREATE DATABASE IF NOT EXISTS kine;
+    CREATE USER IF NOT EXISTS 'kine'@'%' IDENTIFIED WITH AWSAuthenticationPlugin AS 'RDS';
+    GRANT ALL PRIVILEGES ON kine.* TO 'kine'@'%';
+    FLUSH PRIVILEGES;
+  "`
+  }
+  language="bash"
+/>
 
-CREATE USER 'kine'@'%' IDENTIFIED WITH AWSAuthenticationPlugin AS 'RDS';
-GRANT ALL PRIVILEGES ON kine.* TO 'kine'@'%';
-FLUSH PRIVILEGES;
-```
+:::note
+This step requires network connectivity between the EKS cluster and the
+database VPC. If you haven't completed VPC peering (Step 4) yet, complete
+that first and return here.
+:::
 
 #### Create an IAM policy for RDS access
 
