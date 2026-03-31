@@ -22,8 +22,8 @@ Write your content here...
 
 /** @type {import('@docusaurus/types').Config} */
 const config = {
-  title: "vCluster docs | Virtual Clusters for Kubernetes",
-  tagline: "Virtual Clusters for Kubernetes",
+  title: "Tenant cluster management",
+  tagline: "Manage tenant clusters like a hyperscaler",
   url: "https://vcluster.com",
   baseUrl: __webpack_public_path__,
   organizationName: "loft-sh", // Usually your GitHub org/user name.
