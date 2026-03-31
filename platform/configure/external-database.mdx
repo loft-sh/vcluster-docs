@@ -13,6 +13,7 @@ import PageVariables from "@site/src/components/PageVariables";
 <VersionBadge platformVersion="v4.8.0"/>
 
 <PageVariables
+  PLATFORM_DOMAIN="platform.example.com"
   ACCOUNT_ID="123456789012"
   AWS_REGION="us-east-1"
   DB_VPC_ID="vpc-xxxxxxxxx"
@@ -23,7 +24,9 @@ import PageVariables from "@site/src/components/PageVariables";
 ## What is an external database deployment?
 
 An external database deployment runs multiple vCluster Platform replicas in a
-single Kubernetes cluster, all backed by an external database. Leader election
+single Kubernetes cluster, all backed by an external database through
+[Kine](https://github.com/k3s-io/kine), which provides an etcd-compatible API
+backed by relational databases. Leader election
 ensures that only one replica writes to the database at a time, while the
 remaining replicas serve read traffic and stand ready to take over if the leader
 fails. This eliminates the platform as a single point of failure within the
@@ -60,8 +63,6 @@ Consider an external database deployment when you need one or more of the follow
   compared to the default embedded SQLite.
 - **[Cost control](platform-configs/cost-control.mdx) unavailable**: The cost control feature requires the embedded
   single-region database and is not compatible with the external Kine backend.
-- **Fresh install only**: Converting an existing single-replica installation to
-  an external database deployment is not supported.
 
 :::warning
 Converting an existing single-replica platform installation to an external
@@ -76,7 +77,7 @@ These instructions are tested on AWS. An external database deployment can run on
 :::
 
 These steps walk you through setting up a high-availability vCluster Platform in
-a single AWS region using EKS, an external Amazon Relational Database Service (RDS) database (Kine), Application Load Balancer (ALB) ingress,
+a single AWS region using EKS, an external Amazon Relational Database Service (RDS) database as a Kine backend, Application Load Balancer (ALB) ingress,
 and multiple platform replicas.
 
 ### Prerequisites
@@ -126,7 +127,7 @@ because the `gp2` storage class cannot provision volumes.
 />
 
 For more details on EKS prerequisites for running virtual clusters, see the
-[EKS environment setup guide](/docs/vcluster/next/deploy/control-plane/kubernetes-pod/environment/eks).
+[EKS environment setup guide](/docs/vcluster/deploy/control-plane/kubernetes-pod/environment/eks).
 
 #### Note the EKS VPC ID and CIDR
 
@@ -305,6 +306,13 @@ the EKS cluster VPC CIDR range.
 
 #### Create the RDS instance
 
+:::tip
+Enable automated backups by adding `--backup-retention-period 7` (or your
+preferred retention in days) to the command below. Without this, RDS does not
+retain automated snapshots and you must create manual snapshots for disaster
+recovery.
+:::
+
 <InterpolatedCodeBlock
   code={
 `aws rds create-db-instance \\
@@ -333,32 +341,6 @@ Wait for the instance to become available:
   }
   language="bash"
 />
-
-#### Create the Kine database and IAM user
-
-Since the RDS instance is in an isolated VPC with no public access, connect
-through a temporary pod in the EKS cluster. VPC peering must be configured
-first (Step 4), or you can run this step after completing Step 4.
-
-<InterpolatedCodeBlock
-  code={
-`kubectl run mariadb-client --image=mariadb:latest --restart=Never --rm -i -- \\
-  mariadb -h [[VAR:RDS_ENDPOINT:mariadb-ha-platform.xxxxxxxxxxxx.us-east-1.rds.amazonaws.com]] \\
-  -u admin -p[[VAR:ADMIN_PASSWORD:your-password]] -e "
-    CREATE DATABASE IF NOT EXISTS kine;
-    CREATE USER IF NOT EXISTS 'kine'@'%' IDENTIFIED WITH AWSAuthenticationPlugin AS 'RDS';
-    GRANT ALL PRIVILEGES ON kine.* TO 'kine'@'%';
-    FLUSH PRIVILEGES;
-  "`
-  }
-  language="bash"
-/>
-
-:::note
-This step requires network connectivity between the EKS cluster and the
-database VPC. If you haven't completed VPC peering (Step 4) yet, complete
-that first and return here.
-:::
 
 #### Create an IAM policy for RDS access
 
@@ -576,6 +558,25 @@ The connection should report `open`. If it times out, verify that routes exist
 on the correct route tables and that the database security group allows ingress
 from the cluster's VPC CIDR.
 
+#### Create the Kine database and IAM user
+
+Now that VPC peering is active, connect to the RDS instance through a temporary
+pod in the EKS cluster to create the Kine database and IAM-authenticated user.
+
+<InterpolatedCodeBlock
+  code={
+`kubectl run mariadb-client --image=mariadb:latest --restart=Never --rm -i -- \\
+  mariadb -h [[VAR:RDS_ENDPOINT:mariadb-ha-platform.xxxxxxxxxxxx.us-east-1.rds.amazonaws.com]] \\
+  -u admin -p[[VAR:ADMIN_PASSWORD:your-password]] -e "
+    CREATE DATABASE IF NOT EXISTS kine;
+    CREATE USER IF NOT EXISTS 'kine'@'%' IDENTIFIED WITH AWSAuthenticationPlugin AS 'RDS';
+    GRANT ALL PRIVILEGES ON kine.* TO 'kine'@'%';
+    FLUSH PRIVILEGES;
+  "`
+  }
+  language="bash"
+/>
+
 ### Step 5 - Deploy vCluster platform
 
 Deploy the platform with multiple replicas and the external database
@@ -585,7 +586,7 @@ configuration. Unlike multi-region, no `multiRegion` block is needed — only
 Create a values file (`platform-ha-values.yaml`):
 
 <InterpolatedCodeBlock
-  code={"admin:\n  email: [[VAR:ADMIN_EMAIL:admin@example.com]]\n\nreplicaCount: 3\n\nconfig:\n  loftHost: platform.example.com\n  database:\n    enabled: true\n    dataSource: \"mysql://kine@tcp([[VAR:DATABASE_URL:mariadb-ha-platform.xxxxxxxxxxxx.us-east-1.rds.amazonaws.com]]:3306)/kine\"\n    identityProvider: \"aws\"\n    extraArgs:\n      - --datastore-max-open-connections=20\n      - --datastore-max-idle-connections=0\n\n  # Cost control requires the embedded single-region database and is not\n  # compatible with the external Kine backend.\n  costControl:\n    enabled: false\n\nagentValues:\n  replicaCount: 3"}
+  code={"admin:\n  email: [[VAR:ADMIN_EMAIL:admin@example.com]]\n\nreplicaCount: 3\n\nconfig:\n  loftHost: [[GLOBAL:PLATFORM_DOMAIN]]\n  database:\n    enabled: true\n    dataSource: \"mysql://kine@tcp([[VAR:DATABASE_URL:mariadb-ha-platform.xxxxxxxxxxxx.us-east-1.rds.amazonaws.com]]:3306)/kine\"\n    identityProvider: \"aws\"\n    extraArgs:\n      - --datastore-max-open-connections=20\n      # Set to 0 because IAM auth tokens expire, making idle connections stale.\n      - --datastore-max-idle-connections=0\n\n  # Cost control requires the embedded single-region database and is not\n  # compatible with the external Kine backend.\n  costControl:\n    enabled: false\n\n# Run multiple agent replicas for resilience on the connected host cluster.\nagentValues:\n  replicaCount: 3"}
   language="yaml"
 />
 
@@ -620,12 +621,16 @@ Install the platform:
   </TabItem>
   <TabItem value="helm">
 
-```bash
-helm upgrade loft vcluster-platform --install --create-namespace --repository-config='' \
-  --namespace vcluster-platform \
-  --repo "https://charts.loft.sh/" \
-  -f platform-ha-values.yaml
-```
+<InterpolatedCodeBlock
+  code={
+`helm upgrade loft vcluster-platform --install --create-namespace --repository-config='' \\
+  --namespace vcluster-platform \\
+  --repo "https://charts.loft.sh/" \\
+  --kube-context [[GLOBAL:CLUSTER_CONTEXT]] \\
+  -f platform-ha-values.yaml`
+  }
+  language="bash"
+/>
 
   </TabItem>
 </Tabs>
@@ -648,7 +653,7 @@ Wait for all replicas to become ready:
   code={
 `aws acm request-certificate \\
   --region [[GLOBAL:AWS_REGION]] \\
-  --domain-name "platform.example.com" \\
+  --domain-name "[[GLOBAL:PLATFORM_DOMAIN]]" \\
   --validation-method DNS`
   }
   language="bash"
@@ -677,7 +682,7 @@ You can also do this step by setting up cert-manager in the cluster instead of u
 Apply the Ingress manifest to provision an AWS ALB:
 
 <InterpolatedCodeBlock
-  code={"apiVersion: networking.k8s.io/v1\nkind: Ingress\nmetadata:\n  name: loft\n  namespace: vcluster-platform\n  annotations:\n    alb.ingress.kubernetes.io/scheme: internet-facing\n    alb.ingress.kubernetes.io/target-type: ip\n    alb.ingress.kubernetes.io/listen-ports: '[{\"HTTP\":80},{\"HTTPS\":443}]'\n    alb.ingress.kubernetes.io/certificate-arn: \"arn:aws:acm:[[GLOBAL:AWS_REGION]]:[[GLOBAL:ACCOUNT_ID]]:certificate/[[VAR:CERT_ID:xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx]]\"\n    alb.ingress.kubernetes.io/ssl-redirect: \"443\"\n    alb.ingress.kubernetes.io/idle-timeout: \"3600\"\n    alb.ingress.kubernetes.io/healthcheck-path: /healthz\n    alb.ingress.kubernetes.io/success-codes: \"200\"\nspec:\n  ingressClassName: alb\n  rules:\n    - host: platform.example.com\n      http:\n        paths:\n          - path: /\n            pathType: Prefix\n            backend:\n              service:\n                name: loft\n                port:\n                  number: 80"}
+  code={"apiVersion: networking.k8s.io/v1\nkind: Ingress\nmetadata:\n  name: loft\n  namespace: vcluster-platform\n  annotations:\n    alb.ingress.kubernetes.io/scheme: internet-facing\n    alb.ingress.kubernetes.io/target-type: ip\n    alb.ingress.kubernetes.io/listen-ports: '[{\"HTTP\":80},{\"HTTPS\":443}]'\n    alb.ingress.kubernetes.io/certificate-arn: \"arn:aws:acm:[[GLOBAL:AWS_REGION]]:[[GLOBAL:ACCOUNT_ID]]:certificate/[[VAR:CERT_ID:xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx]]\"\n    alb.ingress.kubernetes.io/ssl-redirect: \"443\"\n    alb.ingress.kubernetes.io/idle-timeout: \"3600\"\n    alb.ingress.kubernetes.io/healthcheck-path: /healthz\n    alb.ingress.kubernetes.io/success-codes: \"200\"\nspec:\n  ingressClassName: alb\n  rules:\n    - host: [[GLOBAL:PLATFORM_DOMAIN]]\n      http:\n        paths:\n          - path: /\n            pathType: Prefix\n            backend:\n              service:\n                name: loft\n                port:\n                  number: 80"}
   language="yaml"
 />
 
@@ -694,7 +699,7 @@ Create an A (Alias) record pointing your domain to the ALB:
       {
         "Action": "UPSERT",
         "ResourceRecordSet": {
-          "Name": "platform.example.com",
+          "Name": "[[GLOBAL:PLATFORM_DOMAIN]]",
           "Type": "A",
           "AliasTarget": {
             "HostedZoneId": "[[VAR:ALB_HOSTED_ZONE_ID:ZXXXXXXXXXX]]",
@@ -772,6 +777,8 @@ the transition automatically.
   }
   language="bash"
 />
+
+The `--server-side=true --force-conflicts` flags are required because the platform chart manages CRDs that may conflict during upgrades.
 
   </TabItem>
 </Tabs>
@@ -1099,10 +1106,13 @@ Check the ingress status:
 
 Verify the ALB target group health in the AWS console or with:
 
-```bash
-aws elbv2 describe-target-health \
-  --target-group-arn <TARGET_GROUP_ARN>
-```
+<InterpolatedCodeBlock
+  code={
+`aws elbv2 describe-target-health \\
+  --target-group-arn [[VAR:TARGET_GROUP_ARN:arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/k8s-vcluster-loft-xxxxxxxxxx/xxxxxxxxxx]]`
+  }
+  language="bash"
+/>
 
 Common causes:
 - The platform pods are not ready (check `kubectl get pods`).
