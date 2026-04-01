@@ -157,6 +157,35 @@ When writing docs for new features:
 - Does this change user experience/flow?
 - Does structure match similar docs?
 
+## Repositioning terminology (active project)
+
+The docs are being repositioned to target AI cloud providers, neoclouds, and
+enterprises. Apply these terminology rules to **all new and edited prose**.
+
+| Retire | Use instead |
+|--------|-------------|
+| virtual cluster | tenant cluster |
+| host cluster | Control Plane Cluster |
+| multi-tenancy | tenant isolation |
+| nested Kubernetes / runs inside a host cluster | virtualized control plane hosted on a Control Plane Cluster |
+| shared cluster | (describe the specific tenancy model instead) |
+
+**Hard rules:**
+- Never use "virtual cluster" as a generic descriptor in prose.
+- "vCluster" (the product name) is unchanged.
+- CLI commands (`vcluster create`, flags, YAML keys) are unchanged — do not
+  alter code blocks or command syntax.
+- "Virtual Nodes" (the tenancy model powered by vNode) is a product name —
+  keep it.
+- "Control Plane Cluster" is always title-cased.
+
+**Tone:** Lead with isolation, hyperscaler-grade reliability, and AI workload
+suitability. De-emphasize cost/density framing in favor of isolation and
+operational simplicity for providers.
+
+See `.claude/skills/vcluster-docs-writer/SKILL.md` for general docs writing
+conventions.
+
 ## Misc
 
 - Check `vcluster/configure/` for configuration docs
