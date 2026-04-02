@@ -171,6 +171,7 @@ enterprises. Apply these terminology rules to **all new and edited prose**.
 | shared cluster | (describe the specific tenancy model instead) |
 
 **Hard rules:**
+
 - Never use "virtual cluster" as a generic descriptor in prose.
 - "vCluster" (the product name) is unchanged.
 - CLI commands (`vcluster create`, flags, YAML keys) are unchanged — do not
