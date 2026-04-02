@@ -41,8 +41,8 @@ If in doubt, don't change it. Broken paths break the build.
 
 ## Versioned docs
 
-Do NOT modify `vcluster_versioned_docs/version-*/` folders unless explicitly
-requested.
+Do NOT modify `vcluster_versioned_docs/version-*/` or `platform_versioned_docs/version-*/`
+folders. Changes are backported automatically via a CI process.
 
 ## Link resolution
 
