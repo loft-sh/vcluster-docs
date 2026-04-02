@@ -187,6 +187,24 @@ operational simplicity for providers.
 See `.claude/skills/vcluster-docs-writer/SKILL.md` for general docs writing
 conventions.
 
+## SVG diagrams
+
+SVGs must be imported as React components, not via `require().default`:
+
+```jsx
+import MyDiagram from '@site/static/media/diagrams/my-diagram.svg';
+
+<figure>
+  <MyDiagram style={{width: '100%', height: 'auto'}} role="img" aria-label="description" />
+  <figcaption>Caption text</figcaption>
+</figure>
+```
+
+`width: '100%'` alone is not enough — SVGs have a fixed `height` in the source
+that locks the rendered size. `height: 'auto'` allows proportional scaling from
+the `viewBox` aspect ratio. Do NOT use `<img src={require(...).default}>` for
+SVGs; that returns a React component, not a URL.
+
 ## Misc
 
 - Check `vcluster/configure/` for configuration docs
