@@ -208,6 +208,17 @@ function insertOrUpdateFeatureTable(filePath, featureIds) {
   // Check if FeatureTable already exists
   if (hasFeatureTable(content)) {
     const existingFeatures = extractExistingFeatures(content);
+
+    // "all" is a reserved keyword meaning "show every feature". Skip merging
+    // so the script never corrupts names="all" into names="all,some-feature".
+    if (existingFeatures.includes('all')) {
+      if (isVerbose) {
+        console.log(`[SKIP] ${path.relative(PROJECT_ROOT, filePath)} - uses names="all", skipping auto-sync`);
+      }
+      stats.skipped++;
+      return false;
+    }
+
     const newFeatures = [...new Set([...existingFeatures, ...featureIds])].sort();
 
     // Check if update needed
