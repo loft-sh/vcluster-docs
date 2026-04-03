@@ -205,6 +205,10 @@ that locks the rendered size. `height: 'auto'` allows proportional scaling from
 the `viewBox` aspect ratio. Do NOT use `<img src={require(...).default}>` for
 SVGs; that returns a React component, not a URL.
 
+To constrain image size without going full-width, add `maxWidth: '600px'` and
+`margin: '0 auto'`. Use judgment — complex diagrams with many labels may need
+full width to remain readable.
+
 ## Misc
 
 - Check `vcluster/configure/` for configuration docs
