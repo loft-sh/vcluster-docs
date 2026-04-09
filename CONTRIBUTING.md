@@ -345,16 +345,16 @@ vCluster products.
 "vCluster" is a trademark. There are strict legal frameworks around how to use a
 trademark, for example, it cannot be used in plural. **Do not use "vClusters"**.
 
-Never use vCluster or vClusters when talking about a virtual cluster or clusters
-that vCluster creates. Use **virtual clusters**.
+Never use vCluster or vClusters when talking about a cluster that vCluster
+creates. Use **tenant clusters**.
 
 ### Products
 
-- vCluster: open source project that helps you create virtual clusters
-- vCluster Pro: a single enhanced/paid/upgraded virtual cluster that uses Pro
+- vCluster: open source project that provisions and manages tenant clusters
+- vCluster Pro: a single enhanced/paid/upgraded tenant cluster that uses Pro
   functionality (as labeled "Pro")
-- vCluster Platform: the management platform and UI for managing open source and
-  commercial vCluster instances
+- vCluster Platform: the management platform and UI for managing tenant clusters
+  across one or more Control Plane Clusters
 
 ### CLI
 
@@ -445,20 +445,22 @@ write them.
 
 ### Controlling Vale rules
 
-Use these HTML-style comments to control Vale checking:
+The syntax for suppressing Vale depends on file type:
 
-```text
-<!-- vale off -->  // Stops all Vale checks
-<!-- vale on -->   // Resumes Vale checks
-```
-
-Example usage:
+**In `.md` files** — use HTML comments:
 
 ```text
 <!-- vale off -->
-<!-- this section ignores all Vale rules -->
 This content won't be checked by Vale.
 <!-- vale on -->
+```
+
+**In `.mdx` files** — use JSX comments (HTML comments do not suppress Vale in MDX):
+
+```text
+{/* vale off */}
+This content won't be checked by Vale.
+{/* vale on */}
 ```
 
 <!-- vale on -->
