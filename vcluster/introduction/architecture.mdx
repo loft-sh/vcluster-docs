@@ -23,6 +23,14 @@ Every tenant cluster runs a dedicated <GlossaryTerm term="control-plane">control
 - A **syncer**, which synchronizes resources between the tenant cluster and the underlying infrastructure.
 - A **scheduler**, an optional component for scheduling workloads. By default, vCluster reuses the Control Plane Cluster's scheduler to reduce resource usage. You can [enable the virtual scheduler](../configure/vcluster-yaml/control-plane/other/advanced/virtual-scheduler) when you need node labels, taints, drain operations, or custom scheduling behavior.
 
+All of these components run together in a single container within a StatefulSet pod. The API server, controller manager, data store, and syncer are one unified process. CoreDNS deploys as a separate pod in the same namespace. If you opt into external etcd, it runs as its own StatefulSet. On the underlying cluster, `kubectl get pods -n <vcluster-namespace>` shows something like:
+
+```
+NAME                                 READY   STATUS    AGE
+vcluster-0                           1/1     Running   5m
+vcluster-coredns-6b9f8d6f6b-xk2p9    1/1     Running   5m
+```
+
 Where that control plane runs is your first architectural choice.
 
 ### On an existing Kubernetes cluster
@@ -101,7 +109,7 @@ This model suits GPU tenants, regulated workloads, and any environment where ful
 
 ### Shared nodes
 
-Tenant workloads run on the Control Plane Cluster's existing node pool. Multiple tenant clusters share the same physical nodes. A <GlossaryTerm term="syncer">syncer</GlossaryTerm> component translates workload resources between the tenant cluster and the Control Plane Cluster. Each tenant sees only their own namespaces, pods, and services. Translated resource copies live in a dedicated namespace on the Control Plane Cluster, invisible to the tenant.
+Tenant workloads run on the same cluster that hosts the control planes, sharing the existing node pool. Multiple tenant clusters run side by side on the same physical nodes. A <GlossaryTerm term="syncer">syncer</GlossaryTerm> component translates workload resources from each tenant cluster into a dedicated namespace on the underlying cluster. Each tenant sees only their own namespaces, pods, and services. The translated copies are invisible to them.
 
 <figure>
 <img
@@ -114,23 +122,23 @@ Tenant workloads run on the Control Plane Cluster's existing node pool. Multiple
 
 This model suits developer environments, CI/CD pipelines, and high-density internal platforms where compute separation is not required.
 
-For tenants that need predictable per-tenant compute without full Private Nodes, you can scope workloads to a labeled node pool using [Dedicated Nodes](../deploy/worker-nodes/host-nodes/isolated-workloads.mdx). Node selectors enforce placement on a reserved subset of the Control Plane Cluster's nodes without provisioning separate infrastructure.
+For tenants that need predictable per-tenant compute without full Private Nodes, you can scope workloads to a labeled node pool using [Dedicated Nodes](../deploy/worker-nodes/host-nodes/isolated-workloads.mdx). Node selectors enforce placement on a reserved subset of the underlying cluster's nodes without provisioning separate infrastructure.
 
 ### Worker node comparison
 
-| Feature | Shared Nodes | Private Nodes | Standalone | vind (Docker) |
-|---|---|---|---|---|
-| Isolated control plane | Yes | Yes | Yes | Yes |
-| Custom CNI | No | Yes | Yes | Yes |
-| Custom CSI drivers | No | Yes | Yes | Limited |
-| Isolated network | No | Yes | Yes | Yes |
-| Reuse Control Plane Cluster controllers | Yes | No | No | No |
-| Tenant workloads visible on Control Plane Cluster | Yes | No | No | No |
-| Automatic node provisioning | No | Yes | Yes | Yes |
-| Requires Control Plane Cluster | Yes | Yes | No | No |
-| Suitable for local development | Limited | No | No | Yes |
-| Suitable for CI/CD | Yes | Limited | Limited | Yes |
-| Infrastructure overhead | Low | High | High | Low |
+| Feature | Private Nodes | Shared Nodes | vind (Docker) |
+|---|---|---|---|
+| Isolated control plane | Yes | Yes | Yes |
+| Custom CNI | Yes | No | Yes |
+| Custom CSI drivers | Yes | No | Limited |
+| Isolated network | Yes | No | Yes |
+| Reuse Control Plane Cluster controllers | No | Yes | No |
+| Tenant workloads visible on Control Plane Cluster | No | Yes | No |
+| Automatic node provisioning | Yes | No | Yes |
+| Requires Control Plane Cluster | Yes | Yes | No |
+| Suitable for local development | No | Limited | Yes |
+| Suitable for CI/CD | Limited | Yes | Yes |
+| Infrastructure overhead | High | Low | Low |
 
 ## Virtual Nodes
 
@@ -152,34 +160,38 @@ The syncer links the tenant cluster to the Control Plane Cluster. It keeps the t
 
 **With private nodes**, only control plane state is synchronized. The syncer coordinates the tenant cluster's API server with the underlying infrastructure. From an operator's perspective this is nearly transparent. Workloads run directly on dedicated nodes with no sync overhead.
 
-**With shared nodes**, the syncer also translates workload resources between the tenant cluster and the Control Plane Cluster. This includes Pods, ConfigMaps, Secrets, Services, Ingress, and Gateway API objects. Each resource type has specific sync behavior. Networking resources in particular require careful configuration. If you are deploying with shared nodes, read the [full sync documentation](../configure/vcluster-yaml/sync/) to understand what is synced and how to configure it for your workloads.
+**With shared nodes**, the syncer also translates workload resources between the tenant cluster and the underlying cluster. This includes Pods, ConfigMaps, Secrets, Services, Ingress, and Gateway API objects. Each resource type has specific sync behavior. Networking resources in particular require careful configuration. If you are deploying with shared nodes, read the [full sync documentation](../configure/vcluster-yaml/sync/) to understand what is synced and how to configure it for your workloads.
 
 <!-- vale off -->
 
 ## Networking
 
-Networking within tenant clusters covers communication inside the tenant cluster, between tenant clusters, and between tenant clusters and the Control Plane Cluster.
+Networking within tenant clusters covers communication inside the tenant cluster, between tenant clusters, and between tenant clusters and the underlying cluster.
+
+:::note
+The networking features below apply to **shared nodes** deployments, where the syncer bridges tenant cluster resources to the underlying cluster. With private nodes, tenant workloads run on dedicated infrastructure and networking is fully isolated per tenant.
+:::
 
 #### Ingress traffic
 
-Instead of running a separate Ingress controller in each tenant cluster, vCluster can [synchronize Ingress resources](../configure/vcluster-yaml/sync/to-host/networking/ingresses) to use the Control Plane Cluster's Ingress controller. This reduces per-tenant overhead and simplifies DNS management across tenant clusters.
+Instead of running a separate Ingress controller in each tenant cluster, vCluster can [synchronize Ingress resources](../configure/vcluster-yaml/sync/to-host/networking/ingresses) to use the underlying cluster's Ingress controller. This reduces per-tenant overhead and simplifies DNS management across tenant clusters.
 
 #### DNS
 
-By default, each tenant cluster deploys its own [CoreDNS](../configure/vcluster-yaml/control-plane/components/coredns) instance. CoreDNS lets pods within the tenant cluster resolve other services in the same environment. The syncer maps service DNS names in the tenant cluster to their corresponding IP addresses on the Control Plane Cluster, following Kubernetes DNS naming conventions.
+By default, each tenant cluster deploys its own [CoreDNS](../configure/vcluster-yaml/control-plane/components/coredns) instance. CoreDNS lets pods within the tenant cluster resolve other services in the same environment. The syncer maps service DNS names in the tenant cluster to their corresponding IP addresses on the underlying cluster, following Kubernetes DNS naming conventions.
 
 With vCluster Pro, [CoreDNS can be embedded](../configure/vcluster-yaml/control-plane/components/coredns) directly into the control plane pod, reducing the per-tenant footprint.
 
 #### Communication within a tenant cluster
 
-* **Pod to pod** — Pods within a tenant cluster communicate using the Control Plane Cluster's network infrastructure. No additional configuration is required. The syncer ensures Kubernetes-standard networking is maintained.
+* **Pod to pod** — Pods within a tenant cluster communicate using the underlying cluster's network infrastructure. No additional configuration is required. The syncer ensures Kubernetes-standard networking is maintained.
 
 * **Pod to service** — Services within a tenant cluster are synchronized to allow pod communication, using [CoreDNS](../configure/vcluster-yaml/control-plane/components/coredns) for domain name resolution.
 
-* **Pod to Control Plane Cluster service** — Services from the Control Plane Cluster can be [replicated](../configure/vcluster-yaml/networking/replicate-services) into a tenant cluster, allowing tenant pods to access platform services by name.
+* **Pod to underlying cluster service** — Services from the underlying cluster can be [replicated](../configure/vcluster-yaml/networking/replicate-services) into a tenant cluster, allowing tenant pods to access platform services by name.
 
 * **Pod to another tenant cluster's service** — Services can be mapped [between tenant clusters](../configure/vcluster-yaml/networking/resolve-dns.mdx) using DNS configuration that routes requests from one tenant cluster to another.
 
-#### Communication from the Control Plane Cluster
+#### Communication from the underlying cluster
 
-* **Control Plane Cluster pod to tenant cluster service** — Control Plane Cluster pods can access services within a tenant cluster by [replicating](../configure/vcluster-yaml/networking/replicate-services#virtual-cluster-to-host-cluster) tenant cluster services to any namespace on the Control Plane Cluster.
+* **Underlying cluster pod to tenant cluster service** — Pods on the underlying cluster can access services within a tenant cluster by [replicating](../configure/vcluster-yaml/networking/replicate-services#virtual-cluster-to-host-cluster) tenant cluster services to any namespace on the underlying cluster.
