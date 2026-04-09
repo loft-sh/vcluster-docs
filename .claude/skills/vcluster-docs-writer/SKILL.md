@@ -239,9 +239,10 @@ See `references/partials-guide.md` for complete patterns and troubleshooting.
 
 Key terms (see `references/vcluster-terms.md` for complete guide):
 - **vCluster**: The trademark (never "vClusters" - legally incorrect)
-- **virtual clusters**: The clusters that vCluster creates
-- **vCluster Pro**: Enhanced/paid virtual cluster with Pro functionality
-- **vCluster Platform**: Management platform and UI
+- **tenant clusters**: The clusters that vCluster creates ("virtual clusters" is retired)
+- **Control Plane Cluster**: The cluster that hosts tenant cluster control planes ("host cluster" is retired)
+- **vCluster Pro**: Enhanced/paid tenant cluster with Pro functionality
+- **vCluster Platform**: Management platform and UI for tenant clusters
 - **vcluster**: The CLI command name
 
 ## Resources

@@ -41,8 +41,8 @@ If in doubt, don't change it. Broken paths break the build.
 
 ## Versioned docs
 
-Do NOT modify `vcluster_versioned_docs/version-*/` folders unless explicitly
-requested.
+Do NOT modify `vcluster_versioned_docs/version-*/` or `platform_versioned_docs/version-*/`
+folders. Changes are backported automatically via a CI process.
 
 ## Link resolution
 
@@ -156,6 +156,58 @@ When writing docs for new features:
 - Where else should this feature be referenced?
 - Does this change user experience/flow?
 - Does structure match similar docs?
+
+## Repositioning terminology (active project)
+
+The docs are being repositioned to target AI cloud providers, neoclouds, and
+enterprises. Apply these terminology rules to **all new and edited prose**.
+
+| Retire | Use instead |
+|--------|-------------|
+| virtual cluster | tenant cluster |
+| host cluster | Control Plane Cluster |
+| multi-tenancy | tenant isolation |
+| nested Kubernetes / runs inside a host cluster | virtualized control plane hosted on a Control Plane Cluster |
+| shared cluster | (describe the specific tenancy model instead) |
+
+**Hard rules:**
+
+- Never use "virtual cluster" as a generic descriptor in prose.
+- "vCluster" (the product name) is unchanged.
+- CLI commands (`vcluster create`, flags, YAML keys) are unchanged — do not
+  alter code blocks or command syntax.
+- "Virtual Nodes" (the tenancy model powered by vNode) is a product name —
+  keep it.
+- "Control Plane Cluster" is always title-cased.
+
+**Tone:** Lead with isolation, hyperscaler-grade reliability, and AI workload
+suitability. De-emphasize cost/density framing in favor of isolation and
+operational simplicity for providers.
+
+See `.claude/skills/vcluster-docs-writer/SKILL.md` for general docs writing
+conventions.
+
+## SVG diagrams
+
+SVGs must be imported as React components, not via `require().default`:
+
+```jsx
+import MyDiagram from '@site/static/media/diagrams/my-diagram.svg';
+
+<figure>
+  <MyDiagram style={{width: '100%', height: 'auto'}} role="img" aria-label="description" />
+  <figcaption>Caption text</figcaption>
+</figure>
+```
+
+`width: '100%'` alone is not enough — SVGs have a fixed `height` in the source
+that locks the rendered size. `height: 'auto'` allows proportional scaling from
+the `viewBox` aspect ratio. Do NOT use `<img src={require(...).default}>` for
+SVGs; that returns a React component, not a URL.
+
+To constrain image size without going full-width, add `maxWidth: '600px'` and
+`margin: '0 auto'`. Use judgment — complex diagrams with many labels may need
+full width to remain readable.
 
 ## Misc
 
