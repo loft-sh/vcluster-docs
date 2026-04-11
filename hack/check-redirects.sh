@@ -408,7 +408,9 @@ check_chains() {
         fi
     done < <(parse_redirects)
 
-    [[ $chains -eq 0 ]] && ok "No redirect chains detected."
+    if [[ $chains -eq 0 ]]; then
+        ok "No redirect chains detected."
+    fi
 }
 
 # --------------------------------------------------------------------------
