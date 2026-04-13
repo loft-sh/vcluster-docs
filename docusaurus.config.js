@@ -178,8 +178,6 @@ const config = {
             '/search/**',
             '/tags/**',
           ],
-        },
-        markdown: {
           // Emit absolute URLs (https://www.vcluster.com/docs/...) instead of
           // site-relative paths. Downstream consumers (R2R RAG, LLM agents)
           // surface these links to users in CLI contexts where relative paths
