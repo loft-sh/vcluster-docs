@@ -178,6 +178,11 @@ const config = {
             '/search/**',
             '/tags/**',
           ],
+          // Emit absolute URLs (https://www.vcluster.com/docs/...) instead of
+          // site-relative paths. Downstream consumers (R2R RAG, LLM agents)
+          // surface these links to users in CLI contexts where relative paths
+          // are not clickable or resolvable. See ENGAI-58.
+          relativePaths: false,
         },
         siteTitle: 'vCluster Documentation',
         siteDescription: 'Documentation for vCluster (virtual Kubernetes clusters) and vCluster Platform (multi-cluster management)',
