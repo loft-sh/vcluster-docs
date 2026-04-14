@@ -72,6 +72,12 @@ The version is deployed hidden, then exposed via a config flip PR on release day
 - [ ] Remove: All `(lines X-Y)` references from section headers
 - [ ] Note: Tests run AFTER PR deployed
 
+### Item 2b: Update InterpolatedCodeBlock Fallback Versions
+
+- [ ] File: `src/components/InterpolatedCodeBlock/index.js`
+- [ ] Change: `LATEST_VERSIONS.vcluster` to new version (without `v` prefix, e.g. `'0.XX.0'`)
+- [ ] Change: `LATEST_VERSIONS.platform` if platform version is also changing
+
 ### Additional AI Tasks:
 
 - [ ] Update main docs label (line ~81): `label: "v0.XX"`
