@@ -186,6 +186,28 @@ announcementBar: {
 },
 ```
 
+## InterpolatedCodeBlock Fallback Versions
+
+**File:** `src/components/InterpolatedCodeBlock/index.js`
+
+**Before:**
+```js
+const LATEST_VERSIONS = {
+  platform: '4.4.0',
+  vcluster: '0.29.0',
+};
+```
+
+**After:**
+```js
+const LATEST_VERSIONS = {
+  platform: '4.4.0',  // update if platform version also changed
+  vcluster: '0.30.0',
+};
+```
+
+**Note:** Version is without `v` prefix. This fallback is used when the Docusaurus version context is unavailable (e.g. non-versioned pages, SSR edge cases).
+
 ## netlify.toml Changes
 
 ### Redirect Configuration (~line 521)
