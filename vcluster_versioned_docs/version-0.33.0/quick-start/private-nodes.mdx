@@ -1,0 +1,191 @@
+---
+title: Private Nodes Quick Start
+sidebar_label: Private Nodes
+sidebar_position: 2
+description: Deploy a tenant cluster with dedicated worker nodes for full infrastructure isolation.
+sidebar_class_name: private-nodes standalone
+---
+
+import Flow, { Step } from "@site/src/components/Flow";
+import InterpolatedCodeBlock from '@site/src/components/InterpolatedCodeBlock';
+import PageVariables from '@site/src/components/PageVariables';
+
+You're building a platform where tenants need real hardware isolation. Think GPU workloads that can't share a node pool, regulated environments that require dedicated infrastructure, or AI cloud customers who expect hyperscaler-grade separation.
+
+This guide shows you how to deploy a tenant cluster backed by dedicated worker nodes. There's no cross-tenant scheduling, and each tenant gets a separate CNI and separate storage. At the end, you'll see exactly what is and isn't visible from the Control Plane Cluster.
+
+Private nodes require vCluster Platform. Free mode is supported, so no paid license is needed to get started.
+
+Worker nodes connect to the control plane through vCluster VPN, which routes traffic through the Platform URL using WireGuard. Worker nodes only need outbound HTTPS access to Platform — no direct exposure of the control plane API is required.
+
+## Prerequisites
+
+**You need a Control Plane Cluster with vCluster Platform running on it.**
+
+- Have Platform already? Continue below.
+- No cluster yet? Start with the [Standalone quick start](./standalone.mdx) to bootstrap a Control Plane Cluster and install Platform in one pass.
+- Have a cluster but no Platform? Run `vcluster platform start` against it. See the [Platform install guide](/docs/platform/install/quick-start-guide).
+
+**You also need at least one Linux machine to join as a worker node.**
+
+- Ubuntu 22.04 or 24.04 recommended
+- Root access on the worker node
+- Outbound HTTPS access to the Platform URL from the worker node
+
+See the full [node requirements](../deploy/worker-nodes/private-nodes/node-requirements.mdx).
+
+## Create the tenant cluster
+
+:::warning Private nodes must be enabled at creation time
+An existing tenant cluster cannot be migrated from shared to private nodes. This configuration must be set when the cluster is first created.
+:::
+
+<Flow>
+  <Step>
+    Make sure your kube context is pointed at the Control Plane Cluster.
+
+    ```bash
+    kubectl config current-context
+    ```
+  </Step>
+  <Step>
+    Create a `vcluster.yaml` with private nodes and VPN enabled.
+
+    ```yaml title="vcluster.yaml"
+    privateNodes:
+      enabled: true
+      vpn:
+        enabled: true
+
+    controlPlane:
+      distro:
+        k8s:
+          image:
+            tag: v1.35.0
+
+    networking:
+      podCIDR: 10.64.0.0/16
+      serviceCIDR: 10.128.0.0/16
+    ```
+  </Step>
+  <Step>
+    Deploy the tenant cluster.
+
+    ```bash
+    vcluster create my-vcluster --namespace team-x --values vcluster.yaml
+    ```
+
+    When deployment finishes, the CLI connects and switches your kube context into the tenant cluster. The cluster has no worker nodes yet. Workloads cannot be scheduled until at least one node joins.
+  </Step>
+  <Step>
+    Confirm the tenant cluster is running with no nodes.
+
+    ```bash
+    kubectl get nodes
+    ```
+
+    Expected output:
+
+    ```
+    No resources found.
+    ```
+
+    This is expected. Private nodes join explicitly. The control plane is running. Compute comes next.
+  </Step>
+</Flow>
+
+## Join a worker node
+
+<PageVariables PLATFORM_URL="https://my-platform.example.com" />
+
+<Flow>
+  <Step>
+    Generate a join token. Run this from your local machine with the kube context still inside the tenant cluster.
+
+    ```bash
+    vcluster token create --expires=1h
+    ```
+
+    The output is a `curl` command to run on the worker node:
+
+    <InterpolatedCodeBlock
+      code={"curl -sfLk [[GLOBAL:PLATFORM_URL]]/node/join?token=<token> | sh -"}
+      language="bash"
+    />
+  </Step>
+  <Step>
+    SSH into the worker node and run the join command as root.
+
+    <InterpolatedCodeBlock
+      code={"sudo su -\ncurl -sfLk [[GLOBAL:PLATFORM_URL]]/node/join?token=<token> | sh -"}
+      language="bash"
+    />
+
+    The script installs Kubernetes node components (containerd, kubelet) and the `vcluster-vpn` service, which establishes a WireGuard tunnel to the control plane through Platform. Output ends with:
+
+    ```
+    This node has joined the cluster:
+    * Certificate signing request was sent to apiserver and a response was received.
+    * The kubelet was informed of the new secure connection details.
+    ```
+  </Step>
+  <Step>
+    Back on your workstation, verify the node joined.
+
+    ```bash
+    kubectl get nodes
+    ```
+
+    Output is similar to:
+
+    ```
+    NAME           STATUS   ROLES    AGE   VERSION
+    worker-node-1  Ready    <none>   30s   v1.35.0
+    ```
+  </Step>
+</Flow>
+
+## Deploy a workload
+
+With a worker node ready, schedule a workload to confirm the tenant cluster is fully operational.
+
+```bash
+kubectl create deployment hello --image=nginx
+kubectl get pods --watch
+```
+
+The pod schedules onto `worker-node-1`. No other tenant can see this node or the workloads running on it.
+
+## The isolation boundary
+
+From the Control Plane Cluster, the worker node that joined the tenant cluster is not visible as a Kubernetes node:
+
+```bash
+vcluster disconnect
+kubectl get nodes
+```
+
+The worker node does not appear here. It exists only within the tenant cluster's namespace. No other tenant cluster can schedule onto it. No operator on the Control Plane Cluster can inspect its workloads through the Kubernetes API.
+
+This is what makes private nodes the right model for GPU workloads. Each tenant gets hardware-level isolation without needing a separate physical cluster.
+
+## Clean up
+
+```bash
+vcluster delete my-vcluster --namespace team-x
+```
+
+The join token is invalidated and the node components on the worker machine remain installed but inactive. To fully reset a worker node, re-run the join script with `--reset-only`:
+
+<InterpolatedCodeBlock
+  code={"curl -sfLk [[GLOBAL:PLATFORM_URL]]/node/join?token=<token> | sh -s -- --reset-only"}
+  language="bash"
+/>
+
+## Next steps
+
+- [Auto Nodes](/docs/platform/administer/node-providers/overview) — automate worker node provisioning through Platform instead of joining manually
+- [Node-to-node VPN](../configure/vcluster-yaml/private-nodes/vpn.mdx) — extend VPN to encrypt traffic between worker nodes (useful for multi-cloud and cross-datacenter deployments)
+- [Node requirements](../deploy/worker-nodes/private-nodes/node-requirements.mdx) — supported OS versions and system dependencies
+- [High availability](../deploy/control-plane/binary/high-availability.mdx) — multiple control plane nodes for production
+- [Building a GPU cloud platform](../introduction/gpu-cloud-platform.mdx) — end-to-end architecture guide
