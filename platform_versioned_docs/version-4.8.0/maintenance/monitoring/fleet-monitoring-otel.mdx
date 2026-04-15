@@ -1,8 +1,8 @@
 ---
 title: "Fleet monitoring with OpenTelemetry"
 sidebar_label: "Fleet monitoring with OpenTelemetry"
-sidebar_position: 5
-description: "Monitor virtual clusters across shared and private nodes using OpenTelemetry Collectors with ingest-time label enrichment and Prometheus remote write."
+sidebar_position: 3
+description: "Monitor tenant clusters across shared and private nodes using OpenTelemetry Collectors with automatic label enrichment and Prometheus remote write."
 ---
 
 import Flow, { Step } from '@site/src/components/Flow'
@@ -11,11 +11,11 @@ import Button from '@site/src/components/Button'
 import Tabs from '@theme/Tabs'
 import TabItem from '@theme/TabItem'
 
-When managing many virtual clusters across host clusters, you need per-tenant
+When managing many tenant clusters across Control Plane Clusters, you need per-tenant
 visibility into resource consumption and API health without deploying monitoring
-inside each virtual cluster. This guide explains how to configure OpenTelemetry
+inside each tenant cluster. This guide explains how to configure OpenTelemetry
 Collectors to collect workload and control plane metrics from across multiple
-virtual clusters. All metrics are enriched with vCluster identity labels at
+tenant clusters. All metrics are enriched with vCluster identity labels at
 ingest time and pushed to a central Prometheus via `remote_write`.
 
 :::note
@@ -49,25 +49,25 @@ flowchart TB
     GlobalProm ~~~ connected
 
     subgraph local["Local Cluster"]
-        subgraph localSharedVC["Virtual Cluster (Shared)"]
+        subgraph localSharedVC["Tenant Cluster (Shared)"]
             LocalSharedWorkload["Workload"]
         end
 
         LocalOTel["OTel Collector (Deployment + Target Allocator)"]
 
-        subgraph localPrivVC["Virtual Cluster (Private)"]
+        subgraph localPrivVC["Tenant Cluster (Private)"]
             LocalPrivOTel["OTel Collector (DaemonSet)"]
         end
     end
 
     subgraph connected["Connected Cluster"]
-        subgraph connSharedVC["Virtual Cluster (Shared)"]
+        subgraph connSharedVC["Tenant Cluster (Shared)"]
             ConnSharedWorkload["Workload"]
         end
 
         ConnOTel["OTel Collector (Deployment + Target Allocator)"]
 
-        subgraph connPrivVC["Virtual Cluster (Private)"]
+        subgraph connPrivVC["Tenant Cluster (Private)"]
             ConnPrivOTel["OTel Collector (DaemonSet)"]
         end
     end
@@ -113,22 +113,22 @@ The architecture comprises the following:
 
 - Cluster architecture:
   - A local cluster that hosts vCluster Platform.
-  - Two virtual clusters running on the local cluster:
-    - One virtual cluster sharing the nodes of the local cluster (Shared Nodes tenancy model).
-    - One virtual cluster with private nodes (Private Nodes tenancy model).
+  - Two tenant clusters running on the local cluster:
+    - One tenant cluster sharing the nodes of the local cluster (Shared Nodes tenancy model).
+    - One tenant cluster with private nodes (Private Nodes tenancy model).
   - An external cluster connected to vCluster Platform.
-  - Two virtual clusters running on the connected cluster with the same configuration.
+  - Two tenant clusters running on the connected cluster with the same configuration.
 
 - Collector architecture:
   - A central Prometheus with the remote write receiver enabled.
-  - One OTel Collector Deployment with Target Allocator per host cluster (scrapes shared-nodes virtual clusters and their control planes via ServiceMonitors).
+  - One OTel Collector Deployment with Target Allocator per Control Plane Cluster (scrapes shared-nodes tenant clusters and their control planes via ServiceMonitors).
   - One OTel Collector DaemonSet per private-nodes vCluster (scrapes local kubelet, cAdvisor, and API server metrics from inside the vCluster).
 
 ## How it works
 
 ### Shared nodes
 
-The shared-nodes collector runs on the host cluster as a Deployment with 2
+The shared-nodes collector runs on the Control Plane Cluster as a Deployment with 2
 replicas. A Target Allocator discovers vCluster ServiceMonitors and distributes
 cAdvisor and ServiceMonitor scrape targets across replicas using
 consistent-hashing.
@@ -151,7 +151,7 @@ prometheus receiver
 The `groupbyattrs` processor is required because the Prometheus receiver batches
 all cAdvisor metrics from a single node into one resource scope. Without it, the
 `k8sattributes` processor matches one pod and applies its metadata to all
-metrics in the batch, causing cross-contamination between virtual clusters on the same
+metrics in the batch, causing cross-contamination between tenant clusters on the same
 node. The `groupbyattrs` processor splits the batch into per-pod resource scopes
 (by `namespace`, `pod`, `node`) so each pod is matched correctly.
 
@@ -231,9 +231,9 @@ server:
 
 ### Shared nodes prerequisites
 
-- Prometheus Operator CRDs installed on the host cluster (`ServiceMonitor`,
+- Prometheus Operator CRDs installed on the Control Plane Cluster (`ServiceMonitor`,
   `PodMonitor`).
-- Virtual clusters deployed with a ServiceMonitor enabled. This allows scraping
+- Tenant clusters deployed with a ServiceMonitor enabled. This allows scraping
   their API server and controller metrics. Enable this in your `vcluster.yaml`:
 
   ```yaml
@@ -248,7 +248,7 @@ server:
 
 ### Private nodes prerequisites
 
-- Virtual clusters with dedicated/private nodes.
+- Tenant clusters with dedicated/private nodes.
 - Node-to-node vCluster VPN enabled:
 
   ```yaml
@@ -264,7 +264,7 @@ server:
 ## Deploy the shared nodes collector
 <!-- vale on -->
 
-Deploy one shared-nodes collector per host cluster. First, register the App
+Deploy one shared-nodes collector per Control Plane Cluster. First, register the App
 manifest with the Platform, then deploy it to each cluster through the UI.
 
 <!-- vale off -->
@@ -635,7 +635,7 @@ kubectl apply -f otel-collector-shared-nodes-app.yaml
 | Prometheus Skip TLS Verification | No | Skip TLS verification for the Prometheus connection |
 
 :::info
-Repeat these steps for each host cluster.
+Repeat these steps for each Control Plane Cluster.
 :::
 
 <!-- vale off -->
@@ -882,11 +882,11 @@ spec:
 </details>
 
 :::info Key configuration details
-- **DaemonSet mode**: Private-nodes virtual clusters have dedicated nodes. A DaemonSet
+- **DaemonSet mode**: Private-nodes tenant clusters have dedicated nodes. A DaemonSet
   ensures one collector per node, scraping only the local kubelet and cAdvisor
   via `${env:K8S_NODE_NAME}` filtering. No Target Allocator is needed.
 - **`external_labels` instead of `k8sattributes` for identity**: The collector
-  runs inside the vCluster, so it can't access host-cluster namespace labels.
+  runs inside the vCluster, so it can't access Control Plane Cluster namespace labels.
   The Platform injects `{{ .Values.loft.* }}` template variables at deploy time.
 - **`resource_to_telemetry_conversion: false`**: Setting this to `true` causes
   duplicate labels that break Grafana dashboards.
@@ -906,17 +906,17 @@ Platform UI:
 kubectl apply -f otel-collector-private-nodes-app.yaml
 ```
 
-### Deploy to a virtual cluster
+### Deploy to a tenant cluster
 
 <Flow id="deploy-otel-private">
   <Step>
     Go to the <NavStep>Projects</NavStep> section using the menu on the left.
   </Step>
   <Step>
-    Select the project containing your private-nodes virtual cluster.
+    Select the project containing your private-nodes tenant cluster.
   </Step>
   <Step>
-    Click on the virtual cluster, then navigate to the <NavStep>Config</NavStep>
+    Click on the tenant cluster, then navigate to the <NavStep>Config</NavStep>
     tab.
   </Step>
   <Step>
@@ -936,7 +936,7 @@ kubectl apply -f otel-collector-private-nodes-app.yaml
 | Prometheus Skip TLS Verification | No | Skip TLS verification for the Prometheus connection |
 
 :::info
-Repeat these steps for each private-nodes virtual cluster.
+Repeat these steps for each private-nodes tenant cluster.
 :::
 
 <!-- vale off -->
@@ -1232,7 +1232,7 @@ time, so all panels use straightforward PromQL queries without joins.
 <!-- vale on -->
 
 A platform admin overview of vCluster projects across shared and private node
-virtual clusters. Use this dashboard to monitor resource consumption and API health at
+tenant clusters. Use this dashboard to monitor resource consumption and API health at
 the project level.
 
 **Dashboard JSON file:** [Download dashboard JSON](/media/dashboards/vcluster-projects.json)
@@ -1262,8 +1262,8 @@ the project level.
 ### vCluster detail dashboard
 <!-- vale on -->
 
-A detailed drill-down view for individual virtual clusters. Use this dashboard to
-investigate resource consumption and control plane health for a specific virtual
+A detailed drill-down view for individual tenant clusters. Use this dashboard to
+investigate resource consumption and control plane health for a specific tenant
 cluster.
 
 **Dashboard JSON file:** [Download dashboard JSON](/media/dashboards/vcluster-detail.json)
