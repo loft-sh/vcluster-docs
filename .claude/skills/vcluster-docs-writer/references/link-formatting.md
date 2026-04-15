@@ -2,9 +2,18 @@
 
 ## Core Principle
 
-**Always use relative file paths with `.mdx` extensions, NOT URL paths.**
+**Always use relative file paths with `.mdx` extensions. The `.mdx` suffix is mandatory, not a preference.**
 
-URL paths are sensitive to trailing slashes and can break easily. File paths are robust and work consistently across different Docusaurus configurations.
+A relative path without `.mdx` is a **silent bug**: Docusaurus does not
+rewrite it at build time, so the raw relative string (e.g. `../configure/foo`)
+is preserved in the compiled React module. SSR-rendered HTML is correct
+because build-time resolution runs against the file path, but the
+browser's click-time resolution runs against `window.location` and
+produces a different URL — injecting the current page's parent
+directory into the path. The bug cannot be caught by inspecting static
+HTML, `curl`, or `git grep`. It only fires on click in a real browser.
+
+See [DOC-1311](https://linear.app/loft/issue/DOC-1311) for the full failure mode.
 
 ## Markdown Links
 
@@ -46,14 +55,19 @@ You can write [links](/otherFolder/doc4.mdx) relative to the content root (`/doc
 You can also write [links](/docs/otherFolder/doc4.mdx) relative to the site directory, but it's not recommended.
 ```
 
-## ❌ Wrong Examples (URL Paths)
+## ❌ Wrong Examples
 
-These are examples of **incorrect** link formats that are sensitive to trailing slashes:
+Both classes below produce broken navigation. The second class (relative
+paths without `.mdx`) is the more dangerous one — it renders correct
+static HTML but 404s on click.
 
 ```markdown
+<!-- URL paths — sensitive to trailing slashes, miss file-based resolution -->
 [Pod Identity](/vcluster/integrations/pod-identity/eks-pod-identity)
-[Backing Store](../../../configure/vcluster-yaml/control-plane/components/backing-store)
 [FIPS Guide](/vcluster/deploy/security/fips)
+
+<!-- Relative paths without .mdx — SILENT 404 on click (SPA navigation) -->
+[Backing Store](../../../configure/vcluster-yaml/control-plane/components/backing-store)
 [Policies](../../../../configure/vcluster-yaml/policies/)
 ```
 
@@ -121,4 +135,15 @@ This approach is **MUCH faster** than trying to calculate relative paths manuall
 
 3. **Count the `../` levels carefully** - they must match the directory depth from your current file to the target file
 
-4. **Remember**: Links are resolved at build time, not runtime - broken links will fail the build
+4. **Resolution happens at build time ONLY when the link ends in `.mdx` or `.md`.** Without the suffix, Docusaurus skips file-reference resolution entirely, emits the raw relative string into the compiled bundle, and the browser resolves it against `window.location` at click time. Such links do NOT fail the build — they render correct HTML and 404 only when clicked. Never rely on the build to catch missing `.mdx` suffixes.
+
+## SSR vs CSR mismatch (the silent 404 class)
+
+Docusaurus is a React SPA. Every markdown link is rendered twice:
+
+- **At build time (SSR):** the MDX plugin rewrites `[text](../foo.mdx)` to a canonical absolute route like `/docs/vcluster/foo` by resolving against the source file's path on disk. This becomes the `<a href>` in the static HTML.
+- **At click time (CSR):** the `<Link>` component's React props carry whatever the MDX plugin rewrote the link to. If the plugin left the raw string alone (because the link had no `.mdx` suffix), the click handler calls `history.pushState` with that raw string resolved against `window.location.pathname` — a completely different base than the build-time file path.
+
+When the resolutions agree (link had `.mdx`), SSR and CSR produce the same URL and everything works. When they disagree (no `.mdx`), the static HTML shows the correct URL (so `curl` lies to you), `git grep` for the broken URL returns nothing (it only exists at runtime), but clicking the link silently 404s.
+
+**How to reproduce / verify:** open the page in Chrome DevTools, monkey-patch `history.pushState` to log its argument, click the link. If the pushed URL differs from the `<a>` element's `href` attribute, you have the bug. Fix by adding `.mdx` (or `README.mdx` for directory targets) to the link.
