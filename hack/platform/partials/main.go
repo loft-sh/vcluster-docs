@@ -383,7 +383,7 @@ spec:
 
 	// ProjectMigrateSpaceInstnace
 	util.GenerateObjectOverview(&util.ObjectInformation{
-		Title:       "Move VCluster To Other Project",
+		Title:       "Move vCluster To Other Project",
 		Description: "This API can be used to move a virtual cluster from one project to another.",
 		File:        path.Join(util.BaseResourcesPath, "project/migratevirtualclusterinstance.mdx"),
 		Name:        "Move Virtual Cluster To Other Project",
