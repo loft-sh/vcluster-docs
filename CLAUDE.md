@@ -46,12 +46,25 @@ folders. Changes are backported automatically via a CI process.
 
 ## Link resolution
 
-**Within same section** (e.g., platform → platform): Prefer relative file paths with `.mdx`:
+**Within same section** (e.g., platform → platform): Use relative file paths with the `.mdx` suffix. The suffix is mandatory, not a preference.
 
-- **Preferred:** `[Link](../understand/what-are-projects.mdx)`
-- **Also works:** `[Link](/docs/platform/understand/what-are-projects)`
+- **Correct:** `[Link](../understand/what-are-projects.mdx)`
+- **Correct (directory target):** `[Link](../networking/README.mdx)`
+- **Broken — silent 404 on click:** `[Link](../understand/what-are-projects)` (missing `.mdx`)
+- **Broken — silent 404 on click:** `[Link](../networking/)` (directory without `README.mdx`)
 
-Relative paths are better: they work on GitHub, survive slug changes, and track moves.
+Without the `.mdx` suffix, Docusaurus does not recognize the link as a
+file reference, so the raw relative string is preserved in the compiled
+React module. The SSR-rendered `<a href>` looks correct because build-time
+resolution runs against the file path, but the browser's click-time
+resolution runs against `window.location` and produces a different URL —
+injecting the current page's parent directory into the path. The bug is
+invisible to static HTML inspection, `curl`, and `git grep`. It only
+fires on click. See [DOC-1311](https://linear.app/loft/issue/DOC-1311)
+and the post-mortem for the full failure mode.
+
+Relative paths (with `.mdx`) are also preferred over `/docs/` URL paths:
+they work on GitHub, survive slug changes, and track moves.
 
 **Cross-section links** (e.g., platform → vcluster): Use `/docs/` absolute paths
 (different Docusaurus plugin instances, so file paths don't resolve):
