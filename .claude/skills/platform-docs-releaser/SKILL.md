@@ -54,25 +54,42 @@ Before starting:
 
 ### Part 1: Generate Platform API Partials
 
-**CRITICAL FIRST STEP**: Platform releases require generating API documentation partials before any other changes.
+**CRITICAL FIRST STEP**: Platform releases require updating the Go API dependency and regenerating API documentation partials before any other changes.
+
+The generator at `hack/platform/partials/main.go` produces docs from two sources:
+- **Go types** in `github.com/loft-sh/api/v4` — platform config fields, resource references (must match the new platform version)
+- **vCluster JSON schema** — vCluster config reference sections embedded in the platform docs
 
 **Process:**
-1. Locate the vCluster schema file:
+
+1. Bump `github.com/loft-sh/api/v4` to the version matching the new platform release:
+   ```bash
+   go get github.com/loft-sh/api/v4@vX.Y.Z   # e.g. v4.9.0
+   go mod tidy
+   go mod vendor
+   ```
+   The api module version tracks the platform version (platform v4.9.x → api v4.9.x). Check available tags with:
+   ```bash
+   cd ~/git/vcluster/api && git tag | sort -V | grep "^vX\.Y" | tail -5
+   ```
+   Use the highest stable tag for the target minor version (e.g. `v4.9.1` over `v4.9.0-rc.1`).
+
+2. Locate the vCluster schema file:
    ```bash
    ls configsrc/vcluster/main/vcluster.schema.json
    ```
 
-2. Run the Go generation script:
+3. Run the Go generation script:
    ```bash
    go run hack/platform/partials/main.go configsrc/vcluster/main/vcluster.schema.json
    ```
 
-3. This generates API documentation in:
+4. This generates/updates API documentation in:
    - `platform/api/_partials/resources/` - API resource documentation
-   - Configuration reference files
-   - Status reference files
+   - Configuration reference files (`config/reference.mdx`, `config/status_reference.mdx`)
+   - Any fields added or removed in the new platform version are automatically reflected
 
-**Why this matters**: Platform API docs are auto-generated from the schema. Without this step, the build will fail or have outdated API references.
+**Why this matters**: The Go types in `api/v4` define the platform config schema. If the dependency is stale, new config fields (like `database`) will be missing from the docs and removed fields will remain as dead content.
 
 ### Part 2: Import Path Strategy - Same-Plugin vs Cross-Plugin
 
@@ -329,10 +346,13 @@ versions: {
 ### API Partials Generation
 
 The Go script at `hack/platform/partials/main.go`:
-- Reads vCluster JSON schema
+- Reads Go types from `github.com/loft-sh/api/v4` (vendored) to generate platform config and resource reference docs
+- Reads the vCluster JSON schema for vCluster config reference sections embedded in platform docs
 - Generates MDX partials for API resources
-- Creates reference documentation
-- Updates status references
+- Creates/updates `config/reference.mdx` and `config/status_reference.mdx`
+- Deletes partials for fields removed from the API, adds partials for new fields
+
+**The Go dependency must be bumped to match the new platform release before running the generator.** See Part 1 above.
 
 If the schema path changes, check:
 - `configsrc/vcluster/main/vcluster.schema.json` (typical location)
@@ -342,16 +362,24 @@ If the schema path changes, check:
 
 ### Before PR:
 ```bash
-# 1. Generate API partials
+# 1. Bump api/v4 dependency to match new platform version
+go get github.com/loft-sh/api/v4@vX.Y.Z
+go mod tidy
+go mod vendor
+
+# 2. Generate API partials
 go run hack/platform/partials/main.go configsrc/vcluster/main/vcluster.schema.json
 
-# 2. Verify partials generated
+# 3. Verify partials generated
 ls platform/api/_partials/resources/ | wc -l  # Should have multiple files
 
-# 3. Verify changes
+# 4. Review what changed in the generated partials
+git diff --stat platform/api/
+
+# 5. Verify other changes
 git diff docusaurus.config.js netlify.toml
 
-# 4. Check versions
+# 6. Check versions
 cat platform_versions.json
 ```
 
