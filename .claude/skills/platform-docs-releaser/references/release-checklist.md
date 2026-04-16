@@ -38,6 +38,13 @@ The version is deployed hidden, then exposed via a config flip PR on release day
   ```
 - [ ] Check generated files look reasonable (not empty, proper MDX format)
 - [ ] Review `git diff --stat platform/api/` — new fields should be added, removed fields should be deleted
+- [ ] Check deleted files for cross-plugin consumers in frozen versioned docs:
+  ```bash
+  git diff --name-status platform/api/_partials/resources/ | grep "^D" | awk '{print $2}' | \
+    xargs -I{} basename {} | \
+    xargs -I{} grep -rl "{}" vcluster_versioned_docs/ --include="*.mdx"
+  ```
+- [ ] If any versioned doc still imports a deleted partial: add the path to `platform/api/_partials/resources/.generator-preserve` and restore from git history
 
 ## Part 2: User Creates Versioned Docs (Item 2)
 

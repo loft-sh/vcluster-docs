@@ -89,6 +89,18 @@ The generator at `hack/platform/partials/main.go` produces docs from two sources
    - Configuration reference files (`config/reference.mdx`, `config/status_reference.mdx`)
    - Any fields added or removed in the new platform version are automatically reflected
 
+5. **Audit deleted files for cross-plugin consumers.** The generator removes the entire `platform/api/_partials/resources/` directory before regenerating. When an API field is removed, its partial files disappear. Frozen versioned vCluster docs (0.28–0.33, etc.) may still import those files via `@site/platform/api/_partials/...`. Check for any such orphaned imports:
+   ```bash
+   # List files the generator just deleted (compared to git HEAD)
+   git diff --name-status platform/api/_partials/resources/ | grep "^D"
+
+   # For each deleted path, check if any versioned vCluster docs import it
+   git diff --name-status platform/api/_partials/resources/ | grep "^D" | awk '{print $2}' | \
+     xargs -I{} basename {} | \
+     xargs -I{} grep -rl "{}" vcluster_versioned_docs/ --include="*.mdx"
+   ```
+   If any versioned doc still imports a deleted partial, add the path to `.generator-preserve` (see API Partials Generation section below).
+
 **Why this matters**: The Go types in `api/v4` define the platform config schema. If the dependency is stale, new config fields (like `database`) will be missing from the docs and removed fields will remain as dead content.
 
 ### Part 2: Import Path Strategy - Same-Plugin vs Cross-Plugin
@@ -354,6 +366,20 @@ The Go script at `hack/platform/partials/main.go`:
 
 **The Go dependency must be bumped to match the new platform release before running the generator.** See Part 1 above.
 
+#### `.generator-preserve` — protecting legacy partials
+
+The generator does `os.RemoveAll` on all of `platform/api/_partials/resources/` before regenerating. When an API field is removed, its partial files are deleted permanently. This breaks frozen versioned vCluster docs that still import those files via `@site/platform/api/_partials/...`.
+
+`platform/api/_partials/resources/.generator-preserve` lists paths (relative to that directory) that are backed up before `RemoveAll` and restored afterward:
+
+```
+# Example entry
+config/external.mdx
+config/external/
+```
+
+The manifest file itself is always preserved. To protect a new path, add it to the file — no code change required. Current entries and their reason are documented with comments in the file.
+
 If the schema path changes, check:
 - `configsrc/vcluster/main/vcluster.schema.json` (typical location)
 - `configsrc/vcluster/vX.Y/vcluster.schema.json` (version-specific)
@@ -416,6 +442,25 @@ hurl --test --variable BASE_URL=https://deploy-preview-XXXX--vcluster-docs-site.
 1. Check vCluster versioned docs point to correct Platform version
 2. Verify Platform version exists and is accessible
 3. Update links in older vCluster versions if needed
+
+### Issue: Build fails with "Cannot find module @site/platform/api/_partials/resources/..."
+**Cause:** The generator deleted a partial that frozen versioned vCluster docs still import via `@site/platform/api/_partials/...`.
+
+**Solution:**
+1. Identify the deleted file(s) from the error messages
+2. Add them to `platform/api/_partials/resources/.generator-preserve` (one relative path per line)
+3. Restore the files from git history:
+   ```bash
+   git show <last-good-commit>:"platform/api/_partials/resources/config/external.mdx" > \
+     platform/api/_partials/resources/config/external.mdx
+   # Repeat for each deleted file
+   ```
+4. Re-run the generator to confirm they survive:
+   ```bash
+   go run hack/platform/partials/main.go configsrc/vcluster/main/vcluster.schema.json
+   ls platform/api/_partials/resources/config/external.mdx  # should still exist
+   ```
+5. Add a comment in `.generator-preserve` explaining which versioned docs depend on the file and why it can't be removed yet.
 
 ## CRITICAL: lastVersion Routing and Link Breakage
 
