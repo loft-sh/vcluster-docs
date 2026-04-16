@@ -1,10 +1,14 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
+	"io/fs"
 	"os"
 	"path"
+	"path/filepath"
 	"strings"
 
 	"github.com/invopop/jsonschema"
@@ -28,7 +32,7 @@ func main() {
 	}
 	jsonSchemaPath := os.Args[1]
 
-	_ = os.RemoveAll(util.BasePath)
+	removeAllExceptPreserved(util.BasePath)
 
 	util.GenerateSection(&managementv1.ConfigStatus{}, true, path.Join(util.BasePath, "config/status_reference.mdx"))
 	util.GenerateSection(&managementv1.AuditPolicy{}, true, path.Join(util.BasePath, "config/status/audit/policy.mdx"))
@@ -976,4 +980,95 @@ spec:
 			continue
 		}
 	}
+}
+
+// removeAllExceptPreserved deletes basePath and recreates it, but first backs
+// up any paths listed in basePath/.generator-preserve and restores them
+// afterward. This prevents the generator from destroying partials that are no
+// longer produced from the current API types but are still imported by frozen
+// versioned docs.
+func removeAllExceptPreserved(basePath string) {
+	preserveFile := filepath.Join(basePath, ".generator-preserve")
+
+	// Read the list of paths to preserve (one per line, blank/# lines ignored).
+	var preservePaths []string
+	if f, err := os.Open(preserveFile); err == nil {
+		scanner := bufio.NewScanner(f)
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			preservePaths = append(preservePaths, line)
+		}
+		f.Close()
+	}
+
+	// Always preserve the manifest file itself so it survives RemoveAll.
+	preservePaths = append(preservePaths, ".generator-preserve")
+
+	// Back up preserved paths into a temp directory.
+	var backups []struct{ src, dst string }
+	tmpDir, err := os.MkdirTemp("", "generator-preserve-*")
+	if err != nil {
+		fmt.Printf("Warning: could not create temp dir for preserved files: %v\n", err)
+	} else {
+		for _, rel := range preservePaths {
+			src := filepath.Join(basePath, rel)
+			dst := filepath.Join(tmpDir, rel)
+			if err := copyAll(src, dst); err == nil {
+				backups = append(backups, struct{ src, dst string }{src: src, dst: dst})
+			}
+		}
+	}
+
+	_ = os.RemoveAll(basePath)
+
+	// Restore preserved files.
+	for _, b := range backups {
+		if err := copyAll(b.dst, b.src); err != nil {
+			fmt.Printf("Warning: could not restore preserved path %q: %v\n", b.src, err)
+		}
+	}
+}
+
+// copyAll copies src to dst, preserving directory structure.
+func copyAll(src, dst string) error {
+	info, err := os.Stat(src)
+	if err != nil {
+		return err
+	}
+	if info.IsDir() {
+		return filepath.WalkDir(src, func(p string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			rel, _ := filepath.Rel(src, p)
+			target := filepath.Join(dst, rel)
+			if d.IsDir() {
+				return os.MkdirAll(target, 0755)
+			}
+			return copyFile(p, target)
+		})
+	}
+	return copyFile(src, dst)
+}
+
+// copyFile copies a single file from src to dst, creating parent dirs as needed.
+func copyFile(src, dst string) error {
+	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+		return err
+	}
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+	_, err = io.Copy(out, in)
+	return err
 }
