@@ -30,6 +30,26 @@ from urllib.parse import urljoin
 ROOT = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else 'vcluster_versioned_docs/version-0.33.0')
 PROD_PREFIX = '/docs/vcluster'
 
+# Known broken links that cannot take .mdx suffix without breaking the build.
+# These are pre-existing issues where the target file doesn't exist (auto-generated
+# CLI pages), has a numbered filename prefix (1-control-plane-components.mdx), or
+# the target directory was removed (quick-start). Each entry is (file_suffix, link).
+KNOWN_EXCEPTIONS = {
+    ('deploy/control-plane/binary/basics.mdx', '../../../cli/vcluster_platform_connect_vcluster'),
+    ('deploy/control-plane/binary/high-availability.mdx', '../../../cli/vcluster_platform_connect_vcluster'),
+    ('introduction/oss-vs-free.mdx', '../quick-start'),
+    ('hardening-guide/host-nodes/self-assessment.mdx', './control-plane-components'),
+    ('hardening-guide/host-nodes/self-assessment.mdx', './etcd'),
+    ('hardening-guide/host-nodes/self-assessment.mdx', './control-plane'),
+    ('hardening-guide/host-nodes/self-assessment.mdx', './worker-node'),
+    ('hardening-guide/host-nodes/self-assessment.mdx', './policies'),
+    ('hardening-guide/private-nodes/self-assessment.mdx', './control-plane-components'),
+    ('hardening-guide/private-nodes/self-assessment.mdx', './etcd'),
+    ('hardening-guide/private-nodes/self-assessment.mdx', './control-plane'),
+    ('hardening-guide/private-nodes/self-assessment.mdx', './worker-node'),
+    ('hardening-guide/private-nodes/self-assessment.mdx', './policies'),
+}
+
 
 def file_to_url(p):
     rel = p.relative_to(ROOT).as_posix()
@@ -80,10 +100,19 @@ for p in sorted(ROOT.rglob('*.mdx')):
             if t.startswith('http') or t.startswith('#'):
                 continue
 
+            # Check if this link is in the known-exceptions list
+            rel_file = str(p).replace(str(ROOT) + '/', '')
+            is_exception = any(
+                rel_file.endswith(f) and t == link
+                for f, link in KNOWN_EXCEPTIONS
+            )
+            if is_exception:
+                continue
+
             b = resolve_build(p, t).rstrip('/')
             c = urljoin('https://x' + page_url, t).replace('https://x', '').rstrip('/')
 
-            entry = (str(p).replace(str(ROOT) + '/', ''), ln, t, b, c)
+            entry = (rel_file, ln, t, b, c)
 
             if is_fragment:
                 fragment.append(entry)
