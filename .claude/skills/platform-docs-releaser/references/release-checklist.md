@@ -17,6 +17,13 @@ The version is deployed hidden, then exposed via a config flip PR on release day
 
 **AI Responsibility - CRITICAL FIRST STEP:**
 
+- [ ] Bump `github.com/loft-sh/api/v4` to the version matching the new platform release:
+  ```bash
+  go get github.com/loft-sh/api/v4@vX.Y.Z   # e.g. v4.9.1 for platform v4.9.x
+  go mod tidy
+  go mod vendor
+  ```
+  Check available tags: `cd ~/git/vcluster/api && git tag | sort -V | grep "^vX\.Y" | tail -5`
 - [ ] Locate vCluster schema:
   ```bash
   ls configsrc/vcluster/main/vcluster.schema.json
@@ -30,6 +37,14 @@ The version is deployed hidden, then exposed via a config flip PR on release day
   ls platform/api/_partials/resources/ | wc -l  # Should show multiple files
   ```
 - [ ] Check generated files look reasonable (not empty, proper MDX format)
+- [ ] Review `git diff --stat platform/api/` — new fields should be added, removed fields should be deleted
+- [ ] Check deleted files for cross-plugin consumers in frozen versioned docs:
+  ```bash
+  git diff --name-status platform/api/_partials/resources/ | grep "^D" | awk '{print $2}' | \
+    xargs -I{} basename {} | \
+    xargs -I{} grep -rl "{}" vcluster_versioned_docs/ --include="*.mdx"
+  ```
+- [ ] If any versioned doc still imports a deleted partial: add the path to `platform/api/_partials/resources/.generator-preserve` and restore from git history
 
 ## Part 2: User Creates Versioned Docs (Item 2)
 
