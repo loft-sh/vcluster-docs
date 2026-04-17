@@ -275,44 +275,10 @@ func GenerateObjectOverview(information *ObjectInformation) {
 		})
 	}
 
-	relPath := ""
-	dir, file := path.Split(information.File)
-	for file != "api" {
-		dir, file = path.Split(strings.TrimSuffix(dir, "/"))
-		if file == "" {
-			panic("Unsupported path: " + information.File)
-		}
-
-		if file != "api" {
-			relPath += "../"
-		}
-	}
-	if relPath == "" {
-		relPath = "."
-	}
-	relPath = strings.TrimSuffix(relPath, "/")
-
-	// write overview
-	writeTemplate(TemplateObjectOverview, information.File, ObjectOverviewValues{
-		Title:        information.Title,
-		Resource:     information.Resource,
-		Description:  information.Description,
-		RelativePath: relPath,
-		Name:         information.Name,
-		Plural:       information.Plural,
-		YAMLObject:   string(out),
-
-		Project: information.Project,
-
-		Create:   information.Create,
-		Retrieve: information.Retrieve,
-		Update:   information.Update,
-		Delete:   information.Delete,
-
-		SubResource:       information.SubResource,
-		SubResourceCreate: information.SubResourceCreate,
-		SubResourceGet:    information.SubResourceGet,
-	})
+	// Main page files (e.g., resources/clusterroletemplate.mdx) are NOT generated.
+	// They must be manually created and maintained, following the vcluster pattern
+	// where partials are auto-generated but main pages are always manual.
+	// This allows adding custom documentation sections that won't be overwritten.
 }
 
 func GenerateFromPath(schema *jsonschema.Schema, basePath string, schemaPath string, defaults map[string]interface{}) {
