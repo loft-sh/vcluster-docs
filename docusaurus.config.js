@@ -177,6 +177,10 @@ const config = {
           excludeRoutes: [
             '/search/**',
             '/tags/**',
+            // CLI reference pages are auto-generated --help output; exclude
+            // individual entries to keep llms.txt under 50K. The CLI section
+            // overview page still appears via category entries.
+            '/vcluster/cli/**',
           ],
           // Emit absolute URLs (https://www.vcluster.com/docs/...) instead of
           // site-relative paths. Downstream consumers (R2R RAG, LLM agents)
@@ -186,7 +190,10 @@ const config = {
         },
         siteTitle: 'vCluster Documentation',
         siteDescription: 'Documentation for vCluster (virtual Kubernetes clusters) and vCluster Platform (multi-cluster management)',
-        enableDescriptions: true,
+        // Descriptions are disabled to keep llms.txt under the 50K agent
+        // truncation threshold (~43K savings). Titles carry sufficient signal
+        // for discovery; full content is available at the linked .md URLs.
+        enableDescriptions: false,
         depth: 2,
       },
     ],
