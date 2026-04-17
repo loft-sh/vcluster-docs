@@ -566,6 +566,33 @@ spec:
 		Resource:    "clusters",
 		Description: "Connected Kubernetes clusters that can be managed through the platform. You can allow users and teams to access those clusters and they can create new spaces and virtual clusters inside them.",
 		File:        path.Join(util.BaseResourcesPath, "clusters/clusters.mdx"),
+		ExtraContentBeforeExample: "## Platform-specific verbs\n" +
+			"\n" +
+			"In addition to standard Kubernetes RBAC verbs (`get`, `list`, `create`, `update`, `patch`, `delete`), the Cluster resource supports these platform-specific verbs for access control:\n" +
+			"\n" +
+			"| Verb | Description |\n" +
+			"|------|-------------|\n" +
+			"| `bind` | Required when adding a cluster to ClusterAccess rules. Allows granting users or teams permission to create spaces and virtual clusters on the cluster. |\n" +
+			"| `connectlocal` | Required when setting `spec.local: true` on a cluster. Allows connecting the local cluster (where the platform is installed) to the platform for management. |\n" +
+			"\n" +
+			"### Example access rule with bind verb\n" +
+			"\n" +
+			"```yaml\n" +
+			"apiVersion: management.loft.sh/v1\n" +
+			"kind: Team\n" +
+			"metadata:\n" +
+			"  name: my-team\n" +
+			"spec:\n" +
+			"  access:\n" +
+			"    - name: cluster-access\n" +
+			"      verbs:\n" +
+			"        - get\n" +
+			"        - bind\n" +
+			"      subresources:\n" +
+			"        - clusters\n" +
+			"      teams:\n" +
+			"        - my-team\n" +
+			"```",
 		Object: &storagev1.Cluster{
 			TypeMeta: metav1.TypeMeta{
 				Kind:       "Cluster",
@@ -637,6 +664,32 @@ spec:
 		Resource:    "users",
 		Description: "Users that can access the platform.",
 		File:        path.Join(util.BaseResourcesPath, "user.mdx"),
+		ExtraContentBeforeExample: "## Platform-specific verbs\n" +
+			"\n" +
+			"In addition to standard Kubernetes RBAC verbs (`get`, `list`, `create`, `update`, `patch`, `delete`), the User resource supports these platform-specific verbs for access control:\n" +
+			"\n" +
+			"| Verb | Description |\n" +
+			"|------|-------------|\n" +
+			"| `bind` | Required when adding a user to ClusterAccess rules or other access rules. Allows granting the user permissions on platform resources. |\n" +
+			"| `makeowner` | Required when changing the owner of a resource to a user. Allows transferring ownership of projects, virtual clusters, spaces, or other platform resources. |\n" +
+			"\n" +
+			"### Example access rule with makeowner verb\n" +
+			"\n" +
+			"```yaml\n" +
+			"apiVersion: management.loft.sh/v1\n" +
+			"kind: User\n" +
+			"metadata:\n" +
+			"  name: admin-user\n" +
+			"spec:\n" +
+			"  access:\n" +
+			"    - name: user-management\n" +
+			"      verbs:\n" +
+			"        - get\n" +
+			"        - update\n" +
+			"        - makeowner\n" +
+			"      users:\n" +
+			"        - admin-user\n" +
+			"```",
 		Object: &storagev1.User{
 			TypeMeta: metav1.TypeMeta{
 				Kind:       "User",
@@ -669,6 +722,32 @@ spec:
 		Resource:    "teams",
 		Description: "Teams are composed of multiple users and define a way to manage cluster access or other objects for multiple users at once. You can assign users automatically to teams by their groups, which can be synced from an authentication provider. Teams can also access the platform through their own access keys and own spaces or other objects.",
 		File:        path.Join(util.BaseResourcesPath, "team.mdx"),
+		ExtraContentBeforeExample: "## Platform-specific verbs\n" +
+			"\n" +
+			"In addition to standard Kubernetes RBAC verbs (`get`, `list`, `create`, `update`, `patch`, `delete`), the Team resource supports these platform-specific verbs for access control:\n" +
+			"\n" +
+			"| Verb | Description |\n" +
+			"|------|-------------|\n" +
+			"| `bind` | Allows binding permissions to a team, enabling assignment of access rules and roles to that team. Required when adding a team to ClusterAccess rules. |\n" +
+			"| `makeowner` | Allows transferring ownership of platform resources to a team. Used when changing the owner of projects, clusters, or other resources to a team. |\n" +
+			"\n" +
+			"### Example access rule with bind verb\n" +
+			"\n" +
+			"```yaml\n" +
+			"apiVersion: management.loft.sh/v1\n" +
+			"kind: Team\n" +
+			"metadata:\n" +
+			"  name: platform-admins\n" +
+			"spec:\n" +
+			"  access:\n" +
+			"    - name: team-management\n" +
+			"      verbs:\n" +
+			"        - get\n" +
+			"        - update\n" +
+			"        - bind\n" +
+			"      users:\n" +
+			"        - admin\n" +
+			"```",
 		Object: &storagev1.Team{
 			TypeMeta: metav1.TypeMeta{
 				Kind:       "Team",
@@ -843,6 +922,82 @@ spec:
 		Resource:    "clusterroletemplates",
 		Description: "ClusterRoleTemplate holds the clusterRoleTemplate information",
 		File:        path.Join(util.BaseResourcesPath, "clusterroletemplate.mdx"),
+		ExtraContentAfterExample: "## Policy rules\n" +
+			"\n" +
+			"The `rules` field under `clusterRoleTemplate` defines RBAC permissions using standard Kubernetes PolicyRule objects. Each rule specifies which actions (verbs) are allowed on which resources.\n" +
+			"\n" +
+			"### Verbs\n" +
+			"\n" +
+			"Verbs define the actions allowed on resources. Standard Kubernetes RBAC verbs include:\n" +
+			"\n" +
+			"| Verb | Description |\n" +
+			"|------|-------------|\n" +
+			"| `get` | Retrieve a single resource |\n" +
+			"| `list` | Retrieve a collection of resources |\n" +
+			"| `watch` | Watch for changes to resources |\n" +
+			"| `create` | Create a new resource |\n" +
+			"| `update` | Update an existing resource (replaces the entire object) |\n" +
+			"| `patch` | Partially modify an existing resource |\n" +
+			"| `delete` | Delete a single resource |\n" +
+			"| `deletecollection` | Delete a collection of resources |\n" +
+			"| `*` | Wildcard representing all verbs |\n" +
+			"\n" +
+			"### API groups\n" +
+			"\n" +
+			"API groups define which API the resources belong to. Common API groups include:\n" +
+			"\n" +
+			"| API Group | Description |\n" +
+			"|-----------|-------------|\n" +
+			"| `\"\"` | Core API group (pods, services, configmaps, secrets, namespaces) |\n" +
+			"| `apps` | Deployments, DaemonSets, ReplicaSets, StatefulSets |\n" +
+			"| `batch` | Jobs, CronJobs |\n" +
+			"| `networking.k8s.io` | NetworkPolicies, Ingresses |\n" +
+			"| `rbac.authorization.k8s.io` | Roles, RoleBindings, ClusterRoles, ClusterRoleBindings |\n" +
+			"| `management.loft.sh` | vCluster Platform resources |\n" +
+			"| `storage.loft.sh` | vCluster Platform storage resources |\n" +
+			"| `*` | Wildcard matching all API groups |\n" +
+			"\n" +
+			"### Platform resources\n" +
+			"\n" +
+			"vCluster Platform resources in the `management.loft.sh` API group:\n" +
+			"\n" +
+			"| Resource | Description |\n" +
+			"|----------|-------------|\n" +
+			"| `announcements` | Platform announcements |\n" +
+			"| `apps` | Application configurations |\n" +
+			"| `backups` | Platform backups |\n" +
+			"| `clusteraccesses` | Cluster access permissions |\n" +
+			"| `clusterroletemplates` | Cluster role templates |\n" +
+			"| `clusters` | Connected clusters |\n" +
+			"| `configs` | Platform configuration |\n" +
+			"| `events` | Platform events |\n" +
+			"| `features` | Platform features |\n" +
+			"| `licenses` | Platform licenses |\n" +
+			"| `nodeclaims` | Node claims for auto-provisioning |\n" +
+			"| `nodeenvironments` | Node environment configurations |\n" +
+			"| `nodeproviders` | Node provider configurations |\n" +
+			"| `nodetypes` | Node type definitions |\n" +
+			"| `ownedaccesskeys` | User-owned access keys |\n" +
+			"| `projects` | Projects |\n" +
+			"| `selves` | Current user information |\n" +
+			"| `sharedsecrets` | Shared secrets |\n" +
+			"| `spaceinstances` | Space instances |\n" +
+			"| `spacetemplates` | Space templates |\n" +
+			"| `tasks` | Platform tasks |\n" +
+			"| `teams` | Teams |\n" +
+			"| `users` | Users |\n" +
+			"| `virtualclusterinstances` | Virtual cluster instances |\n" +
+			"| `virtualclustertemplates` | Virtual cluster templates |\n" +
+			"\n" +
+			"Common subresources include `projects/members`, `projects/templates`, `clusters/members`, `virtualclusterinstances/kubeconfig`, and `virtualclusterinstances/log`.\n" +
+			"\n" +
+			"### Resource names\n" +
+			"\n" +
+			"The `resourceNames` field optionally restricts a rule to specific named resources. When empty, the rule applies to all resources of the specified type.\n" +
+			"\n" +
+			"### Non-resource URLs\n" +
+			"\n" +
+			"The `nonResourceURLs` field specifies access to non-resource endpoints like `/healthz`, `/api`, `/apis`, and `/version`. Use `*` as a suffix to match paths (for example, `/healthz/*`).",
 		Object: &managementv1.ClusterRoleTemplate{
 			TypeMeta: metav1.TypeMeta{
 				Kind:       "ClusterRoleTemplate",
@@ -887,6 +1042,8 @@ spec:
 		Title:       "Node Provider",
 		Name:        "NodeProvider",
 		Resource:    "nodeproviders",
+		ExtraImports:              "import FeatureTable from '@site/src/components/FeatureTable';",
+		ExtraContentBeforeExample: "<FeatureTable names=\"auto-nodes-clusterapi\" />",
 		Description: "NodeProvider holds the node provider information",
 		File:        path.Join(util.BaseResourcesPath, "nodeprovider.mdx"),
 		Object: &managementv1.NodeProvider{
