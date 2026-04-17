@@ -14,6 +14,8 @@ import TabItem from '@theme/TabItem';
 import Icon from '@site/src/components/Icon'
 import VersionBadge from '@site/src/components/VersionBadge';
 import FeatureTable from '@site/src/components/FeatureTable';
+import Flow, { Step } from '@site/src/components/Flow'
+
 
 <FeatureTable names="connector-external-database,connector-external-database-eks-pod-identity" />
 
@@ -269,4 +271,69 @@ stringData:
   port: "3306"
   user: root
   type: mysql # This can be mysql or postgres. If left blank, the mysql database type is assumed.
+```
+
+## Recreate / restore virtual clusters
+
+To accommodate infrastructure updates or disaster recovery needs, follow this process to restore virtual clusters using a **database connector** powered backing store.
+
+<!-- vale Vale.Terms = NO -->
+<Flow>
+  <Step>Annotate the target VirtualClusterInstance with `vcluster.com/database-reclaim-policy: retain` so the database is not deleted when the virtual cluster is deleted.</Step>
+  <Step>Record the value of the `vcluster.com/database-uid` annotation and save the `spec` from the VirtualClusterInstance.</Step>
+  <Step>Delete the virtual cluster.</Step>
+  <Step>Create the virtual cluster with the same `vcluster.com/database-uid` annotation and the saved `spec`.</Step>
+</Flow>
+<!-- vale Vale.Terms = YES -->
+
+:::important Scope
+This procedure only restores the backing store connection. Depending on your configuration, resources such as persistent volumes or other external dependencies might not be available for the recreated virtual cluster.
+:::
+
+:::important RBAC permissions
+Creating VirtualClusterInstance resources with the `vcluster.com/database-uid` annotation set requires elevated permissions.
+
+```yaml title="Sample ClusterRole"
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: vcluster-database-admin
+rules:
+   - apiGroups: [ "management.loft.sh" ]
+     resources: [ "virtualclusterinstances/externaldatabase" ]
+     verbs: [ "bind" ]
+```
+:::
+
+### Sample bulk migration script
+
+:::important
+This script assumes that every matched virtual cluster uses a database connector.
+
+If a matched virtual cluster does not use a database connector, its data will not be preserved.
+:::
+
+```sh title="Sample control plane host bulk migration script"
+# requires kubectl, jq and access to the vCluster Platform api
+
+OLD_CLUSTER="old-cluster"
+NEW_CLUSTER="new-cluster"
+
+# select required instances running on old cluster
+kubectl get virtualclusterinstance.management.loft.sh -A -o json | jq --arg c "$OLD_CLUSTER" '.items=[.items[] | select(.spec.clusterRef.cluster==$c)]' > ./old-vcis.json
+
+# annotate with retain
+kubectl annotate -f ./old-vcis.json vcluster.com/database-reclaim-policy=retain --overwrite
+
+# prepare new vcis specs by setting the desired cluster and remove metadata and status fields
+cat ./old-vcis.json | jq --arg c "$NEW_CLUSTER" '.items=[.items[] | .spec.clusterRef.cluster=$c | del(.metadata.resourceVersion, .metadata.uid, .metadata.creationTimestamp, .metadata.generation, .status)]' > ./new-vcis.json
+
+# delete old VCIs
+kubectl delete -f ./old-vcis.json --wait
+
+# create new VCIs
+kubectl create -f ./new-vcis.json
+
+# wait for the new VCIs to be ready
+kubectl wait -f ./new-vcis.json --for=condition=Ready
 ```
