@@ -66,4 +66,45 @@ test.describe('Content negotiation edge function', () => {
       expect(response.headers()['content-type'] || '').toMatch(/text\/html/);
     });
   }
+
+  // Sweep a random sample from llms.txt so a regression on any one page
+  // (the plugin stops emitting it, the path pattern the edge function
+  // can't resolve, Vary mis-set at a CDN node) surfaces in CI. The full
+  // list has ~485 entries; sampling 20 keeps each CI run under ~1 minute.
+  test('random sample from llms.txt serves markdown', async ({ page }) => {
+    test.setTimeout(120000);
+
+    const manifest = await page.request.get(`${BASE_URL}/docs/llms.txt`);
+    expect(manifest.status()).toBe(200);
+
+    // Extract URLs out of the llms.txt markdown link syntax: [title](URL).
+    // Stop at whitespace and the closing paren so we don't capture it.
+    const raw = (await manifest.text()).match(/https?:\/\/[^\s)<>"']+/g) ?? [];
+    const paths = [...new Set(
+      raw
+        .filter((u) => u.includes('/docs/'))
+        .map((u) => new URL(u).pathname)
+        // llms.txt currently lists `.md` URLs directly — strip to the HTML
+        // form so the edge function rewrite is what we're exercising, not
+        // static serving of the .md file.
+        .map((p) => (p.endsWith('.md') ? p.slice(0, -3) : p)),
+    )];
+    expect(paths.length).toBeGreaterThan(50);
+
+    const sample = paths.sort(() => Math.random() - 0.5).slice(0, 20);
+    const failures = [];
+
+    for (const path of sample) {
+      const res = await page.request.get(`${BASE_URL}${path}`, {
+        headers: { accept: 'text/markdown' },
+      });
+      const ct = res.headers()['content-type'] || '';
+      const vary = (res.headers()['vary'] || '').toLowerCase();
+      if (res.status() !== 200 || !ct.startsWith('text/markdown') || !vary.includes('accept')) {
+        failures.push(`${path} → status=${res.status()} ct=${ct} vary=${vary}`);
+      }
+    }
+
+    expect(failures, `markdown regressions on ${failures.length}/${sample.length} sampled paths`).toEqual([]);
+  });
 });
