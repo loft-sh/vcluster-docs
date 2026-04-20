@@ -5,17 +5,25 @@
  * serves sibling .md files when the client sends Accept: text/markdown, and
  * falls through to HTML otherwise.
  *
- * Uses Playwright's request fixture (no browser) so the test runs headlessly
- * on the `local` project without consuming BrowserStack minutes.
+ * Uses the `page` fixture with context.setExtraHTTPHeaders so each request
+ * is issued by a real BrowserStack browser session (Safari, Chromium, iOS
+ * Safari) under the run-e2e label. The edge function runs at Netlify's
+ * CDN layer — identical for every browser — but routing this through real
+ * browsers confirms the response is accepted by each engine.
  *
- * Run against a deploy preview:
+ * Triggered in CI by applying the `run-e2e` label to a PR
+ * (.github/workflows/integration-tests.yml).
+ *
+ * Run locally against a deploy preview:
  *   TEST_BASE_URL=https://deploy-preview-1960--vcluster-docs-site.netlify.app \
  *     npm run test:local -- content-negotiation.spec.js
  */
 
-const { test, expect, request } = require('@playwright/test');
+const { test, expect } = require('@playwright/test');
 
-const BASE_URL = process.env.TEST_BASE_URL || 'https://www.vcluster.com';
+const BASE_URL = process.env.TEST_BASE_URL
+  || (process.env.TEST_URL ? process.env.TEST_URL.replace(/\/docs\/.*$/, '') : null)
+  || 'https://www.vcluster.com';
 
 // Paths with a known .md sibling (listed in llms.txt).
 const MD_BACKED_PATHS = [
@@ -25,50 +33,29 @@ const MD_BACKED_PATHS = [
 ];
 
 test.describe('Content negotiation edge function', () => {
-  let api;
+  for (const p of MD_BACKED_PATHS) {
+    test(`${p} returns markdown when Accept: text/markdown`, async ({ page, context }) => {
+      await context.setExtraHTTPHeaders({ accept: 'text/markdown' });
 
-  test.beforeAll(async () => {
-    api = await request.newContext({ baseURL: BASE_URL });
-  });
+      const response = await page.goto(`${BASE_URL}${p}`, { waitUntil: 'commit' });
 
-  test.afterAll(async () => {
-    await api.dispose();
-  });
-
-  for (const path of MD_BACKED_PATHS) {
-    test(`${path} returns markdown when Accept: text/markdown`, async () => {
-      const res = await api.get(path, {
-        headers: { accept: 'text/markdown' },
-        maxRedirects: 0,
-      });
-
-      expect(res.status()).toBe(200);
-      expect(res.headers()['content-type'] || '').toMatch(/^text\/markdown/);
-      expect((res.headers()['vary'] || '').toLowerCase()).toContain('accept');
+      expect(response.status()).toBe(200);
+      expect(response.headers()['content-type'] || '').toMatch(/^text\/markdown/);
+      expect((response.headers()['vary'] || '').toLowerCase()).toContain('accept');
 
       // Strong check: body must be markdown, not HTML.
-      const body = await res.text();
+      const body = await response.text();
       expect(body).not.toMatch(/^<!DOCTYPE html>/i);
       expect(body).toMatch(/^(---|#\s|import\s)/m);
     });
 
-    test(`${path} returns HTML with no Accept header`, async () => {
-      // Follow redirects — Docusaurus 301s to the trailing-slash variant.
-      const res = await api.get(path);
+    test(`${p} returns HTML without the Accept header`, async ({ page }) => {
+      // Default browser Accept does not include text/markdown — edge function
+      // should fall through and serve the HTML page.
+      const response = await page.goto(`${BASE_URL}${p}`);
 
-      expect(res.status()).toBe(200);
-      expect(res.headers()['content-type'] || '').toMatch(/text\/html/);
-      const body = await res.text();
-      expect(body).toMatch(/<!doctype html>/i);
+      expect(response.status()).toBe(200);
+      expect(response.headers()['content-type'] || '').toMatch(/text\/html/);
     });
   }
-
-  test('Accept: text/html is unaffected', async () => {
-    const res = await api.get(MD_BACKED_PATHS[0], {
-      headers: { accept: 'text/html' },
-    });
-
-    expect(res.status()).toBe(200);
-    expect(res.headers()['content-type'] || '').toMatch(/text\/html/);
-  });
 });
