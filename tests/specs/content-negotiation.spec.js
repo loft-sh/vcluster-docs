@@ -32,12 +32,20 @@ const MD_BACKED_PATHS = [
   '/docs/vcluster',
 ];
 
+// BrowserStack Local routes requests through a tunnel with a self-signed
+// cert; page.request validates by default, so we opt out of TLS verification
+// for this spec. Safe here — we only assert on Netlify CDN responses.
+test.use({ ignoreHTTPSErrors: true });
+
 test.describe('Content negotiation edge function', () => {
   for (const p of MD_BACKED_PATHS) {
-    test(`${p} returns markdown when Accept: text/markdown`, async ({ page, context }) => {
-      await context.setExtraHTTPHeaders({ accept: 'text/markdown' });
-
-      const response = await page.goto(`${BASE_URL}${p}`, { waitUntil: 'commit' });
+    test(`${p} returns markdown when Accept: text/markdown`, async ({ page }) => {
+      // page.request runs inside the BrowserStack session's network stack
+      // but sends only the headers we specify — page.goto() lets Chromium
+      // append its default Accept list which outranks the edge-function match.
+      const response = await page.request.get(`${BASE_URL}${p}`, {
+        headers: { accept: 'text/markdown' },
+      });
 
       expect(response.status()).toBe(200);
       expect(response.headers()['content-type'] || '').toMatch(/^text\/markdown/);
@@ -49,7 +57,7 @@ test.describe('Content negotiation edge function', () => {
       expect(body).toMatch(/^(---|#\s|import\s)/m);
     });
 
-    test(`${p} returns HTML without the Accept header`, async ({ page }) => {
+    test(`${p} returns HTML when the browser navigates normally`, async ({ page }) => {
       // Default browser Accept does not include text/markdown — edge function
       // should fall through and serve the HTML page.
       const response = await page.goto(`${BASE_URL}${p}`);
