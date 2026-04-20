@@ -10,6 +10,7 @@ const __webpack_public_path__ = "/docs/";
 
 import resolveGlob from "resolve-glob";
 import remarkVersionTokens from "./plugins/remark-version-tokens.js";
+import rehypeStripComments from "./plugins/rehype-strip-comments.js";
 
 const newDocTemplate = `---
 title: Your Document Title
@@ -183,6 +184,11 @@ const config = {
           // surface these links to users in CLI contexts where relative paths
           // are not clickable or resolvable. See ENGAI-58.
           relativePaths: false,
+          // Strip React-emitted `<!-- -->` JSX expression markers before the
+          // HTML→Markdown conversion. Runs at the hast stage, ahead of
+          // rehype-remark, so comment nodes are gone before mdast is built.
+          // See DOC-1322.
+          beforeDefaultRehypePlugins: [rehypeStripComments],
         },
         siteTitle: 'vCluster Documentation',
         siteDescription: 'Documentation for vCluster (virtual Kubernetes clusters) and vCluster Platform (multi-cluster management)',
