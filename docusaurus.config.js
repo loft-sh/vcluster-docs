@@ -178,9 +178,10 @@ const config = {
             '/search/**',
             '/tags/**',
             // CLI reference pages are auto-generated --help output; exclude
-            // individual entries to keep llms.txt under 50K. The CLI section
-            // overview page still appears via category entries.
-            '/vcluster/cli/**',
+            // individual entries to keep llms.txt under 50K. The pattern
+            // includes the site baseUrl (`/docs/`) because the signalwire
+            // plugin matches against the full route path.
+            '/docs/vcluster/cli/**',
           ],
           // Emit absolute URLs (https://www.vcluster.com/docs/...) instead of
           // site-relative paths. Downstream consumers (R2R RAG, LLM agents)
