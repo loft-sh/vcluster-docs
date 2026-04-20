@@ -16,9 +16,17 @@
 set -euo pipefail
 
 repo='loft-sh/vcluster-docs'
-pr='1962'
 sha="${1:-$(git rev-parse HEAD)}"
 short="${sha:0:9}"
+# Auto-detect the PR owning this sha. Multiple cells live on sibling
+# PRs now, so hardcoding a single PR number would surface comments
+# from the wrong PR.
+pr=$(gh api "repos/$repo/commits/$sha/pulls" --jq '.[0].number // empty')
+if [ -z "$pr" ]; then
+  printf 'sha=%s check=n/a comment=n/a comment_url=none age=n/a\n' "$short"
+  echo "no PR associated with sha $short" >&2
+  exit 1
+fi
 
 # The provenance footer appended by every ai-pr-review comment contains this
 # substring. Scoping by it avoids false positives from other bots that share
