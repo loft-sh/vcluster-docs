@@ -183,6 +183,14 @@ const config = {
             // includes the site baseUrl (`/docs/`) because the signalwire
             // plugin matches against the full route path.
             '/docs/vcluster/cli/**',
+            // Aggregate config reference renders to ~380K — well above the
+            // 100K agent truncation limit. Sub-pages are indexed individually.
+            '/docs/vcluster/configure/vcluster-yaml$',
+            // Aggregate sync reference renders to ~161K; sub-pages are indexed.
+            '/docs/vcluster/configure/vcluster-yaml/sync$',
+            // Platform API reference renders to ~116K; no sub-pages exist.
+            // Silent truncation on a dense API reference causes incorrect answers.
+            '/docs/platform/api/resources/project/templates$',
           ],
           // Emit absolute URLs (https://www.vcluster.com/docs/...) instead of
           // site-relative paths. Downstream consumers (R2R RAG, LLM agents)
