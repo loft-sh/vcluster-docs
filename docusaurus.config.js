@@ -94,6 +94,7 @@ const config = {
           priority: 0.5,
           ignorePatterns: [
             '/tags/**',
+            '/search',
             '/search/**',
             '*/page/*',
             // Exclude versioned URLs from the sitemap. Unversioned paths (served
