@@ -149,7 +149,7 @@ const config = {
           },
         ],
         theme: {
-          primaryColor: "#00bdff",
+          primaryColor: "#ff6600",
           redocOptions: {
             hideDownloadButton: false,
             disableSearch: true,
@@ -454,7 +454,7 @@ const config = {
         id: "vcluster-0-33-platform-4-8-release",
         content:
           '🚀 <strong>New releases: <a href="https://www.vcluster.com/releases/en/changelog?hideLogo=true&hideMenu=true&theme=dark&embed=true&c=vCluster" target="_blank">vCluster Platform 4.8 and vCluster 0.33</a></strong>',
-        backgroundColor: "#4a90e2",
+        backgroundColor: "#050b24",
         textColor: "#ffffff",
         isCloseable: true,
       },
