@@ -1,0 +1,104 @@
+---
+title: Migrate to the vCluster Rancher Operator
+sidebar_label: Migration Guide
+sidebar_position: 3
+---
+
+import InterpolatedCodeBlock from '@site/src/components/InterpolatedCodeBlock'
+
+:::warning Built-in Rancher integration removed
+
+The built-in Rancher integration was removed in vCluster Platform version v4.9.0. **This page is a migration guide** — it walks you through moving your existing Tenant Clusters from the built-in Rancher integration to the [vCluster Rancher operator](/docs/vcluster/third-party-integrations/rancher/install-rancher-integration), which is the supported replacement.
+
+If you have upgraded to v4.9.0 or later and had Tenant Clusters with the Rancher integration enabled, those clusters will be stuck in `Terminating` when you attempt to delete them. See the [Upgrade Guide](./upgrade-guide.mdx) to resolve this before proceeding.
+
+:::
+
+:::note On vCluster Platform v4.8 or lower?
+
+If you are on v4.8 or lower, use the [v4.8 migration guide](/docs/platform/integrations/rancher/migration-guide) which includes additional steps for disabling the integration at the platform level before cleaning up individual Tenant Clusters. Alternatively, upgrade to v4.9.0 first and then follow this guide.
+
+:::
+
+## Before you begin
+
+This guide requires `kubectl` access to the cluster where vCluster Platform is installed. Steps 1–2 connect to individual Tenant Clusters via `vcluster connect` — no direct kubeconfig for each Tenant Cluster is needed.
+
+Work through the steps in order. Steps 1–2 run against each Tenant Cluster individually; step 3 runs against Rancher. The optional cleanup section at the end applies only if you upgraded from v4.8 or lower.
+
+## Step 1: Remove cattle-system from each Tenant Cluster
+
+Connect to each Tenant Cluster and delete the `cattle-system` namespace. This removes the Rancher cluster agent and all Rancher-related workloads that were injected into the Tenant Cluster.
+
+<InterpolatedCodeBlock
+  language="bash"
+  code={"vcluster connect [[VAR:NAME:my-tenant-cluster]] -n [[VAR:NAMESPACE:p-my-project]]\nkubectl delete namespace cattle-system --ignore-not-found"}
+/>
+
+Repeat for every Tenant Cluster that had the integration enabled.
+
+## Step 2: Remove Rancher RBAC from each Tenant Cluster
+
+While connected to each Tenant Cluster, remove the cluster-level RBAC resources that Rancher created:
+
+```bash
+# List what will be removed — verify before deleting
+kubectl get clusterrole,clusterrolebinding | grep cattle
+
+# Remove them
+kubectl delete clusterrole,clusterrolebinding \
+  $(kubectl get clusterrole,clusterrolebinding \
+    --no-headers -o custom-columns=":metadata.name" \
+    | grep cattle) \
+  --ignore-not-found
+```
+
+## Step 3: Delete the Rancher cluster entries
+
+Each Tenant Cluster that was imported into Rancher has a corresponding cluster entry in Rancher. Before deleting, verify that the cluster shows as **Unavailable** or **Disconnected** in the Rancher UI — this confirms the agent has been removed and the cluster is no longer actively connected. Do not delete the entry if it still shows as **Active**, as this may indicate the `cattle-system` namespace was not fully removed in the previous step.
+
+Once the cluster shows as disconnected, go to **Cluster Management** in the Rancher UI, find each cluster that corresponds to a Tenant Cluster, and delete it. If a deletion hangs, Rancher will eventually force-remove the entry once it detects the agent has been disconnected for a sufficient period of time.
+
+## Step 4: Install the vCluster Rancher operator
+
+With the old integration fully removed, install the new [vCluster Rancher operator](/docs/vcluster/third-party-integrations/rancher/install-rancher-integration). The operator runs independently of the Platform and manages Tenant Cluster registration with Rancher directly.
+
+Follow the [installation guide](/docs/vcluster/third-party-integrations/rancher/install-rancher-integration) to deploy the operator and re-register your Tenant Clusters.
+
+## Optional: Clean up stale Platform state
+
+If you upgraded from v4.8 or lower, your Tenant Clusters and projects may carry stale metadata from the old integration. These are harmless but can be cleaned up from the Platform cluster.
+
+**Remove the import label from Tenant Clusters:**
+
+```bash
+kubectl get virtualclusterinstances -A \
+  -o json | jq -r '
+    .items[]
+    | select(.metadata.labels["loft.sh/import-rancher"] == "true")
+    | "\(.metadata.namespace) \(.metadata.name)"
+  ' | while read ns name; do
+    kubectl label virtualclusterinstance "$name" -n "$ns" loft.sh/import-rancher-
+  done
+```
+
+**Remove stale Rancher conditions from projects:**
+
+```bash
+kubectl get projects.management.loft.sh -o json | jq -r '
+  .items[]
+  | select(
+      .status.conditions[]?
+      | select(.type == "RancherIntegrationSynced")
+    )
+  | .metadata.name
+' | while read project; do
+  idx=$(kubectl get project.management.loft.sh "$project" -o json | jq '
+    .status.conditions | to_entries[]
+    | select(.value.type == "RancherIntegrationSynced")
+    | .key')
+  kubectl patch project.management.loft.sh "$project" \
+    --type=json --subresource=status \
+    -p="[{\"op\":\"remove\",\"path\":\"/status/conditions/${idx}\"}]"
+done
+```
