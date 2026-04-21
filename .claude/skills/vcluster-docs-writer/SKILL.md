@@ -8,6 +8,10 @@ context: fork
 
 Specialized knowledge and workflows for writing vCluster documentation in Docusaurus.
 
+## Dependencies
+
+When this skill is loaded, also invoke: `vcluster-skills-shared:vcluster-branding`
+
 ## When to Use
 
 Trigger when:
