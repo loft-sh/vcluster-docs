@@ -48,6 +48,13 @@ const config = {
         media: '(prefers-color-scheme: dark)',
       },
     },
+    {
+      tagName: 'link',
+      attributes: {
+        rel: 'stylesheet',
+        href: 'https://fonts.googleapis.com/icon?family=Material+Icons+Outlined',
+      },
+    },
   ],
 
   onBrokenLinks: "throw",
