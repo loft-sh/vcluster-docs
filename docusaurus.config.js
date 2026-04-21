@@ -92,44 +92,45 @@ const config = {
         sitemap: {
           changefreq: 'weekly',
           priority: 0.5,
-          ignorePatterns: ['/tags/**', '/search/**', '*/page/*'],
+          ignorePatterns: [
+            '/tags/**',
+            '/search/**',
+            '*/page/*',
+            // Exclude versioned URLs from the sitemap. Unversioned paths (served
+            // by lastVersion) are the canonical entry points for search engines.
+            // The matching `noindex,follow` meta tag is emitted by the DocItem
+            // swizzle at src/theme/DocItem/Layout/index.js. See DOC-1325.
+            '/vcluster/[0-9]*.[0-9]*.[0-9]*/**',
+            '/platform/[0-9]*.[0-9]*.[0-9]*/**',
+            '/vcluster/next/**',
+            '/platform/next/**',
+          ],
           filename: 'sitemap.xml',
           createSitemapItems: async (params) => {
             const { defaultCreateSitemapItems, ...rest } = params;
             const items = await defaultCreateSitemapItems(rest);
 
-            // Filter out pagination and unwanted pages
-            const filteredItems = items.filter((item) => !item.url.includes('/page/'));
+            // Filter out pagination and any remaining versioned URLs that
+            // slipped past ignorePatterns. Belt-and-braces: the version regex
+            // here catches any X.Y.Z path segment under /vcluster/ or /platform/.
+            const filteredItems = items.filter((item) => {
+              if (item.url.includes('/page/')) return false;
+              if (item.url.match(/\/vcluster\/\d+\.\d+\.\d+\//)) return false;
+              if (item.url.match(/\/platform\/\d+\.\d+\.\d+\//)) return false;
+              if (item.url.match(/\/vcluster\/next(\/|$)/)) return false;
+              if (item.url.match(/\/platform\/next(\/|$)/)) return false;
+              return true;
+            });
 
-            // Enhance items with custom priorities and change frequencies
+            // Landing pages get highest priority; everything else stays
+            // on the default sitemap priority.
             return filteredItems.map((item) => {
-              // Main landing pages get highest priority
               if (item.url === 'https://vcluster.com/docs/' ||
                   item.url === 'https://vcluster.com/docs/vcluster/' ||
                   item.url === 'https://vcluster.com/docs/platform/') {
                 return { ...item, priority: 1.0, changefreq: 'daily' };
               }
-
-              // Latest stable versions get highest priority (0.33.0 for vCluster, 4.8.0 for platform)
-              if (item.url.match(/\/vcluster\/0\.33\.0\//) ||
-                  item.url.match(/\/platform\/4\.8\.0\//)) {
-                return { ...item, priority: 1.0, changefreq: 'daily' };
-              }
-
-              // Current/next versions (non-versioned URLs) get high priority
-              if ((item.url.includes('/vcluster/') && !item.url.match(/\/vcluster\/\d+\.\d+\.\d+\//)) ||
-                  (item.url.includes('/platform/') && !item.url.match(/\/platform\/\d+\.\d+\.\d+\//))) {
-                return { ...item, priority: 0.8, changefreq: 'weekly' };
-              }
-
-              // ALL other versioned docs get very low priority (0.19-0.31 for vCluster, older platform versions)
-              if (item.url.match(/\/vcluster\/\d+\.\d+\.\d+\//) ||
-                  item.url.match(/\/platform\/\d+\.\d+\.\d+\//)) {
-                return { ...item, priority: 0.1, changefreq: 'yearly' };
-              }
-
-              // Default priority for other pages
-              return item;
+              return { ...item, priority: 0.8, changefreq: 'weekly' };
             });
           },
         },
