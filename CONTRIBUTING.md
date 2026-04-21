@@ -69,6 +69,52 @@ The review checks documentation style, validates vCluster YAML configurations,
 and identifies broken links. The AI review is meant to assist, not replace,
 human review.
 
+## SEO and crawler policy
+
+The docs site exposes multiple versions (current stable, prior supported,
+EOS/EOL, and the `next` preview). Only the current stable version should
+compete for search engine and AI crawler attention; older versions remain
+reachable for users who need them, but must not outrank or dilute the
+current docs. See DOC-1325 for background.
+
+### What the current setup does
+
+- **`lastVersion`** in `docusaurus.config.js` makes unversioned URLs (for
+  example `/docs/vcluster/deploy/...`) serve the current stable release.
+  Those unversioned URLs are the canonical, indexable entry points.
+- **noindex on non-current versions** is emitted by
+  `src/theme/DocItem/Layout/index.js`. The swizzle reads
+  `useActivePluginAndVersion()` and injects
+  `<meta name="robots" content="noindex,follow">` whenever `isLast` is
+  false. That covers EOS, EOL, any prior stable version still in
+  `onlyIncludeVersions`, and the `current` (next/main) preview.
+- **Sitemap** (`docusaurus.config.js`, sitemap plugin) lists only
+  unversioned URLs. Any path matching `/vcluster/<X.Y.Z>/` or
+  `/platform/<X.Y.Z>/` — plus the `next` previews — is stripped by both
+  `ignorePatterns` and a post-filter in `createSitemapItems`.
+- **`llms.txt`** already excludes versioned docs via
+  `includeVersionedDocs: false` on the `docusaurus-plugin-llms-txt` plugin.
+  That stays as-is.
+- **`static/robots.txt`** is intentionally permissive. `Disallow` would
+  block crawlers from fetching the page and therefore from ever seeing the
+  `noindex` meta tag, which is the opposite of what we want. Note that the
+  production host `vcluster.com/robots.txt` is served by the main site
+  repo, not this one; this file applies to the Netlify preview domain.
+- **Canonical tags** are not emitted automatically. Only add a `<link
+  rel="canonical">` when the content at a versioned URL is effectively
+  identical to the current version. Do not point version-specific content
+  (release notes, deprecated APIs, migration guides) at the current docs.
+
+### When adding or removing a version
+
+1. Update `onlyIncludeVersions` in `docusaurus.config.js` for the affected
+   docs plugin (vcluster or platform). No SEO code changes are required —
+   the swizzle derives `isLast` from the plugin config.
+2. When bumping `lastVersion`, the previous stable version automatically
+   starts emitting `noindex,follow`. No per-version list to edit.
+3. Regenerate the lifecycle JSON (`npm run generate-lifecycle-json`) so
+   the supported-versions partial stays in sync with the config.
+
 ## Style guide
 
 Most of the style guide rules is enforced by `vale` linter. See the
