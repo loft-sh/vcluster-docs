@@ -373,7 +373,8 @@ const config = {
         title: "",
         logo: {
           alt: "vCluster",
-          src: "/media/rebranding/vCluster_favicon_docs_orange.svg",
+          src: "/media/rebranding/vCluster_horizontal-orange.svg",
+          height: 36,
         },
         items: [
           // Product tabs
