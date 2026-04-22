@@ -1,0 +1,202 @@
+---
+title: Deploy vCluster Standalone in an air-gapped environment
+sidebar_label: Air-gapped
+sidebar_position: 5
+description: Learn how to deploy vCluster Standalone in an air-gapped environment.
+sidebar_class_name: pro
+---
+
+import Flow, { Step } from "@site/src/components/Flow";
+import InterpolatedCodeBlock from "@site/src/components/InterpolatedCodeBlock";
+import PageVariables from "@site/src/components/PageVariables";
+
+
+# Deploy vCluster in an air-gapped environment
+
+This document explains how to deploy vCluster in environments without internet access, known as air-gapped environments.
+
+:::important
+Enterprise features require the vCluster Platform.
+
+If you deploy a vCluster in an air-gapped environment and want to use enterprise features, you must also deploy the platform in air-gapped mode and connect the vCluster to it. A standalone air-gapped vCluster does not support any enterprise capabilities.
+:::
+
+## Overview {#overview}
+
+When deploying vCluster Standalone, there are artifacts that are typically accessed using an internet connection, but without access to the internet, these artifacts need to be available to the Kubernetes cluster through a private registry:
+
+- **vCluster Standalone Binary**—Typically retrieved from the<!-- vale Vale.Terms = NO --> [vCluster releases](https://github.com/loft-sh/vcluster/releases) as `vcluster-linux-<ARCH>-standalone`. <!-- vale Vale.Terms = YES -->
+- **vCluster Standalone Install Script**—Typically retrieved from the [vCluster releases](https://github.com/loft-sh/vcluster/releases) as `install-standalone.sh`.
+- **Kubernetes Control-Plane image**—Pulled from `loft-sh/kubernetes` registry.
+
+
+After ensuring that vCluster Standalone binary and install script are present on the server where you want to install vCluster Standalone, and uploading the required images to your private registry, create the `vcluster.yaml` configuration file and follow the installation steps.
+
+## Prerequisites {#prerequisites}
+
+- Access to a node that satisfies the [node requirements](../node-requirements)
+
+### Registry requirements
+
+- OCI-compliant private registry - A private registry accessible to both the node where you install vCluster Standalone and a separate, internet-connected machine.
+- Ability to push images to your private registry.
+
+### Deployment requirements
+
+Ensure you have the following:
+
+- Access to pull the images from the private registry
+
+- On the internet-connected machine for populating the registry:
+  - `wget` installed
+  - `docker` installed
+  - You are logged into GitHub Container Registry
+
+## Populate images to a private registry {#populate-images-private-registry}
+
+Each vCluster release includes multiple assets to help you upload the images to your private registry.
+
+- `images-private-nodes.txt` - The required images to run vCluster Standalone, which assumes using the default Kubernetes version.
+- `images-private-nodes-optional.txt` - An optional set of images needed for worker node daemonsets and agents.
+- `download-images.sh` - A bash script that quickly iterates over all the images files to pull them and package them into a tarball to a machine that has internet access.
+- `push-images.sh` - A bash script that takes the tarball generated from the download script to push them to your private registry.
+
+### Pull and push images {#pull-push-images}
+<PageVariables
+  VCLUSTER_VERSION="0.29.1"
+  REGISTRY="ecr.io/myteam"
+/>
+<Flow id="offline-images">
+  <Step>
+
+  Download the assets from the [vCluster GitHub release](https://github.com/loft-sh/vcluster/releases) and make the scripts executable.
+
+:::note
+The `images-private-nodes.txt` contains all required images for the default Kubernetes version.
+:::
+
+    <InterpolatedCodeBlock
+      code={`
+wget https://github.com/loft-sh/vcluster/releases/download/v[[GLOBAL:VCLUSTER_VERSION]]/images-private-nodes.txt
+wget https://github.com/loft-sh/vcluster/releases/download/v[[GLOBAL:VCLUSTER_VERSION]]/download-images.sh
+wget https://github.com/loft-sh/vcluster/releases/download/v[[GLOBAL:VCLUSTER_VERSION]]/push-images.sh
+
+chmod +x ./download-images.sh
+chmod +x ./push-images.sh
+      `}
+      language="bash"
+    />
+
+  </Step>
+  <Step>
+
+  Run `download-images.sh` to pull all images and create a tarball of the images.
+
+  Review the output to confirm all images were pulled successfully and packaged in the tarball.
+
+  ```bash title="Download and package images"
+  ./download-images.sh --image-list images-private-nodes.txt
+    ```
+
+  </Step>
+  <Step>
+
+  Run `push-images.sh` to upload all required images to your private registry.
+
+  When pushing images into your private registry, the public private registry is removed and only the repository and image name are pushed. This allows vCluster to set your private registry to use for all images used in deploying vCluster.
+
+    <InterpolatedCodeBlock
+      code={`
+./push-images.sh --registry [[GLOBAL:REGISTRY]] --image-list images-private-nodes.txt
+      `}
+      language="bash"
+      title="Push images to private registry"
+    />
+
+  </Step>
+  <Step>
+
+  **Optional**: By default, vCluster Standalone uses Flannel for CNI and Local Path Provisioner. To download and push these, download the `images-private-nodes-optional.txt` file.
+
+  The `images-private-nodes-optional.txt` includes images for various optional configurations. You can edit the file and keep only the images you need, removing those for unused features or versions.
+
+:::note
+The `images-private-nodes-optional.txt` may include multiple Kubernetes distributions, versions, or other feature-dependent images. You can edit the file to retain only what’s necessary for your deployment.
+:::
+
+    <InterpolatedCodeBlock
+      code={`
+wget https://github.com/loft-sh/vcluster/releases/download/v[[GLOBAL:VCLUSTER_VERSION]]/images-private-nodes-optional.txt
+
+./download-images.sh --image-list images-private-nodes-optional.txt --images vcluster-images-optional.tar.gz
+./push-images.sh --registry [[GLOBAL:REGISTRY]] --image-list images-private-nodes-optional.txt
+      `}
+      language="bash"
+      title="Pull, package, and push all optional images"
+    />
+
+  </Step>
+</Flow>
+
+## Configure vCluster {#configure-vCluster}
+
+The vcluster.yaml file contains all configuration settings for your vCluster deployment.
+
+<details>
+  <summary>Use a private registry without credentials</summary>
+
+Set the default private registry that doesn't have authentication. Authenticated private registries are not supported in this version.
+
+  <InterpolatedCodeBlock
+    code={`
+controlPlane:
+  advanced:
+    defaultImageRegistry: [[GLOBAL:REGISTRY]]
+`}
+    language="yaml"
+    title="Setting the private registry"
+  />
+
+</details>
+Before deploying, it's recommended to review the set of configuration options that cannot be updated post deployment.
+[These options](../basics.mdx#control-plane-options) require deploying a new vCluster instead of upgrading your vCluster with new options.
+
+## Deploy vCluster {#deploy-standalone}
+
+After your private registry is populated with the required images, you can proceed with installing the vCluster Standalone.
+
+### Installation
+
+<Flow>
+  <Step>
+  Review your `vcluster.yaml` file.
+
+    <InterpolatedCodeBlock
+      code={`
+controlPlane:
+  advanced:
+    defaultImageRegistry: [[GLOBAL:REGISTRY]]
+  # default vCluster Standalone configuration
+  standalone:
+    enabled: true
+    joinNode:
+      enabled: true  # Optional: Control Plane node will also be considered a worker node
+privateNodes: # Required for adding additional worker nodes
+  enabled: true
+      `}
+      language="yaml"
+      title="Create vcluster.yaml configuration"
+    />
+
+  </Step>
+  <Step>
+  Save the path to the vCluster Standalone Binary and the install script:
+
+  <InterpolatedCodeBlock
+    code={`[[VAR:INSTALL SCRIPT PATH:/tmp/install-standalone.sh]] --vcluster-name standalone --binary [[VAR:BINARY_PATH:/tmp/vcluster]] --skip-download`}
+    language="bash"
+  />
+  </Step>
+</Flow>
+
+For further steps follow [the primary guide](../basics.mdx)

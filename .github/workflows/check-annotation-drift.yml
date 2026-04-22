@@ -1,0 +1,410 @@
+name: Check Annotation Drift
+
+on:
+  schedule:
+    # Run nightly at 02:00 UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: check-annotation-drift
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+  id-token: write
+
+jobs:
+  update-platform-annotations:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout vcluster-docs
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GH_ACCESS_TOKEN }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache-dependency-path: hack/annotations/go.mod
+
+      - name: Build annotation tool
+        run: go build -C hack/annotations -o "$GITHUB_WORKSPACE/bin/check-annotations" .
+
+      - name: Read active platform versions
+        id: versions
+        run: |
+          versions=$(node -e "
+            const fs = require('fs');
+            const cfg = fs.readFileSync('docusaurus.config.js', 'utf8');
+            const m = cfg.match(/id:\s*['\"]platform['\"][\s\S]*?onlyIncludeVersions:\s*(\[[^\]]+\])/);
+            if (m) console.log(m[1]); else console.log('[]');
+          ")
+          echo "versions=$versions" >> "$GITHUB_OUTPUT"
+          echo "Platform versions: $versions"
+
+          if [[ "$versions" == "[]" ]]; then
+            echo "::error::Failed to extract platform versions from docusaurus.config.js"
+            exit 1
+          fi
+
+      - name: Detect annotation drift
+        id: detect
+        env:
+          GH_TOKEN: ${{ secrets.GH_ACCESS_TOKEN }}
+        run: |
+          versions='${{ steps.versions.outputs.versions }}'
+          any_drift=false
+          mkdir -p .drift-reports
+
+          mapfile -t version_list < <(node -e "
+            const v = $versions;
+            v.forEach(x => console.log(x));
+          ")
+
+          for version in "${version_list[@]}"; do
+            echo "=== Checking platform version: $version ==="
+
+            if [[ "$version" == "current" ]]; then
+              docs_path="platform/reference/platform-annotations.mdx"
+              source_branch="main"
+              label="next"
+            else
+              docs_path="platform_versioned_docs/version-${version}/reference/platform-annotations.mdx"
+              major_minor=$(echo "$version" | cut -d. -f1,2)
+              source_branch="release-${major_minor}"
+              label="v${version}"
+            fi
+
+            rm -rf loft-enterprise
+            gh repo clone loft-sh/loft-enterprise loft-enterprise -- --depth 1 --branch "$source_branch" 2>/dev/null || {
+              echo "  Could not clone loft-enterprise at $source_branch, skipping"
+              echo "::warning::Skipped platform $label (branch $source_branch not found)"
+              continue
+            }
+
+            set +e
+            ./bin/check-annotations \
+              --json-output ".drift-reports/platform-${version}.json" \
+              --source loft-enterprise \
+              --docs "$docs_path" \
+              --label "loft-enterprise ($label)" \
+              --product platform
+            exit_code=$?
+            set -e
+
+            if [[ $exit_code -eq 0 ]]; then
+              echo "  No drift for $label"
+            elif [[ $exit_code -eq 1 ]]; then
+              echo "  Drift detected for $label"
+              any_drift=true
+            else
+              echo "::warning::Annotation tool failed for platform $label (exit $exit_code)"
+            fi
+
+            rm -rf loft-enterprise
+            echo ""
+          done
+
+          echo "any_drift=$any_drift" >> "$GITHUB_OUTPUT"
+
+          # Merge all drift reports into one file for Claude
+          # Truncate source_context to 500 chars to keep file under 256KB (Claude Read tool limit)
+          if [[ "$any_drift" == "true" ]]; then
+            node -e "
+              const fs = require('fs');
+              const reports = [];
+              for (const f of fs.readdirSync('.drift-reports')) {
+                if (f.startsWith('platform-') && f.endsWith('.json')) {
+                  const r = JSON.parse(fs.readFileSync('.drift-reports/' + f));
+                  if (r.new_annotations && r.new_annotations.length > 0) {
+                    r.new_annotations.forEach(a => {
+                      if (a.source_context && a.source_context.length > 500) {
+                        a.source_context = a.source_context.substring(0, 500) + '...';
+                      }
+                    });
+                    reports.push(r);
+                  }
+                }
+              }
+              fs.writeFileSync('drift-report.json', JSON.stringify(reports, null, 2));
+              const size = fs.statSync('drift-report.json').size;
+              console.log('Combined ' + reports.length + ' drift reports (' + Math.round(size/1024) + 'KB)');
+            "
+          fi
+
+      - name: Generate documentation with Claude
+        if: steps.detect.outputs.any_drift == 'true'
+        uses: anthropics/claude-code-action@v1
+        env:
+          GH_TOKEN: ${{ secrets.GH_ACCESS_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GH_ACCESS_TOKEN }}
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            You are updating vCluster Platform annotation reference documentation.
+
+            Step 1: Parse the drift report.
+            Use Bash with jq to read drift-report.json. It is a JSON array of drift reports.
+            Each report has:
+            - docs_path: the MDX file to update
+            - new_annotations: array of annotations to document (each has key, type, comment, source_file, source_context)
+
+            Example: jq '.[0].new_annotations | length' drift-report.json
+
+            Step 2: For each drift report, Read the docs_path file to understand the existing sections and format.
+            The existing entries are your style guide — match their format exactly.
+            IMPORTANT: Always Read a file before using Edit on it.
+
+            Step 3: For each new annotation, use Edit to add a documentation entry in the
+            CORRECT EXISTING SECTION based on what the annotation does. For example:
+            - Sleep-related annotations go in the "Sleep mode" section
+            - Cluster-related annotations go in the "Cluster management" section
+            - Project-related annotations go in the relevant project section
+            Prefer placing entries in existing sections. Only create a new section if annotations clearly belong to a distinct category not covered by any existing section.
+
+            Each entry needs:
+            - ### heading with {#anchor} (anchor = key with . and / replaced by -)
+            - **Type:** (Annotation, Label, or Finalizer — from the "type" field)
+            - **Example:** with a realistic value based on the source_context and comment
+            - **Used on:** which Kubernetes resource types this applies to (infer from source_context)
+            - A clear 1-2 sentence description based on the comment and source_context
+
+            Rules:
+            - Preserve ALL existing content byte-for-byte
+            - Only ADD new entries, never modify existing ones
+            - Use the source_context to understand what the annotation does
+            - For boolean annotations, example should be "true" or "false"
+            - For string annotations, use a realistic example value
+            - Keep descriptions concise and user-focused
+            - Do NOT use sub-agents, todo lists, or write temporary files
+            - Work through each file sequentially: read it, then edit it
+          claude_args: |
+            --max-turns 50
+            --disallowedTools "Task" "TodoRead" "TodoWrite"
+            --allowedTools "Bash(jq *)" "Bash(wc *)" "Read" "Edit" "Glob" "Grep"
+            --model claude-sonnet-4-5-20250929
+
+      - name: Clean up
+        if: always()
+        run: rm -rf loft-enterprise vcluster-source bin .drift-reports drift-report.json
+
+      - name: Create pull request
+        if: steps.detect.outputs.any_drift == 'true'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ secrets.GH_ACCESS_TOKEN }}
+          commit-message: 'chore: update platform annotations reference with undocumented entries'
+          title: 'chore: update platform annotations reference with undocumented entries'
+          body: |
+            Automated update of platform annotation reference pages.
+
+            The nightly annotation drift check detected annotations in `loft-enterprise`
+            that are not documented in the platform annotations reference.
+
+            Documentation entries were generated by Claude based on Go source code
+            context and comments. Please review for accuracy.
+
+            ---
+            *Generated by the check-annotation-drift workflow*
+          branch: chore/update-platform-annotations
+          delete-branch: true
+          labels: automation,annotation-drift
+
+  update-vcluster-annotations:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout vcluster-docs
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GH_ACCESS_TOKEN }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache-dependency-path: hack/annotations/go.mod
+
+      - name: Build annotation tool
+        run: go build -C hack/annotations -o "$GITHUB_WORKSPACE/bin/check-annotations" .
+
+      - name: Read active vcluster versions
+        id: versions
+        run: |
+          versions=$(node -e "
+            const fs = require('fs');
+            const cfg = fs.readFileSync('docusaurus.config.js', 'utf8');
+            const m = cfg.match(/id:\s*['\"]vcluster['\"][\s\S]*?onlyIncludeVersions:\s*(\[[^\]]+\])/);
+            if (m) console.log(m[1]); else console.log('[]');
+          ")
+          echo "versions=$versions" >> "$GITHUB_OUTPUT"
+          echo "vCluster versions: $versions"
+
+          if [[ "$versions" == "[]" ]]; then
+            echo "::error::Failed to extract vcluster versions from docusaurus.config.js"
+            exit 1
+          fi
+
+      - name: Detect annotation drift
+        id: detect
+        env:
+          GH_TOKEN: ${{ secrets.GH_ACCESS_TOKEN }}
+        run: |
+          versions='${{ steps.versions.outputs.versions }}'
+          any_drift=false
+          mkdir -p .drift-reports
+
+          mapfile -t version_list < <(node -e "
+            const v = $versions;
+            v.forEach(x => console.log(x));
+          ")
+
+          for version in "${version_list[@]}"; do
+            echo "=== Checking vcluster version: $version ==="
+
+            if [[ "$version" == "current" ]]; then
+              docs_path="vcluster/reference/annotations.mdx"
+              source_ref="main"
+              label="next"
+            else
+              docs_path="vcluster_versioned_docs/version-${version}/reference/annotations.mdx"
+              source_ref="v${version}"
+              label="v${version}"
+            fi
+
+            rm -rf vcluster-source
+            gh repo clone loft-sh/vcluster vcluster-source -- --depth 1 --branch "$source_ref" 2>/dev/null || {
+              echo "  Could not clone vcluster at $source_ref, skipping"
+              echo "::warning::Skipped vcluster $label (ref $source_ref not found)"
+              continue
+            }
+
+            set +e
+            ./bin/check-annotations \
+              --json-output ".drift-reports/vcluster-${version}.json" \
+              --source vcluster-source \
+              --docs "$docs_path" \
+              --label "vcluster ($label)" \
+              --product vcluster
+            exit_code=$?
+            set -e
+
+            if [[ $exit_code -eq 0 ]]; then
+              echo "  No drift for $label"
+            elif [[ $exit_code -eq 1 ]]; then
+              echo "  Drift detected for $label"
+              any_drift=true
+            else
+              echo "::warning::Annotation tool failed for vcluster $label (exit $exit_code)"
+            fi
+
+            rm -rf vcluster-source
+            echo ""
+          done
+
+          echo "any_drift=$any_drift" >> "$GITHUB_OUTPUT"
+
+          # Truncate source_context to 500 chars to keep file under 256KB (Claude Read tool limit)
+          if [[ "$any_drift" == "true" ]]; then
+            node -e "
+              const fs = require('fs');
+              const reports = [];
+              for (const f of fs.readdirSync('.drift-reports')) {
+                if (f.startsWith('vcluster-') && f.endsWith('.json')) {
+                  const r = JSON.parse(fs.readFileSync('.drift-reports/' + f));
+                  if (r.new_annotations && r.new_annotations.length > 0) {
+                    r.new_annotations.forEach(a => {
+                      if (a.source_context && a.source_context.length > 500) {
+                        a.source_context = a.source_context.substring(0, 500) + '...';
+                      }
+                    });
+                    reports.push(r);
+                  }
+                }
+              }
+              fs.writeFileSync('drift-report.json', JSON.stringify(reports, null, 2));
+              const size = fs.statSync('drift-report.json').size;
+              console.log('Combined ' + reports.length + ' drift reports (' + Math.round(size/1024) + 'KB)');
+            "
+          fi
+
+      - name: Generate documentation with Claude
+        if: steps.detect.outputs.any_drift == 'true'
+        uses: anthropics/claude-code-action@v1
+        env:
+          GH_TOKEN: ${{ secrets.GH_ACCESS_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GH_ACCESS_TOKEN }}
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            You are updating vCluster annotation reference documentation.
+
+            Step 1: Parse the drift report.
+            Use Bash with jq to read drift-report.json. It is a JSON array of drift reports.
+            Each report has:
+            - docs_path: the MDX file to update
+            - new_annotations: array of annotations to document (each has key, type, comment, source_file, source_context)
+
+            Example: jq '.[0].new_annotations | length' drift-report.json
+
+            Step 2: For each drift report, Read the docs_path file to understand the existing sections and format.
+            The existing entries are your style guide — match their format exactly.
+            IMPORTANT: Always Read a file before using Edit on it.
+
+            Step 3: For each new annotation, use Edit to add a documentation entry in the
+            CORRECT EXISTING SECTION based on what the annotation does. For example:
+            - Sync-related annotations go in the sync section
+            - Label annotations go with other labels
+            Prefer placing entries in existing sections. Only create a new section if annotations clearly belong to a distinct category not covered by any existing section.
+
+            Each entry needs:
+            - ### heading with {#anchor} (anchor = key with . and / replaced by -)
+            - **Type:** (Annotation, Label, or Finalizer — from the "type" field)
+            - **Example:** with a realistic value based on the source_context and comment
+            - **Used on:** which Kubernetes resource types this applies to (infer from source_context)
+            - A clear 1-2 sentence description based on the comment and source_context
+
+            Rules:
+            - Preserve ALL existing content byte-for-byte
+            - Only ADD new entries, never modify existing ones
+            - Use the source_context to understand what the annotation does
+            - For boolean annotations, example should be "true" or "false"
+            - For string annotations, use a realistic example value
+            - Keep descriptions concise and user-focused
+            - Do NOT use sub-agents, todo lists, or write temporary files
+            - Work through each file sequentially: read it, then edit it
+          claude_args: |
+            --max-turns 50
+            --disallowedTools "Task" "TodoRead" "TodoWrite"
+            --allowedTools "Bash(jq *)" "Bash(wc *)" "Read" "Edit" "Glob" "Grep"
+            --model claude-sonnet-4-5-20250929
+
+      - name: Clean up
+        if: always()
+        run: rm -rf vcluster-source bin .drift-reports drift-report.json
+
+      - name: Create pull request
+        if: steps.detect.outputs.any_drift == 'true'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ secrets.GH_ACCESS_TOKEN }}
+          commit-message: 'chore: update vcluster annotations reference with undocumented entries'
+          title: 'chore: update vcluster annotations reference with undocumented entries'
+          body: |
+            Automated update of vCluster annotation reference pages.
+
+            The nightly annotation drift check detected annotations in `vcluster`
+            that are not documented in the annotations reference.
+
+            Documentation entries were generated by Claude based on Go source code
+            context and comments. Please review for accuracy.
+
+            ---
+            *Generated by the check-annotation-drift workflow*
+          branch: chore/update-vcluster-annotations
+          delete-branch: true
+          labels: automation,annotation-drift

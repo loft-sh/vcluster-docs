@@ -1,0 +1,693 @@
+package main
+
+import (
+	"bufio"
+	"bytes"
+	"encoding/json"
+	"flag"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"sort"
+	"strings"
+	"time"
+)
+
+type RedirectHistory struct {
+	Version   string     `json:"version"`
+	Movements []Movement `json:"movements"`
+	Metadata  Metadata   `json:"metadata"`
+}
+
+type Movement struct {
+	From      string    `json:"from"`
+	To        string    `json:"to"`
+	Version   string    `json:"version"`
+	Timestamp time.Time `json:"timestamp"`
+}
+
+type Metadata struct {
+	Created     time.Time `json:"created"`
+	LastUpdated time.Time `json:"last_updated"`
+}
+
+type PathChanges struct {
+	Version string   `json:"version"`
+	Changes []Change `json:"changes"`
+}
+
+type Change struct {
+	Old string `json:"old"`
+	New string `json:"new"`
+}
+
+// FileMove represents a detected file move/rename from git
+type FileMove struct {
+	OldPath    string `json:"old_path"`
+	NewPath    string `json:"new_path"`
+	Similarity string `json:"similarity"`
+}
+
+type Resolver struct {
+	historyFile string
+	outputFile  string
+	history     *RedirectHistory
+}
+
+func NewResolver(historyFile, outputFile string) *Resolver {
+	return &Resolver{
+		historyFile: historyFile,
+		outputFile:  outputFile,
+	}
+}
+
+func (r *Resolver) LoadHistory() error {
+	if _, err := os.Stat(r.historyFile); os.IsNotExist(err) {
+		// Ensure directory exists
+		dir := filepath.Dir(r.historyFile)
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return fmt.Errorf("creating directory: %w", err)
+		}
+
+		r.history = &RedirectHistory{
+			Version:   "1.0",
+			Movements: []Movement{},
+			Metadata: Metadata{
+				Created:     time.Now().UTC(),
+				LastUpdated: time.Now().UTC(),
+			},
+		}
+		return r.SaveHistory()
+	}
+
+	data, err := os.ReadFile(r.historyFile)
+	if err != nil {
+		return fmt.Errorf("reading history file: %w", err)
+	}
+
+	r.history = &RedirectHistory{}
+	if err := json.Unmarshal(data, r.history); err != nil {
+		return fmt.Errorf("parsing history file: %w", err)
+	}
+
+	return nil
+}
+
+func (r *Resolver) SaveHistory() error {
+	r.history.Metadata.LastUpdated = time.Now().UTC()
+
+	data, err := json.MarshalIndent(r.history, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshaling history: %w", err)
+	}
+
+	if err := os.WriteFile(r.historyFile, data, 0644); err != nil {
+		return fmt.Errorf("writing history file: %w", err)
+	}
+
+	return nil
+}
+
+func (r *Resolver) BuildGraph() map[string]string {
+	graph := make(map[string]string)
+	for _, movement := range r.history.Movements {
+		if movement.From != "" && movement.To != "" {
+			graph[movement.From] = movement.To
+		}
+	}
+	return graph
+}
+
+func (r *Resolver) ResolveChain(start string, graph map[string]string) (string, bool) {
+	visited := make(map[string]bool)
+	current := start
+
+	for {
+		if visited[current] {
+			return "", true // Cycle detected
+		}
+
+		next, exists := graph[current]
+		if !exists {
+			return current, false
+		}
+
+		visited[current] = true
+		current = next
+	}
+}
+
+func (r *Resolver) ResolveAll() (map[string]string, []string) {
+	graph := r.BuildGraph()
+	resolved := make(map[string]string)
+	var cycles []string
+
+	for source := range graph {
+		target, hasCycle := r.ResolveChain(source, graph)
+		if hasCycle {
+			cycles = append(cycles, source)
+		} else if target != source {
+			resolved[source] = target
+		}
+	}
+
+	return resolved, cycles
+}
+
+func (r *Resolver) DetectConflicts() map[string][]string {
+	conflicts := make(map[string][]string)
+	targets := make(map[string]map[string]bool)
+
+	for _, movement := range r.history.Movements {
+		if targets[movement.From] == nil {
+			targets[movement.From] = make(map[string]bool)
+		}
+		targets[movement.From][movement.To] = true
+	}
+
+	for from, toMap := range targets {
+		if len(toMap) > 1 {
+			var toList []string
+			for to := range toMap {
+				toList = append(toList, to)
+			}
+			conflicts[from] = toList
+		}
+	}
+
+	return conflicts
+}
+
+func (r *Resolver) GenerateHurlTests(resolved map[string]string) error {
+	hurlFile := "hack/test-redirects.hurl"
+
+	var tests strings.Builder
+	tests.WriteString("# Auto-generated redirect tests\n")
+	tests.WriteString("# Generated: " + time.Now().UTC().Format("2006-01-02 15:04:05 UTC") + "\n")
+	tests.WriteString("# Usage: hurl --test --variable BASE_URL=https://www.vcluster.com hack/test-redirects.hurl\n")
+	tests.WriteString("#\n")
+	tests.WriteString("# Tests use fake version (99.0.0) to avoid versioned docs serving content.\n")
+	tests.WriteString("# Redirects are fallbacks - they only fire when no content exists at source path.\n\n")
+
+	var sortedKeys []string
+	for k := range resolved {
+		sortedKeys = append(sortedKeys, k)
+	}
+	sort.Strings(sortedKeys)
+
+	for _, from := range sortedKeys {
+		to := resolved[from]
+
+		// Skip any paths with underscores - Docusaurus doesn't generate pages from these
+		if strings.Contains(from, "_") || strings.Contains(to, "_") {
+			continue
+		}
+
+		basePath := getBasePath(from)
+		fromURL := stripProductPrefix(from)
+		toURL := stripProductPrefix(to)
+
+		// Use fake version 99.0.0 to test versioned wildcard redirects
+		// This avoids versioned docs serving content at old paths
+		tests.WriteString(fmt.Sprintf("# Test: %s -> %s\n", from, to))
+		tests.WriteString(fmt.Sprintf("GET {{BASE_URL}}%s/99.0.0/%s/\n", basePath, fromURL))
+		tests.WriteString("HTTP 301\n")
+		tests.WriteString("[Asserts]\n")
+		tests.WriteString(fmt.Sprintf("header \"Location\" contains \"%s/99.0.0/%s\"\n\n", basePath, toURL))
+	}
+
+	if err := os.WriteFile(hurlFile, []byte(tests.String()), 0644); err != nil {
+		return fmt.Errorf("writing hurl tests: %w", err)
+	}
+
+	return nil
+}
+
+func (r *Resolver) GenerateRedirects(resolved map[string]string) error {
+	// Read existing netlify.toml
+	existingContent, err := os.ReadFile(r.outputFile)
+	if err != nil {
+		return fmt.Errorf("reading netlify.toml: %w", err)
+	}
+
+	// Remove old auto-generated section if it exists
+	content := string(existingContent)
+	startMarker := "# AUTO-GENERATED REDIRECTS START"
+	endMarker := "# AUTO-GENERATED REDIRECTS END"
+
+	startIdx := strings.Index(content, startMarker)
+	endIdx := strings.Index(content, endMarker)
+
+	if startIdx != -1 && endIdx != -1 {
+		content = content[:startIdx] + content[endIdx+len(endMarker):]
+	}
+
+	// Prepare new redirects
+	var redirects strings.Builder
+	redirects.WriteString("\n")
+	redirects.WriteString("# AUTO-GENERATED REDIRECTS START\n")
+	redirects.WriteString("# Do not edit manually - generated by redirect-resolver\n")
+	redirects.WriteString(fmt.Sprintf("# Generated: %s\n", time.Now().UTC().Format("2006-01-02 15:04:05 UTC")))
+	redirects.WriteString("# All redirects are transitively resolved to prevent redirect chains\n\n")
+
+	var sortedKeys []string
+	for k := range resolved {
+		sortedKeys = append(sortedKeys, k)
+	}
+	sort.Strings(sortedKeys)
+
+	for _, from := range sortedKeys {
+		to := resolved[from]
+
+		// Skip any paths with underscores - Docusaurus doesn't generate pages from underscore-prefixed directories
+		if strings.Contains(from, "_") || strings.Contains(to, "_") {
+			continue
+		}
+
+		basePath := getBasePath(from)
+		fromURL := stripProductPrefix(from)
+		toURL := stripProductPrefix(to)
+
+		// Unversioned redirect (for /docs/vcluster/path or /docs/platform/path)
+		redirects.WriteString("[[redirects]]\n")
+		redirects.WriteString(fmt.Sprintf("  from = \"%s/%s\"\n", basePath, fromURL))
+		redirects.WriteString(fmt.Sprintf("  to = \"%s/%s\"\n", basePath, toURL))
+		redirects.WriteString("  status = 301\n\n")
+
+		// Versioned redirect with :splat (handles /docs/vcluster/0.30.0/path, /docs/platform/4.5.0/path, etc.)
+		redirects.WriteString("[[redirects]]\n")
+		redirects.WriteString(fmt.Sprintf("  from = \"%s/*/%s\"\n", basePath, fromURL))
+		redirects.WriteString(fmt.Sprintf("  to = \"%s/:splat/%s\"\n", basePath, toURL))
+		redirects.WriteString("  status = 301\n\n")
+	}
+
+	redirects.WriteString("# AUTO-GENERATED REDIRECTS END\n")
+
+	// Write back
+	if err := os.WriteFile(r.outputFile, []byte(content+redirects.String()), 0644); err != nil {
+		return fmt.Errorf("writing netlify.toml: %w", err)
+	}
+
+	return nil
+}
+
+func (r *Resolver) ImportChanges(changesFile string) error {
+	data, err := os.ReadFile(changesFile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			fmt.Printf("No path changes file found at: %s\n", changesFile)
+			return nil
+		}
+		return fmt.Errorf("reading changes file: %w", err)
+	}
+
+	var changes PathChanges
+	if err := json.Unmarshal(data, &changes); err != nil {
+		return fmt.Errorf("parsing changes file: %w", err)
+	}
+
+	// Build set of existing movements for deduplication
+	existing := make(map[string]bool)
+	for _, m := range r.history.Movements {
+		key := m.From + " -> " + m.To
+		existing[key] = true
+	}
+
+	for _, change := range changes.Changes {
+		if change.Old != "" && change.New != "" {
+			key := change.Old + " -> " + change.New
+			if existing[key] {
+				fmt.Printf("Skipping duplicate: %s -> %s\n", change.Old, change.New)
+				continue
+			}
+			r.history.Movements = append(r.history.Movements, Movement{
+				From:      change.Old,
+				To:        change.New,
+				Version:   changes.Version,
+				Timestamp: time.Now().UTC(),
+			})
+			existing[key] = true
+			fmt.Printf("Added movement: %s -> %s (version: %s)\n", change.Old, change.New, changes.Version)
+		}
+	}
+
+	return r.SaveHistory()
+}
+
+func (r *Resolver) Audit(w io.Writer) {
+	cycles := []string{}
+	graph := r.BuildGraph()
+
+	for source := range graph {
+		_, hasCycle := r.ResolveChain(source, graph)
+		if hasCycle {
+			cycles = append(cycles, source)
+		}
+	}
+
+	if len(cycles) > 0 {
+		fmt.Fprintf(w, "⚠️  Warning: Cycles detected involving: %s\n", strings.Join(cycles, ", "))
+	} else {
+		fmt.Fprintln(w, "✅ No cycles detected")
+	}
+
+	conflicts := r.DetectConflicts()
+	if len(conflicts) > 0 {
+		fmt.Fprintln(w, "⚠️  Warning: Conflicting redirects detected:")
+		for from, targets := range conflicts {
+			fmt.Fprintf(w, "  %s -> %s\n", from, strings.Join(targets, ", "))
+		}
+	} else {
+		fmt.Fprintln(w, "✅ No conflicts detected")
+	}
+}
+
+// getLatestVersionTag finds the latest version tag in the repository
+func getLatestVersionTag(repoPath string) (string, error) {
+	cmd := exec.Command("git", "tag", "--list", "v*", "--sort=-version:refname")
+	cmd.Dir = repoPath
+
+	output, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("failed to get git tags: %w", err)
+	}
+
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	if len(lines) == 0 || lines[0] == "" {
+		return "", fmt.Errorf("no version tags found")
+	}
+
+	return lines[0], nil
+}
+
+// getCurrentRef returns the current git ref (branch or HEAD)
+func getCurrentRef(repoPath string) (string, error) {
+	cmd := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD")
+	cmd.Dir = repoPath
+
+	output, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("failed to get current ref: %w", err)
+	}
+
+	ref := strings.TrimSpace(string(output))
+	if ref == "" {
+		return "", fmt.Errorf("could not determine current ref")
+	}
+
+	return ref, nil
+}
+
+// DetectFileMoves uses git to detect file moves/renames between two refs
+// This is the git-based detection approach as specified in CONTRACT.md
+func DetectFileMoves(repoPath, oldRef, newRef string) ([]FileMove, error) {
+	// Validate that this is a git repository
+	gitDir := filepath.Join(repoPath, ".git")
+	if _, err := os.Stat(gitDir); os.IsNotExist(err) {
+		return nil, fmt.Errorf("not a git repository: %s", repoPath)
+	}
+
+	// Execute git command to detect renames
+	// Use git diff with three dots to compare merge-base with HEAD
+	// This shows NET changes, not per-commit changes (avoids intermediate state issues)
+	// -M50 sets rename detection threshold to 50%
+	cmd := exec.Command("git", "diff",
+		"--name-status",
+		"-M50",
+		fmt.Sprintf("%s...%s", oldRef, newRef))
+	cmd.Dir = repoPath
+
+	output, err := cmd.Output()
+	if err != nil {
+		// If git command fails, return empty array (no moves detected)
+		// This handles cases like invalid refs gracefully
+		return []FileMove{}, nil
+	}
+
+	// Parse output
+	moves := []FileMove{}
+	scanner := bufio.NewScanner(bytes.NewReader(output))
+	for scanner.Scan() {
+		line := scanner.Text()
+
+		// Look for lines starting with R (rename)
+		if !strings.HasPrefix(line, "R") {
+			continue
+		}
+
+		// Parse: R<similarity>\t<old>\t<new>
+		parts := strings.Split(line, "\t")
+		if len(parts) != 3 {
+			continue
+		}
+
+		// Extract similarity percentage (e.g., "R100" -> "100")
+		similarity := strings.TrimPrefix(parts[0], "R")
+
+		moves = append(moves, FileMove{
+			OldPath:    parts[1],
+			NewPath:    parts[2],
+			Similarity: similarity,
+		})
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("scanning git output: %w", err)
+	}
+
+	return moves, nil
+}
+
+func detectPathChanges(baseDir string) (*PathChanges, error) {
+	// Get latest version tag (e.g., v0.27.0)
+	// If no tags exist, fall back to comparing with origin/main
+	latestTag, err := getLatestVersionTag(baseDir)
+	var version string
+	var baseRef string
+
+	if err != nil {
+		fmt.Printf("No version tags found, using origin/main as base\n")
+		baseRef = "origin/main"
+		version = "latest"
+	} else {
+		baseRef = latestTag
+		version = strings.TrimPrefix(latestTag, "v")
+	}
+
+	// Get current ref (branch or HEAD)
+	currentRef, err := getCurrentRef(baseDir)
+	if err != nil {
+		return nil, fmt.Errorf("getting current ref: %w", err)
+	}
+
+	// Use git to detect file moves
+	moves, err := DetectFileMoves(baseDir, baseRef, currentRef)
+	if err != nil {
+		return nil, fmt.Errorf("detecting file moves: %w", err)
+	}
+
+	changes := &PathChanges{
+		Version: version,
+		Changes: []Change{},
+	}
+
+	// Process detected moves and filter for vcluster docs
+	for _, move := range moves {
+		// Only process markdown files in vcluster docs
+		if !strings.HasSuffix(move.OldPath, ".md") && !strings.HasSuffix(move.OldPath, ".mdx") {
+			continue
+		}
+
+		// Extract doc paths (remove vcluster/ or vcluster_versioned_docs/version-X/ prefix)
+		oldPath := extractDocPath(move.OldPath)
+		newPath := extractDocPath(move.NewPath)
+
+		// Skip if not in vcluster docs
+		if oldPath == "" || newPath == "" {
+			continue
+		}
+
+		// Never create redirects for underscore directories - Docusaurus doesn't generate pages from these
+		if strings.Contains(oldPath, "/_") || strings.Contains(newPath, "/_") {
+			continue
+		}
+
+		// Strip file extensions (.md, .mdx)
+		oldPath = strings.TrimSuffix(oldPath, filepath.Ext(oldPath))
+		newPath = strings.TrimSuffix(newPath, filepath.Ext(newPath))
+
+		// Validate destination file exists (handles consolidation where git similarity is wrong)
+		destExists := false
+		for _, ext := range []string{".md", ".mdx"} {
+			// Check in main docs folder (relative to baseDir)
+			checkPath := filepath.Join(baseDir, move.NewPath)
+			if _, err := os.Stat(checkPath); err == nil {
+				destExists = true
+				break
+			}
+			// Also check with different extension
+			base := strings.TrimSuffix(move.NewPath, filepath.Ext(move.NewPath))
+			if _, err := os.Stat(filepath.Join(baseDir, base+ext)); err == nil {
+				destExists = true
+				break
+			}
+		}
+
+		if !destExists {
+			fmt.Printf("Skipping: %s -> %s (destination doesn't exist - likely consolidation)\n", oldPath, newPath)
+			continue
+		}
+
+		changes.Changes = append(changes.Changes, Change{
+			Old: oldPath,
+			New: newPath,
+		})
+		fmt.Printf("Found: %s -> %s (similarity: %s%%)\n", oldPath, newPath, move.Similarity)
+	}
+
+	return changes, nil
+}
+
+// extractDocPath extracts the documentation path from a full file path
+// For platform paths, returns with "platform/" prefix to distinguish from vcluster
+// Examples:
+//
+//	vcluster/deploy/security/air-gapped.mdx -> deploy/security/air-gapped.mdx
+//	vcluster_versioned_docs/version-0.27.0/configure/README.mdx -> configure/README.mdx
+//	platform/configure/config.mdx -> platform/configure/config.mdx
+//	platform_versioned_docs/version-4.5.0/configure/config.mdx -> platform/configure/config.mdx
+func extractDocPath(fullPath string) string {
+	// Try vcluster/ prefix
+	if strings.HasPrefix(fullPath, "vcluster/") {
+		return strings.TrimPrefix(fullPath, "vcluster/")
+	}
+
+	// Try vcluster_versioned_docs/version-X/ prefix
+	if strings.HasPrefix(fullPath, "vcluster_versioned_docs/") {
+		parts := strings.SplitN(fullPath, "/", 3)
+		if len(parts) == 3 {
+			return parts[2]
+		}
+	}
+
+	// Try platform/ prefix - keep "platform/" in result to distinguish
+	if strings.HasPrefix(fullPath, "platform/") {
+		return fullPath
+	}
+
+	// Try platform_versioned_docs/version-X/ prefix
+	if strings.HasPrefix(fullPath, "platform_versioned_docs/") {
+		parts := strings.SplitN(fullPath, "/", 3)
+		if len(parts) == 3 {
+			return "platform/" + parts[2]
+		}
+	}
+
+	return ""
+}
+
+// getBasePath returns the docs base path for a given internal path
+func getBasePath(path string) string {
+	if strings.HasPrefix(path, "platform/") {
+		return "/docs/platform"
+	}
+	return "/docs/vcluster"
+}
+
+// stripProductPrefix removes platform/ prefix if present for URL generation
+func stripProductPrefix(path string) string {
+	return strings.TrimPrefix(path, "platform/")
+}
+
+func main() {
+	var (
+		mode        string
+		historyFile string
+		outputFile  string
+		changesFile string
+		baseDir     string
+	)
+
+	flag.StringVar(&mode, "mode", "update", "Operation mode: update, audit, resolve, detect")
+	flag.StringVar(&historyFile, "history", "hack/redirect-history.json", "Path to redirect history JSON file")
+	flag.StringVar(&outputFile, "output", "netlify.toml", "Output file for redirects")
+	flag.StringVar(&changesFile, "changes", "hack/path-changes.json", "Path changes file")
+	flag.StringVar(&baseDir, "base", ".", "Base directory for detecting changes")
+	flag.Parse()
+
+	resolver := NewResolver(historyFile, outputFile)
+
+	if mode != "detect" {
+		if err := resolver.LoadHistory(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error loading history: %v\n", err)
+			os.Exit(1)
+		}
+	}
+
+	switch mode {
+	case "update":
+		fmt.Println("=== Update Mode ===")
+		if err := resolver.ImportChanges(changesFile); err != nil {
+			fmt.Fprintf(os.Stderr, "Error importing changes: %v\n", err)
+			os.Exit(1)
+		}
+		resolver.Audit(os.Stdout)
+		resolved, cycles := resolver.ResolveAll()
+		fmt.Printf("Resolved %d redirects, %d cycles detected\n", len(resolved), len(cycles))
+		if err := resolver.GenerateRedirects(resolved); err != nil {
+			fmt.Fprintf(os.Stderr, "Error generating redirects: %v\n", err)
+			os.Exit(1)
+		}
+		if err := resolver.GenerateHurlTests(resolved); err != nil {
+			fmt.Fprintf(os.Stderr, "Error generating hurl tests: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("✅ Generated redirects in %s and tests in hack/test-redirects.hurl\n", outputFile)
+
+	case "audit":
+		fmt.Println("=== Audit Mode ===")
+		resolver.Audit(os.Stdout)
+
+	case "resolve":
+		fmt.Println("=== Resolve Mode ===")
+		resolved, cycles := resolver.ResolveAll()
+		fmt.Printf("Resolved %d redirects, %d cycles detected\n", len(resolved), len(cycles))
+		if err := resolver.GenerateRedirects(resolved); err != nil {
+			fmt.Fprintf(os.Stderr, "Error generating redirects: %v\n", err)
+			os.Exit(1)
+		}
+		if err := resolver.GenerateHurlTests(resolved); err != nil {
+			fmt.Fprintf(os.Stderr, "Error generating hurl tests: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("✅ Generated redirects in %s and tests in hack/test-redirects.hurl\n", outputFile)
+
+	case "detect":
+		fmt.Println("=== Detect Mode ===")
+		changes, err := detectPathChanges(baseDir)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error detecting changes: %v\n", err)
+			os.Exit(1)
+		}
+
+		data, err := json.MarshalIndent(changes, "", "  ")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error marshaling changes: %v\n", err)
+			os.Exit(1)
+		}
+
+		if err := os.WriteFile(changesFile, data, 0644); err != nil {
+			fmt.Fprintf(os.Stderr, "Error writing changes file: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("Changes saved to %s\n", changesFile)
+
+	default:
+		fmt.Fprintf(os.Stderr, "Unknown mode: %s\n", mode)
+		os.Exit(1)
+	}
+
+	fmt.Println("Done!")
+}

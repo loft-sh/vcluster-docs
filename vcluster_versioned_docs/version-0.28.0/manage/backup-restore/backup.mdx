@@ -1,0 +1,218 @@
+---
+title: Create snapshots
+sidebar_label: Create Snapshots
+sidebar_position: 1
+sidebar_class_name: host-nodes private-nodes
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+import TenancySupport from '../../_fragments/tenancy-support.mdx';
+
+<TenancySupport hostNodes="true" privateNodes="true" />
+
+There are multiple ways to back up and restore a virtual cluster. vCluster provides a built-in method to create and restore snapshots using its CLI.
+
+:::warning
+If you use an external database, such as MySQL or PostgreSQL, that does **not** run in the same namespace as vCluster, you must create a separate backup for the datastore. For more information, refer to the relevant database documentation.  
+:::
+
+## Create a snapshot
+
+We recommend using the vCluster CLI to back up the etcd datastore. When you run a backup, vCluster creates a temporary pod to save the snapshot at the specified location and automatically determines the configured backing store. The snapshot includes:
+
+- Backing store data (for example, etcd or SQLite)
+- vCluster Helm release information
+- vCluster configuration (for example, `vcluster.yaml`)
+
+When creating a snapshot, the command creates a new pod, using the vCluster image, to back up the backing store. To run the snapshot process inside an existing pod using `kubectl exec`, add the `--pod-exec` flag.
+
+:::info
+The vCluster CLI backup method currently does not support backing up persistent volumes. To back up persistent volumes, use the [Velero backup method](./velero).
+:::
+
+### Snapshot URL
+
+vCluster uses a snapshot URL to save the snapshot to a specific location. The snapshot URL contains the following information:
+
+| Parameter          | Description | Example |
+|--------------------|-------------|---------|
+| Protocol           | Defines the storage type for the snapshot | `oci`, `s3`, `container` |
+| Storage location   | Specifies where to save the snapshot | `oci://ghcr.io/my-user/my-repo:my-tag`, `s3://my-s3-bucket/my-snapshot-key`, `container:///data/my-snapshot.tar.gz` |
+| Optional flags     | Additional options for snapshot storage | `skip-client-credentials=true` |
+
+### Supported protocols
+
+The following protocols are supported for storing snapshots:
+
+- [`oci`](#store-snapshots-in-oci-image-registries) – Stores snapshots in an OCI image registry, such as Docker Hub or GHCR.
+- [`s3`](#store-snapshots-in-s3-buckets) – Saves snapshots to an S3-compatible bucket, such as AWS S3 or MinIO.
+- [`container`](#store-snapshots-in-containers) – Stores snapshots as a local file inside a vCluster container or another persistent volume claim (PVC).
+
+For example, the following snapshot URL saves the snapshot to an OCI image registry:
+
+```bash title="Snapshot and push to an OCI image registry"
+vcluster snapshot my-vcluster "oci://ghcr.io/my-user/my-repo:my-tag"
+```
+
+#### Store snapshots in OCI image registries
+
+You can save snapshots to OCI image registries. You can authenticate in two ways: by using locally stored OCI credentials or by passing credentials directly in the snapshot URL.
+
+To authenticate with local credentials, log in to your OCI registry and create the snapshot:
+
+```bash title="Authenticate with local OCI credentials and create a snapshot"
+# Log in to the OCI registry using a password access token.
+echo $PASSWORD_ACCESS_TOKEN | docker login ghcr.io -u $USERNAME --password-stdin
+
+# Create a snapshot and push it to an OCI image registry.
+vcluster snapshot my-vcluster "oci://ghcr.io/my-user/my-repo:my-tag"
+```
+
+Alternatively, you can pass authentication credentials directly in the snapshot URL and create the snapshot. The following options are supported to configure authentication when passing credentials directly in the URL:
+
+| Parameter | Description | Required |
+|-----------|-------------|----------|
+| `username` | Username for authenticating with the OCI registry | Yes, when not using local credentials |
+| `password` | Base64-encoded password for authenticating with the OCI registry | Yes, when not using local credentials |
+| `skip-client-credentials` | When set to `true`, ignores local Docker credentials | No, defaults to `false` |
+
+
+```bash title="Pass OCI credentials directly in the snapshot URL"
+# Pass authentication credentials directly in the URL and create a snapshot.
+export OCI_USERNAME=my-username
+export OCI_PASSWORD=$(echo -n "my-password" | base64)
+vcluster snapshot my-vcluster "oci://ghcr.io/my-user/my-repo:my-tag?username=$OCI_USERNAME&password=$OCI_PASSWORD&skip-client-credentials=true"
+```
+
+#### Store snapshots in S3 buckets
+
+Store snapshots in an S3-compatible bucket using the `s3` protocol. You can authenticate in two ways: by using local environment credentials or by passing credentials directly in the URL.
+
+To use local environment credentials, log in to AWS CLI, then create and save the snapshot:
+
+```bash title="Create and store a snapshot in an S3 bucket using AWS CLI credentials"
+# Check if you are logged in.
+aws sts get-caller-identity
+
+# Create a snapshot and store it in an S3 bucket.
+vcluster snapshot my-vcluster "s3://my-s3-bucket/my-bucket-key"
+```
+
+Alternatively, you can pass options directly in the snapshot URL. The following options are supported:
+
+| Flag                        | Description | Required | 
+|-----------------------------|-------------|---|
+| `access-key-id`             | Base64-encoded S3 access key ID for authentication | Yes, when not using local credentials |
+| `secret-access-key`         | Base64-encoded S3 secret access key for authentication | Yes, when not using local credentials |
+| `session-token`             | Base64-encoded temporary session token for authentication | Yes, when not using local credentials |
+| `region`                    | Region of the S3-compatible bucket | No |
+| `profile`                   | AWS profile to use for authentication | No |
+| `skip-client-credentials`   | Skips use of local credentials for authentication | No, defaults to `false` |
+| `server-side-encryption`    | Server-side encryption method (`AES256` for SSE-S3, `aws:kms` for SSE-KMS) | No |
+| `kms-key-id`               | KMS key ID for SSE-KMS encryption | No |
+
+
+Run the following command to create a snapshot and store it in an S3-compatible bucket, such as AWS S3 or MinIO:
+
+<Tabs
+  defaultValue="macos"
+  values={[
+    {label: 'macOS', value: 'macos'},
+    {label: 'Linux', value: 'linux'},
+  ]}>
+
+<TabItem value="macos">
+
+```bash title="Pass S3 credentials directly in the URL to create a snapshot"
+# Read the AWS credentials from files and encode them with base64
+# This allows them to be safely included in the S3 URL
+export ACCESS_KEY_ID=$(cat my-access-key-id.txt | base64)
+export SECRET_ACCESS_KEY=$(cat my-secret-access-key.txt | base64)
+export SESSION_TOKEN=$(cat my-session-token.txt | base64)
+
+vcluster snapshot my-vcluster "s3://my-s3-bucket/my-bucket-key?access-key-id=$ACCESS_KEY_ID&secret-access-key=$SECRET_ACCESS_KEY&session-token=$SESSION_TOKEN"
+```
+
+</TabItem>
+
+<TabItem value="linux">
+
+```bash title="Pass S3 credentials directly in the URL to create a snapshot"
+# Read the AWS credentials from files and encode them with base64
+# On Linux, the -w 0 flag prevents line wrapping of the encoded output
+export ACCESS_KEY_ID=$(cat my-access-key-id.txt | base64 -w 0)
+export SECRET_ACCESS_KEY=$(cat my-secret-access-key.txt | base64 -w 0)
+export SESSION_TOKEN=$(cat my-session-token.txt | base64 -w 0)
+
+vcluster snapshot my-vcluster "s3://my-s3-bucket/my-bucket-key?access-key-id=$ACCESS_KEY_ID&secret-access-key=$SECRET_ACCESS_KEY&session-token=$SESSION_TOKEN"
+```
+
+</TabItem>
+</Tabs>
+
+##### S3 encryption support {#s3-encryption}
+
+vCluster supports server-side encryption for S3 snapshots to meet security requirements. See the [CLI reference](/docs/vcluster/cli/vcluster_snapshot) for all available flags.
+
+**SSE-S3 (AES256)**
+
+```bash
+vcluster snapshot my-vcluster "s3://my-bucket/key" --server-side-encryption AES256
+```
+
+**SSE-KMS**
+
+```bash
+vcluster snapshot my-vcluster "s3://my-bucket/key" --kms-key-id "12345678-1234-1234-1234-123456789012"
+```
+
+**Example: Bucket policy requiring encryption**
+
+```json title="Enforce SSE-S3 encryption"
+{
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Sid": "DenyUnencryptedUploads",
+    "Effect": "Deny",
+    "Principal": "*",
+    "Action": "s3:PutObject",
+    "Resource": "arn:aws:s3:::my-bucket/*",
+    "Condition": {
+      "StringNotEquals": {
+        "s3:x-amz-server-side-encryption": "AES256"
+      }
+    }
+  }]
+}
+```
+
+#### Store snapshots in containers
+
+Use the `container` protocol to save snapshots as local files inside a vCluster container or another PVC in the same namespace as vCluster.
+Run the following command to create a snapshot and store it in the specified path inside a container:
+
+```bash title="Create snapshots inside a vCluster container or PVC"
+# Create a snapshot to local vCluster PVC (if using embedded storage).
+vcluster snapshot my-vcluster "container:///data/my-snapshot.tar.gz"
+
+# Create a snapshot to another PVC,needs to be in the same namespace as vCluster.
+vcluster snapshot my-vcluster "container:///my-pvc/my-snapshot.tar.gz" --pod-mount "pvc:my-pvc:/my-pvc"
+```
+
+## Limitations
+
+When taking snapshots and restoring virtual clusters, there are limitations: 
+
+**Virtual clusters with PVs or PVCs**
+- Snapshots do not include persistent volumes (PVs) or persistent volume claims (PVCs).
+
+**Sleeping virtual clusters**
+- Snapshots require a running vCluster control plane and do not work with sleeping virtual clusters.
+
+**Virtual clusters using the k0s distro**
+- Use the `--pod-exec` flag to take a snapshot of a k0s virtual cluster.
+- k0s virtual clusters do not support restore or clone operations. Migrate them to k8s instead.
+
+**Virtual clusters using an external database**
+- Virtual clusters with an external database handle backup and restore outside of vCluster. A database administrator must back up or restore the external database according to the database documentation. Avoid using the vCluster CLI backup and restore commands for clusters with an external database.

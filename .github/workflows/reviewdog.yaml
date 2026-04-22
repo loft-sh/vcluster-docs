@@ -1,0 +1,108 @@
+name: Lint
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "platform/**/*.mdx"
+      - "platform/**/*.md"
+      - "vcluster/**/*.mdx"
+      - "vcluster/**/*.md"
+      - "vcluster_versioned_docs/**/*.mdx"
+      - "vcluster_versioned_docs/**/*.md"
+      - "platform_versioned_docs/**/*.mdx"
+      - "platform_versioned_docs/**/*.md"
+      - .github/workflows/reviewdog.yaml
+      - "*.md"
+
+permissions:
+  pull-requests: write
+
+jobs:
+  markdownlint:
+    name: runner / markdownlint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: markdownlint
+        uses: reviewdog/action-markdownlint@v0
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          reporter: github-pr-review
+
+  misspell:
+    name: runner / misspell
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+      - name: Run Misspell with Reviewdog
+        uses: reviewdog/action-misspell@v1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          reporter: github-pr-review
+          path: |
+            platform
+            vcluster
+            platform_versioned_docs
+            vcluster_versioned_docs
+            docs
+
+  vale:
+    name: runner / vale
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+      - name: Get changed files
+        id: changed-files
+        uses: tj-actions/changed-files@v45
+        with:
+          base_sha: ${{ github.event.pull_request.base.sha }}
+          sha: ${{ github.event.pull_request.head.sha }}
+          separator: ","
+          files_ignore: |
+            vcluster_versioned_docs/**/cli/*.md
+            vcluster_versioned_docs/**/cli/*.mdx
+            vcluster/**/cli/*.md
+            vcluster/**/cli/*.mdx
+            vendor/**/*.md
+            vendor/**/*.mdx
+            "*.md"
+          files: |
+            platform/**/*.mdx
+            platform/**/*.md
+            platform_versioned_docs/**/*.mdx
+            platform_versioned_docs/**/*.md
+            vcluster/**/*.mdx
+            vcluster/**/*.md
+            vcluster_versioned_docs/**/*.mdx
+            vcluster_versioned_docs/**/*.md
+      - name: Install venv for vale on ubuntu latest
+        if: steps.changed-files.outputs.all_changed_files != ''
+        run: |
+          venv="$HOME/.local/share/venv"
+          python3 -m venv "$venv"
+          echo "$venv/bin" >> $GITHUB_PATH
+      - name: Run Vale with Reviewdog
+        id: vale
+        uses: errata-ai/vale-action@reviewdog
+        if: steps.changed-files.outputs.all_changed_files != ''
+        continue-on-error: true
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fail_on_error: true
+          reporter: github-pr-review
+          version: 3.13.0
+          files: ${{ steps.changed-files.outputs.all_changed_files }}
+          separator: ","
+          filter_mode: added
+      - name: Fallback vale check for large diffs
+        if: steps.vale.outcome == 'failure'
+        run: |
+          # reviewdog fails on PRs with >300 changed files because the GitHub
+          # API refuses to return the diff. When that happens, run vale directly
+          # to ensure no error-level issues exist in the changed files.
+          IFS=',' read -ra FILES <<< "${{ steps.changed-files.outputs.all_changed_files }}"
+          /home/runner/vale --minAlertLevel error "${FILES[@]}"

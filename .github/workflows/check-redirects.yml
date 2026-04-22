@@ -1,0 +1,138 @@
+name: Check Redirects
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "vcluster/**/*.mdx"
+      - "vcluster/**/*.md"
+      - "platform/**/*.mdx"
+      - "platform/**/*.md"
+      - "netlify.toml"
+      - "hack/check-redirects.sh"
+      - "hack/redirect-allowlist.txt"
+
+permissions:
+  pull-requests: write
+
+jobs:
+  check-redirects:
+    name: Validate redirects
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Check for skip label
+        id: skip
+        run: |
+          if gh pr view "$PR_NUMBER" \
+               --repo "$GITHUB_REPOSITORY" \
+               --json labels --jq '.labels[].name' 2>/dev/null \
+             | grep -qxF "redirect-check-skip"; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::warning::Redirect check skipped via 'redirect-check-skip' label"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+
+      - name: Check redirects
+        id: check
+        if: steps.skip.outputs.skip != 'true'
+        run: |
+          set +e
+          output=$(bash hack/check-redirects.sh pr 2>&1)
+          exit_code=$?
+          set -e
+
+          echo "$output"
+          echo "$output" > /tmp/redirect-check-output.txt
+
+          exit $exit_code
+
+      - name: Comment on PR
+        if: failure() && steps.skip.outputs.skip != 'true'
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea  # v7.0.1
+        with:
+          script: |
+            const fs = require('fs');
+            const output = fs.readFileSync('/tmp/redirect-check-output.txt', 'utf8');
+
+            // Hidden marker survives both fail→pass→fail cycles
+            const MARKER = '<!-- redirect-check-comment -->';
+
+            const body = `${MARKER}
+            ## :warning: Redirect check failed
+
+            <details>
+            <summary>Click to see error details</summary>
+
+            \`\`\`
+            ${output}
+            \`\`\`
+
+            </details>
+
+            **How to fix:**
+            \`\`\`bash
+            npm run fix-redirects    # auto-generate missing redirects
+            # Review the changes in netlify.toml (search for TODO)
+            git add netlify.toml
+            \`\`\`
+
+            **Break-glass:** Add the \`redirect-check-skip\` label to bypass this check.
+            Document the reason in \`hack/redirect-allowlist.txt\` before merging.
+            `;
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            const existing = comments.find(c =>
+              c.user.type === 'Bot' && c.body.includes(MARKER)
+            );
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }
+
+      - name: Resolve old failure comment
+        if: success() && steps.skip.outputs.skip != 'true'
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea  # v7.0.1
+        with:
+          script: |
+            const MARKER = '<!-- redirect-check-comment -->';
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            const existing = comments.find(c =>
+              c.user.type === 'Bot' && c.body.includes(MARKER)
+            );
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body: `${MARKER}\n## :white_check_mark: Redirect check passed\n\n~~Previous failure resolved.~~`,
+              });
+            }

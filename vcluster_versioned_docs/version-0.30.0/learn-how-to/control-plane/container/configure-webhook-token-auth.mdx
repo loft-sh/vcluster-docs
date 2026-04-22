@@ -1,0 +1,271 @@
+---
+title: Configure webhook token authentication
+sidebar_label: Configure webhook token auth
+sidebar_position: 10
+description: Configure the vCluster API server to use webhook token authentication for external identity providers
+---
+
+import Flow, { Step } from '@site/src/components/Flow';
+import TenancySupport from '../../../_fragments/tenancy-support.mdx';
+
+<TenancySupport hostNodes="true" privateNodes="true" standalone="true"/>
+
+This guide shows how to configure the vCluster API server to use [webhook token authentication](https://kubernetes.io/docs/reference/access-authn-authz/authentication/#webhook-token-authentication), enabling integration with external identity providers and custom authentication systems.
+
+## Overview
+
+Webhook token authentication allows the Kubernetes API server to delegate token validation to an external service. When the API server receives a request with a bearer token it does not recognize, it sends a `TokenReview` request to the configured webhook service, which validates the token and returns user identity information.
+
+Use cases for webhook token authentication include:
+
+- Integrating with enterprise identity providers (LDAP, SAML, OAuth2/OIDC) that issue custom tokens
+- Implementing centralized authentication across multiple clusters
+- Supporting custom token formats with specific expiration or validation requirements
+- Enabling authentication through external systems like the Cluster API Provider for vCluster (CAPIVC)
+
+## Prerequisites
+
+Before you begin, ensure you have:
+
+- A running vCluster using the K8s distribution (`controlPlane.distro.k8s.enabled: true`)
+- An external webhook authentication service accessible from the vCluster
+- TLS certificates for secure communication between the API server and webhook service
+
+:::note K8s distribution required
+Webhook token authentication requires the K8s distribution because it uses kube-apiserver, which supports the `--authentication-token-webhook-config-file` flag. This configuration is not available with the K3s or K0s distributions.
+:::
+
+## Configure webhook token authentication
+
+<Flow>
+<Step>
+
+Create a kubeconfig-style file that describes how to connect to your webhook authentication service:
+
+```yaml title="webhook-config.yaml"
+apiVersion: v1
+kind: Config
+clusters:
+  - name: authn-webhook
+    cluster:
+      # CA certificate for verifying the webhook service
+      certificate-authority: /etc/kubernetes/pki/webhook-ca.crt
+      # URL of your webhook authentication service
+      server: https://auth-service.example.com/authenticate
+users:
+  - name: authn-webhook-client
+    user:
+      # Client certificate for mutual TLS (optional)
+      client-certificate: /etc/kubernetes/pki/webhook-client.crt
+      client-key: /etc/kubernetes/pki/webhook-client.key
+contexts:
+  - context:
+      cluster: authn-webhook
+      user: authn-webhook-client
+    name: authn-webhook
+current-context: authn-webhook
+```
+
+</Step>
+<Step>
+
+Create a ConfigMap in the vCluster namespace containing the webhook configuration:
+
+```bash
+kubectl create configmap webhook-token-auth-config \
+  --from-file=webhook-config.yaml \
+  -n vcluster-my-vcluster
+```
+
+If your webhook requires TLS certificates, create a Secret:
+
+```bash
+kubectl create secret generic webhook-auth-certs \
+  --from-file=webhook-ca.crt=/path/to/ca.crt \
+  --from-file=webhook-client.crt=/path/to/client.crt \
+  --from-file=webhook-client.key=/path/to/client.key \
+  -n vcluster-my-vcluster
+```
+
+</Step>
+<Step>
+
+Configure vCluster to pass the webhook configuration to the API server:
+
+```yaml title="vcluster.yaml"
+controlPlane:
+  distro:
+    k8s:
+      enabled: true
+      apiServer:
+        extraArgs:
+          # Point to the webhook configuration file
+          - --authentication-token-webhook-config-file=/etc/kubernetes/webhook/webhook-config.yaml
+          # Cache successful authentications for 2 minutes (default)
+          - --authentication-token-webhook-cache-ttl=2m
+  statefulSet:
+    persistence:
+      addVolumes:
+        # Mount the webhook config ConfigMap
+        - name: webhook-config
+          configMap:
+            name: webhook-token-auth-config
+        # Mount TLS certificates if needed
+        - name: webhook-certs
+          secret:
+            secretName: webhook-auth-certs
+      addVolumeMounts:
+        - name: webhook-config
+          mountPath: /etc/kubernetes/webhook
+        - name: webhook-certs
+          mountPath: /etc/kubernetes/pki
+```
+
+</Step>
+<Step>
+
+Create or update your vCluster with the configuration:
+
+```bash
+vcluster create my-vcluster -f vcluster.yaml --connect=false
+```
+
+</Step>
+<Step>
+
+Verify the API server is using the webhook configuration:
+
+```bash
+kubectl exec -n vcluster-my-vcluster my-vcluster-0 -c syncer -- \
+  ps -ef | grep authentication-token-webhook
+```
+
+You should see `--authentication-token-webhook-config-file` in the kube-apiserver arguments.
+
+</Step>
+</Flow>
+
+## Configuration options
+
+### Cache time-to-live
+
+The `--authentication-token-webhook-cache-ttl` flag controls how long successful authentication responses are cached. The default is 2 minutes. Adjust this based on your security requirements:
+
+```yaml title="vcluster.yaml"
+controlPlane:
+  distro:
+    k8s:
+      apiServer:
+        extraArgs:
+          - --authentication-token-webhook-config-file=/etc/kubernetes/webhook/webhook-config.yaml
+          # Shorter cache for stricter security
+          - --authentication-token-webhook-cache-ttl=30s
+```
+
+### Webhook service implementation
+
+Your webhook service must implement the Kubernetes `TokenReview` API. When the API server receives an unrecognized token, it sends a POST request with a `TokenReview` object:
+
+```json
+{
+  "apiVersion": "authentication.k8s.io/v1",
+  "kind": "TokenReview",
+  "spec": {
+    "token": "<bearer-token>"
+  }
+}
+```
+
+The webhook must respond with the authentication result:
+
+```json
+{
+  "apiVersion": "authentication.k8s.io/v1",
+  "kind": "TokenReview",
+  "status": {
+    "authenticated": true,
+    "user": {
+      "username": "user@example.com",
+      "uid": "12345",
+      "groups": ["developers", "team-a"]
+    }
+  }
+}
+```
+
+## Use with CAPIVC
+
+When using vCluster with [Cluster API Provider for vCluster (CAPIVC)](https://github.com/loft-sh/cluster-api-provider-vcluster), you can configure webhook token authentication through the `VCLUSTER_YAML` environment variable:
+
+```bash
+cat > /tmp/values.yaml <<EOF
+controlPlane:
+  distro:
+    k8s:
+      enabled: true
+      apiServer:
+        extraArgs:
+          - --authentication-token-webhook-config-file=/etc/kubernetes/webhook/webhook-config.yaml
+  statefulSet:
+    persistence:
+      addVolumes:
+        - name: webhook-config
+          configMap:
+            name: webhook-token-auth-config
+      addVolumeMounts:
+        - name: webhook-config
+          mountPath: /etc/kubernetes/webhook
+EOF
+
+export VCLUSTER_YAML=$(cat /tmp/values.yaml | awk '{printf "%s\\n", $0}')
+```
+
+The ConfigMap containing the webhook configuration must exist in the namespace where CAPIVC creates the vCluster.
+
+## Troubleshoot
+
+### Authentication failures
+
+If authentication fails:
+
+1. Check the API server logs for webhook errors:
+
+   ```bash
+   kubectl logs -n vcluster-my-vcluster my-vcluster-0 -c syncer | grep -i auth
+   ```
+
+2. Verify the webhook service is accessible from the vCluster pod:
+
+   ```bash
+   kubectl exec -n vcluster-my-vcluster my-vcluster-0 -c syncer -- \
+     curl -k https://auth-service.example.com/health
+   ```
+
+3. Ensure the webhook configuration file is correctly mounted:
+
+   ```bash
+   kubectl exec -n vcluster-my-vcluster my-vcluster-0 -c syncer -- \
+     cat /etc/kubernetes/webhook/webhook-config.yaml
+   ```
+
+### Certificate issues
+
+If you encounter TLS certificate errors:
+
+- Verify the CA certificate is correct and trusted
+- Check that certificate paths in the webhook config match the mount paths
+- Ensure certificates have not expired
+
+### Network connectivity
+
+The webhook service must be reachable from the vCluster pod. If your service is in a different namespace or cluster:
+
+- Use the fully qualified domain name (FQDN) for the service
+- Ensure network policies allow traffic from the vCluster namespace
+- Consider using a service mesh or ingress for external services
+
+## Related topics
+
+- [K8s distribution](../../../configure/vcluster-yaml/control-plane/components/distro/k8s.mdx)
+- [Hardening guide - authentication](../../../deploy/control-plane/container/security/hardening-guide/host-nodes/3-control-plane.mdx)
+- [Kubernetes webhook token authentication](https://kubernetes.io/docs/reference/access-authn-authz/authentication/#webhook-token-authentication)

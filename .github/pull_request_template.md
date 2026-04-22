@@ -1,0 +1,26 @@
+<!-- 
+When changing something in a file, our linting system `vale`, will treat the whole file as changed and will lint it. 
+In this case, follow the instructions from vale and fix the linting issues. 
+If there are too many errors, ask the tech writer in PR comment to fix the issues.
+Read more about working with vale in the contribution guidelines: https://github.com/loft-sh/vcluster-docs/blob/main/CONTRIBUTING.md#style-guide-automation-style-guide-automation
+-->
+# Content Description
+<!-- Brief overview of changes (1-2 sentences) -->
+
+
+## Preview Link 
+<!-- The preview link or links to the documents-->
+
+
+## Internal Reference
+<!--Add the GitHub or Linear ticket reference-->
+Closes DOC-
+
+
+AI review: mention `@claude` in a comment to request a review or changes. See [CONTRIBUTING.md](https://github.com/loft-sh/vcluster-docs/blob/main/CONTRIBUTING.md#ai-assisted-pr-review) for available commands.
+
+> FORK LIMITATION: `@claude` does not work on pull requests opened from forks. GitHub Actions cannot access the required secrets for fork-originated PRs. To use AI review, push your branch directly to this repository.
+
+<!-- Do not change the line below -->
+@netlify /docs
+

@@ -1,0 +1,107 @@
+import ProAdmonition from '../../_partials/admonitions/pro-admonition.mdx'
+
+<ProAdmonition/>
+
+When using [private nodes](../../deploy/worker-nodes/private-nodes/README.mdx), virtual clusters have dedicated worker nodes that are separate from the host cluster. For CI/CD workflows, combine private nodes with [auto-nodes](../../configure/vcluster-yaml/private-nodes/auto-nodes.mdx) so that worker nodes are automatically provisioned when the virtual cluster is created and cleaned up when deleted.
+
+### Prerequisites
+
+Before using private nodes in your GitHub Actions workflow:
+
+1. **vCluster Platform** must be installed and running
+2. A **[node provider](/platform/administer/node-providers/overview)** must be configured in vCluster Platform
+3. A **virtual cluster template** with private nodes and auto-nodes enabled must be created
+
+### Create a template with private nodes
+
+In vCluster Platform, create a virtual cluster template with private nodes configuration:
+
+```yaml title="Private nodes template configuration"
+# Enable private nodes with auto-provisioning
+privateNodes:
+  enabled: true
+  autoNodes:
+    # Reference the node provider configured in vCluster Platform
+    - provider: my-node-provider
+      dynamic:
+        - name: ci-node-pool
+          # Limit the number of nodes for CI workloads
+          limits:
+            nodes: "3"
+
+# Control plane configuration
+controlPlane:
+  distro:
+    k8s:
+      image:
+        tag: v1.31.2
+  service:
+    spec:
+      # LoadBalancer required for private nodes connectivity
+      type: LoadBalancer
+
+# Network configuration required for private nodes
+networking:
+  podCIDR: 10.64.0.0/16
+  serviceCIDR: 10.128.0.0/16
+```
+
+<!-- vale off -->
+### Configure GitHub Actions workflow
+<!-- vale on -->
+
+This example creates a virtual cluster with private nodes using a Platform template:
+
+```yaml
+# .github/workflows/vclusters-private-nodes.yaml
+name: Pull Request Checks (Private Nodes)
+on:
+  pull_request:
+    branches:
+      - "main"
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install vCluster CLI
+        uses: loft-sh/setup-vcluster@main
+      - name: Login to vCluster Platform instance
+        env:
+          PLATFORM_URL: ${{ secrets.PLATFORM_URL }}
+          ACCESS_KEY: ${{ secrets.ACCESS_KEY }}
+        run: vcluster platform login $PLATFORM_URL --access-key $ACCESS_KEY
+      - name: Create PR Virtual Cluster with Private Nodes
+        env:
+          NAME: repo-${{ github.event.repository.name }}-pr-${{ github.event.pull_request.number }}
+        # Use --template to reference the private nodes template
+        run: vcluster create $NAME --project default --template private-nodes-ci
+      - name: Wait for nodes to be ready
+        # Auto-nodes provisions worker nodes; wait for them to join
+        run: |
+          echo "Waiting for private nodes to join the cluster..."
+          kubectl wait --for=condition=Ready nodes --all --timeout=300s
+      - name: Deploy Application
+        run: kubectl apply -Rf ./kubernetes
+      - name: Wait for Deployment
+        run: kubectl rollout status deployments/the-app
+      - name: Run Tests
+        run: make e2e
+      - name: Delete PR Virtual Cluster
+        env:
+          NAME: repo-${{ github.event.repository.name }}-pr-${{ github.event.pull_request.number }}
+        # Deleting the vCluster also cleans up the auto-provisioned nodes
+        run: vcluster delete $NAME --project default
+```
+
+**Explanation:**
+
+1. The [Setup vCluster](https://github.com/loft-sh/setup-vcluster) action installs the vCluster CLI.
+2. The `vcluster platform login` command authenticates to vCluster Platform using [GitHub secrets](https://docs.github.com/en/actions/security-guides/using-secrets-in-github-actions).
+3. The `vcluster create` command with `--template private-nodes-ci` creates a virtual cluster using the private nodes template. This triggers auto-nodes to provision dedicated worker nodes.
+4. Wait for the auto-provisioned nodes to join and become ready before deploying applications.
+5. Deploy and test the application on the dedicated private nodes.
+6. The `vcluster delete` command removes the virtual cluster and auto-nodes automatically cleans up the provisioned worker nodes.
+
+:::info Node provisioning time
+Auto-nodes provisioning typically takes 1-3 minutes depending on your cloud provider. Factor this into your CI/CD pipeline timeouts.
+:::
