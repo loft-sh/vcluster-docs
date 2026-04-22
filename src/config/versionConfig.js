@@ -8,7 +8,7 @@
  * `versions` and `onlyIncludeVersions` config.
  */
 
-export const vclusterHiddenVersions = [];
+export const vclusterHiddenVersions = ["0.34.0"];
 export const platformHiddenVersions = ["4.9.0"];
 
 export const vclusterEOLVersions = [
