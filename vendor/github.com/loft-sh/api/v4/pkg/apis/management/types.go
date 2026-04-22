@@ -131,33 +131,34 @@ type UserQuotasOptions struct {
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 
-type PodExecOptions struct {
+type DevPodWorkspaceInstanceLogOptions struct {
 	metav1.TypeMeta `json:",inline"`
 
-	// Redirect the standard input stream of the pod for this call.
-	// Defaults to false.
+	// TaskID is the id of the task that is running
 	// +optional
-	Stdin bool `json:"stdin,omitempty" protobuf:"varint,1,opt,name=stdin"`
+	TaskID string `json:"taskID,omitempty"`
 
-	// Redirect the standard output stream of the pod for this call.
+	// Follow the log stream of the task. Defaults to false.
 	// +optional
-	Stdout bool `json:"stdout,omitempty" protobuf:"varint,2,opt,name=stdout"`
+	Follow bool `json:"follow,omitempty"`
+}
 
-	// Redirect the standard error stream of the pod for this call.
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+
+type DevPodWorkspaceInstanceTasksOptions struct {
+	metav1.TypeMeta `json:",inline"`
+
+	// TaskID is the id of the task that is running
 	// +optional
-	Stderr bool `json:"stderr,omitempty" protobuf:"varint,3,opt,name=stderr"`
+	TaskID string `json:"taskID,omitempty"`
+}
 
-	// TTY if true indicates that a tty will be allocated for the exec call.
-	// Defaults to false.
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+
+type DevPodWorkspaceInstanceDownloadOptions struct {
+	metav1.TypeMeta `json:",inline"`
+
+	// Path is the path to download
 	// +optional
-	TTY bool `json:"tty,omitempty" protobuf:"varint,4,opt,name=tty"`
-
-	// Container in which to execute the command.
-	// Defaults to only container if there is only one container in the pod.
-	// +optional
-	Container string `json:"container,omitempty" protobuf:"bytes,5,opt,name=container"`
-
-	// Command is the remote command to execute. argv array. Not executed within a shell.
-	// +listType=atomic
-	Command []string `json:"command" protobuf:"bytes,6,rep,name=command"`
+	Path string `json:"path,omitempty"`
 }

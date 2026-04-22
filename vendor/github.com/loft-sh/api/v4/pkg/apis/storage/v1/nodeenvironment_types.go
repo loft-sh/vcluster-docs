@@ -7,18 +7,16 @@ import (
 
 const (
 	// NodeEnvironment conditions
-	NodeEnvironmentConditionTypeInfrastructureProvisioned = "Provisioned"
-	NodeEnvironmentConditionTypeInfrastructureSynced      = "Synced"
-	NodeEnvironmentConditionTypeKubernetesProvisioned     = "KubernetesProvisioned"
-	NodeEnvironmentConditionTypeKubernetesSynced          = "KubernetesSynced"
+	NodeEnvironmentConditionTypeSyncProperties = "SyncProperties"
+	NodeEnvironmentConditionTypeProvisioned    = "Provisioned"
+	NodeEnvironmentConditionTypeSynced         = "Synced"
 )
 
 var (
 	NodeEnvironmentConditions = []agentstoragev1.ConditionType{
-		NodeEnvironmentConditionTypeInfrastructureProvisioned,
-		NodeEnvironmentConditionTypeInfrastructureSynced,
-		NodeEnvironmentConditionTypeKubernetesProvisioned,
-		NodeEnvironmentConditionTypeKubernetesSynced,
+		NodeEnvironmentConditionTypeSyncProperties,
+		NodeEnvironmentConditionTypeProvisioned,
+		NodeEnvironmentConditionTypeSynced,
 	}
 )
 
@@ -59,54 +57,16 @@ func (a *NodeEnvironment) SetConditions(conditions agentstoragev1.Conditions) {
 	a.Status.Conditions = conditions
 }
 
-func (a *NodeEnvironment) GetOwner() *UserOrTeam {
-	return a.Spec.Owner
-}
-
-func (a *NodeEnvironment) SetOwner(userOrTeam *UserOrTeam) {
-	a.Spec.Owner = userOrTeam
-}
-
-func (a *NodeEnvironment) GetAccess() []Access {
-	return a.Spec.Access
-}
-
-func (a *NodeEnvironment) SetAccess(access []Access) {
-	a.Spec.Access = access
-}
-
 // NodeEnvironmentSpec defines spec of node environment.
 type NodeEnvironmentSpec struct {
-	// DisplayName is the name of the NodeClaim that is displayed in the UI.
-	// +optional
-	DisplayName string `json:"displayName,omitempty"`
-
-	// Owner holds the owner of this object
-	// +optional
-	Owner *UserOrTeam `json:"owner,omitempty"`
-
-	// Access holds the access rights for users and teams
-	// +optional
-	Access []Access `json:"access,omitempty"`
-
 	// Properties are the properties for the NodeEnvironment.
-	// +optional
-	Properties map[string]string `json:"properties"`
+	Properties map[string]string `json:"properties,omitempty"`
 
 	// ProviderRef is the name of the NodeProvider that this NodeEnvironment is based on.
-	// +optional
-	ProviderRef string `json:"providerRef,omitempty"`
+	ProviderRef string `json:"providerRef"`
 
-	// Below are options specifically for scheduling with vCluster.
-
-	// VClusterRef references source vCluster.
-	// +optional
-	VClusterRef string `json:"vClusterRef,omitempty"`
-
-	// ControlPlane indicates if the node environment is a control plane environment. This is intentionally not omitempty as
-	// we want to ensure that the control plane is always set for easier checking in for example terraform templates.
-	// +optional
-	ControlPlane bool `json:"controlPlane"`
+	// VClusterRef references source vCluster. This is required.
+	VClusterRef string `json:"vClusterRef"`
 }
 
 type NodeEnvironmentStatus struct {
