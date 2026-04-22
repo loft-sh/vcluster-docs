@@ -10,7 +10,7 @@ Specialized knowledge and workflows for writing vCluster documentation in Docusa
 
 ## Dependencies
 
-When this skill is loaded, also invoke: `vcluster-skills-shared:vcluster-branding`
+When this skill is loaded, also invoke: `vcluster-brand:vcluster-brand`
 
 ## When to Use
 
