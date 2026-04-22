@@ -6,7 +6,7 @@ export default function Mark({children, color}) {
       style={{
         backgroundColor: color,
         borderRadius: '2px',
-        color: '#fff',
+        color: '#050b24',
         padding: '0.2rem',
       }}>
       {children}
