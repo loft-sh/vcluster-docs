@@ -1,0 +1,115 @@
+---
+title: Expose the platform with Istio
+sidebar_label: Expose the platform with Istio
+description: A simple approach to expose the platform with Istio
+---
+
+This guide explains how to expose the platform using the Istio ingress gateway.
+
+<!-- vale off -->
+
+## Prerequisites {#prerequisites}
+
+Before exposing the platform with Istio, ensure you have:
+
+- A running Kubernetes cluster where the platform is deployed
+- Administrative access to this cluster (`kubectl` configured with appropriate permissions)
+- The `istioctl` command-line tool installed on your local machine
+- A domain name that you can configure for accessing the platform (to replace `org.vclusterplatform.com` in examples)
+- Optional: TLS certificates for secure HTTPS access, stored in a Kubernetes secret
+- The platform service running in the `vcluster-platform` namespace
+
+
+## Install Istio {#install-istio}
+
+Install Istio on your platform host cluster:
+
+```bash title="Install Istio on your cluster"
+istioctl install
+```
+
+## Configure the Istio Gateway {#configure-the-istio-gateway}
+
+Create a `Gateway` resource to handle incoming traffic:
+
+```yaml title="Create Gateway resource"
+apiVersion: networking.istio.io/v1
+kind: Gateway       
+metadata:
+  name: platform-gateway
+  namespace: vcluster-platform
+spec:
+  selector:              
+    istio: ingressgateway
+  servers:
+  - port:         
+      number: 80
+      name: http    
+      protocol: HTTP                                  
+    hosts:
+    - "org.vclusterplatform.com"    # Replace with your domain
+  - port:
+      name: https
+      number: 443
+      protocol: HTTPS
+    hosts:
+    - "org.vclusterplatform.com"    # Replace with your domain
+    tls:
+      credentialName: tls-secret    # Replace with your TLS certificate secret
+      mode: SIMPLE
+```
+
+## Configure Virtual Service {#configure-virtual-service}
+
+Create a `VirtualService` to route traffic to your platform service:
+
+```yaml title="Create VirtualService resource"
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: vcluster-platform
+  namespace: vcluster-platform
+spec:
+  hosts:
+  - "org.vclusterplatform.com"       # Replace with your domain
+  gateways:
+  - platform-gateway
+  http:
+  - route:
+    - destination:
+        port:
+          number: 80
+        host: loft.vcluster-platform.svc.cluster.local # Replace with your platform service
+```
+
+For more information about setting up TLS certificates, see the [Istio Secure Gateways documentation](https://istio.io/latest/docs/tasks/traffic-management/ingress/secure-ingress/).
+
+## Enable Tailscale connectivity {#enable-tailscale-connectivity}
+
+For external virtual clusters or platform agents on connected clusters to communicate with the platform, apply this `EnvoyFilter`:
+
+```yaml title="Apply EnvoyFilter for Tailscale connectivity"
+apiVersion: networking.istio.io/v1alpha3
+kind: EnvoyFilter
+metadata:
+  name: vcluster-platform-tailscale
+  namespace: istio-system
+spec:
+  configPatches:
+  - applyTo: NETWORK_FILTER
+    match:
+      listener:
+        filterChain:
+          filter:
+            name: "envoy.filters.network.http_connection_manager"
+    patch:
+      operation: MERGE
+      value:
+        typed_config:
+          "@type": "type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager"
+          "upgradeConfigs":
+          - { "upgradeType": "tailscale-control-protocol" }
+          - { "upgradeType": "derp" }
+```
+
+This configuration enables the Tailscale protocols required for secure cross-cluster communication.

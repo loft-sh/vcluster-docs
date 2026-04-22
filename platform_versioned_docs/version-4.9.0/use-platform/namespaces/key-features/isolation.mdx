@@ -1,0 +1,126 @@
+---
+title: Isolation
+sidebar_label: Isolation
+sidebar_position: 2
+---
+
+Namespaces can be configured to provide moderate levels of isolation. This "isolation"
+typically includes applying ResourceQuotas, LimitRanges, and NetworkPolicies to a Namespace. These
+policies can be configured using the Space Template `Objects` option, to provide your desired quotas,
+limits and network policies. To make your life easier, Loft is deployed with a default Space
+Template called `Isolated Space Template`. This space template can give you a head start on
+configuring your own namespace isolation policies, or you may find the template sufficient for your
+needs.
+
+## Default isolated space template
+
+The `Isolated Space Template` applies three resources:
+
+- **ResourceQuota**: Limits namespace to 10 CPU cores (20 max), 20Gi memory (40Gi max), 100Gi storage, 20 pods
+- **LimitRange**: Sets container defaults (20m CPU, 64Mi memory) and limits (2 CPU, 4Gi memory)
+- **NetworkPolicy**: Restricts egress to DNS and platform services, blocks private IP ranges
+
+## Configure namespace objects
+
+The `Objects` field in a space template defines Kubernetes resources to create in each namespace.
+
+### Example: Custom isolation configuration
+
+```yaml
+apiVersion: management.loft.sh/v1
+kind: SpaceTemplate
+metadata:
+  name: dev-team-isolated
+spec:
+  displayName: Development Team Isolated Space
+  description: Isolated space template for development teams with moderate resource limits
+  access:
+  - users:
+    - '*'
+    verbs:
+    - get
+  template:
+    metadata: {}
+    instanceTemplate:
+      metadata: {}
+    objects: |
+      # ResourceQuota for development environments
+      apiVersion: v1
+      kind: ResourceQuota
+      metadata:
+        name: dev-resource-quota
+      spec:
+        hard:
+          requests.cpu: "4"            # Total CPU requests limited to 4 cores
+          requests.memory: "8Gi"       # Total memory requests limited to 8GB
+          limits.cpu: "8"              # Total CPU limits cannot exceed 8 cores
+          limits.memory: "16Gi"        # Total memory limits cannot exceed 16GB
+          persistentvolumeclaims: "10" # Maximum 10 PVCs
+          services.loadbalancers: "2"  # Maximum 2 LoadBalancer services
+          count/deployments.apps: "20" # Maximum 20 deployments
+          count/pods: "50"             # Maximum 50 pods
+      ---
+      # LimitRange for container defaults
+      apiVersion: v1
+      kind: LimitRange
+      metadata:
+        name: dev-limit-range
+      spec:
+        limits:
+        - type: Container
+          default:
+            cpu: "500m"       # Default CPU limit if not specified
+            memory: "1Gi"     # Default memory limit if not specified
+          defaultRequest:
+            cpu: "100m"       # Default CPU request
+            memory: "128Mi"   # Default memory request
+          max:
+            cpu: "2"          # Single container max 2 cores
+            memory: "4Gi"     # Single container max 4GB
+          min:
+            cpu: "10m"        # Minimum CPU per container
+            memory: "32Mi"    # Minimum memory per container
+      ---
+      # NetworkPolicy with more permissive rules for development
+      apiVersion: networking.k8s.io/v1
+      kind: NetworkPolicy
+      metadata:
+        name: dev-network-policy
+      spec:
+        podSelector: {}       # Apply to all pods in namespace
+        policyTypes:
+        - Egress
+        - Ingress
+        ingress:
+        - from:
+          - podSelector: {}   # Allow all traffic within namespace
+          - namespaceSelector:
+              matchLabels:
+                loft.sh/allow-traffic: 'true'  # Allow from platform services
+        egress:
+        - to:
+          - podSelector: {}   # Allow to all pods in namespace
+        - ports:              # Allow DNS
+          - port: 53
+            protocol: UDP
+          - port: 53
+            protocol: TCP
+        - to:                 # Allow external HTTPS/HTTP for development
+          - namespaceSelector: {}
+          - ipBlock:
+              cidr: 0.0.0.0/0
+              except:         # Block local networks except for specific needs
+              - 169.254.0.0/16
+          ports:
+          - protocol: TCP
+            port: 443
+          - protocol: TCP
+            port: 80
+```
+
+The `objects` field accepts a yaml string with Kubernetes resources separated by `---`.
+
+:::warning CNIs and Network Policies
+Not all CNIs will support all network policies. Make sure you understand what capabilities your
+CNI supports when investigating namespace isolation.
+:::
