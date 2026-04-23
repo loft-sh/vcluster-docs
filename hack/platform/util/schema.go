@@ -43,6 +43,15 @@ type ObjectInformation struct {
 
 	Object client.Object
 
+	// ExtraImports is rendered with the import block at the top of the overview file.
+	ExtraImports string
+	// ExtraContentBeforeDescription is rendered between the imports and the description.
+	ExtraContentBeforeDescription string
+	// ExtraContentBeforeExample is rendered between the description and the example section.
+	ExtraContentBeforeExample string
+	// ExtraContentAfterExample is rendered between the YAML example and the reference section.
+	ExtraContentAfterExample string
+
 	Project bool
 
 	Retrieve bool
@@ -301,6 +310,11 @@ func GenerateObjectOverview(information *ObjectInformation) {
 		Name:         information.Name,
 		Plural:       information.Plural,
 		YAMLObject:   string(out),
+
+		ExtraImports:                  information.ExtraImports,
+		ExtraContentBeforeDescription: information.ExtraContentBeforeDescription,
+		ExtraContentBeforeExample:     information.ExtraContentBeforeExample,
+		ExtraContentAfterExample:      information.ExtraContentAfterExample,
 
 		Project: information.Project,
 
