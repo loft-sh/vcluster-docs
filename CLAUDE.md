@@ -178,9 +178,9 @@ enterprises. Apply these terminology rules to **all new and edited prose**.
 | Retire | Use instead |
 |--------|-------------|
 | virtual cluster | tenant cluster |
-| host cluster | Control Plane Cluster |
+| host cluster | control plane cluster |
 | multi-tenancy | tenant isolation |
-| nested Kubernetes / runs inside a host cluster | virtualized control plane hosted on a Control Plane Cluster |
+| nested Kubernetes / runs inside a host cluster | virtualized control plane hosted on a control plane cluster |
 | shared cluster | (describe the specific tenancy model instead) |
 
 **Hard rules:**
@@ -191,7 +191,7 @@ enterprises. Apply these terminology rules to **all new and edited prose**.
   alter code blocks or command syntax.
 - "Virtual Nodes" (the tenancy model powered by vNode) is a product name —
   keep it.
-- "Control Plane Cluster" is always title-cased.
+- "tenant cluster" and "control plane cluster" are lowercase in prose.
 
 **Tone:** Lead with isolation, hyperscaler-grade reliability, and AI workload
 suitability. De-emphasize cost/density framing in favor of isolation and
