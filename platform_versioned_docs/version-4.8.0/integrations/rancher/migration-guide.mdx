@@ -1,28 +1,27 @@
 ---
-title: Migrate to the vCluster Rancher Operator
+title: Migrate to the vCluster Rancher operator
 sidebar_label: Migration Guide
 sidebar_position: 3
 ---
 
 import InterpolatedCodeBlock from '@site/src/components/InterpolatedCodeBlock'
+import Flow, { Step } from '@site/src/components/Flow'
 
 :::warning Built-in Rancher integration removed
 
-The built-in Rancher integration was removed in vCluster Platform version v4.9.0. **This page is a migration guide** — it walks you through moving your existing Tenant Clusters from the built-in Rancher integration to the [vCluster Rancher operator](/docs/vcluster/third-party-integrations/rancher/install-rancher-integration), which is the supported replacement.
-
-If you have upgraded to v4.9.0 or later and had Tenant Clusters with the Rancher integration enabled, those clusters will be stuck in `Terminating` when you attempt to delete them. See the [Upgrade Guide](./upgrade-guide.mdx) to resolve this before proceeding.
+The built-in Rancher integration was removed in vCluster Platform v4.9.0. This migration guide walks you through migrating before you upgrade. If you've already upgraded to v4.9.0 or later, use the [migration guide for v4.9.0](/docs/platform/integrations/rancher/migration-guide) instead.
 
 :::
 
 ## Before you begin
 
-This migration requires `kubectl` access to the cluster where vCluster Platform is installed. Steps 5–6 connect to individual Tenant Clusters via `vcluster connect` — no direct kubeconfig for each Tenant Cluster is needed.
+This migration requires `kubectl` access to the control plane cluster with vCluster Platform installed. Step 5 connects to individual tenant clusters using `vcluster connect`. You don't need a direct kubeconfig for each tenant cluster.
 
-Work through the steps in order. Steps 1–4 run against the Platform cluster; steps 5–6 run against each Tenant Cluster individually; step 7 runs against Rancher.
+Work through the steps in order. Steps 1–4 run against the control plane cluster. Step 5 runs against each tenant cluster individually. Step 6 runs against Rancher. Step 7 installs the replacement operator on the control plane cluster.
 
-## Step 1: Remove the import label from Tenant Clusters
+## Step 1: Remove the import label from tenant clusters
 
-The `loft.sh/import-rancher: "true"` label on a `VirtualClusterInstance` tells the Platform to import it into Rancher. Remove it from every Tenant Cluster that has it so the Platform stops trying to manage the Rancher relationship:
+The `loft.sh/import-rancher: "true"` label on a VirtualClusterInstance tells vCluster Platform to import it into Rancher. Run the following on the control plane cluster to remove the label from every tenant cluster that has it:
 
 ```bash
 kubectl get virtualclusterinstances -A \
@@ -77,7 +76,7 @@ kubectl get secret loft-manager-config -n loft -o jsonpath='{.data.config}' \
   | base64 -d | yq 'del(.auth.rancher)'
 ```
 
-If the output looks correct, apply the change:
+If the output looks correct, apply the change and restart the deployment:
 
 ```bash
 PATCHED=$(kubectl get secret loft-manager-config -n loft \
@@ -91,20 +90,23 @@ kubectl patch secret loft-manager-config -n loft \
 kubectl rollout restart deployment/loft -n loft
 ```
 
-## Step 5: Remove cattle-system from each Tenant Cluster
+## Step 5: Clean up each tenant cluster
 
-Connect to each Tenant Cluster and delete the `cattle-system` namespace. This removes the Rancher cluster agent and all Rancher-related workloads that were injected into the Tenant Cluster.
+Complete both sub-steps on one tenant cluster before moving to the next. Repeat for every tenant cluster that had the integration enabled.
+
+<Flow id="clean-up-tenant-cluster">
+
+<Step>
+Connect to the tenant cluster and delete the `cattle-system` namespace. This removes the Rancher cluster agent and all Rancher-related workloads that were injected into the tenant cluster.
 
 <InterpolatedCodeBlock
   language="bash"
   code={"vcluster connect [[VAR:NAME:my-tenant-cluster]] -n [[VAR:NAMESPACE:p-my-project]]\nkubectl delete namespace cattle-system --ignore-not-found"}
 />
+</Step>
 
-Repeat for every Tenant Cluster that had the integration enabled.
-
-## Step 6: Remove Rancher RBAC from each Tenant Cluster
-
-While connected to each Tenant Cluster, remove the cluster-level RBAC resources that Rancher created:
+<Step>
+Remove the cluster-level RBAC resources that Rancher created:
 
 ```bash
 # List what will be removed — verify before deleting
@@ -117,15 +119,16 @@ kubectl delete clusterrole,clusterrolebinding \
     | grep cattle) \
   --ignore-not-found
 ```
+</Step>
 
-## Step 7: Delete the Rancher cluster entries
+</Flow>
 
-Each Tenant Cluster that was imported into Rancher has a corresponding cluster entry in Rancher. Before deleting, verify that the cluster shows as **Unavailable** or **Disconnected** in the Rancher UI — this confirms the agent has been removed and the cluster is no longer actively connected. Do not delete the entry if it still shows as **Active**, as this may indicate the `cattle-system` namespace was not fully removed in the previous step.
+## Step 6: Delete the Rancher cluster entries
 
-Once the cluster shows as disconnected, go to **Cluster Management** in the Rancher UI, find each cluster that corresponds to a Tenant Cluster, and delete it. If a deletion hangs, Rancher will eventually force-remove the entry once it detects the agent has been disconnected for a sufficient period of time.
+Each tenant cluster imported into Rancher has a corresponding cluster entry. Before deleting, verify that the cluster shows as **Unavailable** or **Disconnected** in the Rancher UI. This confirms the agent has been removed and Rancher has lost contact with the cluster. Don't delete the entry if it still shows as **Active**. This may indicate the `cattle-system` namespace wasn't fully removed in the previous step.
 
-## Step 8: Install the vCluster Rancher operator
+Once the cluster shows as **Disconnected**, go to **Cluster Management** in the Rancher UI, find each tenant cluster entry, and delete it. If a deletion hangs, Rancher force-removes the entry once it confirms the agent is gone.
 
-With the old integration fully removed, install the new [vCluster Rancher operator](/docs/vcluster/third-party-integrations/rancher/install-rancher-integration). The operator runs independently of the Platform and manages Tenant Cluster registration with Rancher directly.
+## Step 7: Install the vCluster Rancher operator
 
-Follow the [installation guide](/docs/vcluster/third-party-integrations/rancher/install-rancher-integration) to deploy the operator and re-register your Tenant Clusters.
+With the old integration fully removed, install the new vCluster Rancher operator on the control plane cluster. The operator runs independently of vCluster Platform and manages tenant cluster registration with Rancher directly. Follow the [installation guide](/docs/vcluster/third-party-integrations/rancher/install-rancher-integration) for full setup instructions.
