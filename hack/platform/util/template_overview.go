@@ -14,6 +14,8 @@ type ObjectOverviewValues struct {
 
 	// ExtraImports is rendered with the import block at the top of the file.
 	ExtraImports string
+	// ExtraContentBeforeDescription is rendered between the imports and the description.
+	ExtraContentBeforeDescription string
 	// ExtraContentBeforeExample is rendered between the description and the example section.
 	ExtraContentBeforeExample string
 	// ExtraContentAfterExample is rendered between the YAML example and the reference section.
@@ -59,6 +61,10 @@ import Delete from "{{ .RelativePath }}/_partials/resources/{{ .Resource }}/dele
 {{- end }}
 {{- if .ExtraImports }}
 {{ .ExtraImports }}
+{{- end }}
+{{- if .ExtraContentBeforeDescription }}
+
+{{ .ExtraContentBeforeDescription }}
 {{- end }}
 
 {{ .Description }}

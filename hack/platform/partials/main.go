@@ -572,7 +572,7 @@ spec:
 			"\n" +
 			"| Verb | Description |\n" +
 			"|------|-------------|\n" +
-			"| `bind` | Required when adding a cluster to ClusterAccess rules. Allows granting users or teams permission to create spaces and virtual clusters on the cluster. |\n" +
+			"| `bind` | Required when adding a cluster to ClusterAccess rules. Allows granting users or teams permission to create spaces and tenant clusters on the cluster. |\n" +
 			"| `connectlocal` | Required when setting `spec.local: true` on a cluster. Allows connecting the local cluster (where the platform is installed) to the platform for management. |\n" +
 			"\n" +
 			"### Example access rule with bind verb\n" +
@@ -671,7 +671,7 @@ spec:
 			"| Verb | Description |\n" +
 			"|------|-------------|\n" +
 			"| `bind` | Required when adding a user to ClusterAccess rules or other access rules. Allows granting the user permissions on platform resources. |\n" +
-			"| `makeowner` | Required when changing the owner of a resource to a user. Allows transferring ownership of projects, virtual clusters, spaces, or other platform resources. |\n" +
+			"| `makeowner` | Required when changing the owner of a resource to a user. Allows transferring ownership of projects, tenant clusters, spaces, or other platform resources. |\n" +
 			"\n" +
 			"### Example access rule with makeowner verb\n" +
 			"\n" +
@@ -979,6 +979,7 @@ spec:
 			"| `nodetypes` | Node type definitions |\n" +
 			"| `ownedaccesskeys` | User-owned access keys |\n" +
 			"| `projects` | Projects |\n" +
+			"| `projectsecrets` | Project-scoped secrets |\n" +
 			"| `selves` | Current user information |\n" +
 			"| `sharedsecrets` | Shared secrets |\n" +
 			"| `spaceinstances` | Space instances |\n" +
@@ -986,8 +987,8 @@ spec:
 			"| `tasks` | Platform tasks |\n" +
 			"| `teams` | Teams |\n" +
 			"| `users` | Users |\n" +
-			"| `virtualclusterinstances` | Virtual cluster instances |\n" +
-			"| `virtualclustertemplates` | Virtual cluster templates |\n" +
+			"| `virtualclusterinstances` | Tenant cluster instances |\n" +
+			"| `virtualclustertemplates` | Tenant cluster templates |\n" +
 			"\n" +
 			"Common subresources include `projects/members`, `projects/templates`, `clusters/members`, `virtualclusterinstances/kubeconfig`, and `virtualclusterinstances/log`.\n" +
 			"\n" +
@@ -1020,12 +1021,12 @@ spec:
 						Rules: []rbacv1.PolicyRule{
 							{
 								Verbs:     []string{"get", "list", "update"},
-								APIGroups: []string{managementv1.SchemeGroupVersion.String()},
+								APIGroups: []string{managementv1.SchemeGroupVersion.Group},
 								Resources: []string{"spaceinstances", "virtualclusterinstances"},
 							},
 							{
 								Verbs:     []string{"get", "list"},
-								APIGroups: []string{managementv1.SchemeGroupVersion.String()},
+								APIGroups: []string{managementv1.SchemeGroupVersion.Group},
 								Resources: []string{"projectsecrets"},
 							},
 						},
@@ -1039,13 +1040,13 @@ spec:
 
 	// NodeProvider
 	util.GenerateObjectOverview(&util.ObjectInformation{
-		Title:       "Node Provider",
-		Name:        "NodeProvider",
-		Resource:    "nodeproviders",
-		ExtraImports:              "import FeatureTable from '@site/src/components/FeatureTable';",
-		ExtraContentBeforeExample: "<FeatureTable names=\"auto-nodes-clusterapi\" />",
-		Description: "NodeProvider holds the node provider information",
-		File:        path.Join(util.BaseResourcesPath, "nodeprovider.mdx"),
+		Title:                         "Node Provider",
+		Name:                          "NodeProvider",
+		Resource:                      "nodeproviders",
+		ExtraImports:                  "import FeatureTable from '@site/src/components/FeatureTable';",
+		ExtraContentBeforeDescription: "<FeatureTable names=\"auto-nodes-clusterapi\" />",
+		Description:                   "NodeProvider holds the node provider information",
+		File:                          path.Join(util.BaseResourcesPath, "nodeprovider.mdx"),
 		Object: &managementv1.NodeProvider{
 			TypeMeta: metav1.TypeMeta{
 				Kind:       "NodeProvider",
