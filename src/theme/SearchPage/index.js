@@ -88,8 +88,10 @@ function SearchVersionSelectList({docsSearchVersionsHelpers}) {
   return (
     <div className={styles.searchVersionGrid}>
       {versionedPluginEntries.map(([pluginId, docsData]) => {
+        const displayNames = {vcluster: 'vCluster', platform: 'Platform'};
+        const displayName = displayNames[pluginId] ?? pluginId;
         const labelPrefix =
-          versionedPluginEntries.length > 1 ? `${pluginId}: ` : '';
+          versionedPluginEntries.length > 1 ? `${displayName}: ` : '';
         const latestStableVersion =
           docsData.versions.find((version) => version.isLast) ??
           docsData.versions[0];
@@ -97,7 +99,7 @@ function SearchVersionSelectList({docsSearchVersionsHelpers}) {
         return (
           <div key={pluginId} className={styles.searchVersionGroup}>
             <label className={styles.searchVersionLabel} htmlFor={`search-version-${pluginId}`}>
-              {labelPrefix.replace(/: $/, '') || pluginId}
+              {labelPrefix.replace(/: $/, '') || displayName}
             </label>
             <select
               id={`search-version-${pluginId}`}
@@ -120,7 +122,7 @@ function SearchVersionSelectList({docsSearchVersionsHelpers}) {
                 />
               ))}
               <option value={SEARCH_ALL_VERSIONS}>
-                {`All ${pluginId} versions`}
+                {`All ${displayName} versions`}
               </option>
             </select>
           </div>
