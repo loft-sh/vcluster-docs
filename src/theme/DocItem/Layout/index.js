@@ -2,6 +2,12 @@ import DocItemLayout from '@theme-original/DocItem/Layout';
 import Head from '@docusaurus/Head';
 import useBaseUrl from '@docusaurus/useBaseUrl';
 import {useActivePluginAndVersion} from '@docusaurus/plugin-content-docs/client';
+import {
+  getDocsearchProduct,
+  getVersionFacetValue,
+  getVersionStatus,
+  isStableVersion,
+} from '@site/src/config/docsearch';
 
 /**
  * Wraps every doc page with a visually-hidden directive pointing to llms.txt.
@@ -23,10 +29,46 @@ import {useActivePluginAndVersion} from '@docusaurus/plugin-content-docs/client'
 export default function DocItemLayoutWrapper(props) {
   const llmsTxtUrl = useBaseUrl('/llms.txt');
   const activePluginAndVersion = useActivePluginAndVersion();
+  const pluginId = activePluginAndVersion?.activePlugin?.pluginId;
+  const version = activePluginAndVersion?.activeVersion;
   const isLast = activePluginAndVersion?.activeVersion?.isLast ?? true;
+  const product = pluginId ? getDocsearchProduct(pluginId) : null;
+  const versionFacetValue =
+    pluginId && version
+      ? getVersionFacetValue({pluginId, versionName: version.name})
+      : null;
+  const versionStatus =
+    pluginId && version
+      ? getVersionStatus({pluginId, versionName: version.name})
+      : null;
+  const isStable =
+    pluginId && version
+      ? isStableVersion({pluginId, versionName: version.name})
+      : false;
 
   return (
     <>
+      {product && version && versionFacetValue && versionStatus && (
+        <Head>
+          <meta name="docsearch:product" content={product.pluginId} />
+          <meta name="docsearch:version" content={versionFacetValue} />
+          <meta name="docsearch:version_label" content={version.label} />
+          <meta name="docsearch:version_status" content={versionStatus} />
+          <meta
+            name="docsearch:stable_version"
+            content={product.stableVersion}
+          />
+          <meta
+            name="docsearch:is_stable"
+            content={isStable ? 'true' : 'false'}
+          />
+          <meta
+            name="docsearch:is_latest"
+            content={version.isLast ? 'true' : 'false'}
+          />
+          <meta name="docsearch:page_category" content="docs" />
+        </Head>
+      )}
       {!isLast && (
         <Head>
           <meta name="robots" content="noindex,follow" />
