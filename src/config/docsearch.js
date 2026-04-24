@@ -1,3 +1,6 @@
+// Update stableVersion when a new stable release ships — this value drives
+// version boosting in the search modal and default selection on the search page.
+// See algolia/IMPLEMENTATION.md for the full rollout process.
 export const DOCSEARCH_PRODUCTS = {
   vcluster: {
     pluginId: "vcluster",
@@ -77,19 +80,4 @@ export function getVersionBoostScore({ pluginId, versionName, pathname }) {
   return 0;
 }
 
-export function getDefaultSearchVersionName(version) {
-  return version.isLast ? "__current__" : version.name;
-}
-
-export function isSearchVersionMatch(searchVersion, versionName, latestVersionName) {
-  if (searchVersion === "__all__") {
-    return true;
-  }
-
-  if (searchVersion === "__current__") {
-    return versionName === latestVersionName;
-  }
-
-  return searchVersion === versionName;
-}
 

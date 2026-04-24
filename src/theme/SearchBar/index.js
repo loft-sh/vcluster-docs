@@ -132,6 +132,11 @@ function useSearchParameters({contextualSearch, ...props}) {
       ]
     : normalizeFilters(configFacetFilters);
 
+  // The modal uses optionalFilters (score-based soft boost) rather than hard
+  // facet filters so results from other versions still appear — just ranked
+  // lower. The search page does the opposite: it applies hard disjunctive facet
+  // filters because users there have explicit version controls and expect only
+  // the selected version's results to show.
   const optionalFilters = [];
 
   if (pluginId && versionName) {

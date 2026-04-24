@@ -1,5 +1,5 @@
 /* eslint-disable jsx-a11y/no-autofocus */
-import React, {useEffect, useReducer, useRef, useState} from 'react';
+import React, {useEffect, useMemo, useReducer, useRef, useState} from 'react';
 import clsx from 'clsx';
 import algoliaSearchHelper from 'algoliasearch-helper';
 import {liteClient} from 'algoliasearch/lite';
@@ -208,19 +208,26 @@ function SearchPageContent() {
     initialSearchResultState,
   );
 
-  const disjunctiveFacets = contextualSearch
-    ? ['language', 'docusaurus_tag']
-    : [];
-  const algoliaClient = liteClient(appId, apiKey);
-  const algoliaHelper = algoliaSearchHelper(algoliaClient, indexName, {
-    hitsPerPage: 15,
-    advancedSyntax: true,
-    disjunctiveFacets,
-  });
+  // Hard disjunctive facet filters — only results from the selected version
+  // are returned. This differs from the modal, which uses soft optionalFilters
+  // so cross-version results still appear ranked lower. Users on the search
+  // page have explicit version controls and expect the filter to be strict.
+  const algoliaClient = useMemo(
+    () => liteClient(appId, apiKey),
+    [appId, apiKey],
+  );
+  const algoliaHelper = useMemo(
+    () =>
+      algoliaSearchHelper(algoliaClient, indexName, {
+        hitsPerPage: 15,
+        advancedSyntax: true,
+        disjunctiveFacets: contextualSearch ? ['language', 'docusaurus_tag'] : [],
+      }),
+    [algoliaClient, indexName, contextualSearch],
+  );
 
-  algoliaHelper.on(
-    'result',
-    ({results: {query, hits, page, nbHits, nbPages}}) => {
+  useEffect(() => {
+    const handleResult = ({results: {query, hits, page, nbHits, nbPages}}) => {
       if (query === '' || !Array.isArray(hits)) {
         searchResultStateDispatcher({type: 'reset'});
         return;
@@ -265,8 +272,13 @@ function SearchPageContent() {
           loading: false,
         },
       });
-    },
-  );
+    };
+
+    algoliaHelper.on('result', handleResult);
+    return () => {
+      algoliaHelper.removeListener('result', handleResult);
+    };
+  }, [algoliaHelper, processSearchResultUrl]);
 
   const [loaderRef, setLoaderRef] = useState(null);
   const prevY = useRef(0);

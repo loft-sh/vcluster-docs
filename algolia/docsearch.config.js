@@ -15,6 +15,7 @@ new Crawler({
   sitemaps: ["https://www.vcluster.com/docs/sitemap.xml"],
   ignoreCanonicalTo: true,
   discoveryPatterns: ["https://www.vcluster.com/docs/**"],
+  exclusionPatterns: ["https://www.vcluster.com/docs/v0.19/**"],
   actions: [
     {
       indexName: "vcluster",
