@@ -86,13 +86,7 @@ function SearchVersionSelectList({docsSearchVersionsHelpers}) {
   ).filter(([, docsData]) => docsData.versions.length > 1);
 
   return (
-    <div
-      className={clsx(
-        'col',
-        'col--4',
-        'padding-left--none',
-        styles.searchVersionColumn,
-      )}>
+    <div className={styles.searchVersionGrid}>
       {versionedPluginEntries.map(([pluginId, docsData]) => {
         const labelPrefix =
           versionedPluginEntries.length > 1 ? `${pluginId}: ` : '';
@@ -377,11 +371,7 @@ function SearchPageContent() {
         </p>
 
         <form className="row" onSubmit={(e) => e.preventDefault()}>
-          <div
-            className={clsx('col', styles.searchQueryColumn, {
-              'col--8': docsSearchVersionsHelpers.versioningEnabled,
-              'col--12': !docsSearchVersionsHelpers.versioningEnabled,
-            })}>
+          <div className={clsx('col col--12', styles.searchQueryColumn)}>
             <input
               type="search"
               name="q"
@@ -402,13 +392,15 @@ function SearchPageContent() {
               autoFocus
             />
           </div>
+        </form>
 
-          {contextualSearch && docsSearchVersionsHelpers.versioningEnabled && (
+        {contextualSearch && docsSearchVersionsHelpers.versioningEnabled && (
+          <div className={styles.searchFiltersRow}>
             <SearchVersionSelectList
               docsSearchVersionsHelpers={docsSearchVersionsHelpers}
             />
-          )}
-        </form>
+          </div>
+        )}
 
         <div className="row">
           <div className={clsx('col', 'col--8', styles.searchResultsColumn)}>

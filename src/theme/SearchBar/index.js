@@ -101,12 +101,11 @@ function ResultsFooter({state, onClose}) {
   const createSearchLink = useSearchLinkCreator();
 
   return (
-    <Link to={createSearchLink(state.query)} onClick={onClose}>
-      <Translate
-        id="theme.SearchBar.seeAll"
-        values={{count: state.context.nbHits}}>
-        {'See all {count} results'}
-      </Translate>
+    <Link
+      to={createSearchLink(state.query)}
+      onClick={onClose}
+      className="docsearch-full-results-pill">
+      All results
     </Link>
   );
 }
