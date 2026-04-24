@@ -1,0 +1,401 @@
+---
+title: SELinux support
+sidebar_label: SELinux
+sidebar_position: 6
+description: Run vCluster Standalone and Private Node workers on RHEL with SELinux in enforcing mode.
+sidebar_class_name: private-nodes standalone
+toc_max_heading_level: 3
+---
+
+import InterpolatedCodeBlock from '@site/src/components/InterpolatedCodeBlock';
+import TenancySupport from '../../../../_fragments/tenancy-support.mdx';
+
+<TenancySupport privateNodes="true" standalone="true" />
+
+`vcluster-selinux` is the SELinux policy module that vCluster Labs
+publishes for RHEL hosts running vCluster Standalone or a Private Node
+worker. It ships as a signed `.noarch` RPM for EL 8 and EL 9 from the
+[vCluster SELinux repository on GitHub][repo]. With the module loaded,
+vCluster runs on a host with SELinux in enforcing mode without disabling
+it or adding host-local allow rules.
+
+:::tip No extra steps required
+The vCluster installer and the Private Node join script detect SELinux
+on supported RHEL hosts and install the RPM before placing any vCluster
+binaries. Run the
+[standalone install](../../../control-plane/binary/basics.mdx) or the
+[Private Node join script](../join.mdx) the same way you would on any
+other host — the SELinux module is fetched, verified, and loaded
+automatically.
+:::
+
+## Supported operating systems {#supported-operating-systems}
+
+The SELinux module is required on hosts where the vCluster binary runs
+directly: **vCluster Standalone** control planes and **Private Node**
+workers. vCluster Platform, the Shared Nodes tenancy model, and tenant
+workloads running inside the cluster are unaffected.
+
+### Product-supported {#supported-rhel}
+
+| OS | SELinux mode | RPM | Notes |
+|---|---|---|---|
+| RHEL 9 | `Enforcing`, `Permissive`, `Disabled` | `el9` | Supported. Installer fetches and installs `el9` automatically when SELinux is enforcing or permissive. |
+| RHEL 8 | `Enforcing`, `Permissive`, `Disabled` | `el8` | Supported. Requires a [Kubernetes 1.31 pin](#rhel-8-k8s-pin) for the control plane to start regardless of SELinux mode. Installer fetches and installs `el8` automatically when SELinux is enforcing or permissive. |
+| RHEL 10 | `Disabled` | n/a | Supported without the module. No `el10` RPM is packaged yet. With SELinux enforcing or permissive, the installer exits non-zero before placing any binaries. |
+
+### Tested derivatives {#supported-derivatives}
+
+The `.noarch` RPM targets the EL family as a whole. The same RPM is
+exercised in CI on AlmaLinux and Rocky Linux because RHEL subscriptions
+are not available to the public CI runners. These distributions are
+covered by the same install flow as the corresponding RHEL major
+version, but are not product-supported.
+
+| OS | RPM | CI coverage |
+|---|---|---|
+| AlmaLinux 9 | `el9` | Yes — full standalone + Private Node e2e under enforcing. |
+| AlmaLinux 8 | `el8` | Same RPM as RHEL 8; community-tested. |
+| Rocky Linux 9 | `el9` | Same RPM as RHEL 9; community-tested. Requires `iptables` (see [node requirements](../node-requirements.mdx)). |
+| Rocky Linux 8 | `el8` | Yes — full standalone + Private Node e2e under enforcing. Requires `iptables` and the [Kubernetes 1.31 pin](#rhel-8-k8s-pin). |
+| CentOS Stream 9 | `el9` | Same RPM as RHEL 9; community-tested. Requires `iptables` (see [node requirements](../node-requirements.mdx)). |
+| AlmaLinux 10, Rocky Linux 10 | — | No `el10` RPM yet. Run with SELinux disabled. |
+
+## Prerequisites {#prerequisites}
+
+- vCluster `__VCLUSTER_VERSION_MINOR__` or newer. The installer and the
+  Private Node join script install the RPM and run `restorecon` after
+  binary placement starting with this version.
+- A RHEL 8 or RHEL 9 host with `getenforce` reporting `Enforcing` or
+  `Permissive`. RHEL 8 additionally requires a Kubernetes 1.31 pin in
+  `vcluster.yaml`. See
+  [Pin Kubernetes to 1.31 on RHEL 8](#rhel-8-k8s-pin).
+- Network access to `https://rpm.vcluster.com` from the host, or a
+  pre-staged RPM. See [Install offline or with a custom RPM mirror](#install-offline).
+- `dnf` installed. The RPM declares `container-selinux`,
+  `policycoreutils`, `policycoreutils-python-utils`, `libselinux-utils`,
+  and `selinux-policy-base` as dependencies.
+
+## Install {#install}
+
+On a RHEL 8 or 9 host that can reach `rpm.vcluster.com`, no separate
+SELinux step is required. Use the
+[standalone install](../../../control-plane/binary/basics.mdx) or
+[Private Node join](../join.mdx) flow as documented. RHEL 8 also
+requires the [Kubernetes 1.31 pin](#rhel-8-k8s-pin).
+
+When `getenforce` returns `Enforcing` or `Permissive` and the RPM is not
+already installed, the installer:
+
+1. Reads `${VERSION_ID%%.*}` from `/etc/os-release`.
+2. Writes a yum repo file for
+   `https://rpm.vcluster.com/stable/el${EL_VERSION}/noarch`.
+3. Verifies the package against the GPG key at
+   `https://rpm.vcluster.com/public.key`.
+4. Runs `dnf install -y vcluster-selinux` before placing any vCluster
+   binaries on the host.
+
+For convenience, the same commands as the install pages:
+
+<InterpolatedCodeBlock
+  code={`curl -fsSL https://github.com/loft-sh/vcluster/releases/download/v__VCLUSTER_VERSION__/install-standalone.sh | sudo bash -s -- --config /etc/vcluster/vcluster.yaml`}
+  language="bash"
+  title="Install vCluster Standalone (auto-installs vcluster-selinux on RHEL)"
+/>
+
+```bash title="Join a Private Node worker (auto-installs vcluster-selinux on RHEL)"
+curl -sfLk "$JOIN_URL" | sudo bash
+```
+
+`$JOIN_URL` is the URL `vcluster token create` returns for the tenant
+cluster. See [Join Manually Provisioned Nodes](../join.mdx) for how to
+mint a join token and the full join flow.
+
+If SELinux is `Enforcing` and the RPM install fails, the installer
+exits non-zero before placing any vCluster binaries on the host. If
+SELinux is `Permissive`, the installer prints a warning and continues;
+the host runs vCluster without SELinux enforcement of the
+`vcluster-selinux` rules.
+
+### Pin Kubernetes to 1.31 on RHEL 8 {#rhel-8-k8s-pin}
+
+RHEL 8 ships glibc 2.28. The containerd binary in the default vCluster
+Kubernetes bundle (currently v1.35.x) is dynamically linked against
+glibc 2.32 or newer and will not load on an EL 8 host. The kubelet
+and any tenant pods stay stuck and the node never reaches `Ready`. The
+Kubernetes 1.31.x bundles are built against an older glibc and run on
+EL 8.
+
+Pin the Kubernetes version in `vcluster.yaml` before running the
+installer:
+
+```yaml title="/etc/vcluster/vcluster.yaml on a RHEL 8 host"
+controlPlane:
+  standalone:
+    enabled: true
+    joinNode:
+      enabled: true
+      containerd:
+        enabled: true
+  distro:
+    k8s:
+      version: v1.31.11
+```
+
+With this configuration, the standalone install on RHEL 8 is otherwise
+identical to RHEL 9. The `el8` RPM comes from
+`rpm.vcluster.com/stable/el8/noarch`, the SELinux policy loads, and
+`systemd` transitions `vcluster.service` into `container_runtime_t`.
+
+:::warning
+The pin is host-wide. Every tenant Kubernetes version the host serves
+is 1.31.x. To run a newer Kubernetes on the control plane, run the host
+on RHEL 9 instead.
+:::
+
+### Enable SELinux enforcement for tenant pods {#containerd-selinux}
+
+Containerd applies per-pod MCS labels only when its configuration has
+`enable_selinux = true`. The installer does not enable this flag by
+default because it changes runtime behavior for workloads that may
+already be running. Pass `--containerd-selinux` to enable it:
+
+<InterpolatedCodeBlock
+  code={`curl -fsSL https://github.com/loft-sh/vcluster/releases/download/v__VCLUSTER_VERSION__/install-standalone.sh | sudo bash -s -- --config /etc/vcluster/vcluster.yaml --containerd-selinux`}
+  language="bash"
+  title="Standalone with containerd SELinux enforcement"
+/>
+
+```bash title="Private Node worker with containerd SELinux enforcement"
+curl -sfLk "$JOIN_URL" | sudo bash -s -- --containerd-selinux
+```
+
+With `enable_selinux = true` in `/etc/containerd/config.toml`, each
+tenant pod on the worker runs under `container_t` with its own MCS
+category. Combined with the module's `container_t` → `vcluster_data_t`
+deny rules, a compromised tenant pod cannot read host PKI or the
+backing-store database through the filesystem.
+
+### Air-gapped install {#install-offline}
+
+Hosts without egress to `rpm.vcluster.com` need either a reachable
+mirror or a pre-staged RPM. Pair this with the rest of the air-gapped
+guidance in
+[Deploy Private Nodes in an air-gapped environment](./air-gapped.mdx).
+
+#### Point at a custom RPM URL
+
+Pass `--selinux-rpm-url` or set the `VCLUSTER_SELINUX_RPM_URL`
+environment variable to a URL the host can reach:
+
+<InterpolatedCodeBlock
+  code={`curl -fsSL https://github.com/loft-sh/vcluster/releases/download/v__VCLUSTER_VERSION__/install-standalone.sh | sudo bash -s -- --config /etc/vcluster/vcluster.yaml --selinux-rpm-url https://internal.example.com/vcluster-selinux-<ver>-<rel>.el9.noarch.rpm`}
+  language="bash"
+  title="Standalone with a custom RPM URL"
+/>
+
+`--selinux-rpm-url` accepts either a direct `.rpm` URL or a yum-repo
+URL. `dnf install` accepts both.
+
+#### Pre-stage the RPM at image-build time
+
+Bake `vcluster-selinux` into the host image and tell the installer to
+skip its own fetch with `--skip-selinux-rpm`:
+
+```bash title="Install the RPM once, during image build"
+sudo dnf install -y vcluster-selinux
+```
+
+<InterpolatedCodeBlock
+  code={`curl -fsSL https://github.com/loft-sh/vcluster/releases/download/v__VCLUSTER_VERSION__/install-standalone.sh | sudo bash -s -- --config /etc/vcluster/vcluster.yaml --skip-selinux-rpm`}
+  language="bash"
+  title="Run the installer later without re-fetching the RPM"
+/>
+
+:::warning
+Pass `--skip-selinux-rpm` only when `vcluster-selinux` is already
+installed on the host or SELinux is disabled. With SELinux `Enforcing`
+and no module loaded, `vcluster.service` fails to transition into
+`container_runtime_t` and the control plane does not start.
+:::
+
+### Install manually {#install-manually}
+
+To pin a specific release, download the `.noarch.rpm` for your RHEL
+major version from the [vcluster-selinux releases page][releases] and
+install it directly:
+
+```bash
+sudo dnf install https://github.com/loft-sh/vcluster-selinux/releases/download/<tag>/vcluster-selinux-<ver>-<rel>.el9.noarch.rpm
+```
+
+Or install from the same yum repo the vCluster installer would have
+configured:
+
+```bash title="/etc/yum.repos.d/vcluster-selinux.repo"
+sudo tee /etc/yum.repos.d/vcluster-selinux.repo <<'EOF'
+[vcluster-selinux-stable]
+name=vCluster SELinux (stable)
+baseurl=https://rpm.vcluster.com/stable/el9/noarch
+enabled=1
+gpgcheck=1
+repo_gpgcheck=0
+gpgkey=https://rpm.vcluster.com/public.key
+EOF
+sudo dnf install -y vcluster-selinux
+```
+
+When installing the RPM manually, run `install-standalone.sh` or the
+join script with `--skip-selinux-rpm` so the installer does not
+re-fetch the RPM.
+
+## What the module labels {#what-the-module-labels}
+
+| Path | SELinux type |
+|---|---|
+| `/var/lib/vcluster/bin/vcluster` (the entrypoint `install-standalone.sh` places) | `container_runtime_exec_t` |
+| `/var/lib/vcluster(/.*)?` (PKI, kine/etcd backing store, sockets, pid files) | `vcluster_data_t` |
+| `/etc/vcluster(/.*)?`, `/etc/vcluster-vpn(/.*)?`, `/etc/crictl.yaml` | `container_config_t` |
+| `/opt/cni(/.*)?`, `/etc/cni(/.*)?` | `container_file_t` |
+| `/usr/local/bin/vcluster-vpn` | `container_runtime_exec_t` |
+| `/etc/systemd/system/vcluster*` | `container_unit_file_t` |
+
+The module also registers a `semanage fcontext` override for
+`/var/run/flannel(/.*)?` → `container_file_t` so the flannel pod can
+write its runtime state. It pre-creates `/var/lib/vcluster`,
+`/etc/vcluster`, `/etc/vcluster-vpn`, `/opt/cni`, `/etc/cni`,
+`/opt/local-path-provisioner`, `/run/flannel`, and `/run/kubernetes` so
+the labels are correct regardless of whether the RPM or the installer
+runs first.
+
+`kubelet`, `containerd`, `runc`, `/etc/containerd`,
+`/var/lib/containerd`, and `/var/lib/kubelet` are covered by
+`container-selinux`. This module does not change their labels.
+
+:::note Control-plane binaries are labeled `vcluster_data_t` on disk
+The module's `.fc` file declares `container_runtime_exec_t` for the
+Kubernetes control-plane binaries (`kube-apiserver`,
+`kube-controller-manager`, `kube-scheduler`, `etcd`, `etcdctl`, `kine`,
+`konnectivity-server`, `helm`, `kubectl`, `vcluster-cli`). vCluster
+extracts these binaries from its bundle on first start, after the RPM's
+`%post` has already run, so they inherit `vcluster_data_t` from their
+parent directory. This is functional: `container_runtime_t` has managed
+access to `vcluster_data_t` and no AVCs are generated. To apply the
+declared label on disk, run
+`sudo restorecon -R /var/lib/vcluster/bin` after `vcluster.service`
+has started once.
+:::
+
+## Verify {#verify}
+
+After `install-standalone.sh` returns, the module is loaded, the
+vCluster service runs under `container_runtime_t`, and the audit log
+contains no denials for the install window:
+
+```bash
+sudo semodule -l | grep '^vcluster'
+# vcluster
+
+ls -Z /var/lib/vcluster/bin/vcluster
+# system_u:object_r:container_runtime_exec_t:s0  /var/lib/vcluster/bin/vcluster
+
+sudo cat /proc/$(systemctl show -p MainPID --value vcluster.service)/attr/current
+# system_u:system_r:container_runtime_t:s0
+
+ls -Z /var/lib/vcluster/pki/ca.key
+# system_u:object_r:vcluster_data_t:s0  /var/lib/vcluster/pki/ca.key
+
+sudo ausearch -m avc --start recent \
+  | grep -E 'vcluster_|container_runtime_t|container_t' || echo "no denials"
+```
+
+## Upgrade {#upgrade}
+
+`sudo dnf update vcluster-selinux` unloads the previous policy module,
+installs the new one, and reruns `restorecon` over the paths the RPM
+owns. No manual steps are required. If a release adds a new
+control-plane binary path, the release notes call out a one-off
+`sudo restorecon -R /var/lib/vcluster` to apply the new label.
+
+## Uninstall {#uninstall}
+
+```bash
+sudo dnf remove vcluster-selinux
+```
+
+The RPM's `%postun` unloads the policy module, removes the flannel
+`semanage fcontext` override, and `restorecon`s the covered paths back
+to their pre-install defaults.
+
+## Troubleshoot {#troubleshoot}
+
+### vCluster service fails to start under enforcing {#service-fails-to-start}
+
+A denial like `avc: denied { execute }` on `container_runtime_exec_t`
+in `journalctl -u vcluster.service` indicates that `systemd` could not
+exec the vCluster binary with the expected label. Either the module is
+not loaded, or the binary was placed before the module relabeled the
+parent directory.
+
+Confirm the module and the RPM are in place:
+
+```bash
+rpm -q vcluster-selinux
+sudo semodule -l | grep '^vcluster'
+getenforce
+```
+
+If `rpm -q` does not return a version, install the RPM (see
+[Install](#install)). If the RPM and module are both present but the
+binary was placed before the RPM's `%post` ran, relabel and restart:
+
+```bash
+sudo restorecon -R /var/lib/vcluster /etc/vcluster
+sudo systemctl restart vcluster.service
+```
+
+### Installer fails to fetch the RPM {#rpm-install-fails}
+
+If the installer exits with a line like
+`failed to install vcluster-selinux RPM`, it could not reach
+`rpm.vcluster.com` and no `--selinux-rpm-url` was passed. Choose one of
+the following:
+
+- Allow egress to `rpm.vcluster.com` and rerun the installer.
+- Pre-install the RPM on the host and rerun with `--skip-selinux-rpm`.
+  See [Install manually](#install-manually).
+- Rerun with `--selinux-rpm-url <url>` pointing to a reachable mirror.
+  See [Install offline or with a custom RPM mirror](#install-offline).
+
+### A control-plane binary fails to execute {#binary-mislabeled}
+
+A denial on a binary under `/var/lib/vcluster/bin/` with
+`tcontext=...vcluster_data_t` in `ausearch` indicates that the RPM's
+`.fc` file is missing an entry for that binary. Open an issue at
+[loft-sh/vcluster-selinux][issues] with the binary name and the
+denial. As a per-host workaround:
+
+```bash
+sudo semanage fcontext -a -t container_runtime_exec_t '/var/lib/vcluster/bin/<binary>'
+sudo restorecon -v /var/lib/vcluster/bin/<binary>
+sudo systemctl restart vcluster.service
+```
+
+### Flannel pod can't write /var/run/flannel {#flannel-denials}
+
+Confirm the RPM's `semanage fcontext` override for flannel is still in
+place:
+
+```bash
+sudo semanage fcontext -l | grep flannel
+# /var/run/flannel(/.*)?  all files  system_u:object_r:container_file_t:s0
+```
+
+If the line is missing, reinstall the RPM. The override is registered
+by the RPM's `%post` and can be removed by a manual
+`semanage fcontext -d`.
+
+{/* Links */}
+[repo]: https://github.com/loft-sh/vcluster-selinux
+[releases]: https://github.com/loft-sh/vcluster-selinux/releases
+[issues]: https://github.com/loft-sh/vcluster-selinux/issues
