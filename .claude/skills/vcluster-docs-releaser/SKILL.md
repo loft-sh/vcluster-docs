@@ -180,7 +180,19 @@ versions: {
 }
 ```
 
-#### 3. `docusaurus.config.js` — SEO sitemap priorities
+#### 3. `src/config/docsearch.js` — update stable version for search
+
+```js
+vcluster: {
+  pluginId: "vcluster",
+  stableVersion: "0.XX.0",  // Was "0.YY.0" — update to new stable
+  stableLabel: "v0.XX Stable",
+},
+```
+
+This drives search modal version boosting (stable docs get `pageRank: 120`, others get `60` or `20`) and the default version filter on the `/docs/search` page. Without this update, search will continue biasing toward the old stable version.
+
+#### 4. `docusaurus.config.js` — SEO sitemap priorities
 
 ```js
 if (item.url.match(/\/vcluster\/0\.XX\.0\//) ||
@@ -189,7 +201,7 @@ if (item.url.match(/\/vcluster\/0\.XX\.0\//) ||
 }
 ```
 
-#### 4. `docusaurus.config.js` — announcement bar
+#### 5. `docusaurus.config.js` — announcement bar
 
 ```js
 announcementBar: {
@@ -198,7 +210,7 @@ announcementBar: {
 },
 ```
 
-#### 5. `netlify.toml` — redirect
+#### 6. `netlify.toml` — redirect
 
 ```toml
 [[redirects]]
@@ -208,7 +220,7 @@ announcementBar: {
   force = true
 ```
 
-#### 6. `hack/test-vcluster-0.XX.hurl` — create hurl test
+#### 7. `hack/test-vcluster-0.XX.hurl` — create hurl test
 
 Copy from previous version, update version numbers. Hurl tests run AFTER PR is deployed to Netlify preview.
 
@@ -222,6 +234,7 @@ This PR is small, reviewable, and safe to merge by anyone with merge rights.
 | `src/config/versionConfig.js` | Add version to `vclusterHiddenVersions` array | rc-1 |
 | `docusaurus.config.js` | `lastVersion`, labels, SEO, announcement bar | Release day |
 | `src/config/versionConfig.js` | Remove version from `vclusterHiddenVersions` | Release day |
+| `src/config/docsearch.js` | Update `stableVersion` to new stable version string | Release day |
 | `netlify.toml` | Redirect | Release day |
 | `hack/test-vcluster-0.XX.hurl` | New file | Release day |
 
@@ -232,6 +245,7 @@ This PR is small, reviewable, and safe to merge by anyone with merge rights.
 - ✅ **Update netlify redirect** - `netlify.toml`
 - ✅ **Verify CLI commands** - Check files exist
 - ✅ **Create hurl test** - Create new test file
+- ✅ **Update search stable version** - `src/config/docsearch.js` `stableVersion` field (release day only)
 
 ### User Handles (Items 1, 6-9):
 - **Create versioned docs** - `npm run docusaurus docs:version:vcluster X.Y.Z`
@@ -344,7 +358,7 @@ Ready to commit and push!
 ## Quick Reference
 
 **Version pattern:** `0.30.0` → label: `v0.30`
-**Files to modify:** 3 files total
+**Files to modify:** 4 files total (release day adds `src/config/docsearch.js`)
 **Lines to change:** ~10 locations across all files
 **Time estimate:** 2-3 minutes for AI tasks
 
