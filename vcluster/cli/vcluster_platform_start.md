@@ -27,6 +27,10 @@ before running this command:
 2. Helm v3 must be installed
 3. kubectl must be installed
 
+NOTE: TLS certificate verification is disabled by default
+during platform startup because the platform uses a self-signed
+certificate. Use --secure to enable TLS verification.
+
 ########################################################
 ```
 
@@ -38,6 +42,7 @@ before running this command:
       --chart-path string    The vCluster platform chart path to deploy vCluster platform
       --chart-repo string    The chart repo to deploy vCluster platform (default "https://charts.loft.sh/")
       --context string       The kube context to use for installation
+      --docker               If true, vCluster platform will be installed in Docker
       --email string         The email to use for the installation
   -h, --help                 help for start
       --host string          Provide a hostname to enable ingress and configure its hostname
@@ -50,6 +55,7 @@ before running this command:
       --password string      The password to use for the admin account. (If empty this will be the namespace UID)
       --reset                If true, existing vCluster Platform resources, including the deployment, will be deleted before installing vCluster platform
       --reuse-values         Reuse previous vCluster platform helm values on upgrade (default true)
+      --secure               If true, verify TLS certificates when connecting to the platform (by default, TLS verification is skipped during bootstrap because the platform starts with a self-signed certificate)
       --upgrade              If true, vCluster platform will try to upgrade the release
       --values string        Path to a file for extra vCluster platform helm chart values
       --version string       The vCluster platform version to install (default "latest")

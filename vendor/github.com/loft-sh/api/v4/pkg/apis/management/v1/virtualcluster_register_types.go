@@ -25,6 +25,10 @@ type RegisterVirtualClusterSpec struct {
 	// +optional
 	ServiceUID string `json:"serviceUID,omitempty"`
 
+	// KubernetesVersion is the Kubernetes version of the virtual cluster.
+	// +optional
+	KubernetesVersion string `json:"kubernetesVersion,omitempty"`
+
 	// Project is the project name the virtual cluster should be in.
 	// +optional
 	Project string `json:"project,omitempty"`
@@ -49,6 +53,10 @@ type RegisterVirtualClusterSpec struct {
 	// Values specifies the vCluster config.
 	// +optional
 	Values string `json:"values,omitempty"`
+
+	// Standalone specifies if the vCluster is standalone
+	// +optional
+	Standalone *bool `json:"standalone,omitempty"`
 }
 
 // RegisterVirtualClusterStatus holds the status
@@ -56,4 +64,8 @@ type RegisterVirtualClusterStatus struct {
 	// Name is the actual name of the virtual cluster instance.
 	// +optional
 	Name string `json:"name,omitempty"`
+
+	// Namespace is the namespace of the virtual cluster instance.
+	// +optional
+	Namespace string `json:"namespace,omitempty"`
 }

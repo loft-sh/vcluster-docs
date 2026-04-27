@@ -1,0 +1,62 @@
+---
+title: Upgrade from legacy Rancher integration
+sidebar_label: Upgrade Guide
+sidebar_position: 2
+---
+
+
+import InterpolatedCodeBlock from '@site/src/components/InterpolatedCodeBlock';
+
+:::info Legacy integration removed
+
+The built-in Rancher integration was removed in vCluster Platform v4.9.0. This page explains what happens when you upgrade an existing deployment and how to recover tenant clusters that become stuck. For the current Rancher integration, see [Install the Rancher integration for vCluster](/docs/vcluster/third-party-integrations/rancher/install-rancher-integration).
+
+:::
+
+## What changes on upgrade
+
+When you upgrade a vCluster Platform instance with the legacy Rancher integration to v4.9.0 or later, the following happens automatically:
+
+- **Running tenant clusters are unaffected.** Existing tenant clusters continue running normally.
+- **Rancher sync no longer runs.** vCluster Platform stops syncing members with Rancher.
+- **Rancher auth is removed.** Users can no longer log in to vCluster Platform using Rancher SSO.
+- **Rancher clusters stay active.** The Rancher cluster agent running inside each tenant cluster maintains its own direct connection to Rancher, independent of vCluster Platform. Rancher clusters remain in `active` state after the upgrade.
+
+:::note Want to upgrade your tenant clusters to use the new Rancher integration?
+
+If you want to use the new operator-based Rancher integration, which lets you create new tenant clusters integrated with Rancher, see the [migration guide](./migration-guide.mdx).
+
+:::
+
+## Stuck tenant clusters after deletion
+
+Tenant clusters that had the Rancher integration enabled carry a `loft.sh/cleanup-rancher` finalizer on their VirtualClusterInstance object. After upgrading to v4.9.0 or later, nothing processes this finalizer. The controller that handled it no longer exists. This means **any deletion attempt on a Rancher-integrated tenant cluster blocks indefinitely**.
+
+The tenant cluster appears in `Terminating` state in the Platform UI. The corresponding Rancher cluster entry shows as disconnected or unavailable.
+
+### Identify affected tenant clusters
+
+```bash
+kubectl get virtualclusterinstances -A -o json | jq '
+  .items[]
+  | select(.metadata.finalizers[]? == "loft.sh/cleanup-rancher")
+  | {name: .metadata.name, namespace: .metadata.namespace, phase: .status.phase}
+'
+```
+
+### Unblock a stuck tenant cluster
+
+Remove the finalizer manually to allow the deletion to complete:
+
+<InterpolatedCodeBlock
+  language="bash"
+  code={"kubectl patch virtualclusterinstance [[VAR:NAME:my-tenant-cluster]] -n [[VAR:NAMESPACE:p-my-project]] \\\n  --type=json \\\n  -p='[{\"op\":\"remove\",\"path\":\"/metadata/finalizers/0\"}]'"}
+/>
+
+The tenant cluster completes deletion once the finalizer is removed.
+
+After the tenant cluster is deleted, the corresponding Rancher cluster entry isn't automatically removed. vCluster Platform no longer communicates with Rancher. Verify the cluster shows as **Unavailable** or **Disconnected** in Rancher before deleting it. Go to **Cluster Management** in the Rancher UI, find the corresponding cluster entry, and delete it. If the deletion hangs, Rancher force-removes the entry once it confirms the agent is gone.
+
+## Next steps
+
+If you want to keep your tenant clusters registered in Rancher using the new operator-based integration, see the [migration guide](./migration-guide.mdx).

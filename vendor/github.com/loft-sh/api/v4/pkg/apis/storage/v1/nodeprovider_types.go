@@ -7,17 +7,23 @@ import (
 )
 
 const (
-	NodeProviderTypeBCM       string = "bcm"
-	NodeProviderTypeKubeVirt  string = "kubeVirt"
-	NodeProviderTypeTerraform string = "terraform"
+	NodeProviderTypeBCM        string = "bcm"
+	NodeProviderTypeKubeVirt   string = "kubeVirt"
+	NodeProviderTypeTerraform  string = "terraform"
+	NodeProviderTypeClusterAPI string = "clusterAPI"
+	NodeProviderTypeMetal3     string = "metal3"
 
 	// NodeProviderConditionTypeInitialized is the condition that indicates if the node provider is initialized.
 	NodeProviderConditionTypeInitialized = "Initialized"
+
+	// NodeProviderConditionTypeDeployed is the condition that indicates if infrastructure components are deployed.
+	NodeProviderConditionTypeDeployed = "Deployed"
 )
 
 var (
 	NodeProviderConditions = []agentstoragev1.ConditionType{
 		NodeProviderConditionTypeInitialized,
+		NodeProviderConditionTypeDeployed,
 	}
 )
 
@@ -43,7 +49,14 @@ const (
 	NodeTypeNodeGroupsAnnotation = "bcm.loft.sh/node-groups"
 
 	// KubeVirt specific annotations
-	NodeTypeVMTemplateAnnotation = "kubevirt.loft.sh/vm-template"
+	NodeTypeVMTemplateAnnotation = "kubevirt.vcluster.com/vm-template"
+
+	// ClusterAPI specific annotations
+	NodeTypeClusterAPIInfrastructureMachineTemplateAnnotation = "clusterapi.loft.sh/infrastructure-machine-template"
+	NodeTypeClusterAPIBootstrapConfigTemplateAnnotation       = "clusterapi.loft.sh/bootstrap-config-template"
+
+	// Properties
+	NodeProviderCCMEnabledProperty = "vcluster.com/ccm-enabled"
 )
 
 // +genclient
@@ -72,6 +85,10 @@ func (a *NodeProvider) SetConditions(conditions agentstoragev1.Conditions) {
 // NodeProviderSpec defines the desired state of NodeProvider.
 // Only one of the provider types (Pods, BCM, Kubevirt) should be specified at a time.
 type NodeProviderSpec struct {
+	// Properties are global properties that are applied to all node claims and environments managed by this provider.
+	// +optional
+	Properties map[string]string `json:"properties,omitempty"`
+
 	// BCM configures a node provider for BCM Bare Metal Cloud environments.
 	// +optional
 	BCM *NodeProviderBCM `json:"bcm,omitempty"`
@@ -85,9 +102,28 @@ type NodeProviderSpec struct {
 	// +optional
 	Terraform *NodeProviderTerraform `json:"terraform,omitempty"`
 
+	// ClusterAPI configures a node provider using Cluster API, enabling nodes to be provisioned using Cluster API.
+	// This requires the vCluster to be deployed with Cluster API as well.
+	// +optional
+	ClusterAPI *NodeProviderClusterAPI `json:"clusterAPI,omitempty"`
+
+	// Metal3 configures a node provider using metal3.io BareMetalHost resources.
+	// +optional
+	Metal3 *NodeProviderMetal3 `json:"metal3,omitempty"`
+
 	// DisplayName is the name that should be displayed in the UI
 	// +optional
 	DisplayName string `json:"displayName,omitempty"`
+}
+
+type NodeProviderClusterAPI struct {
+	ClusterAPIObjects `json:",inline"`
+
+	// ClusterRef is a reference to connected host cluster in which KubeVirt operator is running
+	ClusterRef NodeProviderClusterRef `json:"clusterRef,omitempty"`
+
+	// NodeTypes define NodeTypes that should be automatically created for this provider.
+	NodeTypes []ClusterAPINodeTypeSpec `json:"nodeTypes,omitempty"`
 }
 
 // NodeProviderBCMSpec defines the configuration for a BCM node provider.
@@ -107,7 +143,7 @@ type NodeProviderTerraform struct {
 	NodeTemplate *TerraformTemplate `json:"nodeTemplate,omitempty"`
 
 	// NodeEnvironmentTemplate is the template to use for this node environment.
-	NodeEnvironmentTemplate *TerraformTemplate `json:"nodeEnvironmentTemplate,omitempty"`
+	NodeEnvironmentTemplate *TerraformNodeEnvironmentTemplate `json:"nodeEnvironmentTemplate,omitempty"`
 
 	// NodeTypes define NodeTypes that should be automatically created for this provider.
 	NodeTypes []TerraformNodeTypeSpec `json:"nodeTypes,omitempty"`
@@ -131,6 +167,17 @@ type ManagedNodeTypeObjectMeta struct {
 	Annotations map[string]string `json:"annotations,omitempty"`
 }
 
+type TerraformNodeEnvironmentTemplate struct {
+	// Deprecated: Use Infrastructure and Kubernetes instead.
+	TerraformTemplate `json:",inline"`
+
+	// Infrastructure is the infrastructure template to use for this node environment.
+	Infrastructure *TerraformTemplate `json:"infrastructure,omitempty"`
+
+	// Kubernetes is the kubernetes template to use for this node environment.
+	Kubernetes *TerraformTemplate `json:"kubernetes,omitempty"`
+}
+
 type TerraformTemplate struct {
 	// Inline is the inline template to use for this node type.
 	Inline string `json:"inline,omitempty"`
@@ -151,6 +198,9 @@ type TerraformTemplateSourceGit struct {
 
 	// Commit is the commit SHA to checkout
 	Commit string `json:"commit,omitempty"`
+
+	// Tag is the tag reference to checkout
+	Tag string `json:"tag,omitempty"`
 
 	// SubPath is the subpath in the repo to use
 	SubPath string `json:"subPath,omitempty"`
@@ -192,6 +242,32 @@ type NamespacedRef struct {
 	Namespace string `json:"namespace"`
 }
 
+type ClusterAPINodeTypeSpec struct {
+	NamedNodeTypeSpec `json:",inline"`
+	ClusterAPIObjects `json:",inline"`
+
+	// MergeInfrastructureMachineTemplate will be merged into base InfrastructureMachine template for this NodeProvider.
+	// This allows overwriting of specific fields from top level template by individual NodeTypes
+	// This is mutually exclusive with InfrastructureMachineTemplate
+	MergeInfrastructureMachineTemplate *runtime.RawExtension `json:"mergeInfrastructureMachineTemplate,omitempty"`
+
+	// MergeBootstrapConfigTemplate will be merged into base BootstrapConfig template for this NodeProvider.
+	// This allows overwriting of specific fields from top level template by individual NodeTypes
+	// This is mutually exclusive with BootstrapConfigTemplate
+	MergeBootstrapConfigTemplate *runtime.RawExtension `json:"mergeBootstrapConfigTemplate,omitempty"`
+
+	// MaxCapacity is the maximum number of nodes that can be created for this NodeType.
+	MaxCapacity int `json:"maxCapacity,omitempty"`
+}
+
+type ClusterAPIObjects struct {
+	// InfrastructureMachineTemplate is a template for the infrastructure machine, e.g. AWSMachine
+	InfrastructureMachineTemplate *runtime.RawExtension `json:"infrastructureMachineTemplate,omitempty"`
+
+	// BootstrapConfigTemplate is a template for the bootstrap config. Currently only KubeadmConfig is supported.
+	BootstrapConfigTemplate *runtime.RawExtension `json:"bootstrapConfigTemplate,omitempty"`
+}
+
 // KubeVirtNodeTypeSpec defines single NodeType spec for KubeVirt provider type.
 type KubeVirtNodeTypeSpec struct {
 	NamedNodeTypeSpec `json:",inline"`
@@ -212,7 +288,7 @@ type KubeVirtNodeTypeSpec struct {
 // NodeProviderKubeVirt defines the configuration for a KubeVirt node provider.
 type NodeProviderKubeVirt struct {
 	// ClusterRef is a reference to connected host cluster in which KubeVirt operator is running
-	ClusterRef *KubeVirtClusterRef `json:"clusterRef,omitempty"`
+	ClusterRef NodeProviderClusterRef `json:"clusterRef,omitempty"`
 
 	// VirtualMachineTemplate is a KubeVirt VirtualMachine template to use by NodeTypes managed by this NodeProvider
 	VirtualMachineTemplate *runtime.RawExtension `json:"virtualMachineTemplate,omitempty"`
@@ -221,12 +297,77 @@ type NodeProviderKubeVirt struct {
 	NodeTypes []KubeVirtNodeTypeSpec `json:"nodeTypes"`
 }
 
-type KubeVirtClusterRef struct {
+type NodeProviderClusterRef struct {
 	// Cluster is the connected cluster the VMs will be created in
 	Cluster string `json:"cluster"`
 
 	// Namespace is the namespace inside the connected cluster holding VMs
-	Namespace string `json:"namespace"`
+	Namespace string `json:"namespace,omitempty"`
+}
+
+type MultusDeployment struct {
+	// Enabled controls whether Multus CNI is deployed into the cluster.
+	Enabled bool `json:"enabled"`
+
+	// HelmValues is raw YAML that will be passed as values to the Multus Helm chart.
+	// +optional
+	HelmValues string `json:"helmValues,omitempty"`
+}
+
+type DHCPDeployment struct {
+	// Enabled controls whether the DHCP server is deployed into the cluster.
+	Enabled bool `json:"enabled"`
+
+	// HelmValues is raw YAML that will be passed as values to the DHCP Helm chart.
+	// +optional
+	HelmValues string `json:"helmValues,omitempty"`
+}
+
+type Metal3Deployment struct {
+	// Enabled controls whether Metal3 and Ironic are deployed into the cluster.
+	Enabled bool `json:"enabled"`
+
+	// HelmValues is raw YAML that will be passed as values to the Metal3 Helm chart.
+	// +optional
+	HelmValues string `json:"helmValues,omitempty"`
+}
+
+type Metal3ProviderDeployment struct {
+	// Multus configures the Multus CNI deployment.
+	// +optional
+	Multus MultusDeployment `json:"multus,omitempty"`
+
+	// DHCP configures the DHCP server deployment.
+	// +optional
+	DHCP DHCPDeployment `json:"dhcp,omitempty"`
+
+	// Metal3 configures the Metal3/Ironic deployment.
+	// +optional
+	Metal3 Metal3Deployment `json:"metal3,omitempty"`
+}
+
+type NodeProviderMetal3 struct {
+	// ClusterRef is a reference to connected host cluster in which KubeVirt operator is running
+	ClusterRef NodeProviderClusterRef `json:"clusterRef,omitempty"`
+
+	Deploy Metal3ProviderDeployment `json:"deploy,omitempty"`
+
+	// NodeTypes define NodeTypes that should be automatically created for this provider.
+	NodeTypes []Metal3NodeTypeSpec `json:"nodeTypes,omitempty"`
+}
+
+type Metal3NodeTypeSpec struct {
+	NamedNodeTypeSpec `json:",inline"`
+
+	// BareMetalHosts is a list of BareMetalHosts to use for this NodeType.
+	// +optional
+	BareMetalHosts Metal3BareMetalHosts `json:"bareMetalHosts,omitempty"`
+}
+
+type Metal3BareMetalHosts struct {
+	// Selector is a label selector to select the BareMetalHosts to use for this NodeType.
+	// +optional
+	Selector *metav1.LabelSelector `json:"selector,omitempty"`
 }
 
 // NodeProviderStatus defines the observed state of NodeProvider.

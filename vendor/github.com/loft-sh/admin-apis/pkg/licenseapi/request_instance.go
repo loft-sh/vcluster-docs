@@ -10,11 +10,14 @@ const InstanceCreateMethod = http.MethodPost
 // information about the instance's current license.
 // +k8s:deepcopy-gen=true
 type InstanceCreateInput struct {
-	*InstanceTokenAuth `hash:"-"`
+	*InstanceTokenAuth `json:",inline" hash:"-"`
 
 	// Product is the product that is being used. Can be empty, loft, devpod-pro or vcluster-pro.
 	// This should NOT be a ProductName but a string to allow for downward compatibility
 	Product string `json:"product,omitempty" form:"product"`
+
+	// StaticToken is a token for the instance. This is used for testing purposes or for instances that use a static token.
+	StaticToken string `json:"staticToken,omitempty" form:"staticToken" hash:"-"`
 
 	// Email is the admin email. Can be empty if no email is specified.
 	Email string `json:"email,omitempty" form:"email"`
@@ -36,7 +39,7 @@ type InstanceCreateInput struct {
 	DebugInstanceID *string `json:"debugInstanceID,omitempty" form:"debugInstanceID" hash:"-"`
 
 	// PlatformDatabase reports details about the platform database to the license service
-	PlatformDatabase PlatformDatabase `json:"isPlatformDatabaseReady,omitempty" form:"isPlatformDatabaseReady"`
+	PlatformDatabase *PlatformDatabase `json:"platformDatabase,omitempty" form:"platformDatabase"`
 }
 
 // InstanceCreateOutput is the struct holding all information returned from "instance create"
@@ -48,7 +51,29 @@ type InstanceCreateOutput struct {
 	CurrentTime int64    `json:"currentTime"`
 }
 
+// PlatformDatabase contains information about the local platform database installation
+// +k8s:openapi-gen=true
+// +k8s:deepcopy-gen=true
 type PlatformDatabase struct {
-	IsReady           bool   `json:"isReady"`
-	CreationTimestamp string `json:"creationTimestamp"`
+	IsReady               bool   `json:"isReady"`
+	CreationTimestamp     string `json:"creationTimestamp"`
+	LatestUpdateTimestamp string `json:"latestUpdateTimestamp"`
+}
+type InstanceActivateInstanceInput struct {
+	ActivationCode string `json:"activationCode"`
+}
+
+type InstanceSendActivationEmailInput struct {
+	Email string `json:"email"`
+}
+
+type InstanceUsageInput struct {
+	// KubeSystemNamespaceUID is the UID of the kube system namespace.
+	KubeSystemNamespaceUID string `json:"kubeSystemNamespace"`
+
+	// Type is the type of usage data to be sent to the license service.
+	Type string `json:"type"`
+
+	// Data is the data to be sent to the license service.
+	Data []byte `json:"data"`
 }

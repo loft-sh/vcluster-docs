@@ -1,17 +1,29 @@
 import React from 'react';
 import {useLocation} from '@docusaurus/router';
+import {useVersions} from '@docusaurus/plugin-content-docs/client';
 import Content from '@theme-original/DocSidebar/Desktop/Content';
 import DocsVersionDropdownNavbarItem from '@theme-original/NavbarItem/DocsVersionDropdownNavbarItem';
+import {vclusterEOLVersions, platformEOLVersions, vclusterHiddenVersions, platformHiddenVersions, getDesktopVersions} from '@site/src/config/versionConfig';
 import styles from "./styles.module.css";
 
-function VersionSelector(props) {
-  return <div className={styles["version-selector-wrapper"]}>
-    <div className={styles["version-selector"]}>
-      <DocsVersionDropdownNavbarItem docsPluginId={props.docsPluginId}
-                                     dropdownItemsBefore={[]}
-                                     dropdownItemsAfter={props.dropdownItemsAfter}/>
+function VersionSelector({docsPluginId, dropdownItemsAfter, hiddenVersions = []}) {
+  const allVersions = useVersions(docsPluginId);
+  const visibleVersions = hiddenVersions.length > 0
+    ? allVersions.filter(v => !hiddenVersions.includes(v.name)).map(v => v.name)
+    : undefined;
+
+  return (
+    <div className={styles["version-selector-wrapper"]}>
+      <div className={styles["version-selector"]}>
+        <DocsVersionDropdownNavbarItem
+          docsPluginId={docsPluginId}
+          dropdownItemsBefore={[]}
+          dropdownItemsAfter={dropdownItemsAfter}
+          versions={visibleVersions}
+        />
+      </div>
     </div>
-  </div>
+  );
 }
 
 export default function ContentWrapper(props) {
@@ -21,37 +33,20 @@ export default function ContentWrapper(props) {
 
   return (
     <>
-      {shouldShowVClusterVersioning && <VersionSelector docsPluginId={"vcluster"} dropdownItemsAfter={[
-        {
-          to: "https://vcluster.com/docs/v0.24",
-          label: "v0.24 (EOL) ↗"
-        },
-        {
-          to: "https://vcluster.com/docs/v0.23",
-          label: "v0.23 (EOL) ↗"
-        },
-        {
-          to: "https://vcluster.com/docs/v0.22",
-          label: "v0.22 (EOL) ↗"
-        },
-        {
-          to: "https://vcluster.com/docs/v0.21",
-          label: "v0.21 (EOL) ↗"
-        },
-        {
-          to: "https://vcluster.com/docs/v0.20",
-          label: "v0.20 (EOL) ↗"
-        },
-        {
-          to: "https://vcluster.com/docs/v0.19",
-          label: "v0.19 (EOL) ↗"
-        }
-      ]} />}
-      {shouldShowPlatformVersioning && <VersionSelector docsPluginId={"platform"} dropdownItemsAfter={[
-        {
-          to: "https://loft.sh/docs/getting-started/install", label: "v3.4 (EOL) ↗"
-        }
-      ]} />}
+      {shouldShowVClusterVersioning && (
+        <VersionSelector
+          docsPluginId="vcluster"
+          dropdownItemsAfter={getDesktopVersions(vclusterEOLVersions)}
+          hiddenVersions={vclusterHiddenVersions}
+        />
+      )}
+      {shouldShowPlatformVersioning && (
+        <VersionSelector
+          docsPluginId="platform"
+          dropdownItemsAfter={getDesktopVersions(platformEOLVersions)}
+          hiddenVersions={platformHiddenVersions}
+        />
+      )}
       <Content {...props} />
     </>
   );

@@ -10,6 +10,9 @@ type License struct {
 	// Entity holds a name for an organization, person or entity this product is licensed for. This will be displayed to the user.
 	Entity string `json:"entity,omitempty"`
 
+	// Annotations contains additional metadata about the license.
+	// +optional
+	Annotations map[string]string `json:"annotations,omitempty"`
 	// Analytics indicates the analytics endpoints and which requests should be sent to the
 	// analytics server.
 	// +optional
@@ -41,4 +44,8 @@ type License struct {
 	// Plans contains a list of plans
 	// +optional
 	Plans []Plan `json:"plans,omitempty"`
+
+	// Usage data contains  resource usage information for a platform deployment
+	// +optional
+	UsageData UsageData `json:"usageData,omitempty"`
 }

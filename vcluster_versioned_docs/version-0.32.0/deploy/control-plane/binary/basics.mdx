@@ -1,0 +1,216 @@
+---
+title: Create control plane
+sidebar_label: Install
+sidebar_position: 1
+sidebar_class_name: standalone private-nodes
+---
+import Flow, { Step } from "@site/src/components/Flow"
+import Link from '@docusaurus/Link'
+import Tabs from '@theme/Tabs'
+import TabItem from '@theme/TabItem'
+
+import StandaloneFlags from '../../../_fragments/deploy/standalone-flags.mdx'
+import TenancySupport from '../../../_fragments/tenancy-support.mdx';
+import PageVariables from '@site/src/components/PageVariables';
+import InterpolatedCodeBlock from '@site/src/components/InterpolatedCodeBlock';
+
+<TenancySupport standalone="true" />
+
+## Overview
+
+<Tabs
+  groupId="standalone-basics-management"
+  defaultValue="self-managed"
+  values={[
+    { label: 'Self-managed', value: 'self-managed' },
+    { label: 'Platform-managed', value: 'platform' },
+  ]}
+>
+  <TabItem value="platform">
+
+When deploying a Platform-managed vCluster Standalone cluster, <Link to="/docs/platform">vCluster Platform</Link> handles automated provisioning and lifecycle management of the control plane node, including rolling upgrades.
+
+  </TabItem>
+  <TabItem value="self-managed">
+
+When deploying a self-managed vCluster Standalone cluster, the assets required to install the control plane are located in the [GitHub releases](https://github.com/loft-sh/vcluster/releases) of vCluster.
+
+:::info Why is the configuration so minimal?
+vCluster Standalone eliminates the dependency on an external Control Plane Cluster by running directly on your infrastructure. This architectural difference means:
+
+- **`controlPlane.standalone.enabled`** is automatically set when vCluster detects it's running as a binary rather than as a pod
+- **`controlPlane.privateNodes.enabled`** is automatically set because standalone mode has no Control Plane Cluster, so all worker nodes are private nodes that join directly
+
+If you're familiar with traditional vCluster deployments, you'll notice this configuration has fewer required settings because there's no Control Plane Cluster relationship to configure.
+
+For optional settings like dedicating the control plane node (not running workloads on it), configuring containerd, or customizing node registration, see the [standalone configuration reference](../../../configure/vcluster-yaml/control-plane/components/standalone). For vcluster.yaml options that are not supported in Standalone mode, see [Unsupported configuration options](./troubleshooting#unsupported-configuration-options).
+:::
+
+  </TabItem>
+</Tabs>
+
+
+## Predeployment configuration options
+
+Before deploying, review the configuration options that can't be updated after deployment. These options require you to deploy a new vCluster instance rather than upgrading your existing one.
+
+### Control-plane options  {#control-plane-options}
+
+* [High availability](./high-availability) - Run multiple control plane nodes
+* [CoreDNS](../../../configure/vcluster-yaml/control-plane/components/coredns) - Currently only CoreDNS deployed by vCluster during startup is supported.
+* Backing Store - Decide how the data of your cluster is stored, must be one of either [embedded SQLite](/vcluster/configure/vcluster-yaml/control-plane/components/backing-store/database/sqlite) (the default) or [embedded etcd](/vcluster/configure/vcluster-yaml/control-plane/components/backing-store/etcd/embedded).
+
+
+### Node roles
+
+Decide if the control plane node will also be a worker node or not. Once a node joins the cluster, the roles of the node cannot change.
+
+By default, the control plane node also acts as a worker node. To deploy a dedicated control plane that does not run workloads, set [`controlPlane.standalone.joinNode.enabled`](../../../configure/vcluster-yaml/control-plane/components/standalone#standalone-joinNode-enabled) to `false`.
+
+:::warning
+When the control plane node also acts as a worker, tenant workloads share the machine with
+the vCluster control-plane process and its credentials. For production deployments, set
+[`controlPlane.standalone.joinNode.enabled`](../../../configure/vcluster-yaml/control-plane/components/standalone#standalone-joinNode-enabled)
+to `false` and use dedicated worker nodes.
+:::
+
+### Worker nodes
+
+ With vCluster Standalone, worker node pools can only be [private nodes](../../worker-nodes/private-nodes). Since there is no Control Plane Cluster,
+ there is no concept of Shared Nodes.
+
+## Prerequisites
+
+- Access to a node that satisfies the [node requirements](./node-requirements)
+
+## Install control plane node
+
+### Self-managed
+
+:::tip Control Plane Node
+Perform all steps on the control plane node as root.
+:::
+<Flow>
+    <Step>
+    Switch to root and set `CONFIG_DIRECTORY` to the directory where you want to store the `vcluster.yaml` configuration file.
+    ```bash
+    sudo su -
+    ```
+    <PageVariables CONFIG_DIRECTORY="/etc/vcluster" />
+    </Step>
+    <Step>
+        Create directory for storing vCluster Standalone configuration.
+        <InterpolatedCodeBlock
+          code={`mkdir -p [[GLOBAL:CONFIG_DIRECTORY]]`}
+          title="Create config directory"
+          language="bash"
+        />
+        Save a basic `vcluster.yaml` configuration file for vCluster Standalone on the control plane node.
+        <InterpolatedCodeBlock
+          code={`cat <<EOF > [[GLOBAL:CONFIG_DIRECTORY]]/vcluster.yaml
+  controlPlane:
+    distro:
+      k8s:
+        version: v1.34.0
+  EOF`}
+          title="Create vCluster config file"
+          language="yaml"
+        />
+
+:::warning
+Adding additional control plane nodes is not supported unless you follow the [high availability](./high-availability) steps for configuration.
+:::
+    </Step>
+    <Step>
+        Run the installation script on the control plane node:
+        <InterpolatedCodeBlock
+          code={`curl -sfL https://github.com/loft-sh/vcluster/releases/download/v__VCLUSTER_VERSION__/install-standalone.sh | sh -s -- --vcluster-name standalone`}
+          title="Install vCluster Standalone on control plane node"
+          language="bash"
+        />
+
+    </Step>
+    <Step>
+        Check that the control plane node is ready by running these commands:
+
+        ```bash title="Check node status"
+        kubectl get nodes
+        ```
+
+        Expected output:
+        ```bash
+        NAME               STATUS   ROLES                  AGE   VERSION
+        ip-192-168-3-131   Ready    control-plane,master   11m   v1.32.1
+        ```
+
+        ```bash title="Verify cluster components are running"
+        kubectl get pods -A
+        ```
+
+        Pods should include:
+        - **Flannel**: CNI for container networking
+        - **CoreDNS**: DNS service for the cluster
+        - **KubeProxy**: Network traffic routing and load balancing
+        - **Konnectivity**: Secure control plane to worker node communication
+        - **Local Path Provisioner**: Dynamic storage provisioning
+    </Step>
+
+</Flow>
+
+<StandaloneFlags />
+
+#### Access your cluster
+
+After installation, vCluster automatically configures the kubeconfig on the control plane node and sets the kubectl context to your new vCluster Standalone instance.
+
+To use vCluster Standalone as a Control Plane Cluster for tenant clusters, set your kubectl context to the vCluster Standalone instance. You can then create and manage tenant clusters using the vCluster CLI.
+
+To access the cluster from other machines, copy the kubeconfig from `/var/lib/vcluster/kubeconfig.yaml` on the control plane node, then replace the server field with relevant IP or DNS to access the cluster.
+You can also configure vCluster to make [external access easier](../../../manage/accessing-vcluster#access-vcluster-externally).
+
+The vCluster CLI is installed at `/var/lib/vcluster/bin/vcluster-cli`.
+
+<!-- vale Google.Headings = NO -->
+### Platform-managed
+<!-- vale Google.Headings = YES -->
+
+When managing a standalone cluster through <Link to="/docs/platform">vCluster Platform</Link>, the initial control plane node is provisioned through the platform using <Link to="/docs/vcluster/deploy/worker-nodes/private-nodes/auto-nodes/">Auto Nodes</Link>. Platform connects to your node provider (such as AWS, GCP, or a bare metal provisioner), provisions a VM or physical server, installs the vCluster binary, and joins the node as the control plane. Once the cluster is running, Platform manages its full lifecycle. Platform coordinates configuration updates and version upgrades as rolling operations, eliminating the need for manual SSH access.
+
+Use <Link to="/docs/platform">vCluster Platform</Link> to:
+
+1. Add a [Node Provider](/docs/platform/administer/node-providers/overview).
+2. Add the vCluster configuration (example below).
+3. Provision the cluster from the platform UI.
+
+<PageVariables K8S_VERSION="v1.35.0" NODE_PROVIDER="aws" />
+
+<InterpolatedCodeBlock
+  code={`controlPlane:
+  standalone:
+    enabled: true
+    autoNodes:
+      provider: [[GLOBAL:NODE_PROVIDER]] # Node provider you want to use
+      quantity: 1 # Number of nodes (HA requires embedded etcd or external DB)
+  distro:
+    k8s:
+      image:
+        tag: [[GLOBAL:K8S_VERSION]] # Kubernetes version you want to use
+
+# Worker nodes
+privateNodes:
+  enabled: true
+  autoNodes: # (optional) Add worker nodes with Auto Nodes
+    - provider: [[GLOBAL:NODE_PROVIDER]]
+      dynamic:
+        - name: aws-pool-1`}
+  title="vcluster.yaml for a standalone control plane managed by vCluster Platform"
+  language="yaml"
+/>
+
+After provisioning completes, <Link to="/docs/platform">vCluster Platform</Link> manages the control plane node lifecycle. Worker node lifecycle also remains managed through the platform UI when <Link to="/docs/vcluster/deploy/worker-nodes/private-nodes/auto-nodes/">Auto Nodes</Link> are used.
+
+#### Access your cluster
+
+To access a Standalone cluster managed by <Link to="/docs/platform">vCluster Platform</Link>, open the vCluster in the platform UI and click `Connect`.
+
+As an alternative, use the [`vcluster platform connect vcluster`](../../../cli/vcluster_platform_connect_vcluster) command.
