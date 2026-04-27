@@ -27,13 +27,13 @@ The docs implementation adds:
 
 Relevant files:
 
-- [docusaurus.config.js](/Users/daryl/git/vcluster/vcluster-docs/docusaurus.config.js)
-- [src/theme/DocItem/Layout/index.js](/Users/daryl/git/vcluster/vcluster-docs/src/theme/DocItem/Layout/index.js)
-- [src/config/docsearch.js](/Users/daryl/git/vcluster/vcluster-docs/src/config/docsearch.js)
-- [src/theme/SearchBar/index.js](/Users/daryl/git/vcluster/vcluster-docs/src/theme/SearchBar/index.js)
-- [src/theme/SearchBar/styles.css](/Users/daryl/git/vcluster/vcluster-docs/src/theme/SearchBar/styles.css)
-- [src/theme/SearchPage/index.js](/Users/daryl/git/vcluster/vcluster-docs/src/theme/SearchPage/index.js)
-- [src/theme/SearchPage/styles.module.css](/Users/daryl/git/vcluster/vcluster-docs/src/theme/SearchPage/styles.module.css)
+- [docusaurus.config.js](../docusaurus.config.js)
+- [src/theme/DocItem/Layout/index.js](../src/theme/DocItem/Layout/index.js)
+- [src/config/docsearch.js](../src/config/docsearch.js)
+- [src/theme/SearchBar/index.js](../src/theme/SearchBar/index.js)
+- [src/theme/SearchBar/styles.css](../src/theme/SearchBar/styles.css)
+- [src/theme/SearchPage/index.js](../src/theme/SearchPage/index.js)
+- [src/theme/SearchPage/styles.module.css](../src/theme/SearchPage/styles.module.css)
 
 ### Algolia
 
@@ -84,7 +84,7 @@ After deploy, confirm production pages under `https://www.vcluster.com/docs/` em
 - `docsearch:is_latest`
 - `docsearch:page_category`
 
-These are added in [src/theme/DocItem/Layout/index.js](/Users/daryl/git/vcluster/vcluster-docs/src/theme/DocItem/Layout/index.js).
+These are added in [src/theme/DocItem/Layout/index.js](../src/theme/DocItem/Layout/index.js).
 
 ## Step 2: Set Environment Variables
 
@@ -130,7 +130,7 @@ curl --request GET \
 
 ## Step 4: Apply Updated Index Settings
 
-Import the new index settings from [export-vcluster-settings.preview.json](/Users/daryl/git/vcluster/vcluster-docs/algolia/export-vcluster-settings.preview.json):
+Import the new index settings from [export-vcluster-settings.preview.json](export-vcluster-settings.preview.json):
 
 ```bash
 curl --request PUT \
@@ -138,7 +138,7 @@ curl --request PUT \
   --header "x-algolia-application-id: $ALGOLIA_APP_ID" \
   --header "x-algolia-api-key: $ALGOLIA_ADMIN_KEY" \
   --header "content-type: application/json" \
-  --data @/Users/daryl/git/vcluster/vcluster-docs/algolia/export-vcluster-settings.preview.json
+  --data @algolia/export-vcluster-settings.preview.json
 ```
 
 This is required because the crawler’s `initialIndexSettings` won’t update an already-existing index.

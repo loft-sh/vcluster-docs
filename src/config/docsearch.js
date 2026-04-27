@@ -4,11 +4,13 @@
 export const DOCSEARCH_PRODUCTS = {
   vcluster: {
     pluginId: "vcluster",
+    displayName: "vCluster",
     stableVersion: "0.33.0",
     stableLabel: "v0.33 Stable",
   },
   platform: {
     pluginId: "platform",
+    displayName: "Platform",
     stableVersion: "4.8.0",
     stableLabel: "v4.8 Stable",
   },

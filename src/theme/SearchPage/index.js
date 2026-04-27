@@ -22,6 +22,7 @@ import {
 } from '@docusaurus/theme-search-algolia/client';
 import Layout from '@theme/Layout';
 import Heading from '@theme/Heading';
+import {getDocsearchProduct} from '@site/src/config/docsearch';
 import styles from './styles.module.css';
 
 const SEARCH_ALL_VERSIONS = "__all__";
@@ -88,8 +89,7 @@ function SearchVersionSelectList({docsSearchVersionsHelpers}) {
   return (
     <div className={styles.searchVersionGrid}>
       {versionedPluginEntries.map(([pluginId, docsData]) => {
-        const displayNames = {vcluster: 'vCluster', platform: 'Platform'};
-        const displayName = displayNames[pluginId] ?? pluginId;
+        const displayName = getDocsearchProduct(pluginId)?.displayName ?? pluginId;
         const labelPrefix =
           versionedPluginEntries.length > 1 ? `${displayName}: ` : '';
         const latestStableVersion =
@@ -316,6 +316,7 @@ function SearchPageContent() {
 
           const pluginData = docsSearchVersionsHelpers.allDocsData[pluginId];
           const latestStableVersion =
+            getDocsearchProduct(pluginId)?.stableVersion ??
             pluginData.versions.find((version) => version.isLast)?.name ??
             pluginData.versions[0]?.name;
           const versionName =
@@ -355,9 +356,10 @@ function SearchPageContent() {
     searchResultStateDispatcher({type: 'reset'});
     if (searchQuery) {
       searchResultStateDispatcher({type: 'loading'});
-      setTimeout(() => {
+      const timer = setTimeout(() => {
         makeSearch();
       }, 300);
+      return () => clearTimeout(timer);
     }
   }, [searchQuery, docsSearchVersionsHelpers.searchVersions, makeSearch]);
 
