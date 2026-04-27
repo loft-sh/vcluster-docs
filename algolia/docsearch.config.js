@@ -13,9 +13,11 @@ new Crawler({
   maxDepth: 10,
   startUrls: ["https://www.vcluster.com/docs/"],
   sitemaps: ["https://www.vcluster.com/docs/sitemap.xml"],
+  renderJavaScript: false,
   ignoreCanonicalTo: true,
   discoveryPatterns: ["https://www.vcluster.com/docs/**"],
   exclusionPatterns: ["https://www.vcluster.com/docs/v0.19/**"],
+  schedule: "at 05:00 on Saturday",
   actions: [
     {
       indexName: "vcluster",
@@ -54,6 +56,7 @@ new Crawler({
             ? 160
             : pageRankByStatus[versionStatus] ?? 0;
 
+        // priority order: deepest active sub list header -> navbar active item -> 'Documentation'
         const lvl0 =
           $(
             ".menu__link.menu__link--sublist.menu__link--active, .navbar__item.navbar__link--active"
