@@ -4,7 +4,7 @@
 // There are various equivalent ways to declare your Docusaurus config.
 // See: https://docusaurus.io/docs/api/docusaurus-config
 
-import { themes as prismThemes } from "prism-react-renderer";
+import vClusterTheme from "./src/prism-theme.js";
 
 const __webpack_public_path__ = "/docs/";
 
@@ -455,7 +455,7 @@ const config = {
         copyright: `Copyright © ${new Date().getFullYear()}<span class="footer-space-before"><a href="https://www.vcluster.com/">vCluster Labs</a></span><span class="footer-separator">|</span>Documentation released under<span class="footer-space-before"><a href="https://creativecommons.org/publicdomain/zero/1.0/">CC0 1.0 Universal</a></span>.`,
       },
       prism: {
-        theme: prismThemes.gruvboxMaterialDark,
+        theme: vClusterTheme,
         additionalLanguages: ["bash", "hcl"],
       },
       announcementBar: {
