@@ -55,6 +55,8 @@ func addKnownTypes(scheme *runtime.Scheme) error {
 		&License{},
 		&LicenseList{},
 		&LicenseRequest{},
+		&LicenseToken{},
+		&LicenseTokenList{},
 		&LoftUpgrade{},
 		&LoftUpgradeList{},
 		&NodeClaim{},
@@ -68,8 +70,6 @@ func addKnownTypes(scheme *runtime.Scheme) error {
 		&NodeTypeList{},
 		&OIDCClient{},
 		&OIDCClientList{},
-		&OSImage{},
-		&OSImageList{},
 		&OwnedAccessKey{},
 		&OwnedAccessKeyList{},
 		&Project{},
@@ -91,8 +91,6 @@ func addKnownTypes(scheme *runtime.Scheme) error {
 		&RegisterVirtualClusterList{},
 		&ResetAccessKey{},
 		&ResetAccessKeyList{},
-		&SSHKey{},
-		&SSHKeyList{},
 		&Self{},
 		&SelfList{},
 		&SelfSubjectAccessReview{},
@@ -128,13 +126,10 @@ func addKnownTypes(scheme *runtime.Scheme) error {
 		&VirtualClusterInstance{},
 		&VirtualClusterInstanceList{},
 		&VirtualClusterAccessKey{},
-		&VirtualClusterInstanceDebugShell{},
-		&VirtualClusterInstanceDebugShellPods{},
 		&VirtualClusterExternalDatabase{},
 		&VirtualClusterInstanceKubeConfig{},
 		&VirtualClusterInstanceLog{},
 		&VirtualClusterNodeAccessKey{},
-		&VirtualClusterResourceUsage{},
 		&VirtualClusterInstanceShell{},
 		&VirtualClusterInstanceSnapshot{},
 		&VirtualClusterStandalone{},
@@ -234,6 +229,7 @@ var (
 			nil,
 			management.NewLicenseRequestREST,
 		),
+		management.ManagementLicenseTokenStorage,
 		management.ManagementLoftUpgradeStorage,
 		management.ManagementNodeClaimStorage,
 		builders.NewApiResourceWithStorage(
@@ -266,7 +262,6 @@ var (
 			func() runtime.Object { return &NodeTypeList{} }, // Register versioned resource list
 			management.NewNodeTypeStatusREST),
 		management.ManagementOIDCClientStorage,
-		management.ManagementOSImageStorage,
 		management.ManagementOwnedAccessKeyStorage,
 		management.ManagementProjectStorage,
 		builders.NewApiResourceWithStorage(
@@ -332,7 +327,6 @@ var (
 		management.ManagementRedirectTokenStorage,
 		management.ManagementRegisterVirtualClusterStorage,
 		management.ManagementResetAccessKeyStorage,
-		management.ManagementSSHKeyStorage,
 		management.ManagementSelfStorage,
 		management.ManagementSelfSubjectAccessReviewStorage,
 		management.ManagementSharedSecretStorage,
@@ -412,18 +406,6 @@ var (
 			management.NewVirtualClusterAccessKeyREST,
 		),
 		builders.NewApiResourceWithStorage(
-			management.InternalVirtualClusterInstanceDebugShellREST,
-			func() runtime.Object { return &VirtualClusterInstanceDebugShell{} }, // Register versioned resource
-			nil,
-			management.NewVirtualClusterInstanceDebugShellREST,
-		),
-		builders.NewApiResourceWithStorage(
-			management.InternalVirtualClusterInstanceDebugShellPodsREST,
-			func() runtime.Object { return &VirtualClusterInstanceDebugShellPods{} }, // Register versioned resource
-			nil,
-			management.NewVirtualClusterInstanceDebugShellPodsREST,
-		),
-		builders.NewApiResourceWithStorage(
 			management.InternalVirtualClusterExternalDatabaseREST,
 			func() runtime.Object { return &VirtualClusterExternalDatabase{} }, // Register versioned resource
 			nil,
@@ -446,12 +428,6 @@ var (
 			func() runtime.Object { return &VirtualClusterNodeAccessKey{} }, // Register versioned resource
 			nil,
 			management.NewVirtualClusterNodeAccessKeyREST,
-		),
-		builders.NewApiResourceWithStorage(
-			management.InternalVirtualClusterResourceUsageREST,
-			func() runtime.Object { return &VirtualClusterResourceUsage{} }, // Register versioned resource
-			nil,
-			management.NewVirtualClusterResourceUsageREST,
 		),
 		builders.NewApiResourceWithStorage(
 			management.InternalVirtualClusterInstanceShellREST,
@@ -714,6 +690,14 @@ type LicenseRequestList struct {
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 
+type LicenseTokenList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata,omitempty"`
+	Items           []LicenseToken `json:"items"`
+}
+
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+
 type LoftUpgradeList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
@@ -766,14 +750,6 @@ type OIDCClientList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []OIDCClient `json:"items"`
-}
-
-// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
-
-type OSImageList struct {
-	metav1.TypeMeta `json:",inline"`
-	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []OSImage `json:"items"`
 }
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
@@ -894,14 +870,6 @@ type ResetAccessKeyList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []ResetAccessKey `json:"items"`
-}
-
-// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
-
-type SSHKeyList struct {
-	metav1.TypeMeta `json:",inline"`
-	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []SSHKey `json:"items"`
 }
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
@@ -1090,22 +1058,6 @@ type VirtualClusterAccessKeyList struct {
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 
-type VirtualClusterInstanceDebugShellList struct {
-	metav1.TypeMeta `json:",inline"`
-	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []VirtualClusterInstanceDebugShell `json:"items"`
-}
-
-// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
-
-type VirtualClusterInstanceDebugShellPodsList struct {
-	metav1.TypeMeta `json:",inline"`
-	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []VirtualClusterInstanceDebugShellPods `json:"items"`
-}
-
-// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
-
 type VirtualClusterExternalDatabaseList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
@@ -1134,14 +1086,6 @@ type VirtualClusterNodeAccessKeyList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []VirtualClusterNodeAccessKey `json:"items"`
-}
-
-// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
-
-type VirtualClusterResourceUsageList struct {
-	metav1.TypeMeta `json:",inline"`
-	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []VirtualClusterResourceUsage `json:"items"`
 }
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
