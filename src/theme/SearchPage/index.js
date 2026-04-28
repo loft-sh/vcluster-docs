@@ -1,5 +1,5 @@
 /* eslint-disable jsx-a11y/no-autofocus */
-import React, {useEffect, useReducer, useRef, useState} from 'react';
+import React, {useEffect, useMemo, useReducer, useRef, useState} from 'react';
 import clsx from 'clsx';
 import algoliaSearchHelper from 'algoliasearch-helper';
 import {liteClient} from 'algoliasearch/lite';
@@ -22,10 +22,15 @@ import {
 } from '@docusaurus/theme-search-algolia/client';
 import Layout from '@theme/Layout';
 import Heading from '@theme/Heading';
+import {getDocsearchProduct} from '@site/src/config/docsearch';
 import styles from './styles.module.css';
-// Very simple pluralization: probably good enough for now
+
+const SEARCH_ALL_VERSIONS = "__all__";
+const SEARCH_CURRENT_VERSION = "__current__";
+
 function useDocumentsFoundPlural() {
   const {selectMessage} = usePluralForm();
+
   return (count) =>
     selectMessage(
       count,
@@ -40,36 +45,34 @@ function useDocumentsFoundPlural() {
       ),
     );
 }
+
+function getDefaultSearchVersions(allDocsData) {
+  return Object.entries(allDocsData).reduce((acc, [pluginId, pluginData]) => {
+    const defaultVersion =
+      pluginData.versions.length > 1
+        ? SEARCH_CURRENT_VERSION
+        : pluginData.versions[0]?.name ?? SEARCH_ALL_VERSIONS;
+
+    return {
+      ...acc,
+      [pluginId]: defaultVersion,
+    };
+  }, {});
+}
+
 function useDocsSearchVersionsHelpers() {
   const allDocsData = useAllDocsData();
-  // State of the version select menus / algolia facet filters
-  // docsPluginId -> versionName map
   const [searchVersions, setSearchVersions] = useState(() =>
-    Object.entries(allDocsData).reduce(
-      (acc, [pluginId, pluginData]) => {
-        // CUSTOM: Default to "Stable" versions instead of first version
-        // Modified for DOC-972 - maintains version dropdown defaults across all browsers
-        // This ensures search results default to stable versions (e.g., "v0.29 Stable", "v4.4 Stable")
-        // instead of "main" when embedded in iframe or used standalone
-        const stableVersion = pluginData.versions.find(
-          v => v.label && v.label.includes('Stable')
-        );
-        const defaultVersion = stableVersion || pluginData.versions[0];
-
-        return {
-          ...acc,
-          [pluginId]: defaultVersion.name,
-        };
-      },
-      {},
-    ),
+    getDefaultSearchVersions(allDocsData),
   );
-  // Set the value of a single select menu
+
   const setSearchVersion = (pluginId, searchVersion) =>
-    setSearchVersions((s) => ({...s, [pluginId]: searchVersion}));
+    setSearchVersions((state) => ({...state, [pluginId]: searchVersion}));
+
   const versioningEnabled = Object.values(allDocsData).some(
     (docsData) => docsData.versions.length > 1,
   );
+
   return {
     allDocsData,
     versioningEnabled,
@@ -77,48 +80,58 @@ function useDocsSearchVersionsHelpers() {
     setSearchVersion,
   };
 }
-// We want to display one select per versioned docs plugin instance
+
 function SearchVersionSelectList({docsSearchVersionsHelpers}) {
   const versionedPluginEntries = Object.entries(
     docsSearchVersionsHelpers.allDocsData,
-  )
-    // Do not show a version select for unversioned docs plugin instances
-    .filter(([, docsData]) => docsData.versions.length > 1);
+  ).filter(([, docsData]) => docsData.versions.length > 1);
+
   return (
-    <div
-      className={clsx(
-        'col',
-        'col--3',
-        'padding-left--none',
-        styles.searchVersionColumn,
-      )}>
+    <div className={styles.searchVersionGrid}>
       {versionedPluginEntries.map(([pluginId, docsData]) => {
+        const displayName = getDocsearchProduct(pluginId)?.displayName ?? pluginId;
         const labelPrefix =
-          versionedPluginEntries.length > 1 ? `${pluginId}: ` : '';
+          versionedPluginEntries.length > 1 ? `${displayName}: ` : '';
+        const latestStableVersion =
+          docsData.versions.find((version) => version.isLast) ??
+          docsData.versions[0];
+
         return (
-          <select
-            key={pluginId}
-            onChange={(e) =>
-              docsSearchVersionsHelpers.setSearchVersion(
-                pluginId,
-                e.target.value,
-              )
-            }
-            defaultValue={docsSearchVersionsHelpers.searchVersions[pluginId]}
-            className={styles.searchVersionInput}>
-            {docsData.versions.map((version, i) => (
-              <option
-                key={i}
-                label={`${labelPrefix}${version.label}`}
-                value={version.name}
-              />
-            ))}
-          </select>
+          <div key={pluginId} className={styles.searchVersionGroup}>
+            <label className={styles.searchVersionLabel} htmlFor={`search-version-${pluginId}`}>
+              {labelPrefix.replace(/: $/, '') || displayName}
+            </label>
+            <select
+              id={`search-version-${pluginId}`}
+              onChange={(e) =>
+                docsSearchVersionsHelpers.setSearchVersion(
+                  pluginId,
+                  e.target.value,
+                )
+              }
+              value={docsSearchVersionsHelpers.searchVersions[pluginId]}
+              className={styles.searchVersionInput}>
+              <option value={SEARCH_CURRENT_VERSION}>
+                {`Current stable (${latestStableVersion.label})`}
+              </option>
+              {docsData.versions.map((version) => (
+                <option
+                  key={version.name}
+                  label={`${labelPrefix}${version.label}`}
+                  value={version.name}
+                />
+              ))}
+              <option value={SEARCH_ALL_VERSIONS}>
+                {`All ${displayName} versions`}
+              </option>
+            </select>
+          </div>
         );
       })}
     </div>
   );
 }
+
 function getSearchPageTitle(searchQuery) {
   return searchQuery
     ? translate(
@@ -137,6 +150,7 @@ function getSearchPageTitle(searchQuery) {
         description: 'The search page title for empty query',
       });
 }
+
 function SearchPageContent() {
   const {
     i18n: {currentLocale},
@@ -158,6 +172,7 @@ function SearchPageContent() {
     hasMore: null,
     loading: null,
   };
+
   const [searchResultState, searchResultStateDispatcher] = useReducer(
     (prevState, data) => {
       switch (data.type) {
@@ -171,6 +186,7 @@ function SearchPageContent() {
           if (searchQuery !== data.value.query) {
             return prevState;
           }
+
           return {
             ...data.value,
             items:
@@ -193,30 +209,38 @@ function SearchPageContent() {
     },
     initialSearchResultState,
   );
-  // respect settings from the theme config for facets
-  const disjunctiveFacets = contextualSearch
-    ? ['language', 'docusaurus_tag']
-    : [];
-  const algoliaClient = liteClient(appId, apiKey);
-  const algoliaHelper = algoliaSearchHelper(algoliaClient, indexName, {
-    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-    // @ts-ignore: why errors happens after upgrading to TS 5.5 ?
-    hitsPerPage: 15,
-    advancedSyntax: true,
-    disjunctiveFacets,
-  });
-  algoliaHelper.on(
-    'result',
-    ({results: {query, hits, page, nbHits, nbPages}}) => {
+
+  // Hard disjunctive facet filters — only results from the selected version
+  // are returned. This differs from the modal, which uses soft optionalFilters
+  // so cross-version results still appear ranked lower. Users on the search
+  // page have explicit version controls and expect the filter to be strict.
+  const algoliaClient = useMemo(
+    () => liteClient(appId, apiKey),
+    [appId, apiKey],
+  );
+  const algoliaHelper = useMemo(
+    () =>
+      algoliaSearchHelper(algoliaClient, indexName, {
+        hitsPerPage: 15,
+        advancedSyntax: true,
+        disjunctiveFacets: contextualSearch ? ['language', 'docusaurus_tag'] : [],
+      }),
+    [algoliaClient, indexName, contextualSearch],
+  );
+
+  useEffect(() => {
+    const handleResult = ({results: {query, hits, page, nbHits, nbPages}}) => {
       if (query === '' || !Array.isArray(hits)) {
         searchResultStateDispatcher({type: 'reset'});
         return;
       }
+
       const sanitizeValue = (value) =>
         value.replace(
           /algolia-docsearch-suggestion--highlight/g,
           'search-result-match',
         );
+
       const items = hits.map(
         ({
           url,
@@ -226,6 +250,7 @@ function SearchPageContent() {
           const titles = Object.keys(hierarchy).map((key) =>
             sanitizeValue(hierarchy[key].value),
           );
+
           return {
             title: titles.pop(),
             url: processSearchResultUrl(url),
@@ -236,6 +261,7 @@ function SearchPageContent() {
           };
         },
       );
+
       searchResultStateDispatcher({
         type: 'update',
         value: {
@@ -248,15 +274,19 @@ function SearchPageContent() {
           loading: false,
         },
       });
-    },
-  );
+    };
+
+    algoliaHelper.on('result', handleResult);
+    return () => {
+      algoliaHelper.removeListener('result', handleResult);
+    };
+  }, [algoliaHelper, processSearchResultUrl]);
+
   const [loaderRef, setLoaderRef] = useState(null);
   const prevY = useRef(0);
   const observer = useRef(
     ExecutionEnvironment.canUseIntersectionObserver &&
       new IntersectionObserver(
-        // TODO need to fix this React Compiler lint error
-        // eslint-disable-next-line react-compiler/react-compiler
         (entries) => {
           const {
             isIntersecting,
@@ -270,68 +300,94 @@ function SearchPageContent() {
         {threshold: 1},
       ),
   );
+
   const makeSearch = useEvent((page = 0) => {
+    algoliaHelper.clearRefinements();
+
     if (contextualSearch) {
       algoliaHelper.addDisjunctiveFacetRefinement('docusaurus_tag', 'default');
       algoliaHelper.addDisjunctiveFacetRefinement('language', currentLocale);
+
       Object.entries(docsSearchVersionsHelpers.searchVersions).forEach(
         ([pluginId, searchVersion]) => {
-          algoliaHelper.addDisjunctiveFacetRefinement(
-            'docusaurus_tag',
-            `docs-${pluginId}-${searchVersion}`,
-          );
+          if (searchVersion === SEARCH_ALL_VERSIONS) {
+            return;
+          }
+
+          const pluginData = docsSearchVersionsHelpers.allDocsData[pluginId];
+          const latestStableVersion =
+            getDocsearchProduct(pluginId)?.stableVersion ??
+            pluginData.versions.find((version) => version.isLast)?.name ??
+            pluginData.versions[0]?.name;
+          const versionName =
+            searchVersion === SEARCH_CURRENT_VERSION
+              ? latestStableVersion
+              : searchVersion;
+
+          if (versionName) {
+            algoliaHelper.addDisjunctiveFacetRefinement(
+              'docusaurus_tag',
+              `docs-${pluginId}-${versionName}`,
+            );
+          }
         },
       );
     }
+
     algoliaHelper.setQuery(searchQuery).setPage(page).search();
   });
+
   useEffect(() => {
     if (!loaderRef) {
       return undefined;
     }
+
     const currentObserver = observer.current;
+
     if (currentObserver) {
       currentObserver.observe(loaderRef);
       return () => currentObserver.unobserve(loaderRef);
     }
+
     return () => true;
   }, [loaderRef]);
+
   useEffect(() => {
     searchResultStateDispatcher({type: 'reset'});
     if (searchQuery) {
       searchResultStateDispatcher({type: 'loading'});
-      setTimeout(() => {
+      const timer = setTimeout(() => {
         makeSearch();
       }, 300);
+      return () => clearTimeout(timer);
     }
   }, [searchQuery, docsSearchVersionsHelpers.searchVersions, makeSearch]);
+
   useEffect(() => {
     if (!searchResultState.lastPage || searchResultState.lastPage === 0) {
       return;
     }
+
     makeSearch(searchResultState.lastPage);
   }, [makeSearch, searchResultState.lastPage]);
+
   return (
     <Layout>
       <PageMetadata title={pageTitle} />
 
       <Head>
-        {/*
-         We should not index search pages
-          See https://github.com/facebook/docusaurus/pull/3233
-        */}
         <meta property="robots" content="noindex, follow" />
       </Head>
 
       <div className="container margin-vert--lg">
         <Heading as="h1">{pageTitle}</Heading>
+        <p className={styles.searchHelperText}>
+          Search defaults to the current stable docs for each product. Use the
+          version filters to broaden results or target a specific release.
+        </p>
 
         <form className="row" onSubmit={(e) => e.preventDefault()}>
-          <div
-            className={clsx('col', styles.searchQueryColumn, {
-              'col--9': docsSearchVersionsHelpers.versioningEnabled,
-              'col--12': !docsSearchVersionsHelpers.versioningEnabled,
-            })}>
+          <div className={clsx('col col--12', styles.searchQueryColumn)}>
             <input
               type="search"
               name="q"
@@ -352,13 +408,15 @@ function SearchPageContent() {
               autoFocus
             />
           </div>
+        </form>
 
-          {contextualSearch && docsSearchVersionsHelpers.versioningEnabled && (
+        {contextualSearch && docsSearchVersionsHelpers.versioningEnabled && (
+          <div className={styles.searchFiltersRow}>
             <SearchVersionSelectList
               docsSearchVersionsHelpers={docsSearchVersionsHelpers}
             />
-          )}
-        </form>
+          </div>
+        )}
 
         <div className="row">
           <div className={clsx('col', 'col--8', styles.searchResultsColumn)}>
@@ -420,8 +478,6 @@ function SearchPageContent() {
                           <li
                             key={index}
                             className="breadcrumbs__item"
-                            // Developer provided the HTML, so assume it's safe.
-                            // eslint-disable-next-line react/no-danger
                             dangerouslySetInnerHTML={{__html: html}}
                           />
                         ))}
@@ -432,8 +488,6 @@ function SearchPageContent() {
                   {summary && (
                     <p
                       className={styles.searchResultItemSummary}
-                      // Developer provided the HTML, so assume it's safe.
-                      // eslint-disable-next-line react/no-danger
                       dangerouslySetInnerHTML={{__html: summary}}
                     />
                   )}
@@ -471,6 +525,7 @@ function SearchPageContent() {
     </Layout>
   );
 }
+
 export default function SearchPage() {
   return (
     <HtmlClassNameProvider className="search-page-wrapper">

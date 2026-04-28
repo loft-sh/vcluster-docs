@@ -431,9 +431,10 @@ const config = {
         apiKey: "7c88fbdab6aea75d67f1f52e41b5d456",
         indexName: "vcluster",
         placeholder: "Search...",
-        externalUrlRegex: "vcluster\\.com\/docs\/v0\\.19",
         contextualSearch: true,
-        algoliaOptions: {},
+        searchPagePath: "search",
+        externalUrlRegex:
+          "(?:loft\\.sh|platform-v4-[0-9]--vcluster-docs-site\\.netlify\\.app)",
       },
       footer: {
         style: "light",
