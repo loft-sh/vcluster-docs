@@ -70,9 +70,6 @@ type NodeClaimData struct {
 	// UserData that should be used to start the node.
 	UserData string `json:"userData,omitempty"`
 
-	// Outputs of the node environment.
-	Outputs []byte `json:"outputs,omitempty"`
-
 	// Terraform state of the node claim.
 	State []byte `json:"state,omitempty"`
 
