@@ -186,11 +186,13 @@ announcementBar: {
 },
 ```
 
-## InterpolatedCodeBlock Fallback Versions
+## InterpolatedCodeBlock Fallback Versions (auto-synced)
 
 **File:** `src/components/InterpolatedCodeBlock/index.js`
 
-**Before:**
+This block is now auto-synced to the latest stable patch by
+`.github/workflows/sync-latest-versions.yml`:
+
 ```js
 const LATEST_VERSIONS = {
   platform: '4.4.0',
@@ -198,15 +200,19 @@ const LATEST_VERSIONS = {
 };
 ```
 
-**After:**
-```js
-const LATEST_VERSIONS = {
-  platform: '4.4.0',  // update if platform version also changed
-  vcluster: '0.30.0',
-};
-```
+**Do not edit by hand** during patch releases — the daily sync workflow opens a
+PR when a new stable patch (matching the currently-tracked minor) ships in
+[loft-sh/vcluster](https://github.com/loft-sh/vcluster/releases) or
+[loft-sh/loft](https://github.com/loft-sh/loft/releases). A PR-time staleness
+check (`validate-latest-versions.yml`) fails the build if the file drifts.
 
-**Note:** Version is without `v` prefix. This fallback is used when the Docusaurus version context is unavailable (e.g. non-versioned pages, SSR edge cases).
+**Minor bumps** (e.g. `0.29.0` → `0.30.0`) still go through the normal docs
+versioning step — the auto-sync is patch-only by design and never promotes
+minor versions. Bump the minor here once the new docs version is created;
+patches on top of the new minor will then be auto-synced.
+
+Version strings have no `v` prefix. This fallback is used when the Docusaurus
+version context is unavailable (e.g. non-versioned pages, SSR edge cases).
 
 ## netlify.toml Changes
 
