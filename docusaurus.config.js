@@ -21,6 +21,8 @@ description: Brief description of the document
 Write your content here...
 `;
 
+const isNetlifyProduction = process.env.CONTEXT === 'production';
+
 /** @type {import('@docusaurus/types').Config} */
 const config = {
   title: "Tenant cluster management",
@@ -327,10 +329,17 @@ const config = {
 
   scripts: [
     {
-      src:
-        "https://cdnjs.cloudflare.com/ajax/libs/clipboard.js/2.0.0/clipboard.min.js",
+      src: "https://cdnjs.cloudflare.com/ajax/libs/clipboard.js/2.0.0/clipboard.min.js",
       async: true,
     },
+    ...(isNetlifyProduction
+      ? [
+          {
+            src: "https://www.googletagmanager.com/gtm.js?id=GTM-KGZ3TLD",
+            async: true,
+          },
+        ]
+      : []),
   ],
   clientModules: [
     './src/client/MermaidPolyfillsClient.js',
