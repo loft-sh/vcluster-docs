@@ -198,6 +198,24 @@ detect_changes() {
         RENAMED_OLD="${RENAMED_OLD}${old_path}"$'\n'
         RENAMED_NEW="${RENAMED_NEW}${new_path}"$'\n'
     done <<<"$rename_lines"
+
+    ADDED_FILES="$(git diff --name-status --diff-filter=A "${base_ref}"...HEAD -- \
+        'vcluster/**/*.mdx' 'vcluster/**/*.md' \
+        'platform/**/*.mdx' 'platform/**/*.md' 2>/dev/null | \
+        awk '{print $2}' | \
+        grep -v '/_' || true)"
+
+    # Build a map of sidebar_position -> added file path per directory,
+    # so guess_destination can match a deleted file to its replacement by position.
+    # Format: "dir/sidebar_pos=new_path" stored in ADDED_BY_POS
+    ADDED_BY_POS=""
+    while IFS= read -r added_path; do
+        [[ -z "$added_path" ]] && continue
+        local added_dir="${added_path%/*}"
+        local pos
+        pos="$(grep -m1 '^sidebar_position:' "${REPO_ROOT}/${added_path}" 2>/dev/null | awk '{print $2}')"
+        [[ -n "$pos" ]] && ADDED_BY_POS="${ADDED_BY_POS}${added_dir}/${pos}=${added_path}"$'\n'
+    done <<<"$ADDED_FILES"
 }
 
 append_redirect() {
@@ -238,10 +256,34 @@ append_redirect() {
 
 guess_destination() {
     local filepath="$1"
+    local base_ref="$2"
     local url
     url="$(file_to_url "$filepath")"
+    local dir="${filepath%/*}"
     local parent_url="${url%/*}"
     local parent_path="${parent_url#/docs/}"
+
+    # Match by sidebar_position: find the added file in the same dir with the same position
+    local pos
+    pos="$(git show "${base_ref}:${filepath}" 2>/dev/null | grep -m1 '^sidebar_position:' | awk '{print $2}')"
+    if [[ -n "$pos" ]]; then
+        local match
+        match="$(grep "^${dir}/${pos}=" <<<"$ADDED_BY_POS" | head -1 | cut -d= -f2-)"
+        if [[ -n "$match" ]]; then
+            file_to_url "$match"
+            return
+        fi
+    fi
+
+    # Fallback: if exactly one file was added in the same directory, redirect there
+    local siblings
+    siblings="$(grep "^${dir}/" <<<"$ADDED_FILES" 2>/dev/null || true)"
+    local sibling_count
+    sibling_count="$(echo "$siblings" | grep -c . || true)"
+    if [[ "$sibling_count" -eq 1 ]]; then
+        file_to_url "$(echo "$siblings" | tr -d '[:space:]')"
+        return
+    fi
 
     if [[ -f "${REPO_ROOT}/${parent_path}/index.mdx" ]] || \
        [[ -f "${REPO_ROOT}/${parent_path}/_category_.json" ]] || \
@@ -448,10 +490,16 @@ fix_redirects() {
         if has_redirect_coverage "$url"; then
             ok "Already covered: $filepath"
         else
-            local dest
-            dest="$(guess_destination "$filepath")"
-            append_redirect "$url" "$dest" "Deleted: $filepath — TODO: verify destination"
-            warn "Added redirect: $url -> $dest  (verify destination!)"
+            local dest base_ref
+            base_ref="$(get_base_ref)"
+            dest="$(guess_destination "$filepath" "$base_ref")"
+            if [[ "$dest" == */$(basename "${filepath%.mdx}") || "$dest" == */$(basename "${filepath%.md}") ]]; then
+                append_redirect "$url" "$dest" "Renamed: $filepath"
+                ok "Added redirect: $url -> $dest"
+            else
+                append_redirect "$url" "$dest" "Deleted: $filepath — TODO: verify destination"
+                warn "Added redirect: $url -> $dest  (verify destination!)"
+            fi
         fi
     done <<<"$DELETED_FILES"
 

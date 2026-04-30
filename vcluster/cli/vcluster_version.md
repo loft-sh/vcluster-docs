@@ -3,28 +3,21 @@ title: "vcluster version --help"
 sidebar_label: vcluster version
 ---
 
+## vcluster version
 
-Print the version number of vcluster
-
-## Synopsis
+Print the vCluster version
 
 ```
 vcluster version [flags]
 ```
 
-```
-All software has versions. This is Vcluster's.
-```
-
-
-## Flags
+### Options
 
 ```
   -h, --help   help for version
 ```
 
-
-## Global and inherited flags
+### Options inherited from parent commands
 
 ```
       --config string       The vcluster CLI config to use (will be created if it does not exist) (default "~/.vcluster/config.json")
@@ -34,4 +27,3 @@ All software has versions. This is Vcluster's.
   -n, --namespace string    The kubernetes namespace to use
   -s, --silent              Run in silent mode and prevents any vcluster log output except panics & fatals
 ```
-

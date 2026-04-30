@@ -21,6 +21,8 @@ description: Brief description of the document
 Write your content here...
 `;
 
+const isNetlifyProduction = process.env.CONTEXT === 'production';
+
 /** @type {import('@docusaurus/types').Config} */
 const config = {
   title: "Tenant cluster management",
@@ -252,14 +254,19 @@ const config = {
         beforeDefaultRemarkPlugins: [
           [remarkVersionTokens, { siteDir: __dirname }],
         ],
-        lastVersion: "0.33.0",
-        onlyIncludeVersions: ["current", "0.33.0", "0.32.0", "0.31.0", "0.30.0", "0.29.0"],
+        lastVersion: "0.34.0",
+        onlyIncludeVersions: ["current", "0.34.0", "0.33.0", "0.32.0", "0.31.0", "0.30.0"],
         versions: {
           current: {
             label: "main 🚧",
           },
+          "0.34.0": {
+            label: "v0.34 Stable",
+            banner: "none",
+            badge: true,
+          },
           "0.33.0": {
-            label: "v0.33 Stable",
+            label: "v0.33",
             banner: "none",
             badge: true,
           },
@@ -275,11 +282,6 @@ const config = {
           },
           "0.30.0": {
             label: "v0.30 (EOS)",
-            banner: "none",
-            badge: true,
-          },
-          "0.29.0": {
-            label: "v0.29 (EOS)",
             banner: "none",
             badge: true,
           },
@@ -299,14 +301,19 @@ const config = {
         beforeDefaultRemarkPlugins: [
           [remarkVersionTokens, { siteDir: __dirname }],
         ],
-        lastVersion: "4.8.0",
-        onlyIncludeVersions: ["current", "4.8.0", "4.7.0", "4.6.0"],
+        lastVersion: "4.9.0",
+        onlyIncludeVersions: ["current", "4.9.0", "4.8.0", "4.7.0", "4.6.0"],
         versions: {
           current: {
             label: "main 🚧",
           },
+          "4.9.0": {
+            label: "v4.9 Stable",
+            banner: "none",
+            badge: true,
+          },
           "4.8.0": {
-            label: "v4.8 Stable",
+            label: "v4.8",
             banner: "none",
             badge: true,
           },
@@ -327,10 +334,17 @@ const config = {
 
   scripts: [
     {
-      src:
-        "https://cdnjs.cloudflare.com/ajax/libs/clipboard.js/2.0.0/clipboard.min.js",
+      src: "https://cdnjs.cloudflare.com/ajax/libs/clipboard.js/2.0.0/clipboard.min.js",
       async: true,
     },
+    ...(isNetlifyProduction
+      ? [
+          {
+            src: "https://www.googletagmanager.com/gtm.js?id=GTM-KGZ3TLD",
+            async: true,
+          },
+        ]
+      : []),
   ],
   clientModules: [
     './src/client/MermaidPolyfillsClient.js',
@@ -432,8 +446,10 @@ const config = {
         apiKey: "7c88fbdab6aea75d67f1f52e41b5d456",
         indexName: "vcluster",
         placeholder: "Search...",
-        externalUrlRegex: "vcluster\\.com\/docs\/v0\\.19",
-        algoliaOptions: {},
+        contextualSearch: true,
+        searchPagePath: "search",
+        externalUrlRegex:
+          "(?:loft\\.sh|platform-v4-[0-9]--vcluster-docs-site\\.netlify\\.app)",
       },
       footer: {
         style: "light",
@@ -459,9 +475,9 @@ const config = {
         additionalLanguages: ["bash", "hcl"],
       },
       announcementBar: {
-        id: "vcluster-0-33-platform-4-8-release",
+        id: "vcluster-0-34-platform-4-9-release",
         content:
-          '🚀 <strong>New releases: <a href="https://www.vcluster.com/releases/en/changelog?hideLogo=true&hideMenu=true&theme=dark&embed=true&c=vCluster" target="_blank">vCluster Platform 4.8 and vCluster 0.33</a></strong>',
+          '🚀 <strong>New releases: <a href="https://www.vcluster.com/releases/en/changelog?hideLogo=true&hideMenu=true&theme=dark&embed=true&c=vCluster" target="_blank">vCluster Platform 4.9 and vCluster 0.34</a></strong>',
         backgroundColor: "#050b24",
         textColor: "#ffffff",
         isCloseable: true,
