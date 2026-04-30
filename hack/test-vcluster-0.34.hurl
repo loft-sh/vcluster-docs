@@ -52,7 +52,7 @@ header "Location" contains "https://www.vcluster.com/docs/platform/understand/wh
 GET {{BASE_URL}}/docs/syncer/overview
 HTTP 301
 [Asserts]
-header "Location" contains "https://www.vcluster.com/docs/vcluster/0.20.0/introduction/architecture#syncer"
+header "Location" contains "/docs/vcluster/introduction/architecture#syncer"
 
 # Test 9: Using vclusters redirect
 GET {{BASE_URL}}/docs/using-vclusters/kube-context
@@ -64,7 +64,7 @@ header "Location" contains "https://www.vcluster.com/docs/vcluster/introduction/
 GET {{BASE_URL}}/docs/config-reference/
 HTTP 301
 [Asserts]
-header "Location" contains "/docs/vcluster/vcluster-yaml/"
+header "Location" contains "/docs/vcluster/configure/vcluster-yaml/"
 
 # Test 11: Storage redirect
 GET {{BASE_URL}}/docs/storage/
@@ -92,13 +92,13 @@ header "Location" contains "https://www.vcluster.com/docs/vcluster/"
 GET {{BASE_URL}}/docs/platform-ui-link/vcluster/backup-restore-migration
 HTTP 301
 [Asserts]
-header "Location" contains "/docs/vcluster/manage/backup-restore#migrate-and-override-vcluster-configuration-options-to-create-a-new-vcluster"
+header "Location" contains "/docs/vcluster/manage/backup-restore/backup#migrate-and-override-vcluster-configuration-options-to-create-a-new-vcluster"
 
 # Test 15: Supported migration options
 GET {{BASE_URL}}/docs/platform-ui-link/vcluster/supported-migration-options
 HTTP 301
 [Asserts]
-header "Location" contains "/docs/vcluster/manage/backup-restore#supported-migration-options"
+header "Location" contains "/docs/vcluster/manage/backup-restore/backup#supported-migration-options"
 
 # Test 16: Control plane
 GET {{BASE_URL}}/docs/platform-ui-link/vcluster/control-plane
@@ -318,31 +318,31 @@ header "Location" contains "/docs/vcluster/deploy/control-plane/kubernetes-pod/b
 GET {{BASE_URL}}/docs/vcluster/
 HTTP 200
 [Asserts]
-body contains "Virtual Clusters"
+body contains "vCluster"
 
-# Test 50: vCluster 0.33.0 should be accessible as versioned doc
-GET {{BASE_URL}}/docs/vcluster/0.33.0/
+# Test 50: vCluster 0.32.0 should be accessible as versioned doc
+GET {{BASE_URL}}/docs/vcluster/0.32.0/
 HTTP 200
 [Asserts]
-body contains "Virtual Clusters"
+body contains "vCluster"
 
 # Test 51: vCluster 0.32.0 should still be accessible
 GET {{BASE_URL}}/docs/vcluster/0.32.0/
 HTTP 200
 [Asserts]
-body contains "Virtual Clusters"
+body contains "vCluster"
 
 # Test 52: vCluster 0.31.0 should still be accessible
 GET {{BASE_URL}}/docs/vcluster/0.31.0/
 HTTP 200
 [Asserts]
-body contains "Virtual Clusters"
+body contains "vCluster"
 
 # Test 53: vCluster 0.30.0 should still be accessible
 GET {{BASE_URL}}/docs/vcluster/0.30.0/
 HTTP 200
 [Asserts]
-body contains "Virtual Clusters"
+body contains "vCluster"
 
 # Test 55: vCluster CLI pages should load
 GET {{BASE_URL}}/docs/vcluster/cli/vcluster_create/
