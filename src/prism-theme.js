@@ -5,11 +5,11 @@
  * Plain text: #CDD3DE (cool near-white, easy on the eyes)
  *
  * Token palette — five deliberate choices:
- *   Sky blue    #48B5FF  strings / inserted diffs (matches vcluster.com highlight.js)
- *   Soft orange #FF983F  numbers, booleans, variables (brand accent, literal values)
- *   Warm amber  #FFD580  keywords, tags (structural / declarative tokens)
- *   Pale orange #F4C28D  YAML keys, bash commands, class names (brand family, readable)
- *   Blaze Orange #FF6600 shebangs, YAML anchors (rare, maximum signal)
+ *   Sky blue     #48B5FF  strings / inserted diffs (matches vcluster.com highlight.js)
+ *   Light orange #FFA366  numbers, booleans, variables (literal values)
+ *   White        #FFFFFF  keywords, tags (structural / declarative tokens)
+ *   Pale orange  #FFE0CC  YAML keys, bash commands, class names (brand family, readable)
+ *   Blaze Orange #FF6600  shebangs, YAML anchors (rare, maximum signal)
  *   Slate       #7B8BB2  comments, punctuation, null (muted / de-emphasized)
  *
  * @type {import('prism-react-renderer').PrismTheme}
@@ -44,14 +44,14 @@ const vClusterTheme = {
     // numbers, booleans, $VARIABLES, regex patterns
     {
       types: ["number", "boolean", "variable", "regex"],
-      style: { color: "#FF983F" },
+      style: { color: "#FFA366" },
     },
 
     // ── Structural keywords and tags — warm amber ───────────────────────────
     // bash: if / for / do / fi / while; YAML tags; CSS selectors
     {
       types: ["keyword", "tag", "selector"],
-      style: { color: "#FFD580" },
+      style: { color: "#FFFFFF" },
     },
 
     // ── Properties and command names — pale orange ──────────────────────────
@@ -59,7 +59,7 @@ const vClusterTheme = {
     // and bash/HCL command/function names all share this shade
     {
       types: ["key", "attr-name", "property", "class-name", "namespace", "function", "builtin"],
-      style: { color: "#F4C28D" },
+      style: { color: "#FFE0CC" },
     },
 
     // ── Operators — near-plain, low visual noise ────────────────────────────
