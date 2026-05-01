@@ -4,7 +4,7 @@
 // There are various equivalent ways to declare your Docusaurus config.
 // See: https://docusaurus.io/docs/api/docusaurus-config
 
-import { themes as prismThemes } from "prism-react-renderer";
+import vClusterTheme from "./src/prism-theme.js";
 
 const __webpack_public_path__ = "/docs/";
 
@@ -48,6 +48,13 @@ const config = {
         href: '/docs/media/rebranding/vCluster_favicon_docs_dark.svg',
         type: 'image/svg+xml',
         media: '(prefers-color-scheme: dark)',
+      },
+    },
+    {
+      tagName: 'link',
+      attributes: {
+        rel: 'stylesheet',
+        href: 'https://fonts.googleapis.com/icon?family=Material+Icons+Outlined',
       },
     },
   ],
@@ -151,7 +158,7 @@ const config = {
           },
         ],
         theme: {
-          primaryColor: "#00bdff",
+          primaryColor: "#ff6600",
           redocOptions: {
             hideDownloadButton: false,
             disableSearch: true,
@@ -380,7 +387,8 @@ const config = {
         title: "",
         logo: {
           alt: "vCluster",
-          src: "/media/rebranding/vCluster_favicon_docs_orange.svg",
+          src: "/media/rebranding/vCluster_horizontal-orange.svg",
+          height: 36,
         },
         items: [
           // Product tabs
@@ -426,7 +434,7 @@ const config = {
             position: "right",
           },
           {
-            href: "https://github.com/loft-sh/vcluster",
+            href: "https://github.com/loft-sh/vcluster-docs",
             className: "github-link",
             "aria-label": "GitHub",
             position: "right",
@@ -463,14 +471,14 @@ const config = {
         copyright: `Copyright © ${new Date().getFullYear()}<span class="footer-space-before"><a href="https://www.vcluster.com/">vCluster Labs</a></span><span class="footer-separator">|</span>Documentation released under<span class="footer-space-before"><a href="https://creativecommons.org/publicdomain/zero/1.0/">CC0 1.0 Universal</a></span>.`,
       },
       prism: {
-        theme: prismThemes.dracula,
+        theme: vClusterTheme,
         additionalLanguages: ["bash", "hcl"],
       },
       announcementBar: {
         id: "vcluster-0-34-platform-4-9-release",
         content:
           '🚀 <strong>New releases: <a href="https://www.vcluster.com/releases/en/changelog?hideLogo=true&hideMenu=true&theme=dark&embed=true&c=vCluster" target="_blank">vCluster Platform 4.9 and vCluster 0.34</a></strong>',
-        backgroundColor: "#4a90e2",
+        backgroundColor: "#050b24",
         textColor: "#ffffff",
         isCloseable: true,
       },
