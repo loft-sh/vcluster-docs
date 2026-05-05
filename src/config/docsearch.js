@@ -14,6 +14,16 @@ export const DOCSEARCH_PRODUCTS = {
     stableVersion: "4.9.0",
     stableLabel: "v4.9 Stable",
   },
+  vnode: {
+    pluginId: "vnode",
+    displayName: "vNode",
+    versioned: false,
+  },
+  vmetal: {
+    pluginId: "vmetal",
+    displayName: "vMetal",
+    versioned: false,
+  },
 };
 
 export function getDocsearchProduct(pluginId) {
