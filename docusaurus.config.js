@@ -276,12 +276,12 @@ const config = {
             badge: true,
           },
           "0.31.0": {
-            label: "v0.31",
+            label: "v0.31 (EOS)",
             banner: "none",
             badge: true,
           },
           "0.30.0": {
-            label: "v0.30 (EOS)",
+            label: "v0.30 (EOL)",
             banner: "none",
             badge: true,
           },
