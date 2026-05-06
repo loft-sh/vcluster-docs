@@ -449,7 +449,7 @@ const config = {
         contextualSearch: true,
         searchPagePath: "search",
         externalUrlRegex:
-          "(?:loft\\.sh|platform-v4-[0-9]--vcluster-docs-site\\.netlify\\.app)",
+          "(?:loft\\.sh|platform-v4-[0-9]--vcluster-docs-site\\.netlify\\.app|vnode\\.com|vmetal\\.ai)",
       },
       footer: {
         style: "light",

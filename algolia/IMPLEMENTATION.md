@@ -276,6 +276,37 @@ Check:
 - older docs still show up when explicitly filtered
 - unreleased docs don’t dominate results unless intentionally targeted
 
+## External Site Reindex (vNode and vMetal)
+
+The crawler now covers three domains: `vcluster.com`, `vnode.com`, and `vmetal.ai`. The Saturday schedule crawls all three automatically. However, vnode-docs and vmetal-docs deploy independently and have no per-deploy crawler hook — a manual reindex is required after either external site ships significant content changes.
+
+### When to trigger a manual reindex
+
+Trigger after any deploy to `vnode-docs` or `vmetal-docs` that adds or substantially changes pages. Small edits don't warrant a reindex — the Saturday crawl will pick them up.
+
+### Before triggering the reindex
+
+Verify the external site is live with the correct meta tags. Check page source on any doc page and confirm:
+
+```
+<meta name="docsearch:product" content="vnode">   <!-- or vmetal -->
+<meta name="docsearch:page_category" content="docs">
+```
+
+If the tags are missing (e.g. the `DocItem/Layout` swizzle wasn't deployed), the crawler falls back to the `defaultValue` fields in `docsearch.config.js`. Results will still be faceted correctly, but confirm this before proceeding.
+
+### Trigger the reindex
+
+```bash
+curl --request POST \
+  --url "https://crawler.algolia.com/api/1/crawlers/$CRAWLER_ID/reindex" \
+  --header "Authorization: Basic $CRAWLER_BASIC_AUTH"
+```
+
+### Verify
+
+After the crawl completes, open the Algolia index browser and filter by `product:vnode` and `product:vmetal` to confirm records are present with correct `version_label` and `is_latest` values.
+
 ## After Each Stable Release
 
 When a new stable version ships for either product:

@@ -150,9 +150,11 @@ function useSearchParameters({contextualSearch, ...props}) {
     }
   } else {
     Object.values(DOCSEARCH_PRODUCTS).forEach((product) => {
-      optionalFilters.push(
-        `docusaurus_tag:docs-${product.pluginId}-${product.stableVersion}<score=2>`,
-      );
+      if (product.stableVersion) {
+        optionalFilters.push(
+          `docusaurus_tag:docs-${product.pluginId}-${product.stableVersion}<score=2>`,
+        );
+      }
     });
   }
 

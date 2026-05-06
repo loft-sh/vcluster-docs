@@ -11,11 +11,23 @@ new Crawler({
   apiKey: "YOUR_API_KEY",
   rateLimit: 8,
   maxDepth: 10,
-  startUrls: ["https://www.vcluster.com/docs/"],
-  sitemaps: ["https://www.vcluster.com/docs/sitemap.xml"],
+  startUrls: [
+    "https://www.vcluster.com/docs/",
+    "https://www.vnode.com/docs/",
+    "https://www.vmetal.ai/docs/",
+  ],
+  sitemaps: [
+    "https://www.vcluster.com/docs/sitemap.xml",
+    "https://www.vnode.com/docs/sitemap.xml",
+    "https://www.vmetal.ai/docs/sitemap.xml",
+  ],
   renderJavaScript: false,
   ignoreCanonicalTo: true,
-  discoveryPatterns: ["https://www.vcluster.com/docs/**"],
+  discoveryPatterns: [
+    "https://www.vcluster.com/docs/**",
+    "https://www.vnode.com/docs/**",
+    "https://www.vmetal.ai/docs/**",
+  ],
   exclusionPatterns: ["https://www.vcluster.com/docs/v0.19/**"],
   schedule: "at 05:00 on Saturday",
   actions: [
@@ -102,6 +114,66 @@ new Crawler({
               defaultValue: pageCategory,
             },
             pageRank,
+          },
+          indexHeadings: true,
+          aggregateContent: true,
+          recordVersion: "v3",
+        });
+      },
+    },
+    {
+      indexName: "vcluster",
+      pathsToMatch: ["https://www.vnode.com/docs/**"],
+      recordExtractor: ({ $, helpers }) => {
+        $(".hash-link").remove();
+        return helpers.docsearch({
+          recordProps: {
+            lvl0: { selectors: "", defaultValue: "vNode Documentation" },
+            lvl1: ["header h1", "article h1"],
+            lvl2: "article h2",
+            lvl3: "article h3",
+            lvl4: "article h4",
+            lvl5: "article h5, article td:first-child",
+            lvl6: "article h6",
+            content: "article p, article li, article td:last-child",
+            product: { defaultValue: "vnode" },
+            version: { defaultValue: "latest" },
+            version_label: { defaultValue: "Latest" },
+            version_status: { defaultValue: "stable" },
+            is_stable: { defaultValue: "true" },
+            is_latest: { defaultValue: "true" },
+            page_category: { defaultValue: "docs" },
+            pageRank: 120,
+          },
+          indexHeadings: true,
+          aggregateContent: true,
+          recordVersion: "v3",
+        });
+      },
+    },
+    {
+      indexName: "vcluster",
+      pathsToMatch: ["https://www.vmetal.ai/docs/**"],
+      recordExtractor: ({ $, helpers }) => {
+        $(".hash-link").remove();
+        return helpers.docsearch({
+          recordProps: {
+            lvl0: { selectors: "", defaultValue: "vMetal Documentation" },
+            lvl1: ["header h1", "article h1"],
+            lvl2: "article h2",
+            lvl3: "article h3",
+            lvl4: "article h4",
+            lvl5: "article h5, article td:first-child",
+            lvl6: "article h6",
+            content: "article p, article li, article td:last-child",
+            product: { defaultValue: "vmetal" },
+            version: { defaultValue: "latest" },
+            version_label: { defaultValue: "Latest" },
+            version_status: { defaultValue: "stable" },
+            is_stable: { defaultValue: "true" },
+            is_latest: { defaultValue: "true" },
+            page_category: { defaultValue: "docs" },
+            pageRank: 120,
           },
           indexHeadings: true,
           aggregateContent: true,
