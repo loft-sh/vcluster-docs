@@ -27,6 +27,8 @@ new Crawler({
     "https://www.vcluster.com/docs/**",
     "https://www.vnode.com/docs/**",
     "https://www.vmetal.ai/docs/**",
+    // vmetal.ai 301-redirects www to apex; include both so the resolved URL matches.
+    "https://vmetal.ai/docs/**",
   ],
   exclusionPatterns: ["https://www.vcluster.com/docs/v0.19/**"],
   schedule: "at 05:00 on Saturday",
@@ -153,7 +155,11 @@ new Crawler({
     },
     {
       indexName: "vcluster",
-      pathsToMatch: ["https://www.vmetal.ai/docs/**"],
+      // vmetal.ai 301-redirects www to apex; include both so the resolved URL matches.
+      pathsToMatch: [
+        "https://www.vmetal.ai/docs/**",
+        "https://vmetal.ai/docs/**",
+      ],
       recordExtractor: ({ $, helpers }) => {
         $(".hash-link").remove();
         return helpers.docsearch({
