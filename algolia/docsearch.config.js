@@ -11,21 +11,24 @@ new Crawler({
   apiKey: "YOUR_API_KEY",
   rateLimit: 8,
   maxDepth: 10,
+  // vnode.com 301-redirects apex → www; vmetal.ai 301-redirects www → apex.
+  // Algolia matches against the resolved URL after redirects, so each domain
+  // must use the form it resolves to, not the form it's requested as.
   startUrls: [
     "https://www.vcluster.com/docs/",
-    "https://vnode.com/docs/",
+    "https://www.vnode.com/docs/",
     "https://vmetal.ai/docs/",
   ],
   sitemaps: [
     "https://www.vcluster.com/docs/sitemap.xml",
-    "https://vnode.com/docs/sitemap.xml",
+    "https://www.vnode.com/docs/sitemap.xml",
     "https://vmetal.ai/docs/sitemap.xml",
   ],
   renderJavaScript: false,
   ignoreCanonicalTo: true,
   discoveryPatterns: [
     "https://www.vcluster.com/docs/**",
-    "https://vnode.com/docs/**",
+    "https://www.vnode.com/docs/**",
     "https://vmetal.ai/docs/**",
   ],
   exclusionPatterns: ["https://www.vcluster.com/docs/v0.19/**"],
@@ -123,7 +126,7 @@ new Crawler({
     },
     {
       indexName: "vcluster",
-      pathsToMatch: ["https://vnode.com/docs/**"],
+      pathsToMatch: ["https://www.vnode.com/docs/**"],
       recordExtractor: ({ $, helpers }) => {
         $(".hash-link").remove();
         return helpers.docsearch({

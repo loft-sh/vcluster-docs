@@ -18,6 +18,7 @@ import {useActivePluginAndVersion} from '@docusaurus/plugin-content-docs/client'
 import translations from '@theme/SearchTranslations';
 import {
   DOCSEARCH_PRODUCTS,
+  PRODUCT_BADGES,
   getVersionFacetValue,
   getVersionStatus,
 } from '@site/src/config/docsearch';
@@ -92,11 +93,6 @@ function useResultsFooterComponent({closeModal}) {
     [closeModal],
   );
 }
-
-const PRODUCT_BADGES = {
-  vnode: {label: 'vNode', color: '#0C00FF'},
-  vmetal: {label: 'vMetal', color: '#0098B2'},
-};
 
 function Hit({hit, children}) {
   const badge = PRODUCT_BADGES[hit.product];

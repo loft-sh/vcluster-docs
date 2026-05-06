@@ -22,7 +22,7 @@ import {
 } from '@docusaurus/theme-search-algolia/client';
 import Layout from '@theme/Layout';
 import Heading from '@theme/Heading';
-import {getDocsearchProduct} from '@site/src/config/docsearch';
+import {getDocsearchProduct, PRODUCT_BADGES} from '@site/src/config/docsearch';
 import styles from './styles.module.css';
 
 const SEARCH_ALL_VERSIONS = "__all__";
@@ -150,11 +150,6 @@ function getSearchPageTitle(searchQuery) {
         description: 'The search page title for empty query',
       });
 }
-
-const PRODUCT_BADGES = {
-  vnode: {label: 'vNode', color: '#0C00FF'},
-  vmetal: {label: 'vMetal', color: '#0098B2'},
-};
 
 function ProductBadge({product}) {
   const badge = PRODUCT_BADGES[product];
