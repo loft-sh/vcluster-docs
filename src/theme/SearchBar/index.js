@@ -93,8 +93,25 @@ function useResultsFooterComponent({closeModal}) {
   );
 }
 
+const PRODUCT_BADGES = {
+  vnode: {label: 'vNode', color: '#0C00FF'},
+  vmetal: {label: 'vMetal', color: '#0098B2'},
+};
+
 function Hit({hit, children}) {
-  return <Link to={hit.url}>{children}</Link>;
+  const badge = PRODUCT_BADGES[hit.product];
+  return (
+    <Link to={hit.url}>
+      {badge && (
+        <span
+          className="docsearch-product-badge"
+          style={{backgroundColor: badge.color}}>
+          {badge.label}
+        </span>
+      )}
+      {children}
+    </Link>
+  );
 }
 
 function ResultsFooter({state, onClose}) {

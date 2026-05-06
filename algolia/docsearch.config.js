@@ -13,21 +13,19 @@ new Crawler({
   maxDepth: 10,
   startUrls: [
     "https://www.vcluster.com/docs/",
-    "https://www.vnode.com/docs/",
-    "https://www.vmetal.ai/docs/",
+    "https://vnode.com/docs/",
+    "https://vmetal.ai/docs/",
   ],
   sitemaps: [
     "https://www.vcluster.com/docs/sitemap.xml",
-    "https://www.vnode.com/docs/sitemap.xml",
-    "https://www.vmetal.ai/docs/sitemap.xml",
+    "https://vnode.com/docs/sitemap.xml",
+    "https://vmetal.ai/docs/sitemap.xml",
   ],
   renderJavaScript: false,
   ignoreCanonicalTo: true,
   discoveryPatterns: [
     "https://www.vcluster.com/docs/**",
-    "https://www.vnode.com/docs/**",
-    "https://www.vmetal.ai/docs/**",
-    // vmetal.ai 301-redirects www to apex; include both so the resolved URL matches.
+    "https://vnode.com/docs/**",
     "https://vmetal.ai/docs/**",
   ],
   exclusionPatterns: ["https://www.vcluster.com/docs/v0.19/**"],
@@ -68,7 +66,7 @@ new Crawler({
         const pageRank =
           pathname === `/${product}/` || pathname === `/${product}`
             ? 160
-            : pageRankByStatus[versionStatus] ?? 0;
+            : pageRankByStatus[versionStatus] || 0;
 
         // priority order: deepest active sub list header -> navbar active item -> 'Documentation'
         const lvl0 =
@@ -125,7 +123,7 @@ new Crawler({
     },
     {
       indexName: "vcluster",
-      pathsToMatch: ["https://www.vnode.com/docs/**"],
+      pathsToMatch: ["https://vnode.com/docs/**"],
       recordExtractor: ({ $, helpers }) => {
         $(".hash-link").remove();
         return helpers.docsearch({
@@ -155,11 +153,7 @@ new Crawler({
     },
     {
       indexName: "vcluster",
-      // vmetal.ai 301-redirects www to apex; include both so the resolved URL matches.
-      pathsToMatch: [
-        "https://www.vmetal.ai/docs/**",
-        "https://vmetal.ai/docs/**",
-      ],
+      pathsToMatch: ["https://vmetal.ai/docs/**"],
       recordExtractor: ({ $, helpers }) => {
         $(".hash-link").remove();
         return helpers.docsearch({

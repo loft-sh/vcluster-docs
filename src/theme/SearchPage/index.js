@@ -151,6 +151,23 @@ function getSearchPageTitle(searchQuery) {
       });
 }
 
+const PRODUCT_BADGES = {
+  vnode: {label: 'vNode', color: '#0C00FF'},
+  vmetal: {label: 'vMetal', color: '#0098B2'},
+};
+
+function ProductBadge({product}) {
+  const badge = PRODUCT_BADGES[product];
+  if (!badge) return null;
+  return (
+    <span
+      className={styles.productBadge}
+      style={{backgroundColor: badge.color}}>
+      {badge.label}
+    </span>
+  );
+}
+
 function SearchPageContent() {
   const {
     i18n: {currentLocale},
@@ -244,6 +261,7 @@ function SearchPageContent() {
       const items = hits.map(
         ({
           url,
+          product,
           _highlightResult: {hierarchy},
           _snippetResult: snippet = {},
         }) => {
@@ -258,6 +276,7 @@ function SearchPageContent() {
               ? `${sanitizeValue(snippet.content.value)}...`
               : '',
             breadcrumbs: titles,
+            product,
           };
         },
       );
@@ -461,10 +480,11 @@ function SearchPageContent() {
         {searchResultState.items.length > 0 ? (
           <main>
             {searchResultState.items.map(
-              ({title, url, summary, breadcrumbs}, i) => (
+              ({title, url, summary, breadcrumbs, product}, i) => (
                 <article key={i} className={styles.searchResultItem}>
                   <Heading as="h2" className={styles.searchResultItemHeading}>
                     <Link to={url} dangerouslySetInnerHTML={{__html: title}} />
+                    <ProductBadge product={product} />
                   </Heading>
 
                   {breadcrumbs.length > 0 && (
