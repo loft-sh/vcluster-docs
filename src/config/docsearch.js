@@ -26,6 +26,13 @@ export const DOCSEARCH_PRODUCTS = {
   },
 };
 
+// Brand colors for products that appear in search results from external domains.
+// Used to render product badge pills in the search modal and search page.
+export const PRODUCT_BADGES = {
+  vnode: {label: DOCSEARCH_PRODUCTS.vnode.displayName, color: '#0C00FF'},
+  vmetal: {label: DOCSEARCH_PRODUCTS.vmetal.displayName, color: '#0098B2'},
+};
+
 export function getDocsearchProduct(pluginId) {
   return DOCSEARCH_PRODUCTS[pluginId] ?? null;
 }

@@ -18,6 +18,7 @@ import {useActivePluginAndVersion} from '@docusaurus/plugin-content-docs/client'
 import translations from '@theme/SearchTranslations';
 import {
   DOCSEARCH_PRODUCTS,
+  PRODUCT_BADGES,
   getVersionFacetValue,
   getVersionStatus,
 } from '@site/src/config/docsearch';
@@ -94,7 +95,19 @@ function useResultsFooterComponent({closeModal}) {
 }
 
 function Hit({hit, children}) {
-  return <Link to={hit.url}>{children}</Link>;
+  const badge = PRODUCT_BADGES[hit.product];
+  return (
+    <Link to={hit.url}>
+      {badge && (
+        <span
+          className="docsearch-product-badge"
+          style={{backgroundColor: badge.color}}>
+          {badge.label}
+        </span>
+      )}
+      {children}
+    </Link>
+  );
 }
 
 function ResultsFooter({state, onClose}) {
