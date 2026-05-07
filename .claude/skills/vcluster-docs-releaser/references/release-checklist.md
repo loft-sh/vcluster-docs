@@ -72,7 +72,7 @@ The version is deployed hidden, then exposed via a config flip PR on release day
 - [ ] Remove: All `(lines X-Y)` references from section headers
 - [ ] Note: Tests run AFTER PR deployed
 
-### Item 2b: InterpolatedCodeBlock Fallback Versions (automated)
+### Item 2b: InterpolatedCodeBlock Fallback Versions
 
 `LATEST_VERSIONS` in `src/components/InterpolatedCodeBlock/index.js` is auto-synced
 to the latest stable patch by `.github/workflows/sync-latest-versions.yml`
@@ -84,6 +84,11 @@ For minor releases (e.g. 0.33.0 → 0.34.0), the auto-sync does NOT promote the
 minor — the new minor must land through the normal docs versioning step. The
 auto-sync will pick up subsequent patches once the file points at the new
 minor.
+
+- [ ] **Minor releases only:** update `LATEST_VERSIONS.vcluster` to `0.XX.0` and
+      `LATEST_VERSIONS.platform` to `4.YY.0` in
+      `src/components/InterpolatedCodeBlock/index.js`.
+      (The auto-sync will handle subsequent patches once this is set.)
 
 ### Additional AI Tasks:
 
