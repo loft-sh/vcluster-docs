@@ -25,9 +25,13 @@ const (
 
 var DefaultRequire = true
 
-const BasePath = "platform/api/_partials/resources/"
+// BasePath and BaseResourcesPath are package-level vars (not const) so the
+// release-dispatch receiver can redirect generator output to versioned
+// folders without a fork. Defaults match the legacy const values byte-for-byte
+// so unmodified scripted callers continue to write to the same place.
+var BasePath = "platform/api/_partials/resources/"
 
-const BaseResourcesPath = "platform/api/resources"
+var BaseResourcesPath = "platform/api/resources"
 
 var pluralizeClient = pluralize.NewClient()
 
@@ -337,6 +341,23 @@ func GenerateFromPath(schema *jsonschema.Schema, basePath string, schemaPath str
 }
 
 func GenerateFromPathWithError(schema *jsonschema.Schema, basePath string, schemaPath string, defaults map[string]interface{}) error {
+	content, err := RenderFromPath(schema, schemaPath, defaults)
+	if err != nil {
+		return err
+	}
+	filePath := path.Join(basePath, schemaPath) + ".mdx"
+	_ = os.MkdirAll(path.Dir(filePath), 0o777)
+	if err := os.WriteFile(filePath, []byte(content), os.ModePerm); err != nil {
+		return fmt.Errorf("failed to write file: %w", err)
+	}
+	return nil
+}
+
+// RenderFromPath resolves a schema path and returns the rendered MDX content
+// without writing it. Callers can compose the content with hand-authored
+// prose (e.g. pathExtras Before/After in the vcluster partials generator)
+// before deciding where to write it.
+func RenderFromPath(schema *jsonschema.Schema, schemaPath string, defaults map[string]interface{}) (string, error) {
 	splittedSchemaPath := strings.Split(schemaPath, "/")
 
 	fieldSchema := schema
@@ -346,7 +367,7 @@ func GenerateFromPathWithError(schema *jsonschema.Schema, basePath string, schem
 		lastProperty = property
 		fieldSchema, ok = fieldSchema.Properties.Get(property)
 		if !ok {
-			return fmt.Errorf("couldn't find schema path '%s' at '%s'", schemaPath, property)
+			return "", fmt.Errorf("couldn't find schema path '%s' at '%s'", schemaPath, property)
 		}
 
 		if i+1 == len(splittedSchemaPath) {
@@ -375,7 +396,7 @@ func GenerateFromPathWithError(schema *jsonschema.Schema, basePath string, schem
 			refSplit := strings.Split(ref, "/")
 			fieldSchema, ok = schema.Definitions[refSplit[len(refSplit)-1]]
 			if !ok {
-				return fmt.Errorf("couldn't find schema definition %s", refSplit[len(refSplit)-1])
+				return "", fmt.Errorf("couldn't find schema definition %s", refSplit[len(refSplit)-1])
 			}
 		}
 	}
@@ -389,15 +410,7 @@ func GenerateFromPathWithError(schema *jsonschema.Schema, basePath string, schem
 		1,
 		defaults,
 	)
-	filePath := path.Join(basePath, schemaPath) + ".mdx"
-
-	// write file
-	_ = os.MkdirAll(path.Dir(filePath), 0o777)
-	err := os.WriteFile(filePath, []byte(content), os.ModePerm)
-	if err != nil {
-		return fmt.Errorf("failed to write file: %w", err)
-	}
-	return nil
+	return content, nil
 }
 
 func GenerateResource(schema *jsonschema.Schema, basePath string, subResource bool) error {
