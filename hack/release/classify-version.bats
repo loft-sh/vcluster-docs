@@ -78,6 +78,28 @@ get() {
     [ "$(get channel)" = "stable" ]
 }
 
+@test "vcluster: way-future minor (>+1 above max-frozen) → skip per A4 appx B" {
+    # A4 example: v9.9.9 against a 0.x history must skip, not silently
+    # land into the current docs folder.
+    VERSION=v9.9.9 EVENT_TYPE=vcluster-released run "$SCRIPT"
+    [ "$status" -eq 0 ]
+    [ "$(get skip)" = "true" ]
+}
+
+@test "vcluster: major-version bump (1.0.0 against 0.x history) → skip" {
+    # Prevents silent routing of an unexpected major to current_root.
+    VERSION=v1.0.0 EVENT_TYPE=vcluster-released run "$SCRIPT"
+    [ "$status" -eq 0 ]
+    [ "$(get skip)" = "true" ]
+}
+
+@test "vcluster: skipped a minor (current=0.34, incoming=0.36) → skip" {
+    # Only the immediate next minor (max-frozen + 1) maps to current_root.
+    VERSION=v0.36.0 EVENT_TYPE=vcluster-released run "$SCRIPT"
+    [ "$status" -eq 0 ]
+    [ "$(get skip)" = "true" ]
+}
+
 @test "vcluster: RC on frozen minor → versioned folder, channel=rc" {
     VERSION=v0.34.0-rc.3 EVENT_TYPE=vcluster-released run "$SCRIPT"
     [ "$status" -eq 0 ]
@@ -87,7 +109,8 @@ get() {
 }
 
 @test "vcluster: RC of next minor → current docs folder, channel=rc" {
-    VERSION=v0.36.0-rc.1 EVENT_TYPE=vcluster-released run "$SCRIPT"
+    # Next minor against max-frozen 0.34 is 0.35 (max + 1).
+    VERSION=v0.35.0-rc.1 EVENT_TYPE=vcluster-released run "$SCRIPT"
     [ "$status" -eq 0 ]
     [ "$(get skip)" = "false" ]
     [ "$(get target_folder)" = "vcluster" ]

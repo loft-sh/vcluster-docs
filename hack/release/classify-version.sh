@@ -101,11 +101,17 @@ if [[ -f "$versions_path" ]]; then
 fi
 
 if (( incoming_key > highest_key )); then
-    # Strictly newer than anything frozen → next/current docs.
-    emit skip false
-    emit target_folder "$current_root"
-    emit channel "$channel"
-    exit 0
+    # Newer than anything frozen. Only the immediate next minor in the
+    # same major series can map to current docs — anything further is
+    # treated as garbage / unexpected, per A4 appendix B (e.g. v9.9.9
+    # against a 0.x history must skip, not silently write into current).
+    if (( incoming_key == highest_key + 1 )); then
+        emit skip false
+        emit target_folder "$current_root"
+        emit channel "$channel"
+        exit 0
+    fi
+    emit_skip "$channel"
 fi
 
 candidate="${versioned_root}/version-${major}.${minor}.0"
