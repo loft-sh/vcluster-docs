@@ -114,11 +114,38 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// Fix home directory paths
-	exec.Command("sh", "-c",
-		fmt.Sprintf("rg -l '/home/[^/]+/.vcluster/config.json' --glob '*.md' %s | xargs sed -i 's|/home/[^/]\\+/.vcluster/config.json|~/.vcluster/config.json|g'", cliDocsDir)).Run()
+	// Cobra resolves os.UserHomeDir() at flag-registration time, so any
+	// flag whose default is rooted at $HOME bakes the runner's home into
+	// the generated MDX (e.g. /home/runner/.vcluster/config.json). The
+	// docs need to read as ~/. The previous shell version of this step
+	// depended on ripgrep being on PATH; on a vanilla GitHub-hosted
+	// runner it isn't, so the substitution silently no-op'd and the
+	// runner's home leaked through to the published docs. Pure-Go walk
+	// + literal replace removes the toolchain dependency.
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		if err := rewriteHome(cliDocsDir, home); err != nil {
+			log.Fatalf("rewrite home in %q: %v", cliDocsDir, err)
+		}
+	}
 
 	fmt.Printf("CLI documentation generated in %s\n", cliDocsDir)
+}
+
+func rewriteHome(root, home string) error {
+	return filepath.Walk(root, func(p string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() || filepath.Ext(p) != ".md" {
+			return err
+		}
+		b, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		updated := strings.ReplaceAll(string(b), home, "~")
+		if updated == string(b) {
+			return nil
+		}
+		return os.WriteFile(p, []byte(updated), 0o644)
+	})
 }
 
 func copyDir(src, dst string) error {
