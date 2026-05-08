@@ -12,14 +12,37 @@ import (
 )
 
 func main() {
-	var branch, vclusterDir, outputDir string
+	var branch, vclusterDir, outputDir, sourcePath, targetFolder string
 	var useLocal bool
 
 	flag.StringVar(&branch, "branch", "current", "vCluster branch to checkout")
 	flag.StringVar(&vclusterDir, "vcluster-dir", "~/loft/vcluster", "Path to local vCluster repository")
 	flag.StringVar(&outputDir, "output", "./vcluster/cli", "Output directory for generated CLI docs")
 	flag.BoolVar(&useLocal, "local", true, "Use local vCluster repository")
+	flag.StringVar(&sourcePath, "source-path", "", "Source checkout path; set by release receiver. Overrides --vcluster-dir and forces --local.")
+	flag.StringVar(&targetFolder, "target-folder", "", "Output folder for generated CLI docs; set by release receiver. Overrides --output.")
 	flag.Parse()
+
+	// --target-folder explicitly passed empty means the caller computed an
+	// empty path (e.g. classify-version.sh returned no folder). Refuse rather
+	// than silently writing into the legacy default under release CI.
+	targetFolderSet := false
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "target-folder" {
+			targetFolderSet = true
+		}
+	})
+	if targetFolderSet && targetFolder == "" {
+		log.Fatal("vcluster-cli generator: --target-folder was passed but empty; refusing to write to legacy default. Check the calling workflow (hack/release/run-generator.sh).")
+	}
+
+	if sourcePath != "" {
+		vclusterDir = sourcePath
+		useLocal = true
+	}
+	if targetFolder != "" {
+		outputDir = targetFolder
+	}
 
 	cliDocsDir := outputDir
 
