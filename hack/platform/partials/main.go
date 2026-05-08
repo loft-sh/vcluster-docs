@@ -45,7 +45,12 @@ func main() {
 	util.GenerateSection(&managementv1.ConfigStatus{}, true, path.Join(util.BasePath, "config/status_reference.mdx"))
 	util.GenerateSection(&managementv1.AuditPolicy{}, true, path.Join(util.BasePath, "config/status/audit/policy.mdx"))
 	util.GenerateSection(&managementv1.Audit{}, true, path.Join(util.BasePath, "config/status/audit.mdx"))
-	util.GenerateSection(&storagev1.RancherIntegrationSpec{}, true, path.Join(util.BasePath, "projects/spec/rancher.mdx"))
+	// RancherIntegrationSpec was removed from loft-sh/api/v4 in v4.9.0 — the
+	// legacy in-tree Rancher integration is replaced by the standalone
+	// vCluster Rancher operator (see /docs/platform/integrations/rancher and
+	// the migration guide). The previously-generated rancher.mdx is only
+	// imported by frozen versioned docs (4.5/4.6/4.7), which ship their own
+	// partial copies; current platform docs do not import it.
 	util.GenerateSection(&storagev1.VaultIntegrationSpec{}, true, path.Join(util.BasePath, "projects/spec/vault.mdx"))
 
 	util.GenerateMetadata(&util.ObjectInformation{
