@@ -13,10 +13,14 @@
 # interpolated into a `run:` block, and the classifier rejects malformed
 # versions before any side-effect runs.
 #
-# Known gap (tracked separately): platform-released regenerates against
-# the loft-sh/api version pinned in go.mod here, not the just-released
-# one. A "Sync API" workflow is expected to PR a go.mod bump on platform
-# releases — this receiver consumes whatever is on main when it runs.
+# For platform-released the receiver also bumps loft-sh/api +
+# loft-sh/agentapi pins in go.mod to the released version before running
+# the platform partials generator. The generator reflects against
+# vendored Go types, so without the bump the regen would silently
+# produce no diff against the previous release's types and no PR would
+# open. The bumped go.mod + go.sum land in the same docs-sync PR
+# alongside the regenerated partials — both have to ship together to
+# compile on next regen.
 
 name: handle-source-release
 
@@ -119,9 +123,31 @@ jobs:
           git config --global url."https://${GH_ACCESS_TOKEN}@github.com/".insteadOf "https://github.com/"
           echo "GOPRIVATE=github.com/loft-sh/*" >>"$GITHUB_ENV"
 
+      # The platform partials generator reflects against the loft-sh/api +
+      # loft-sh/agentapi types pinned in this repo's go.mod. Without bumping
+      # the pins to the just-released version, the regen sees identical
+      # types to last time and emits no diff — the receiver would silently
+      # produce no PR. The legacy sync-api.yaml `update-docs` job did this
+      # bump before opening the docs PR; with that job removed in DEVOPS-889
+      # PR #4, the bump moves here. Major-version segment is taken from the
+      # released version itself, so a future v5 cutover doesn't need code.
+      - name: Bump loft-sh/api + loft-sh/agentapi pins to released platform version
+        if: steps.classify.outputs.skip != 'true' && steps.inputs.outputs.event == 'platform-released'
+        env:
+          VERSION: ${{ steps.inputs.outputs.version }}
+        run: |
+          set -eo pipefail
+          stripped="${VERSION#v}"
+          major="v${stripped%%.*}"
+          echo "Bumping github.com/loft-sh/{api,agentapi}/${major} to ${VERSION}"
+          go mod edit -require "github.com/loft-sh/agentapi/${major}@${VERSION}"
+          go mod edit -require "github.com/loft-sh/api/${major}@${VERSION}"
+          go mod tidy
+
       # vcluster + vcluster-cli generators consume the released vCluster
       # source tree. Platform generator builds against API types pinned in
-      # this repo's go.mod, so no source checkout is needed.
+      # this repo's go.mod (see bump step above), so no source checkout is
+      # needed.
       - name: Checkout vCluster source
         if: steps.classify.outputs.skip != 'true' && (steps.inputs.outputs.event == 'vcluster-released' || steps.inputs.outputs.event == 'vcluster-cli-released')
         uses: actions/checkout@v4
