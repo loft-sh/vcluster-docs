@@ -25,9 +25,13 @@ const (
 
 var DefaultRequire = true
 
-const BasePath = "platform/api/_partials/resources/"
+// BasePath and BaseResourcesPath are package-level vars (not const) so the
+// release-dispatch receiver can redirect generator output to versioned
+// folders without a fork. Defaults match the legacy const values byte-for-byte
+// so unmodified scripted callers continue to write to the same place.
+var BasePath = "platform/api/_partials/resources/"
 
-const BaseResourcesPath = "platform/api/resources"
+var BaseResourcesPath = "platform/api/resources"
 
 var pluralizeClient = pluralize.NewClient()
 
