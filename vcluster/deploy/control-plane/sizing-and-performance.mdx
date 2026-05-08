@@ -2,12 +2,13 @@
 title: Control plane sizing and performance
 sidebar_label: Sizing and performance
 sidebar_position: 0
-description: Validated resource profiles and tuning settings for vCluster Virtual Control Planes at scale.
+description: How to evaluate, size, and tune a Tenant Cluster's Virtual Control Plane for your environment.
 ---
 
-This page covers validated resource profiles for the Virtual Control Plane and
-tuning settings that reduce tail latency under sustained load. For the test
-methodology, results matrix, and analysis behind the numbers, see
+This page explains how to evaluate and tune a Tenant Cluster's Virtual Control
+Plane for your environment. It covers the evaluation framework, monitoring
+thresholds, resource profile starting points, and validated tuning settings.
+For the test methodology and analysis behind the profiles, see
 [Benchmark methodology](./benchmark-methodology.mdx).
 
 ## Scope and caveats
@@ -28,10 +29,73 @@ throughput, container image pulls, NetworkPolicy enforcement, or application
 behavior. Treat these results as an upper bound. Your workload's true ceiling
 is lower with significant data-plane demands.
 
-**Run the harness against your own configuration.** The benchmark framework
-is being prepared for open source release. We strongly recommend running it
-against a representative subset of your real configuration before committing to
-a production profile.
+**There is no published mapping from KWOK fake-node counts to real-node counts.**
+Real workloads have data-plane costs that KWOK doesn't model. If your
+customer-visible claim is a node count, validate it on real nodes at the scale
+that matters.
+
+## How to evaluate your environment
+
+The recommended approach is to run the benchmark framework against a
+representative subset of your real configuration: your operators, your CRDs,
+your object density. Measure the control-plane response as it runs. The same
+SLI checks the framework uses internally make a portable monitoring template
+you can apply to any Tenant Cluster.
+
+### Run the framework
+
+The framework is open source:
+[loft-sh/vCluster-Control-Plane-Load-Testing](https://github.com/loft-sh/vCluster-Control-Plane-Load-Testing).
+It includes per-profile EKS Terraform modules, kube-burner workload
+configurations, the 13-SLI evaluation checks, and the doubling-ladder and
+binary-search scripts. See [Benchmark methodology](./benchmark-methodology.mdx)
+for test setup details.
+
+Customize the workload (`kube-burner/configs/`) to match your tenant — your
+CRD mix, your operator density, your churn pattern — then run the ladder
+against your candidate profile.
+
+### What to monitor
+
+These are the 13 conditions the framework evaluates after each stage. They
+also make a useful production monitoring set:
+
+| # | Condition | Threshold |
+| --- | --- | --- |
+| 1 | Control plane replica Ready | Any pod not Ready → fail |
+| 2a | Container restart count | > 2 → fail |
+| 2b | OOMKilled | Any event → fail |
+| 3a | Sustained 429 responses | > 0.1 req/s → fail |
+| 3b | Sustained 5xx responses | > 0.1 req/s → fail |
+| 3c | Sustained request terminations | > 0.1 req/s → fail |
+| 4 | API P99 latency (non-watch) | > 2 s sustained → fail |
+| 5a | etcd leader lost | Any interval → fail |
+| 5b | etcd leader changes | Any → fail |
+| 5c | etcd proposals failed | Any → fail |
+| 5d | etcd WAL fsync P99 | > 25 ms → warn |
+| 5e | etcd DB size | > 4 GB → warn; > 12 GB → fail |
+| 6 | Node convergence | < 98% of target N → fail |
+
+If your workload trips any condition against a candidate profile, scale up to
+the next profile or apply the tuning settings below. For production alert
+thresholds, see [Operational guidance](#operational-guidance).
+
+### When to validate on real nodes
+
+Synthetic testing covers the control-plane portion of sizing. Real validation
+is needed for:
+
+- **Pod startup latency SLOs** — image pulls, scheduling under contention, and
+  kubelet binding latency are not modeled by KWOK.
+- **Network programming p99** — Service, EndpointSlice, kube-proxy, and CNI
+  interactions are not modeled.
+- **CRD-heavy operator workloads** — each CRD adds a separate watch cache and
+  informer that KWOK doesn't exercise.
+- **Real container runtime behavior** — image pulls, probes, and evictions
+  create event storms that synthetic load cannot reproduce.
+
+If your customer-visible claim is a node count or pod count, validate it on
+real nodes at the scale that matters.
 
 ## Choose a resource profile
 
@@ -46,7 +110,7 @@ Tenant Cluster.
 | Standard production | P3 | 4 | 8 GiB | Most production tenants — recommended starting point |
 | Large production | P4 | 8 | 16 GiB | Heavy churn or dense deployments |
 | Enterprise / AI Cloud | P5 | 16 | 32 GiB | High-density GPU clusters; operator-rich workloads (cert-manager, external-secrets, GPU Operator, Argo, KServe, etc.) |
-| Hyperscale | P6 | 32 | 64 GiB | Latency headroom above P5; same node ceiling, ~6% lower API p99 |
+| Hyperscale | P6 | 32 | 64 GiB | Latency headroom above P5; same node ceiling, marginal API p99 improvement |
 
 **Key principles:**
 
@@ -102,10 +166,10 @@ controlPlane:
 
 `GOGC=200` halves GC overhead at the cost of slightly higher steady-state
 memory use. `GOMEMLIMIT` prevents OOM events by giving the Go runtime a hard
-ceiling to plan against. In the W9 benchmark, this combination cut API p99
-latency by 15–25% under churn. Set `GOMEMLIMIT` to about 75% of your profile's
-memory limit. For example, use `12000MiB` for a P4 16 GiB pod, or `6000MiB`
-for a P3 8 GiB pod.
+ceiling to plan against. This combination meaningfully reduces API p99 latency
+under sustained churn. Set `GOMEMLIMIT` to about 75% of your profile's memory
+limit. For example, use `12000MiB` for a P4 16 GiB pod, or `6000MiB` for a
+P3 8 GiB pod.
 
 <!-- vale Google.Headings off -->
 ### etcd storage class
@@ -128,15 +192,18 @@ controlPlane:
 ```
 
 Create a StorageClass with at least 16K IOPS and 500 MB/s throughput. Generic
-cloud defaults push WAL fsync p99 into the 25–50 ms range under W8/W9-class
-load. For example, AWS `gp3` defaults to 3K IOPS and 125 MB/s. With a
-high-IOPS class, benchmarks measured 4–7 ms WAL fsync p99 under W9-class load.
+cloud defaults push WAL fsync p99 into the 25–50 ms range under heavy churn,
+above the 25 ms warn threshold. For example, AWS `gp3` defaults to 3K IOPS
+and 125 MB/s. A high-IOPS class keeps WAL fsync p99 well within the warn
+threshold even under sustained load.
 
 <!-- vale Google.Headings off -->
 ### API server concurrency
 <!-- vale Google.Headings on -->
 
-Tune API server concurrency limits to match expected client load:
+The Kubernetes defaults (400 / 200) are sufficient for most workloads. For
+operator-rich Tenant Clusters with many persistent controllers, double them to
+absorb the extra `LIST` and `WATCH` bookkeeping during churn cycles:
 
 ```yaml title="vcluster.yaml — API server concurrency (k8s distro)"
 controlPlane:
@@ -147,9 +214,6 @@ controlPlane:
           - --max-requests-inflight=800
           - --max-mutating-requests-inflight=400
 ```
-
-For operator-rich workloads with many persistent controllers, double these
-values to absorb the extra `LIST` and `WATCH` bookkeeping during churn cycles.
 
 ### Controller manager and scheduler — client throttling
 

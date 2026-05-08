@@ -8,7 +8,7 @@ description: Test setup, service level indicators, and analysis for vCluster con
 This page documents the test harness behind the
 [Sizing and performance](./sizing-and-performance.mdx) page: workload profiles,
 service level indicators, and the search procedure used to find each profile's
-stable node count.
+stable operating point.
 
 ## Test setup
 
@@ -21,12 +21,12 @@ Every profile runs three replicas (HA) with embedded etcd.
 Four workload profiles vary object count, pod density, and controller density
 inside the Tenant Cluster:
 
-| Profile | Description | Pods | Namespaces | Churn model |
-| --- | --- | --- | --- | --- |
-| K0 | Baseline — KWOK nodes only, no synthetic workload | 0 | 0 | 10-minute stability window |
-| W7 | Heavy realistic — mixed Deployment shapes | ~10,000 | 165 | Pod lifecycle, namespace churn, controller PATCH traffic |
-| W8 | Extreme realistic — 3× W7 scale | ~30,500 | 500 | Same as W7, 3× the API surface area |
-| W9 | Controller density — W8 plus 25 persistent watch streams | ~30,500 | 500 | W8 churn + 25 synthetic operator watches |
+| Profile | Description | Churn model |
+| --- | --- | --- |
+| K0 | Baseline — KWOK nodes only, no synthetic workload | 10-minute stability window |
+| W7 | Heavy realistic — mixed Deployment shapes across many namespaces | Pod lifecycle, namespace churn, controller PATCH traffic |
+| W8 | Extreme realistic — 3× W7 scale | Same as W7, scaled up to surface etcd write-path effects |
+| W9 | Controller density — W8 plus persistent watch streams | W8 churn + synthetic operator watches |
 
 W9 closes the gap between synthetic load and a real Tenant Cluster with a full
 operator stack: cert-manager, external-secrets, Argo, Kubeflow, GPU Operator,
@@ -54,7 +54,7 @@ namespace.
 | 5e | etcd DB size | > 4 GB → warn; > 12 GB → fail |
 | 6 | Node convergence | < 98% of target N → fail |
 
-Crossing any condition invalidates the SN number for that profile but doesn't
+Crossing any condition invalidates the stage result for that profile but doesn't
 necessarily mean total cluster failure. The thresholds define a conservative,
 reproducible operating envelope, not a cliff edge.
 
@@ -103,11 +103,11 @@ test. Prometheus scrapes the vCluster API server and etcd endpoints through a
 
 ### CPU is the bottleneck below 4 CPU per replica
 
-Under earlier, lighter workload profiles now superseded by W7/W8/W9, CPU scaled
-SN linearly at about **3,200 nodes per CPU core** across P1, P2, and P3. At
-P1, CPU saturation caused a pod restart and a subsequent etcd leader change,
-confirming CPU as the binding resource. Resource profile drives capacity in this
-regime, and linear sizing is a reasonable planning model.
+Under earlier, lighter workload profiles now superseded by W7/W8/W9, capacity
+scaled linearly with CPU across P1, P2, and P3. At P1, CPU saturation caused
+a pod restart and a subsequent etcd leader change, confirming CPU as the
+binding resource. Resource profile drives capacity in this regime, and linear
+sizing is a reasonable planning model.
 
 ### The etcd write path is the bottleneck above 4 CPU
 
@@ -116,16 +116,14 @@ shifts to the etcd write path: WAL fsync latency, proposal commit throughput,
 and apply throughput. At high-CPU profiles, API p99 latency differences between adjacent profiles
 are within single-digit percentages at the same node count, with no change to
 the ceiling. Raising this ceiling requires moving etcd out-of-process, tuning
-batch apply behavior, or sharding the write path.
-Adding more CPU to the control plane replicas won't help.
+batch apply behavior, or sharding the write path. Adding more CPU to the
+control plane replicas won't help.
 
 ### Memory scales with object count
 
 In W9 tests, pod, Deployment, and Service object count drove etcd DB size, not
-node count. ~30,500 pods across 500 namespaces produced roughly 1.9 GB of etcd
-data in our heaviest test configuration.
-When sizing memory, plan for object density (pods and controllers per namespace)
-rather than raw node count.
+node count. When sizing memory, plan for object density (pods and controllers
+per namespace) rather than raw node count.
 
 ## Limitations
 
@@ -148,13 +146,7 @@ Keep these constraints in mind when applying the results:
   issues such as gradual memory growth over days are out of scope.
 - **One Tenant Cluster at a time.** Tests don't measure co-tenancy effects
   from multiple Tenant Clusters sharing a Control Plane Cluster.
-- **W7/W8 SN values pending.** Don't extrapolate the P5/W9 result to W7 or
-  W8. Lighter workloads show higher SN values. Results are added as
-  runs complete.
 
 ## Reproduce the benchmarks
 
-The benchmark framework is being prepared for open source release. It includes
-Terraform modules for per-profile EKS clusters, kube-burner workload
-configurations for K0/W7/W8/W9, a 13-SLI Prometheus rule file, and the
-doubling ladder and binary search scripts. Check this section for a repository link when it's published.
+Reproduce these benchmarks against your own configuration using the open source framework: [loft-sh/vCluster-Control-Plane-Load-Testing](https://github.com/loft-sh/vCluster-Control-Plane-Load-Testing). The repo includes Terraform modules for per-profile EKS clusters, kube-burner workload configurations for K0/W7/W8/W9, the 13-SLI fail-condition checks, and the doubling-ladder and binary-search scripts.
