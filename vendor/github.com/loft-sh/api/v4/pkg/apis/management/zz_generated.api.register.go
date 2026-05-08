@@ -206,7 +206,17 @@ var (
 	NewLoftUpgradeREST = func(getter generic.RESTOptionsGetter) rest.Storage {
 		return NewLoftUpgradeRESTFunc(Factory)
 	}
-	NewLoftUpgradeRESTFunc     NewRESTFunc
+	NewLoftUpgradeRESTFunc       NewRESTFunc
+	ManagementNetworkPeerStorage = builders.NewApiResourceWithStorage( // Resource status endpoint
+		InternalNetworkPeer,
+		func() runtime.Object { return &NetworkPeer{} },     // Register versioned resource
+		func() runtime.Object { return &NetworkPeerList{} }, // Register versioned resource list
+		NewNetworkPeerREST,
+	)
+	NewNetworkPeerREST = func(getter generic.RESTOptionsGetter) rest.Storage {
+		return NewNetworkPeerRESTFunc(Factory)
+	}
+	NewNetworkPeerRESTFunc     NewRESTFunc
 	ManagementNodeClaimStorage = builders.NewApiResourceWithStorage( // Resource status endpoint
 		InternalNodeClaim,
 		func() runtime.Object { return &NodeClaim{} },     // Register versioned resource
@@ -781,7 +791,27 @@ var (
 		func() runtime.Object { return &LoftUpgrade{} },
 		func() runtime.Object { return &LoftUpgradeList{} },
 	)
-	InternalNodeClaim = builders.NewInternalResource(
+	InternalNetworkPeer = builders.NewInternalResource(
+		"networkpeers",
+		"NetworkPeer",
+		func() runtime.Object { return &NetworkPeer{} },
+		func() runtime.Object { return &NetworkPeerList{} },
+	)
+	InternalNetworkPeerStatus = builders.NewInternalResourceStatus(
+		"networkpeers",
+		"NetworkPeerStatus",
+		func() runtime.Object { return &NetworkPeer{} },
+		func() runtime.Object { return &NetworkPeerList{} },
+	)
+	InternalNetworkPeerDebugREST = builders.NewInternalSubresource(
+		"networkpeers", "NetworkPeerDebug", "debug",
+		func() runtime.Object { return &NetworkPeerDebug{} },
+	)
+	NewNetworkPeerDebugREST = func(getter generic.RESTOptionsGetter) rest.Storage {
+		return NewNetworkPeerDebugRESTFunc(Factory)
+	}
+	NewNetworkPeerDebugRESTFunc NewRESTFunc
+	InternalNodeClaim           = builders.NewInternalResource(
 		"nodeclaims",
 		"NodeClaim",
 		func() runtime.Object { return &NodeClaim{} },
@@ -1273,6 +1303,14 @@ var (
 		return NewVirtualClusterExternalDatabaseRESTFunc(Factory)
 	}
 	NewVirtualClusterExternalDatabaseRESTFunc    NewRESTFunc
+	InternalVirtualClusterInstanceJoinScriptREST = builders.NewInternalSubresource(
+		"virtualclusterinstances", "VirtualClusterInstanceJoinScript", "joinscript",
+		func() runtime.Object { return &VirtualClusterInstanceJoinScript{} },
+	)
+	NewVirtualClusterInstanceJoinScriptREST = func(getter generic.RESTOptionsGetter) rest.Storage {
+		return NewVirtualClusterInstanceJoinScriptRESTFunc(Factory)
+	}
+	NewVirtualClusterInstanceJoinScriptRESTFunc  NewRESTFunc
 	InternalVirtualClusterInstanceKubeConfigREST = builders.NewInternalSubresource(
 		"virtualclusterinstances", "VirtualClusterInstanceKubeConfig", "kubeconfig",
 		func() runtime.Object { return &VirtualClusterInstanceKubeConfig{} },
@@ -1399,6 +1437,9 @@ var (
 		InternalLicenseRequestREST,
 		InternalLoftUpgrade,
 		InternalLoftUpgradeStatus,
+		InternalNetworkPeer,
+		InternalNetworkPeerStatus,
+		InternalNetworkPeerDebugREST,
 		InternalNodeClaim,
 		InternalNodeClaimStatus,
 		InternalNodeEnvironment,
@@ -1473,6 +1514,7 @@ var (
 		InternalVirtualClusterInstanceDebugShellREST,
 		InternalVirtualClusterInstanceDebugShellPodsREST,
 		InternalVirtualClusterExternalDatabaseREST,
+		InternalVirtualClusterInstanceJoinScriptREST,
 		InternalVirtualClusterInstanceKubeConfigREST,
 		InternalVirtualClusterInstanceLogREST,
 		InternalVirtualClusterNodeAccessKeyREST,
@@ -1646,7 +1688,6 @@ type AuditPolicyRule struct {
 
 type Authentication struct {
 	Connector                `json:",inline"`
-	Rancher                  *AuthenticationRancher  `json:"rancher,omitempty"`
 	Password                 *AuthenticationPassword `json:"password,omitempty"`
 	Connectors               []ConnectorWithName     `json:"connectors,omitempty"`
 	DisableTeamCreation      bool                    `json:"disableTeamCreation,omitempty"`
@@ -1725,12 +1766,6 @@ type AuthenticationOIDC struct {
 
 type AuthenticationPassword struct {
 	Disabled bool `json:"disabled,omitempty"`
-}
-
-type AuthenticationRancher struct {
-	Host        string `json:"host,omitempty"`
-	BearerToken string `json:"bearerToken,omitempty"`
-	Insecure    bool   `json:"insecure,omitempty"`
 }
 
 type AuthenticationSAML struct {
@@ -2260,6 +2295,32 @@ type MaintenanceWindow struct {
 type ManagementRole struct {
 	ObjectName  `json:",inline"`
 	AssignedVia AssignedVia `json:"assignedVia,omitempty"`
+}
+
+// +genclient
+// +genclient:nonNamespaced
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+
+type NetworkPeer struct {
+	metav1.TypeMeta   `json:",inline"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
+	Spec              NetworkPeerSpec   `json:"spec,omitempty"`
+	Status            NetworkPeerStatus `json:"status,omitempty"`
+}
+
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+
+type NetworkPeerDebug struct {
+	metav1.TypeMeta   `json:",inline"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
+}
+
+type NetworkPeerSpec struct {
+	storagev1.NetworkPeerSpec `json:",inline"`
+}
+
+type NetworkPeerStatus struct {
+	storagev1.NetworkPeerStatus `json:",inline"`
 }
 
 // +genclient
@@ -3205,6 +3266,18 @@ type VirtualClusterInstanceDebugShellPods struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 	Status            VirtualClusterDebugShellPodsStatus `json:"status,omitempty"`
+}
+
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+
+type VirtualClusterInstanceJoinScript struct {
+	metav1.TypeMeta   `json:",inline"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
+	Status            VirtualClusterInstanceJoinScriptStatus `json:"status,omitempty"`
+}
+
+type VirtualClusterInstanceJoinScriptStatus struct {
+	JoinCommand string `json:"joinCommand,omitempty"`
 }
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
@@ -5481,6 +5554,133 @@ func (s *storageLoftUpgrade) UpdateLoftUpgrade(ctx context.Context, object *Loft
 }
 
 func (s *storageLoftUpgrade) DeleteLoftUpgrade(ctx context.Context, id string) (bool, error) {
+	st := s.GetStandardStorage()
+	_, sync, err := st.Delete(ctx, id, nil, &metav1.DeleteOptions{})
+	return sync, err
+}
+
+// NetworkPeer Functions and Structs
+//
+// +k8s:deepcopy-gen=false
+type NetworkPeerStrategy struct {
+	builders.DefaultStorageStrategy
+}
+
+// +k8s:deepcopy-gen=false
+type NetworkPeerStatusStrategy struct {
+	builders.DefaultStatusStorageStrategy
+}
+
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+
+type NetworkPeerList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata,omitempty"`
+	Items           []NetworkPeer `json:"items"`
+}
+
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+
+type NetworkPeerDebugList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata,omitempty"`
+	Items           []NetworkPeerDebug `json:"items"`
+}
+
+func (NetworkPeer) NewStatus() interface{} {
+	return NetworkPeerStatus{}
+}
+
+func (pc *NetworkPeer) GetStatus() interface{} {
+	return pc.Status
+}
+
+func (pc *NetworkPeer) SetStatus(s interface{}) {
+	pc.Status = s.(NetworkPeerStatus)
+}
+
+func (pc *NetworkPeer) GetSpec() interface{} {
+	return pc.Spec
+}
+
+func (pc *NetworkPeer) SetSpec(s interface{}) {
+	pc.Spec = s.(NetworkPeerSpec)
+}
+
+func (pc *NetworkPeer) GetObjectMeta() *metav1.ObjectMeta {
+	return &pc.ObjectMeta
+}
+
+func (pc *NetworkPeer) SetGeneration(generation int64) {
+	pc.ObjectMeta.Generation = generation
+}
+
+func (pc NetworkPeer) GetGeneration() int64 {
+	return pc.ObjectMeta.Generation
+}
+
+// Registry is an interface for things that know how to store NetworkPeer.
+// +k8s:deepcopy-gen=false
+type NetworkPeerRegistry interface {
+	ListNetworkPeers(ctx context.Context, options *internalversion.ListOptions) (*NetworkPeerList, error)
+	GetNetworkPeer(ctx context.Context, id string, options *metav1.GetOptions) (*NetworkPeer, error)
+	CreateNetworkPeer(ctx context.Context, id *NetworkPeer) (*NetworkPeer, error)
+	UpdateNetworkPeer(ctx context.Context, id *NetworkPeer) (*NetworkPeer, error)
+	DeleteNetworkPeer(ctx context.Context, id string) (bool, error)
+}
+
+// NewRegistry returns a new Registry interface for the given Storage. Any mismatched types will panic.
+func NewNetworkPeerRegistry(sp builders.StandardStorageProvider) NetworkPeerRegistry {
+	return &storageNetworkPeer{sp}
+}
+
+// Implement Registry
+// storage puts strong typing around storage calls
+// +k8s:deepcopy-gen=false
+type storageNetworkPeer struct {
+	builders.StandardStorageProvider
+}
+
+func (s *storageNetworkPeer) ListNetworkPeers(ctx context.Context, options *internalversion.ListOptions) (*NetworkPeerList, error) {
+	if options != nil && options.FieldSelector != nil && !options.FieldSelector.Empty() {
+		return nil, fmt.Errorf("field selector not supported yet")
+	}
+	st := s.GetStandardStorage()
+	obj, err := st.List(ctx, options)
+	if err != nil {
+		return nil, err
+	}
+	return obj.(*NetworkPeerList), err
+}
+
+func (s *storageNetworkPeer) GetNetworkPeer(ctx context.Context, id string, options *metav1.GetOptions) (*NetworkPeer, error) {
+	st := s.GetStandardStorage()
+	obj, err := st.Get(ctx, id, options)
+	if err != nil {
+		return nil, err
+	}
+	return obj.(*NetworkPeer), nil
+}
+
+func (s *storageNetworkPeer) CreateNetworkPeer(ctx context.Context, object *NetworkPeer) (*NetworkPeer, error) {
+	st := s.GetStandardStorage()
+	obj, err := st.Create(ctx, object, nil, &metav1.CreateOptions{})
+	if err != nil {
+		return nil, err
+	}
+	return obj.(*NetworkPeer), nil
+}
+
+func (s *storageNetworkPeer) UpdateNetworkPeer(ctx context.Context, object *NetworkPeer) (*NetworkPeer, error) {
+	st := s.GetStandardStorage()
+	obj, _, err := st.Update(ctx, object.Name, rest.DefaultUpdatedObjectInfo(object), nil, nil, false, &metav1.UpdateOptions{})
+	if err != nil {
+		return nil, err
+	}
+	return obj.(*NetworkPeer), nil
+}
+
+func (s *storageNetworkPeer) DeleteNetworkPeer(ctx context.Context, id string) (bool, error) {
 	st := s.GetStandardStorage()
 	_, sync, err := st.Delete(ctx, id, nil, &metav1.DeleteOptions{})
 	return sync, err
@@ -8552,6 +8752,14 @@ type VirtualClusterExternalDatabaseList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []VirtualClusterExternalDatabase `json:"items"`
+}
+
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+
+type VirtualClusterInstanceJoinScriptList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata,omitempty"`
+	Items           []VirtualClusterInstanceJoinScript `json:"items"`
 }
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
