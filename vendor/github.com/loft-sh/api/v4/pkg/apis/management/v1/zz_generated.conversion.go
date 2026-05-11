@@ -330,16 +330,6 @@ func RegisterConversions(s *runtime.Scheme) error {
 	}); err != nil {
 		return err
 	}
-	if err := s.AddGeneratedConversionFunc((*AuthenticationRancher)(nil), (*management.AuthenticationRancher)(nil), func(a, b interface{}, scope conversion.Scope) error {
-		return Convert_v1_AuthenticationRancher_To_management_AuthenticationRancher(a.(*AuthenticationRancher), b.(*management.AuthenticationRancher), scope)
-	}); err != nil {
-		return err
-	}
-	if err := s.AddGeneratedConversionFunc((*management.AuthenticationRancher)(nil), (*AuthenticationRancher)(nil), func(a, b interface{}, scope conversion.Scope) error {
-		return Convert_management_AuthenticationRancher_To_v1_AuthenticationRancher(a.(*management.AuthenticationRancher), b.(*AuthenticationRancher), scope)
-	}); err != nil {
-		return err
-	}
 	if err := s.AddGeneratedConversionFunc((*AuthenticationSAML)(nil), (*management.AuthenticationSAML)(nil), func(a, b interface{}, scope conversion.Scope) error {
 		return Convert_v1_AuthenticationSAML_To_management_AuthenticationSAML(a.(*AuthenticationSAML), b.(*management.AuthenticationSAML), scope)
 	}); err != nil {
@@ -1297,6 +1287,76 @@ func RegisterConversions(s *runtime.Scheme) error {
 	}
 	if err := s.AddGeneratedConversionFunc((*management.ManagementRole)(nil), (*ManagementRole)(nil), func(a, b interface{}, scope conversion.Scope) error {
 		return Convert_management_ManagementRole_To_v1_ManagementRole(a.(*management.ManagementRole), b.(*ManagementRole), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddGeneratedConversionFunc((*NetworkPeer)(nil), (*management.NetworkPeer)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_v1_NetworkPeer_To_management_NetworkPeer(a.(*NetworkPeer), b.(*management.NetworkPeer), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddGeneratedConversionFunc((*management.NetworkPeer)(nil), (*NetworkPeer)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_management_NetworkPeer_To_v1_NetworkPeer(a.(*management.NetworkPeer), b.(*NetworkPeer), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddGeneratedConversionFunc((*NetworkPeerDebug)(nil), (*management.NetworkPeerDebug)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_v1_NetworkPeerDebug_To_management_NetworkPeerDebug(a.(*NetworkPeerDebug), b.(*management.NetworkPeerDebug), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddGeneratedConversionFunc((*management.NetworkPeerDebug)(nil), (*NetworkPeerDebug)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_management_NetworkPeerDebug_To_v1_NetworkPeerDebug(a.(*management.NetworkPeerDebug), b.(*NetworkPeerDebug), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddGeneratedConversionFunc((*NetworkPeerDebugList)(nil), (*management.NetworkPeerDebugList)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_v1_NetworkPeerDebugList_To_management_NetworkPeerDebugList(a.(*NetworkPeerDebugList), b.(*management.NetworkPeerDebugList), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddGeneratedConversionFunc((*management.NetworkPeerDebugList)(nil), (*NetworkPeerDebugList)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_management_NetworkPeerDebugList_To_v1_NetworkPeerDebugList(a.(*management.NetworkPeerDebugList), b.(*NetworkPeerDebugList), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddGeneratedConversionFunc((*NetworkPeerDebugOptions)(nil), (*management.NetworkPeerDebugOptions)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_v1_NetworkPeerDebugOptions_To_management_NetworkPeerDebugOptions(a.(*NetworkPeerDebugOptions), b.(*management.NetworkPeerDebugOptions), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddGeneratedConversionFunc((*management.NetworkPeerDebugOptions)(nil), (*NetworkPeerDebugOptions)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_management_NetworkPeerDebugOptions_To_v1_NetworkPeerDebugOptions(a.(*management.NetworkPeerDebugOptions), b.(*NetworkPeerDebugOptions), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddGeneratedConversionFunc((*NetworkPeerList)(nil), (*management.NetworkPeerList)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_v1_NetworkPeerList_To_management_NetworkPeerList(a.(*NetworkPeerList), b.(*management.NetworkPeerList), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddGeneratedConversionFunc((*management.NetworkPeerList)(nil), (*NetworkPeerList)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_management_NetworkPeerList_To_v1_NetworkPeerList(a.(*management.NetworkPeerList), b.(*NetworkPeerList), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddGeneratedConversionFunc((*NetworkPeerSpec)(nil), (*management.NetworkPeerSpec)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_v1_NetworkPeerSpec_To_management_NetworkPeerSpec(a.(*NetworkPeerSpec), b.(*management.NetworkPeerSpec), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddGeneratedConversionFunc((*management.NetworkPeerSpec)(nil), (*NetworkPeerSpec)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_management_NetworkPeerSpec_To_v1_NetworkPeerSpec(a.(*management.NetworkPeerSpec), b.(*NetworkPeerSpec), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddGeneratedConversionFunc((*NetworkPeerStatus)(nil), (*management.NetworkPeerStatus)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_v1_NetworkPeerStatus_To_management_NetworkPeerStatus(a.(*NetworkPeerStatus), b.(*management.NetworkPeerStatus), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddGeneratedConversionFunc((*management.NetworkPeerStatus)(nil), (*NetworkPeerStatus)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_management_NetworkPeerStatus_To_v1_NetworkPeerStatus(a.(*management.NetworkPeerStatus), b.(*NetworkPeerStatus), scope)
 	}); err != nil {
 		return err
 	}
@@ -3220,6 +3280,36 @@ func RegisterConversions(s *runtime.Scheme) error {
 	}); err != nil {
 		return err
 	}
+	if err := s.AddGeneratedConversionFunc((*VirtualClusterInstanceJoinScript)(nil), (*management.VirtualClusterInstanceJoinScript)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_v1_VirtualClusterInstanceJoinScript_To_management_VirtualClusterInstanceJoinScript(a.(*VirtualClusterInstanceJoinScript), b.(*management.VirtualClusterInstanceJoinScript), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddGeneratedConversionFunc((*management.VirtualClusterInstanceJoinScript)(nil), (*VirtualClusterInstanceJoinScript)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_management_VirtualClusterInstanceJoinScript_To_v1_VirtualClusterInstanceJoinScript(a.(*management.VirtualClusterInstanceJoinScript), b.(*VirtualClusterInstanceJoinScript), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddGeneratedConversionFunc((*VirtualClusterInstanceJoinScriptList)(nil), (*management.VirtualClusterInstanceJoinScriptList)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_v1_VirtualClusterInstanceJoinScriptList_To_management_VirtualClusterInstanceJoinScriptList(a.(*VirtualClusterInstanceJoinScriptList), b.(*management.VirtualClusterInstanceJoinScriptList), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddGeneratedConversionFunc((*management.VirtualClusterInstanceJoinScriptList)(nil), (*VirtualClusterInstanceJoinScriptList)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_management_VirtualClusterInstanceJoinScriptList_To_v1_VirtualClusterInstanceJoinScriptList(a.(*management.VirtualClusterInstanceJoinScriptList), b.(*VirtualClusterInstanceJoinScriptList), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddGeneratedConversionFunc((*VirtualClusterInstanceJoinScriptStatus)(nil), (*management.VirtualClusterInstanceJoinScriptStatus)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_v1_VirtualClusterInstanceJoinScriptStatus_To_management_VirtualClusterInstanceJoinScriptStatus(a.(*VirtualClusterInstanceJoinScriptStatus), b.(*management.VirtualClusterInstanceJoinScriptStatus), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddGeneratedConversionFunc((*management.VirtualClusterInstanceJoinScriptStatus)(nil), (*VirtualClusterInstanceJoinScriptStatus)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_management_VirtualClusterInstanceJoinScriptStatus_To_v1_VirtualClusterInstanceJoinScriptStatus(a.(*management.VirtualClusterInstanceJoinScriptStatus), b.(*VirtualClusterInstanceJoinScriptStatus), scope)
+	}); err != nil {
+		return err
+	}
 	if err := s.AddGeneratedConversionFunc((*VirtualClusterInstanceKubeConfig)(nil), (*management.VirtualClusterInstanceKubeConfig)(nil), func(a, b interface{}, scope conversion.Scope) error {
 		return Convert_v1_VirtualClusterInstanceKubeConfig_To_management_VirtualClusterInstanceKubeConfig(a.(*VirtualClusterInstanceKubeConfig), b.(*management.VirtualClusterInstanceKubeConfig), scope)
 	}); err != nil {
@@ -3622,6 +3712,11 @@ func RegisterConversions(s *runtime.Scheme) error {
 	}
 	if err := s.AddGeneratedConversionFunc((*url.Values)(nil), (*BackupApplyOptions)(nil), func(a, b interface{}, scope conversion.Scope) error {
 		return Convert_url_Values_To_v1_BackupApplyOptions(a.(*url.Values), b.(*BackupApplyOptions), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddGeneratedConversionFunc((*url.Values)(nil), (*NetworkPeerDebugOptions)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_url_Values_To_v1_NetworkPeerDebugOptions(a.(*url.Values), b.(*NetworkPeerDebugOptions), scope)
 	}); err != nil {
 		return err
 	}
@@ -4226,7 +4321,6 @@ func autoConvert_v1_Authentication_To_management_Authentication(in *Authenticati
 	if err := Convert_v1_Connector_To_management_Connector(&in.Connector, &out.Connector, s); err != nil {
 		return err
 	}
-	out.Rancher = (*management.AuthenticationRancher)(unsafe.Pointer(in.Rancher))
 	out.Password = (*management.AuthenticationPassword)(unsafe.Pointer(in.Password))
 	out.Connectors = *(*[]management.ConnectorWithName)(unsafe.Pointer(&in.Connectors))
 	out.DisableTeamCreation = in.DisableTeamCreation
@@ -4247,7 +4341,6 @@ func autoConvert_management_Authentication_To_v1_Authentication(in *management.A
 	if err := Convert_management_Connector_To_v1_Connector(&in.Connector, &out.Connector, s); err != nil {
 		return err
 	}
-	out.Rancher = (*AuthenticationRancher)(unsafe.Pointer(in.Rancher))
 	out.Password = (*AuthenticationPassword)(unsafe.Pointer(in.Password))
 	out.Connectors = *(*[]ConnectorWithName)(unsafe.Pointer(&in.Connectors))
 	out.DisableTeamCreation = in.DisableTeamCreation
@@ -4486,30 +4579,6 @@ func autoConvert_management_AuthenticationPassword_To_v1_AuthenticationPassword(
 // Convert_management_AuthenticationPassword_To_v1_AuthenticationPassword is an autogenerated conversion function.
 func Convert_management_AuthenticationPassword_To_v1_AuthenticationPassword(in *management.AuthenticationPassword, out *AuthenticationPassword, s conversion.Scope) error {
 	return autoConvert_management_AuthenticationPassword_To_v1_AuthenticationPassword(in, out, s)
-}
-
-func autoConvert_v1_AuthenticationRancher_To_management_AuthenticationRancher(in *AuthenticationRancher, out *management.AuthenticationRancher, s conversion.Scope) error {
-	out.Host = in.Host
-	out.BearerToken = in.BearerToken
-	out.Insecure = in.Insecure
-	return nil
-}
-
-// Convert_v1_AuthenticationRancher_To_management_AuthenticationRancher is an autogenerated conversion function.
-func Convert_v1_AuthenticationRancher_To_management_AuthenticationRancher(in *AuthenticationRancher, out *management.AuthenticationRancher, s conversion.Scope) error {
-	return autoConvert_v1_AuthenticationRancher_To_management_AuthenticationRancher(in, out, s)
-}
-
-func autoConvert_management_AuthenticationRancher_To_v1_AuthenticationRancher(in *management.AuthenticationRancher, out *AuthenticationRancher, s conversion.Scope) error {
-	out.Host = in.Host
-	out.BearerToken = in.BearerToken
-	out.Insecure = in.Insecure
-	return nil
-}
-
-// Convert_management_AuthenticationRancher_To_v1_AuthenticationRancher is an autogenerated conversion function.
-func Convert_management_AuthenticationRancher_To_v1_AuthenticationRancher(in *management.AuthenticationRancher, out *AuthenticationRancher, s conversion.Scope) error {
-	return autoConvert_management_AuthenticationRancher_To_v1_AuthenticationRancher(in, out, s)
 }
 
 func autoConvert_v1_AuthenticationSAML_To_management_AuthenticationSAML(in *AuthenticationSAML, out *management.AuthenticationSAML, s conversion.Scope) error {
@@ -6971,6 +7040,180 @@ func autoConvert_management_ManagementRole_To_v1_ManagementRole(in *management.M
 // Convert_management_ManagementRole_To_v1_ManagementRole is an autogenerated conversion function.
 func Convert_management_ManagementRole_To_v1_ManagementRole(in *management.ManagementRole, out *ManagementRole, s conversion.Scope) error {
 	return autoConvert_management_ManagementRole_To_v1_ManagementRole(in, out, s)
+}
+
+func autoConvert_v1_NetworkPeer_To_management_NetworkPeer(in *NetworkPeer, out *management.NetworkPeer, s conversion.Scope) error {
+	out.ObjectMeta = in.ObjectMeta
+	if err := Convert_v1_NetworkPeerSpec_To_management_NetworkPeerSpec(&in.Spec, &out.Spec, s); err != nil {
+		return err
+	}
+	if err := Convert_v1_NetworkPeerStatus_To_management_NetworkPeerStatus(&in.Status, &out.Status, s); err != nil {
+		return err
+	}
+	return nil
+}
+
+// Convert_v1_NetworkPeer_To_management_NetworkPeer is an autogenerated conversion function.
+func Convert_v1_NetworkPeer_To_management_NetworkPeer(in *NetworkPeer, out *management.NetworkPeer, s conversion.Scope) error {
+	return autoConvert_v1_NetworkPeer_To_management_NetworkPeer(in, out, s)
+}
+
+func autoConvert_management_NetworkPeer_To_v1_NetworkPeer(in *management.NetworkPeer, out *NetworkPeer, s conversion.Scope) error {
+	out.ObjectMeta = in.ObjectMeta
+	if err := Convert_management_NetworkPeerSpec_To_v1_NetworkPeerSpec(&in.Spec, &out.Spec, s); err != nil {
+		return err
+	}
+	if err := Convert_management_NetworkPeerStatus_To_v1_NetworkPeerStatus(&in.Status, &out.Status, s); err != nil {
+		return err
+	}
+	return nil
+}
+
+// Convert_management_NetworkPeer_To_v1_NetworkPeer is an autogenerated conversion function.
+func Convert_management_NetworkPeer_To_v1_NetworkPeer(in *management.NetworkPeer, out *NetworkPeer, s conversion.Scope) error {
+	return autoConvert_management_NetworkPeer_To_v1_NetworkPeer(in, out, s)
+}
+
+func autoConvert_v1_NetworkPeerDebug_To_management_NetworkPeerDebug(in *NetworkPeerDebug, out *management.NetworkPeerDebug, s conversion.Scope) error {
+	out.ObjectMeta = in.ObjectMeta
+	return nil
+}
+
+// Convert_v1_NetworkPeerDebug_To_management_NetworkPeerDebug is an autogenerated conversion function.
+func Convert_v1_NetworkPeerDebug_To_management_NetworkPeerDebug(in *NetworkPeerDebug, out *management.NetworkPeerDebug, s conversion.Scope) error {
+	return autoConvert_v1_NetworkPeerDebug_To_management_NetworkPeerDebug(in, out, s)
+}
+
+func autoConvert_management_NetworkPeerDebug_To_v1_NetworkPeerDebug(in *management.NetworkPeerDebug, out *NetworkPeerDebug, s conversion.Scope) error {
+	out.ObjectMeta = in.ObjectMeta
+	return nil
+}
+
+// Convert_management_NetworkPeerDebug_To_v1_NetworkPeerDebug is an autogenerated conversion function.
+func Convert_management_NetworkPeerDebug_To_v1_NetworkPeerDebug(in *management.NetworkPeerDebug, out *NetworkPeerDebug, s conversion.Scope) error {
+	return autoConvert_management_NetworkPeerDebug_To_v1_NetworkPeerDebug(in, out, s)
+}
+
+func autoConvert_v1_NetworkPeerDebugList_To_management_NetworkPeerDebugList(in *NetworkPeerDebugList, out *management.NetworkPeerDebugList, s conversion.Scope) error {
+	out.ListMeta = in.ListMeta
+	out.Items = *(*[]management.NetworkPeerDebug)(unsafe.Pointer(&in.Items))
+	return nil
+}
+
+// Convert_v1_NetworkPeerDebugList_To_management_NetworkPeerDebugList is an autogenerated conversion function.
+func Convert_v1_NetworkPeerDebugList_To_management_NetworkPeerDebugList(in *NetworkPeerDebugList, out *management.NetworkPeerDebugList, s conversion.Scope) error {
+	return autoConvert_v1_NetworkPeerDebugList_To_management_NetworkPeerDebugList(in, out, s)
+}
+
+func autoConvert_management_NetworkPeerDebugList_To_v1_NetworkPeerDebugList(in *management.NetworkPeerDebugList, out *NetworkPeerDebugList, s conversion.Scope) error {
+	out.ListMeta = in.ListMeta
+	out.Items = *(*[]NetworkPeerDebug)(unsafe.Pointer(&in.Items))
+	return nil
+}
+
+// Convert_management_NetworkPeerDebugList_To_v1_NetworkPeerDebugList is an autogenerated conversion function.
+func Convert_management_NetworkPeerDebugList_To_v1_NetworkPeerDebugList(in *management.NetworkPeerDebugList, out *NetworkPeerDebugList, s conversion.Scope) error {
+	return autoConvert_management_NetworkPeerDebugList_To_v1_NetworkPeerDebugList(in, out, s)
+}
+
+func autoConvert_v1_NetworkPeerDebugOptions_To_management_NetworkPeerDebugOptions(in *NetworkPeerDebugOptions, out *management.NetworkPeerDebugOptions, s conversion.Scope) error {
+	out.Action = in.Action
+	return nil
+}
+
+// Convert_v1_NetworkPeerDebugOptions_To_management_NetworkPeerDebugOptions is an autogenerated conversion function.
+func Convert_v1_NetworkPeerDebugOptions_To_management_NetworkPeerDebugOptions(in *NetworkPeerDebugOptions, out *management.NetworkPeerDebugOptions, s conversion.Scope) error {
+	return autoConvert_v1_NetworkPeerDebugOptions_To_management_NetworkPeerDebugOptions(in, out, s)
+}
+
+func autoConvert_management_NetworkPeerDebugOptions_To_v1_NetworkPeerDebugOptions(in *management.NetworkPeerDebugOptions, out *NetworkPeerDebugOptions, s conversion.Scope) error {
+	out.Action = in.Action
+	return nil
+}
+
+// Convert_management_NetworkPeerDebugOptions_To_v1_NetworkPeerDebugOptions is an autogenerated conversion function.
+func Convert_management_NetworkPeerDebugOptions_To_v1_NetworkPeerDebugOptions(in *management.NetworkPeerDebugOptions, out *NetworkPeerDebugOptions, s conversion.Scope) error {
+	return autoConvert_management_NetworkPeerDebugOptions_To_v1_NetworkPeerDebugOptions(in, out, s)
+}
+
+func autoConvert_url_Values_To_v1_NetworkPeerDebugOptions(in *url.Values, out *NetworkPeerDebugOptions, s conversion.Scope) error {
+	// WARNING: Field TypeMeta does not have json tag, skipping.
+
+	if values, ok := map[string][]string(*in)["action"]; ok && len(values) > 0 {
+		if err := runtime.Convert_Slice_string_To_string(&values, &out.Action, s); err != nil {
+			return err
+		}
+	} else {
+		out.Action = ""
+	}
+	return nil
+}
+
+// Convert_url_Values_To_v1_NetworkPeerDebugOptions is an autogenerated conversion function.
+func Convert_url_Values_To_v1_NetworkPeerDebugOptions(in *url.Values, out *NetworkPeerDebugOptions, s conversion.Scope) error {
+	return autoConvert_url_Values_To_v1_NetworkPeerDebugOptions(in, out, s)
+}
+
+func autoConvert_v1_NetworkPeerList_To_management_NetworkPeerList(in *NetworkPeerList, out *management.NetworkPeerList, s conversion.Scope) error {
+	out.ListMeta = in.ListMeta
+	out.Items = *(*[]management.NetworkPeer)(unsafe.Pointer(&in.Items))
+	return nil
+}
+
+// Convert_v1_NetworkPeerList_To_management_NetworkPeerList is an autogenerated conversion function.
+func Convert_v1_NetworkPeerList_To_management_NetworkPeerList(in *NetworkPeerList, out *management.NetworkPeerList, s conversion.Scope) error {
+	return autoConvert_v1_NetworkPeerList_To_management_NetworkPeerList(in, out, s)
+}
+
+func autoConvert_management_NetworkPeerList_To_v1_NetworkPeerList(in *management.NetworkPeerList, out *NetworkPeerList, s conversion.Scope) error {
+	out.ListMeta = in.ListMeta
+	out.Items = *(*[]NetworkPeer)(unsafe.Pointer(&in.Items))
+	return nil
+}
+
+// Convert_management_NetworkPeerList_To_v1_NetworkPeerList is an autogenerated conversion function.
+func Convert_management_NetworkPeerList_To_v1_NetworkPeerList(in *management.NetworkPeerList, out *NetworkPeerList, s conversion.Scope) error {
+	return autoConvert_management_NetworkPeerList_To_v1_NetworkPeerList(in, out, s)
+}
+
+func autoConvert_v1_NetworkPeerSpec_To_management_NetworkPeerSpec(in *NetworkPeerSpec, out *management.NetworkPeerSpec, s conversion.Scope) error {
+	out.NetworkPeerSpec = in.NetworkPeerSpec
+	return nil
+}
+
+// Convert_v1_NetworkPeerSpec_To_management_NetworkPeerSpec is an autogenerated conversion function.
+func Convert_v1_NetworkPeerSpec_To_management_NetworkPeerSpec(in *NetworkPeerSpec, out *management.NetworkPeerSpec, s conversion.Scope) error {
+	return autoConvert_v1_NetworkPeerSpec_To_management_NetworkPeerSpec(in, out, s)
+}
+
+func autoConvert_management_NetworkPeerSpec_To_v1_NetworkPeerSpec(in *management.NetworkPeerSpec, out *NetworkPeerSpec, s conversion.Scope) error {
+	out.NetworkPeerSpec = in.NetworkPeerSpec
+	return nil
+}
+
+// Convert_management_NetworkPeerSpec_To_v1_NetworkPeerSpec is an autogenerated conversion function.
+func Convert_management_NetworkPeerSpec_To_v1_NetworkPeerSpec(in *management.NetworkPeerSpec, out *NetworkPeerSpec, s conversion.Scope) error {
+	return autoConvert_management_NetworkPeerSpec_To_v1_NetworkPeerSpec(in, out, s)
+}
+
+func autoConvert_v1_NetworkPeerStatus_To_management_NetworkPeerStatus(in *NetworkPeerStatus, out *management.NetworkPeerStatus, s conversion.Scope) error {
+	out.NetworkPeerStatus = in.NetworkPeerStatus
+	return nil
+}
+
+// Convert_v1_NetworkPeerStatus_To_management_NetworkPeerStatus is an autogenerated conversion function.
+func Convert_v1_NetworkPeerStatus_To_management_NetworkPeerStatus(in *NetworkPeerStatus, out *management.NetworkPeerStatus, s conversion.Scope) error {
+	return autoConvert_v1_NetworkPeerStatus_To_management_NetworkPeerStatus(in, out, s)
+}
+
+func autoConvert_management_NetworkPeerStatus_To_v1_NetworkPeerStatus(in *management.NetworkPeerStatus, out *NetworkPeerStatus, s conversion.Scope) error {
+	out.NetworkPeerStatus = in.NetworkPeerStatus
+	return nil
+}
+
+// Convert_management_NetworkPeerStatus_To_v1_NetworkPeerStatus is an autogenerated conversion function.
+func Convert_management_NetworkPeerStatus_To_v1_NetworkPeerStatus(in *management.NetworkPeerStatus, out *NetworkPeerStatus, s conversion.Scope) error {
+	return autoConvert_management_NetworkPeerStatus_To_v1_NetworkPeerStatus(in, out, s)
 }
 
 func autoConvert_v1_NodeClaim_To_management_NodeClaim(in *NodeClaim, out *management.NodeClaim, s conversion.Scope) error {
@@ -11773,6 +12016,74 @@ func autoConvert_management_VirtualClusterInstanceDebugShellPodsList_To_v1_Virtu
 // Convert_management_VirtualClusterInstanceDebugShellPodsList_To_v1_VirtualClusterInstanceDebugShellPodsList is an autogenerated conversion function.
 func Convert_management_VirtualClusterInstanceDebugShellPodsList_To_v1_VirtualClusterInstanceDebugShellPodsList(in *management.VirtualClusterInstanceDebugShellPodsList, out *VirtualClusterInstanceDebugShellPodsList, s conversion.Scope) error {
 	return autoConvert_management_VirtualClusterInstanceDebugShellPodsList_To_v1_VirtualClusterInstanceDebugShellPodsList(in, out, s)
+}
+
+func autoConvert_v1_VirtualClusterInstanceJoinScript_To_management_VirtualClusterInstanceJoinScript(in *VirtualClusterInstanceJoinScript, out *management.VirtualClusterInstanceJoinScript, s conversion.Scope) error {
+	out.ObjectMeta = in.ObjectMeta
+	if err := Convert_v1_VirtualClusterInstanceJoinScriptStatus_To_management_VirtualClusterInstanceJoinScriptStatus(&in.Status, &out.Status, s); err != nil {
+		return err
+	}
+	return nil
+}
+
+// Convert_v1_VirtualClusterInstanceJoinScript_To_management_VirtualClusterInstanceJoinScript is an autogenerated conversion function.
+func Convert_v1_VirtualClusterInstanceJoinScript_To_management_VirtualClusterInstanceJoinScript(in *VirtualClusterInstanceJoinScript, out *management.VirtualClusterInstanceJoinScript, s conversion.Scope) error {
+	return autoConvert_v1_VirtualClusterInstanceJoinScript_To_management_VirtualClusterInstanceJoinScript(in, out, s)
+}
+
+func autoConvert_management_VirtualClusterInstanceJoinScript_To_v1_VirtualClusterInstanceJoinScript(in *management.VirtualClusterInstanceJoinScript, out *VirtualClusterInstanceJoinScript, s conversion.Scope) error {
+	out.ObjectMeta = in.ObjectMeta
+	if err := Convert_management_VirtualClusterInstanceJoinScriptStatus_To_v1_VirtualClusterInstanceJoinScriptStatus(&in.Status, &out.Status, s); err != nil {
+		return err
+	}
+	return nil
+}
+
+// Convert_management_VirtualClusterInstanceJoinScript_To_v1_VirtualClusterInstanceJoinScript is an autogenerated conversion function.
+func Convert_management_VirtualClusterInstanceJoinScript_To_v1_VirtualClusterInstanceJoinScript(in *management.VirtualClusterInstanceJoinScript, out *VirtualClusterInstanceJoinScript, s conversion.Scope) error {
+	return autoConvert_management_VirtualClusterInstanceJoinScript_To_v1_VirtualClusterInstanceJoinScript(in, out, s)
+}
+
+func autoConvert_v1_VirtualClusterInstanceJoinScriptList_To_management_VirtualClusterInstanceJoinScriptList(in *VirtualClusterInstanceJoinScriptList, out *management.VirtualClusterInstanceJoinScriptList, s conversion.Scope) error {
+	out.ListMeta = in.ListMeta
+	out.Items = *(*[]management.VirtualClusterInstanceJoinScript)(unsafe.Pointer(&in.Items))
+	return nil
+}
+
+// Convert_v1_VirtualClusterInstanceJoinScriptList_To_management_VirtualClusterInstanceJoinScriptList is an autogenerated conversion function.
+func Convert_v1_VirtualClusterInstanceJoinScriptList_To_management_VirtualClusterInstanceJoinScriptList(in *VirtualClusterInstanceJoinScriptList, out *management.VirtualClusterInstanceJoinScriptList, s conversion.Scope) error {
+	return autoConvert_v1_VirtualClusterInstanceJoinScriptList_To_management_VirtualClusterInstanceJoinScriptList(in, out, s)
+}
+
+func autoConvert_management_VirtualClusterInstanceJoinScriptList_To_v1_VirtualClusterInstanceJoinScriptList(in *management.VirtualClusterInstanceJoinScriptList, out *VirtualClusterInstanceJoinScriptList, s conversion.Scope) error {
+	out.ListMeta = in.ListMeta
+	out.Items = *(*[]VirtualClusterInstanceJoinScript)(unsafe.Pointer(&in.Items))
+	return nil
+}
+
+// Convert_management_VirtualClusterInstanceJoinScriptList_To_v1_VirtualClusterInstanceJoinScriptList is an autogenerated conversion function.
+func Convert_management_VirtualClusterInstanceJoinScriptList_To_v1_VirtualClusterInstanceJoinScriptList(in *management.VirtualClusterInstanceJoinScriptList, out *VirtualClusterInstanceJoinScriptList, s conversion.Scope) error {
+	return autoConvert_management_VirtualClusterInstanceJoinScriptList_To_v1_VirtualClusterInstanceJoinScriptList(in, out, s)
+}
+
+func autoConvert_v1_VirtualClusterInstanceJoinScriptStatus_To_management_VirtualClusterInstanceJoinScriptStatus(in *VirtualClusterInstanceJoinScriptStatus, out *management.VirtualClusterInstanceJoinScriptStatus, s conversion.Scope) error {
+	out.JoinCommand = in.JoinCommand
+	return nil
+}
+
+// Convert_v1_VirtualClusterInstanceJoinScriptStatus_To_management_VirtualClusterInstanceJoinScriptStatus is an autogenerated conversion function.
+func Convert_v1_VirtualClusterInstanceJoinScriptStatus_To_management_VirtualClusterInstanceJoinScriptStatus(in *VirtualClusterInstanceJoinScriptStatus, out *management.VirtualClusterInstanceJoinScriptStatus, s conversion.Scope) error {
+	return autoConvert_v1_VirtualClusterInstanceJoinScriptStatus_To_management_VirtualClusterInstanceJoinScriptStatus(in, out, s)
+}
+
+func autoConvert_management_VirtualClusterInstanceJoinScriptStatus_To_v1_VirtualClusterInstanceJoinScriptStatus(in *management.VirtualClusterInstanceJoinScriptStatus, out *VirtualClusterInstanceJoinScriptStatus, s conversion.Scope) error {
+	out.JoinCommand = in.JoinCommand
+	return nil
+}
+
+// Convert_management_VirtualClusterInstanceJoinScriptStatus_To_v1_VirtualClusterInstanceJoinScriptStatus is an autogenerated conversion function.
+func Convert_management_VirtualClusterInstanceJoinScriptStatus_To_v1_VirtualClusterInstanceJoinScriptStatus(in *management.VirtualClusterInstanceJoinScriptStatus, out *VirtualClusterInstanceJoinScriptStatus, s conversion.Scope) error {
+	return autoConvert_management_VirtualClusterInstanceJoinScriptStatus_To_v1_VirtualClusterInstanceJoinScriptStatus(in, out, s)
 }
 
 func autoConvert_v1_VirtualClusterInstanceKubeConfig_To_management_VirtualClusterInstanceKubeConfig(in *VirtualClusterInstanceKubeConfig, out *management.VirtualClusterInstanceKubeConfig, s conversion.Scope) error {
