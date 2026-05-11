@@ -25,6 +25,10 @@ vcluster restore my-vcluster oci://ghcr.io/my-user/my-repo:my-tag
 vcluster restore my-vcluster s3://my-bucket/my-bucket-key
 # Restore from vCluster container filesystem
 vcluster restore my-vcluster container:///data/my-local-snapshot.tar.gz
+# Restore a Docker-based vCluster from a local snapshot file
+vcluster restore my-vcluster ./my-snapshot.tar.gz --driver docker
+# Restore with a different name
+vcluster restore my-new-name ./my-snapshot.tar.gz --driver docker
 #######################################################
 ```
 
@@ -32,6 +36,9 @@ vcluster restore my-vcluster container:///data/my-local-snapshot.tar.gz
 ## Flags
 
 ```
+      --azure-resource-group string         Azure resource group where the storage account is located
+      --azure-subscription-id string        Azure subscription ID where the storage account is located
+      --driver string                       The driver to use for managing the virtual cluster, can be either helm, platform, or docker.
   -h, --help                                help for restore
       --pod-env stringArray                 Additional environment variables for the created pod. Use key=value. E.g.: MY_ENV=my-value
       --pod-image string                    Image to use for the created pod
@@ -39,6 +46,7 @@ vcluster restore my-vcluster container:///data/my-local-snapshot.tar.gz
       --pod-mount stringArray               Additional mounts for the created pod. Use form <type>:<name>/<key>:<mount>. Supported types are: pvc, secret, configmap. E.g.: pvc:my-pvc:/path-in-pod or secret:my-secret/my-key:/path-in-pod
       --pod-service-account string          Service account to use for the created pod
       --restore-volumes                     Restore volumes from volume snapshots
+      --standalone                          Target the local standalone vCluster on this host
 ```
 
 

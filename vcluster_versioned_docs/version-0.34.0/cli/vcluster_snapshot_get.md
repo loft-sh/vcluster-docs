@@ -32,11 +32,14 @@ vcluster snapshot get my-vcluster container:///data/my-local-snapshot.tar.gz
 ## Flags
 
 ```
+      --azure-resource-group string           Azure resource group where the storage account is located
+      --azure-subscription-id string          Azure subscription ID where the storage account is located
       --customer-key-encryption-file string   AWS customer key encryption file used for SSE-C. Mutually exclusive with kms-key-id
   -h, --help                                  help for get
       --include-volumes                       Create CSI volume snapshots (shared and private nodes only)
       --kms-key-id string                     AWS KMS key ID that is configured for given S3 bucket. If set, aws-kms SSE will be used
       --server-side-encryption string         AWS Server-Side encryption algorithm
+      --standalone                            Target the local standalone vCluster on this host
 ```
 
 

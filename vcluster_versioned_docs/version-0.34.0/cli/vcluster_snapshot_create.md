@@ -27,6 +27,10 @@ vcluster snapshot create my-vcluster oci://ghcr.io/my-user/my-repo:my-tag
 vcluster snapshot create my-vcluster s3://my-bucket/my-bucket-key
 # Snapshot to vCluster container filesystem
 vcluster snapshot create my-vcluster container:///data/my-local-snapshot.tar.gz
+# Snapshot a Docker-based vCluster to a local file
+vcluster snapshot create my-vcluster ./my-snapshot.tar.gz --driver docker
+# Snapshot with auto-generated filename (my-vcluster-snapshot-<timestamp>.tar.gz)
+vcluster snapshot create my-vcluster --driver docker
 ##############################################################
 ```
 
@@ -34,11 +38,15 @@ vcluster snapshot create my-vcluster container:///data/my-local-snapshot.tar.gz
 ## Flags
 
 ```
+      --azure-resource-group string           Azure resource group where the storage account is located
+      --azure-subscription-id string          Azure subscription ID where the storage account is located
       --customer-key-encryption-file string   AWS customer key encryption file used for SSE-C. Mutually exclusive with kms-key-id
+      --driver string                         The driver to use for managing the virtual cluster, can be either helm, platform, or docker.
   -h, --help                                  help for create
       --include-volumes                       Create CSI volume snapshots (shared and private nodes only)
       --kms-key-id string                     AWS KMS key ID that is configured for given S3 bucket. If set, aws-kms SSE will be used
       --server-side-encryption string         AWS Server-Side encryption algorithm
+      --standalone                            Target the local standalone vCluster on this host
 ```
 
 
