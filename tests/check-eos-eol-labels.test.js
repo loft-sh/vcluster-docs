@@ -17,6 +17,9 @@ const {
   parseVersionConfigLabels,
   parseDocusaurusConfigLabels,
   detectDrift,
+  deriveNewLabel,
+  applyDocusaurusUpdate,
+  applyVersionConfigUpdate,
 } = require('../scripts/check-eos-eol-labels.js');
 
 const VCLUSTER_PARTIAL_FIXTURE = `
@@ -198,4 +201,57 @@ test('detectDrift catches (EOS) -> (EOL) transition', () => {
   assert.equal(drift.length, 1);
   assert.equal(drift[0].actual, '(EOS)');
   assert.equal(drift[0].expected, '(EOL)');
+});
+
+test('deriveNewLabel transitions Stable -> (EOS)', () => {
+  assert.equal(deriveNewLabel('v0.34', 'v0.34 Stable', '(EOS)'), 'v0.34 (EOS)');
+});
+
+test('deriveNewLabel transitions (EOS) -> (EOL)', () => {
+  assert.equal(deriveNewLabel('v0.31', 'v0.31 (EOS)', '(EOL)'), 'v0.31 (EOL)');
+});
+
+test('deriveNewLabel appends (EOS) to bare version', () => {
+  assert.equal(deriveNewLabel('v0.33', 'v0.33', '(EOS)'), 'v0.33 (EOS)');
+});
+
+test('applyDocusaurusUpdate rewrites only the keyed entry', () => {
+  const input = `versions: {
+  current: { label: "v0.32" },
+  "0.32.0": {
+    label: "v0.32",
+    banner: "none",
+  },
+},`;
+  const out = applyDocusaurusUpdate(input, '0.32.0', 'v0.32', 'v0.32 (EOS)');
+  // The "current" key's label must stay as "v0.32"; only the 0.32.0 entry bumps.
+  assert.match(out, /current: \{ label: "v0\.32" \}/);
+  assert.match(out, /"0\.32\.0":\s*\{\s*label:\s*"v0\.32 \(EOS\)"/);
+});
+
+test('applyDocusaurusUpdate throws when key is wrong', () => {
+  const input = `"0.31.0": { label: "v0.31 (EOS)" }`;
+  assert.throws(
+    () => applyDocusaurusUpdate(input, '0.99.0', 'v0.31 (EOS)', 'v0.31 (EOL)'),
+    /Failed to rewrite/
+  );
+});
+
+test('applyVersionConfigUpdate replaces label in array entry', () => {
+  const input = `export const vclusterEOLVersions = [
+  { to: "https://example.com/v0.31", label: "v0.31 (EOS)" },
+  { to: "https://example.com/v0.30", label: "v0.30 (EOL)" },
+];`;
+  const out = applyVersionConfigUpdate(input, 'v0.31 (EOS)', 'v0.31 (EOL)');
+  assert.match(out, /"v0\.31 \(EOL\)"/);
+  // The unrelated v0.30 entry is untouched.
+  assert.match(out, /"v0\.30 \(EOL\)"/);
+});
+
+test('applyVersionConfigUpdate throws when label is missing', () => {
+  const input = `label: "v0.31 (EOS)"`;
+  assert.throws(
+    () => applyVersionConfigUpdate(input, 'v0.99 (EOS)', 'v0.99 (EOL)'),
+    /Failed to find/
+  );
 });

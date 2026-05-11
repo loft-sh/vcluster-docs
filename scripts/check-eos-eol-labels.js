@@ -6,17 +6,21 @@
  * supported-versions MDX partials.
  *
  * Catches drift that no file edit can reveal — labels go stale purely because
- * time has passed. Run on a weekly cron; with --open-issue, opens or updates a
- * single tracking issue in the repo on drift.
+ * time has passed. Run on a weekly cron; with --update, rewrites the labels in
+ * place so the workflow can open a PR for review.
  *
  * Usage:
  *   node scripts/check-eos-eol-labels.js                   # validate as of today
  *   node scripts/check-eos-eol-labels.js --date 2027-01-15 # validate as of given date
- *   node scripts/check-eos-eol-labels.js --open-issue      # also dedupe/manage GH issue
+ *   node scripts/check-eos-eol-labels.js --update          # also rewrite labels in place
  *
  * Outputs (when GITHUB_OUTPUT is set):
  *   drift=true|false
- * On drift, writes a markdown report to eos-eol-drift-report.md and exits 1.
+ *   changed=true|false   (--update only — true if files were rewritten)
+ *   summary=<one-line>   (--update only — e.g. "v0.31 (EOS)→(EOL), v0.34 Stable→(EOS)")
+ *
+ * On drift without --update: writes eos-eol-drift-report.md and exits 1.
+ * With --update: writes the report AND rewrites labels in place; exits 0.
  *
  * Functions are exported for the test suite. Main execution is gated by
  * require.main === module so the file can be required as a library.
@@ -24,7 +28,6 @@
 
 const fs = require('fs');
 const path = require('path');
-const { execFileSync } = require('child_process');
 
 const ROOT = path.join(__dirname, '..');
 const PARTIALS = {
@@ -34,7 +37,6 @@ const PARTIALS = {
 const VERSION_CONFIG = path.join(ROOT, 'src/config/versionConfig.js');
 const DOCUSAURUS_CONFIG = path.join(ROOT, 'docusaurus.config.js');
 const REPORT_PATH = path.join(ROOT, 'eos-eol-drift-report.md');
-const ISSUE_TITLE = 'EOS/EOL label drift detected';
 
 function parsePartial(content) {
   const rows = [];
@@ -128,6 +130,7 @@ function detectDrift({ today, partials, labels }) {
       source: entry.source,
       version,
       product: row.product,
+      key: entry.key || null,
       label: entry.label,
       actual: actual || '(none)',
       expected: expected || '(none)',
@@ -138,31 +141,74 @@ function detectDrift({ today, partials, labels }) {
   return drift;
 }
 
+function deriveNewLabel(version, oldLabel, expected) {
+  // Strip trailing " Stable", " (EOS)", or " (EOL)" decorators, then append
+  // the new expected suffix. This handles every direction:
+  //   "v0.34 Stable"  + (EOS)  → "v0.34 (EOS)"
+  //   "v0.31 (EOS)"   + (EOL)  → "v0.31 (EOL)"
+  //   "v0.33"         + (EOS)  → "v0.33 (EOS)"
+  const stripped = oldLabel.replace(/\s*(Stable|\(EOS\)|\(EOL\))\s*$/, '');
+  // Defensive: the extracted base should start with the version. If not,
+  // fall back to vX.Y to keep the rewrite predictable.
+  const base = stripped.includes(version) ? stripped : version;
+  return expected ? `${base} ${expected}` : base;
+}
+
+function escapeRegex(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function applyDocusaurusUpdate(content, key, oldLabel, newLabel) {
+  // Anchor the replacement on the X.Y.Z key so the unversioned "current"
+  // entry (also keyed on a label like "v0.32") never gets touched.
+  const re = new RegExp(
+    `("${escapeRegex(key)}":\\s*\\{\\s*label:\\s*)"${escapeRegex(oldLabel)}"`
+  );
+  const replaced = content.replace(re, `$1"${newLabel}"`);
+  if (replaced === content) {
+    throw new Error(
+      `Failed to rewrite docusaurus.config.js label "${oldLabel}" under key "${key}"`
+    );
+  }
+  return replaced;
+}
+
+function applyVersionConfigUpdate(content, oldLabel, newLabel) {
+  // versionConfig.js entries live in flat arrays of single-line objects;
+  // each label string is unique across the arrays, so a literal swap works.
+  const target = `"${oldLabel}"`;
+  if (!content.includes(target)) {
+    throw new Error(`Failed to find versionConfig.js label "${oldLabel}"`);
+  }
+  return content.replace(target, `"${newLabel}"`);
+}
+
 function renderReport(drift, today) {
   const iso = today.toISOString().slice(0, 10);
   const lines = [
     `As of ${iso}, the following version labels do not match the EOS/EOL`,
     `dates published in the supported-versions MDX partials:`,
     '',
-    '| Version | Source | Label | Current suffix | Expected suffix | EOS date | EOL date |',
-    '| --- | --- | --- | --- | --- | --- | --- |',
+    '| Version | Source | Old label | New label | EOS date | EOL date |',
+    '| --- | --- | --- | --- | --- | --- |',
   ];
   for (const d of drift) {
+    const newLabel = deriveNewLabel(d.version, d.label, d.expected === '(none)' ? '' : d.expected);
     lines.push(
-      `| ${d.version} | \`${d.source}\` | \`${d.label}\` | ${d.actual} | ${d.expected} | ${d.eos} | ${d.eol} |`
+      `| ${d.version} | \`${d.source}\` | \`${d.label}\` | \`${newLabel}\` | ${d.eos} | ${d.eol} |`
     );
   }
   lines.push('');
-  lines.push('## How to resolve');
+  lines.push('## Notes');
   lines.push('');
-  lines.push('1. For an `(EOS)` → `(EOL)` transition, edit the matching label in');
-  lines.push('   `src/config/versionConfig.js` (or `docusaurus.config.js` if still');
-  lines.push('   in the active version dropdown).');
-  lines.push('2. For an active version reaching EOS for the first time, also remove');
-  lines.push('   the `Stable` suffix from the current "Stable" version label.');
-  lines.push('3. If a version is moving out of active support entirely, run the');
-  lines.push('   archive workflow described in `.claude/skills/vcluster-docs-archiver`.');
-  lines.push('4. Re-run `node scripts/check-eos-eol-labels.js` to confirm.');
+  lines.push('- Suffix transitions are mechanical and applied automatically by');
+  lines.push('  `scripts/check-eos-eol-labels.js --update`.');
+  lines.push('- If a label loses its `Stable` suffix here, manually add `Stable`');
+  lines.push('  to the new latest version in `docusaurus.config.js` in this PR.');
+  lines.push('- A version is NOT moved between `docusaurus.config.js` (active) and');
+  lines.push('  `src/config/versionConfig.js` (archived) by this automation. Run the');
+  lines.push('  archive workflow described in `.claude/skills/vcluster-docs-archiver`');
+  lines.push('  when a version should be fully retired.');
   return lines.join('\n') + '\n';
 }
 
@@ -171,57 +217,9 @@ function appendGithubOutput(lines) {
   fs.appendFileSync(process.env.GITHUB_OUTPUT, lines.join('\n') + '\n');
 }
 
-function ghJson(args) {
-  // execFileSync to avoid any shell-quoting hazards on user-controlled strings.
-  const out = execFileSync('gh', args, { encoding: 'utf8' });
-  return out.trim();
-}
-
-function openOrUpdateTrackingIssue(reportBody) {
-  const body = [
-    'The scheduled `check-eos-eol-labels` workflow detected version labels',
-    'that no longer match the EOS/EOL dates published in',
-    '`docs/_partials/vcluster_supported_versions.mdx` or',
-    '`docs/_partials/platform_supported_versions.mdx`.',
-    '',
-    reportBody,
-    '---',
-    '',
-    'Generated by [`.github/workflows/check-eos-eol-labels.yml`]' +
-      '(.github/workflows/check-eos-eol-labels.yml). The next scheduled run',
-    'with no drift will leave this issue open — close it manually after the',
-    'fix lands.',
-  ].join('\n');
-
-  // Dedupe by exact title — the same issue is updated on every weekly run
-  // that still reports drift, instead of spawning a new one each Monday.
-  const listed = ghJson([
-    'issue',
-    'list',
-    '--state',
-    'open',
-    '--search',
-    `${ISSUE_TITLE} in:title`,
-    '--json',
-    'number,title',
-    '--jq',
-    `.[] | select(.title == "${ISSUE_TITLE}") | .number`,
-  ]);
-  const existing = listed.split('\n').filter(Boolean)[0];
-
-  if (existing) {
-    execFileSync('gh', ['issue', 'edit', existing, '--body', body], { stdio: 'inherit' });
-    console.log(`Updated existing tracking issue #${existing}`);
-  } else {
-    execFileSync('gh', ['issue', 'create', '--title', ISSUE_TITLE, '--body', body], {
-      stdio: 'inherit',
-    });
-  }
-}
-
 function parseArgs(argv) {
   let today = new Date();
-  let openIssue = false;
+  let update = false;
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--date') {
       const v = argv[i + 1];
@@ -230,24 +228,27 @@ function parseArgs(argv) {
       }
       today = new Date(`${v}T00:00:00Z`);
       i++;
-    } else if (argv[i] === '--open-issue') {
-      openIssue = true;
+    } else if (argv[i] === '--update') {
+      update = true;
     }
   }
-  return { today, openIssue };
+  return { today, update };
 }
 
 function main() {
-  const { today, openIssue } = parseArgs(process.argv.slice(2));
+  const { today, update } = parseArgs(process.argv.slice(2));
 
   const partials = {
     vcluster: parsePartial(fs.readFileSync(PARTIALS.vcluster, 'utf8')),
     platform: parsePartial(fs.readFileSync(PARTIALS.platform, 'utf8')),
   };
 
+  let versionConfigContent = fs.readFileSync(VERSION_CONFIG, 'utf8');
+  let docusaurusConfigContent = fs.readFileSync(DOCUSAURUS_CONFIG, 'utf8');
+
   const labels = [
-    ...parseVersionConfigLabels(fs.readFileSync(VERSION_CONFIG, 'utf8')),
-    ...parseDocusaurusConfigLabels(fs.readFileSync(DOCUSAURUS_CONFIG, 'utf8')),
+    ...parseVersionConfigLabels(versionConfigContent),
+    ...parseDocusaurusConfigLabels(docusaurusConfigContent),
   ];
 
   const drift = detectDrift({ today, partials, labels });
@@ -255,7 +256,7 @@ function main() {
   if (drift.length === 0) {
     console.log(`No EOS/EOL label drift detected as of ${today.toISOString().slice(0, 10)}.`);
     if (fs.existsSync(REPORT_PATH)) fs.unlinkSync(REPORT_PATH);
-    appendGithubOutput(['drift=false']);
+    appendGithubOutput(['drift=false', 'changed=false']);
     return 0;
   }
 
@@ -263,10 +264,40 @@ function main() {
   fs.writeFileSync(REPORT_PATH, report);
   console.error(report);
   console.error(`Wrote drift report to ${path.relative(process.cwd(), REPORT_PATH)}`);
-  appendGithubOutput(['drift=true']);
 
-  if (openIssue) openOrUpdateTrackingIssue(report);
-  return 1;
+  if (!update) {
+    appendGithubOutput(['drift=true', 'changed=false']);
+    return 1;
+  }
+
+  const summaryParts = [];
+  for (const d of drift) {
+    const expected = d.expected === '(none)' ? '' : d.expected;
+    const newLabel = deriveNewLabel(d.version, d.label, expected);
+    if (d.source === 'docusaurus.config.js') {
+      docusaurusConfigContent = applyDocusaurusUpdate(
+        docusaurusConfigContent,
+        d.key,
+        d.label,
+        newLabel
+      );
+    } else {
+      versionConfigContent = applyVersionConfigUpdate(
+        versionConfigContent,
+        d.label,
+        newLabel
+      );
+    }
+    summaryParts.push(`${d.label} → ${newLabel}`);
+  }
+
+  fs.writeFileSync(VERSION_CONFIG, versionConfigContent);
+  fs.writeFileSync(DOCUSAURUS_CONFIG, docusaurusConfigContent);
+
+  const summary = summaryParts.join(', ');
+  console.log(`Applied ${drift.length} label rewrite(s): ${summary}`);
+  appendGithubOutput(['drift=true', 'changed=true', `summary=${summary}`]);
+  return 0;
 }
 
 module.exports = {
@@ -278,6 +309,9 @@ module.exports = {
   parseVersionConfigLabels,
   parseDocusaurusConfigLabels,
   detectDrift,
+  deriveNewLabel,
+  applyDocusaurusUpdate,
+  applyVersionConfigUpdate,
   renderReport,
 };
 
