@@ -136,6 +136,59 @@ find vcluster vcluster_versioned_docs -name "*.mdx" \
   -exec sed -i 's|/platform/old/path|/platform/new/path|g' {} \;
 ```
 
+### Sidebar Navigation Conventions
+
+Docusaurus sidebar categories can be made clickable (navigating to a page on click) in two ways. Both are banned — sidebar section labels must expand/collapse only.
+
+**Anti-pattern 1: `link` field in `_category_.json`**
+
+```json
+// WRONG — do not add a link field
+{
+  "label": "Deploy",
+  "position": 2,
+  "link": {
+    "type": "generated-index"
+  }
+}
+```
+
+Remove the `link` field entirely. The `label` and `position` fields are sufficient.
+
+**Anti-pattern 2: `README.mdx` as a folder index**
+
+Docusaurus automatically converts a `README.mdx` file into the category's landing page and makes the section label clickable — even without a `link` in `_category_.json`. Do not create `README.mdx` files as folder indices.
+
+Instead, use `overview.mdx` with an explicit `slug:` that matches the directory URL:
+
+```mdx
+---
+title: Networking
+sidebar_label: Overview
+sidebar_position: 0
+slug: /configure/vcluster-yaml/networking
+---
+```
+
+When converting an existing `README.mdx` to `overview.mdx`:
+
+1. Add `slug:` matching the directory's URL (plugin-relative, no `/vcluster/` prefix).
+2. Set `sidebar_label: Overview` — not the section name, to avoid duplication.
+3. Migrate `sidebar_position` and `sidebar_class_name` out of the MDX frontmatter and into `_category_.json` as `position` and `className` respectively. The `_category_.json` controls the section label in the sidebar; the `overview.mdx` frontmatter controls only the child item.
+4. Update any relative links inside the file that previously resolved from a directory URL — they now resolve from the slug URL.
+
+**`_category_.json` structure for a folder that has an `overview.mdx`:**
+
+```json
+{
+  "label": "Networking",
+  "position": 3,
+  "className": "host-nodes private-nodes"
+}
+```
+
+Do not add a `link` field.
+
 ### PR Preview URLs
 
 Preview links MUST point to actual changed pages, NOT the docs root.
@@ -231,6 +284,8 @@ See `references/partials-guide.md` for complete patterns and troubleshooting.
 - ⚠️ **NEVER run `npm run build`** (user runs when needed)
 - ⚠️ **NEVER use URL paths for links** (use file paths with `.mdx`)
 - ⚠️ **NEVER place admonitions inside JSX components** like `<Step>`
+- ⚠️ **NEVER add a `link` field to `_category_.json`** — sidebar section labels must expand/collapse only, not navigate
+- ⚠️ **NEVER create `README.mdx` as a folder index** — use `overview.mdx` with an explicit `slug:` instead (see Sidebar Navigation Conventions)
 
 ### Always-Do
 - ✅ **Always run vale** before finalizing documentation
