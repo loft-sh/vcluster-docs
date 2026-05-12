@@ -1,0 +1,161 @@
+---
+title: Control plane benchmark methodology
+sidebar_label: Benchmark methodology
+sidebar_position: 1
+description: Test setup, service level indicators, and analysis for vCluster control plane scalability benchmarks.
+---
+
+This page documents the test harness behind the
+[Sizing and performance](./sizing-and-performance.mdx) page: workload profiles,
+service level indicators, and the search procedure used to find each profile's
+stable operating point.
+
+## Test setup
+
+:::note Control plane only
+Workloads are simulated. KWOK fake nodes do not run real container runtimes,
+image pulls, kubelets, or CNI plumbing. The synthetic workloads here pressure
+the Virtual Control Plane (syncer, embedded kube-apiserver,
+kube-controller-manager, kube-scheduler, and etcd) — not pod startup, network
+programming, DNS, or storage paths. Results may differ from production
+workloads with real container runtimes and operators.
+:::
+
+Six resource profiles (P1–P6) vary CPU and memory per control plane replica,
+mapping directly to the [sizing table](./sizing-and-performance.mdx#choose-a-resource-profile).
+Every profile runs three replicas (HA) with embedded etcd.
+
+### Workload profiles
+
+Four workload profiles vary object count, pod density, and controller density
+inside the Tenant Cluster:
+
+| Profile | Description | Churn model |
+| --- | --- | --- |
+| K0 | Baseline — KWOK nodes only, no synthetic workload | 10-minute stability window |
+| W7 | Heavy realistic — mixed Deployment shapes across many namespaces | Pod lifecycle, namespace churn, controller PATCH traffic |
+| W8 | Extreme realistic — 3× W7 scale | Same as W7, scaled up to surface etcd write-path effects |
+| W9 | Controller density — W8 plus persistent watch streams | W8 churn + synthetic operator watches |
+
+W9 closes the gap between synthetic load and a real Tenant Cluster with a full
+operator stack: cert-manager, external-secrets, Argo, Kubeflow, GPU Operator,
+KServe, Prometheus Operator, KEDA, and similar.
+
+### Service level indicators
+
+We declare a Stable Node Count (SN) result only when all 13 conditions hold
+across the evaluation window. Each is a PromQL query against the vCluster
+namespace.
+
+| # | Condition | Threshold |
+| --- | --- | --- |
+| 1 | Control plane replica Ready | Any pod not Ready → fail |
+| 2a | Container restart count | > 2 → fail (the 1→3 HA bootstrap causes 1–2 expected pod-0 restarts) |
+| 2b | OOMKilled | Any event → fail |
+| 3a | Sustained 429 responses | > 0.1 req/s → fail |
+| 3b | Sustained 5xx responses | > 0.1 req/s → fail |
+| 3c | Sustained request terminations | > 0.1 req/s → fail |
+| 4 | API P99 latency (non-watch) | > 2 s sustained → fail |
+| 5a | etcd leader lost | Any interval → fail |
+| 5b | etcd leader changes | Any → fail |
+| 5c | etcd proposals failed | Any → fail |
+| 5d | etcd WAL fsync P99 | > 25 ms → warn |
+| 5e | etcd DB size | > 4 GB → warn; > 12 GB → fail |
+| 6 | Node convergence | < 98% of target N → fail |
+
+Crossing any condition invalidates the stage result for that profile but doesn't
+necessarily mean total cluster failure. The thresholds define a conservative,
+reproducible operating envelope, not a cliff edge.
+
+Each test stage emits two artifacts alongside full control plane logs and a
+configuration manifest:
+
+- `fail-conditions-<uuid>.{json,txt}` — pass/fail evaluation of every condition.
+- `collected-metrics-<uuid>/` — raw time series for 41 metrics across eight categories (API latency, API errors, etcd health, container resources, pod state, scheduler, workqueue, and Control Plane Cluster metrics).
+
+### Search procedure
+
+For each `Profile × Workload` pair, the test runner finds SN in two phases:
+
+1. **Doubling ladder** — starting from N = 100 nodes, double node count at
+   each stage (100 → 200 → 400 → 800, and so on) until at least one SLI fails.
+2. **Binary search** — bisect between the last passing node count and the
+   first failing count until the gap is ≤ 15%. The midpoint, rounded down,
+   is reported as SN.
+
+Each stage provisions a fresh Tenant Cluster and registers N KWOK nodes. It
+then runs the workload generator, evaluates all SLIs, and records artifacts
+before tearing down the Tenant Cluster and moving to the next stage.
+
+### Node simulation
+
+KWOK simulates worker nodes, emulating node and pod lifecycle events without
+running real container runtimes. KWOK nodes register directly to the Virtual
+Control Plane's API server, matching the
+[private nodes](../worker-nodes/private-nodes/README.mdx) deployment topology
+these benchmarks target.
+
+KWOK doesn't exercise real kubelet behavior: image pulls, CSI mounts, and
+device plugins. The vCluster control-plane code paths for node registration,
+heartbeats, pod scheduling, and status updates work the same as with real nodes.
+
+### Test environment
+
+Terraform provisions each resource profile's isolated EKS cluster (using
+`make apply-p1` through `make apply-p6`). Every cluster ships with Karpenter
+for Control Plane Cluster autoscaling, a monitoring stack (Prometheus, Grafana,
+Loki, OpenTelemetry), and vCluster Platform managing the Tenant Cluster under
+test. Prometheus scrapes the vCluster API server and etcd endpoints through a
+`ServiceMonitor` enabled with `controlPlane.serviceMonitor.enabled`.
+
+## Analysis
+
+### CPU is the bottleneck below 4 CPU per replica
+
+Under earlier, lighter workload profiles now superseded by W7/W8/W9, capacity
+scaled linearly with CPU across P1, P2, and P3. At P1, CPU saturation caused
+a pod restart and a subsequent etcd leader change, confirming CPU as the
+binding resource. Resource profile drives capacity in this regime, and linear
+sizing is a reasonable planning model.
+
+### The etcd write path is the bottleneck above 4 CPU
+
+From P3 onward, adding CPU doesn't raise the node ceiling. The bottleneck
+shifts to the etcd write path: WAL fsync latency, proposal commit throughput,
+and apply throughput. At high-CPU profiles, API p99 latency differences between adjacent profiles
+are within single-digit percentages at the same node count, with no change to
+the ceiling. Raising this ceiling requires moving etcd out-of-process, tuning
+batch apply behavior, or sharding the write path. Adding more CPU to the
+control plane replicas won't help.
+
+### Memory scales with object count
+
+In W9 tests, pod, Deployment, and Service object count drove etcd DB size, not
+node count. When sizing memory, plan for object density (pods and controllers
+per namespace) rather than raw node count.
+
+## Limitations
+
+These benchmarks cover one specific vCluster control-plane configuration.
+Keep these constraints in mind when applying the results:
+
+- **KWOK simulates nodes, not kubelets.** Workloads sensitive to kubelet
+  behavior are out of scope. These include image pulls, CSI mounts, device
+  plugins, and kubelet metrics.
+- **Fixed infrastructure.** Tests hold EKS, a specific Kubernetes version,
+  storage class, and CNI constant across profiles. Results vary on other
+  clouds, Kubernetes distributions, and disk classes. Anything that changes
+  WAL fsync latency is especially significant.
+- **Fixed admission and operator surface.** Tests don't vary admission webhooks,
+  custom resource definitions, or operator density on the Tenant Cluster.
+  CRD-heavy workloads add separate watch caches and informers per Kind, raising
+  memory and watch overhead linearly with Kind count. Examples include
+  PyTorchJobs, KServe Inferences, and Knative Revisions.
+- **Short-duration runs.** Individual test runs are 30–60 minutes. Long-tail
+  issues such as gradual memory growth over days are out of scope.
+- **One Tenant Cluster at a time.** Tests don't measure co-tenancy effects
+  from multiple Tenant Clusters sharing a Control Plane Cluster.
+
+## Reproduce the benchmarks
+
+Reproduce these benchmarks against your own configuration using the open source framework: [loft-sh/vCluster-Control-Plane-Load-Testing](https://github.com/loft-sh/vcluster-control-plane-load-testing). The repo includes Terraform modules for per-profile EKS clusters, kube-burner workload configurations for K0/W7/W8/W9, the 13-SLI fail-condition checks, and the doubling-ladder and binary-search scripts.
