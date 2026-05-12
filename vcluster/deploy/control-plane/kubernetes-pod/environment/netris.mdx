@@ -7,19 +7,19 @@ sidebar_class_name: private-nodes
 ---
 
 One deployment model for vCluster is through private nodes.
-It allows for stronger isolation between the virtual clusters, since the Pods in a virtual cluster don't share the same Nodes.
+It allows for stronger isolation between the tenant clusters, since the Pods in a tenant cluster don't share the same Nodes.
 
 Unlike cloud providers that offer stable network abstractions for automation, bare metal infrastructure lacks these built-in capabilities, making network configuration and management significantly more complex.
 This guide shows how vCluster with [Netris](https://netris.ai/) delivers an equally seamless integration for bare metal environments.
-It enables you to isolate virtual clusters spanning mixed bare metal and VM private nodes that share the same underlying hardware with an exclusive network.
+It enables you to isolate tenant clusters spanning mixed bare metal and VM private nodes that share the same underlying hardware with an exclusive network.
 
 Netris server clusters provide network abstractions that can be configured in different ways depending on your hardware setup—including access ports, trunk ports, or other network configurations.
 
 ![Architecture](/img/netris_architecture.svg)
 
-The goal of this guide is to have a virtual cluster on an isolated network:
+The goal of this guide is to have a tenant cluster on an isolated network:
 
-- Virtual cluster managed by vCluster platform
+- Tenant cluster managed by vCluster platform
 - Control plane is reachable on the network behind a stable address
 - BCM server provisioned and joined as a private node
 - KubeVirt VM provisioned and joined as a private node
@@ -27,11 +27,11 @@ The goal of this guide is to have a virtual cluster on an isolated network:
 - Hosts on other networks cannot reach the Nodes or workloads (unless explicitly peered)
 
 Like in traditional Kubernetes clusters, Nodes share the same network domain.
-Instead of control plane _nodes_, the vCluster control plane runs as (multihomed) Pods in the host cluster.
-This is transparent to the virtual cluster; however, the host cluster remains inaccessible.
+Instead of control plane _nodes_, the vCluster control plane runs as (multihomed) Pods in the control plane cluster.
+This is transparent to the tenant cluster; however, the control plane cluster remains inaccessible.
 
 This can be repeated for any number of clusters.
-The VPCs of each virtual cluster may also be peered to access shared services across clusters.
+The VPCs of each tenant cluster may also be peered to access shared services across clusters.
 
 ## Netris
 
@@ -49,23 +49,23 @@ We assume the following:
 - Netris controller & agent installed & configured
 - Networks configured in Netris (VPC and Server cluster) and BCM (See [below](#prepare-networks))
     - Default network with BCM head node
-    - Host-cluster network
+    - Control plane cluster network
     - vCluster tenant network
-- Netris controller API is reachable from the host cluster network
-- BCM head node (API) is reachable from the host cluster network
-- "Host" Kubernetes cluster set up (See [below](#prepare-host-cluster))
+- Netris controller API is reachable from the control plane cluster network
+- BCM head node (API) is reachable from the control plane cluster network
+- Control plane cluster set up (See [below](#prepare-control-plane-cluster))
 - BCM head node must be able to run commands on servers with plain `ssh` when they are on a different BCM network
 - At least one unused server in BCM is available
 
 ## Prepare networks
 
-We must prepare the networks for the host cluster and a vCluster tenant in Netris & BCM.
+We must prepare the networks for the control plane cluster and a vCluster tenant in Netris & BCM.
 
 ### Netris server clusters
 
 1. Create ServerClusterTemplates
 
-    Create a template for the host cluster nodes:
+    Create a template for the control plane cluster nodes:
 
     ```json title="serverClusterTemplate.json"
     [
@@ -90,14 +90,14 @@ We must prepare the networks for the host cluster and a vCluster tenant in Netri
 
     Create a ServerCluster for each of the networks using the respective templates.
 
-    For the host cluster, add the shared servers as endpoints.
+    For the control plane cluster, add the shared servers as endpoints.
 
     This configures the connected ports as access ports within the server cluster V-net, and it's not necessary to make any adjustments in the host OS.
 
     ![ServerCluster](/img/netris_create_host_cluster_servercluster.png)
 
     The one for the tenant network doesn't have any endpoints with untagged ports until later.
-    However, we add the host cluster servers as _shared_ endpoints.
+    However, we add the control plane cluster servers as _shared_ endpoints.
 
     This configures the ports on the shared servers as trunk ports (additionally) carrying tagged VLAN traffic.
     These frames then ingress on a vlan interface that is a port on the bridge for the tenant we'll configure later.
@@ -117,7 +117,7 @@ We must prepare the networks for the host cluster and a vCluster tenant in Netri
 
     ![BCM Network](/img/bcm_create_network.png)
 
-## Prepare host cluster
+## Prepare control plane cluster {#prepare-control-plane-cluster}
 
 :::info
 It is advisable to install Kubernetes after first configuring the network.
@@ -131,7 +131,7 @@ There must be a default StorageClass available.
 
 ### Install compatible CNI plugin
 
-Since the host cluster Nodes handle VLAN traffic, some CNI plugin configurations are not compatible.
+Since the control plane cluster Nodes handle VLAN traffic, some CNI plugin configurations are not compatible.
 
 We have tested the following plugins:
 
@@ -141,9 +141,9 @@ We have tested the following plugins:
     - Must set `cni.exclusive: false`
     - Must set `bpf.vlanBypass: '{0}'`
 
-### Create bridge for tenant network on host cluster nodes
+### Create bridge for tenant network on control plane cluster nodes
 
-We create an unfiltered bridge on all host cluster nodes that is an extension of the Netris fabric for the tenant server cluster.
+We create an unfiltered bridge on all control plane cluster nodes that is an extension of the Netris fabric for the tenant server cluster.
 
 The bridge has a vlan interface with the VLAN id that we looked up earlier as one of its ports.
 
@@ -179,19 +179,19 @@ spec:
 
 ### Install tooling
 
-The following tools are required in the host cluster to manage interfaces that allow adding Pods and VMs to the virtual cluster network.
+The following tools are required in the control plane cluster to manage interfaces that allow adding Pods and VMs to the tenant cluster network.
 
 #### Multus
 
 See install instructions in [Multus CNI](https://github.com/k8snetworkplumbingwg/multus-cni).
 
-Multus adds additional interfaces to the vCluster control plane Pods and KubeVirt VMs to attach them to the virtual cluster VLAN.
+Multus adds additional interfaces to the vCluster control plane Pods and KubeVirt VMs to attach them to the tenant cluster VLAN.
 
 #### KubeVirt
 
 See install instructions in [KubeVirt](https://kubevirt.io/user-guide/docs/latest/administration/intro.html).
 
-KubeVirt works together with Multus and manages the VMs in the host cluster.
+KubeVirt works together with Multus and manages the VMs in the control plane cluster.
 
 The example below also uses the [containerized data importer](https://kubevirt.io/user-guide/storage/containerized_data_importer/) to create a large enough disk to install and run Kubernetes on top of Ubuntu 24.04.
 
@@ -327,10 +327,10 @@ For more details on kube-vip configuration, see [Kube-vip](/vcluster/configure/v
 
 4. Verify node provisioning
 
-    The BCM node provider will automatically provision the bare metal server as a node in the virtual cluster.
+    The BCM node provider will automatically provision the bare metal server as a node in the tenant cluster.
     You can monitor the node claim status.
 
-    Run in the host cluster:
+    Run in the control plane cluster:
 
     ```text
     kubectl get nodeclaims -A
@@ -338,7 +338,7 @@ For more details on kube-vip configuration, see [Kube-vip](/vcluster/configure/v
     p-default   netris-8gnqh   Available   netris     bcm-netris.dgx-node   2025-10-27T19:39:45Z
     ```
 
-    Once the node joins the cluster, the claim transitions from `Pending` to `Available` and the node will appear in the virtual cluster:
+    Once the node joins the cluster, the claim transitions from `Pending` to `Available` and the node will appear in the tenant cluster:
 
     ```text
     kubectl get nodes
@@ -346,7 +346,7 @@ For more details on kube-vip configuration, see [Kube-vip](/vcluster/configure/v
     dgx-01   Ready    <none>   68s   v1.34.1
     ```
 
-## Join VM running in host cluster infrastructure
+## Join VM running in control plane cluster infrastructure
 
 ### Configure KubeVirt node provider
 
@@ -422,10 +422,10 @@ For more details on kube-vip configuration, see [Kube-vip](/vcluster/configure/v
 
 3. Verify VM provisioning
 
-    The KubeVirt node provider will automatically create VMs that join the virtual cluster.
+    The KubeVirt node provider will automatically create VMs that join the tenant cluster.
     You can monitor the node claims.
 
-    Run in the host cluster:
+    Run in the control plane cluster:
 
     ```text
     kubectl get nodeclaims -A
@@ -434,7 +434,7 @@ For more details on kube-vip configuration, see [Kube-vip](/vcluster/configure/v
     p-default   netris-8gnqh   Available   netris     kubevirt-netris.netris-vm   2025-10-27T19:39:45Z
     ```
 
-    Once the VM joins the cluster, the node claim transitions from `Pending` to `Available` and the VM will appear in the virtual cluster:
+    Once the VM joins the cluster, the node claim transitions from `Pending` to `Available` and the VM will appear in the tenant cluster:
 
     ```bash
     kubectl get nodes
