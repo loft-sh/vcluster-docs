@@ -4,18 +4,15 @@ import styles from './styles.module.css';
 const COLORS = {
   secondary: '#FFE0CC',
   green:     '#FFE0CC', // deprecated alias for secondary; kept for versioned docs compatibility
-  success:   'var(--ifm-color-success)',
-  info:      'var(--ifm-color-info)',
-  warning:   'var(--ifm-color-warning)',
-  danger:    'var(--ifm-color-danger)',
+  success:   'var(--ifm-color-success-lightest)',
+  info:      'var(--ifm-color-info-lightest)',
+  warning:   'var(--ifm-color-warning-lightest)',
+  danger:    'var(--ifm-color-danger-lightest)',
 };
 
 const DEFAULT_BG = '#E6E7E9';
 
 export default function Highlight({ children, color, className }) {
-  if (color && !COLORS[color]) {
-    console.warn(`Highlight: unknown color "${color}". Valid values: ${Object.keys(COLORS).join(', ')}.`);
-  }
   return (
     <span
       style={{ backgroundColor: (color && COLORS[color]) || DEFAULT_BG, color: '#050B24' }}
