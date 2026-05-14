@@ -3,6 +3,7 @@ import styles from './styles.module.css';
 
 const COLORS = {
   secondary: '#FFE0CC',
+  green:     '#FFE0CC', // deprecated alias for secondary; kept for versioned docs compatibility
   success:   'var(--ifm-color-success)',
   info:      'var(--ifm-color-info)',
   warning:   'var(--ifm-color-warning)',
