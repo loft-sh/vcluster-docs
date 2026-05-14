@@ -1,28 +1,26 @@
 import React from 'react';
 import styles from './styles.module.css';
 
-const colors = {
-  primary: 'var(--ifm-color-primary)',
-  secondary: 'var(--ifm-color-secondary)',
-  success: 'var(--ifm-color-success)',
-  info: 'var(--ifm-color-info)',
-  warning: 'var(--ifm-color-warning)',
-  danger: 'var(--ifm-color-danger)'
+const COLORS = {
+  secondary: '#FFE0CC',
+  success:   'var(--ifm-color-success)',
+  info:      'var(--ifm-color-info)',
+  warning:   'var(--ifm-color-warning)',
+  danger:    'var(--ifm-color-danger)',
 };
 
-export default class Highlight extends React.Component {
-  render() {
-    const { children, color, className, ...props } = this.props;
-    return (
-      <span
-        style={{
-          backgroundColor: color ? (colors[color] || color) : undefined,
-          ...props
-        }}
-        className={`${styles.highlight} ${className || ''}`}
-      >
-        {children}
-      </span>
-    );
+const DEFAULT_BG = '#E6E7E9';
+
+export default function Highlight({ children, color, className }) {
+  if (color && !COLORS[color]) {
+    console.warn(`Highlight: unknown color "${color}". Valid values: ${Object.keys(COLORS).join(', ')}.`);
   }
+  return (
+    <span
+      style={{ backgroundColor: (color && COLORS[color]) || DEFAULT_BG, color: '#050B24' }}
+      className={`${styles.highlight} ${className || ''}`}
+    >
+      {children}
+    </span>
+  );
 }
