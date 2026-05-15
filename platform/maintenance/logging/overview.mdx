@@ -1,0 +1,94 @@
+---
+title: Logging
+sidebar_label: Overview
+sidebar_position: 1
+description: Understand platform audit logs, platform process logs, and workload log collection in vCluster Platform.
+---
+
+import Icon from '@site/src/components/Icon';
+
+vCluster Platform surfaces three distinct types of logs, each serving a different purpose and requiring different configuration.
+
+| Type | What it captures | Configure |
+|------|-----------------|-----------|
+| [Platform audit logs](#platform-audit-logs) | API requests that pass through the platform gateway, including who acted and when | [Audit Logging](../../configure/platform-configs/audit.mdx) |
+| [Platform process logs](#platform-process-logs) | Operational output from the platform pod, including startup, controller activity, and errors | [Platform Process Logging](./platform-logging.mdx) |
+| [Workload logs](#workload-logs) | Output from applications running inside tenant clusters | [Central HostPath Mapper](../monitoring/central-hostpath-mapper.mdx) |
+
+These three types are independent. Enabling audit logging does not affect process log verbosity. A separate infrastructure component handles workload log collection.
+
+## Platform audit logs
+
+The platform's API gateway processes every API request and records it in the audit log. This includes requests from the UI, the CLI, and direct API access. Each log entry captures:
+
+- The requesting user (or service account), their groups, and source IP
+- The resource being accessed (type, name, namespace, cluster)
+- The HTTP verb (`get`, `list`, `create`, `update`, `delete`, `patch`)
+- Whether impersonation was in use
+- Timestamps and a unique audit ID
+
+### What gets logged
+
+Four audit levels control the volume and detail of what the platform captures.
+
+| Level | Writes (create/update/delete/patch) | Reads (get/list/watch) | Request body | Response body |
+|-------|-------------------------------------|------------------------|:------------:|:-------------:|
+| 1 | Metadata only | Not logged | <Icon type="cross" /> | <Icon type="cross" /> |
+| 2 | Metadata only | Metadata only | <Icon type="cross" /> | <Icon type="cross" /> |
+| 3 | Logged with request body | Logged with request body | <Icon type="check" /> | <Icon type="cross" /> |
+| 4 | Logged with request and response | Logged with request and response | <Icon type="check" /> | <Icon type="check" /> |
+
+At all levels, the following are always excluded from audit logs:
+
+- Internal access-review requests (`selfsubjectaccessreviews`, `subjectaccessreviews`)
+- Agent coordination resources (`agentauditevents`, `directclusterendpointtokens`, `ingressauthtokens`)
+- Platform token resources (`licensetokens`)
+
+The platform records long-running streaming operations (`pods/log`, `pods/exec`, `pods/portforward`) at metadata level only, regardless of the configured level. This prevents unbounded log growth.
+
+The platform limits sensitive resources (`sharedsecrets`, `ownedaccesskeys`, `resetaccesskeys`, `users/profile`) to metadata level. This prevents credential material from appearing in logs.
+
+### Configure audit logging
+
+See [Audit Logging](../../configure/platform-configs/audit.mdx) for how to enable audit logging, choose a level, define a custom policy, and persist logs to a PVC or external database.
+
+## Platform process logs
+
+The platform pod writes operational logs to stdout. These cover initialization, controller reconciliation, API request handling, and runtime errors.
+
+The platform supports three log levels.
+
+| Level | What it captures | When to use |
+|-------|-----------------|-------------|
+| `info` | Startup sequences, controller events, handled requests | Default for all environments |
+| `debug` | Full operation context for every request and reconciliation loop | Temporarily, when diagnosing an issue |
+| `error` | Failures and warnings only | Stable production environments with low noise requirements |
+
+By default, logs use a human-readable console format. Switch to JSON format when feeding logs into an aggregation pipeline such as Elasticsearch or Grafana Loki.
+
+Access platform logs with:
+
+```bash
+kubectl logs -n vcluster-platform -l app=loft -f
+```
+
+See [Platform Process Logging](./platform-logging.mdx) for how to change log level and output format.
+
+## Workload logs
+
+Standard log collectors such as Fluentd, the ELK stack, and Grafana Loki read container logs from the host filesystem at paths like:
+
+```
+/var/log/pods/<namespace>_<pod-name>_<uid>/<container>/
+```
+
+Tenant clusters introduce a naming problem. When vCluster syncs pods to the control plane cluster, it rewrites their names. A pod named `web-6d4f9b` inside a tenant cluster appears as `web-6d4f9b-x-default-x-my-vcluster` on the control plane cluster. Log collectors see only the physical name and cannot correlate entries back to the originating tenant cluster workload.
+
+The HostPath Mapper solves this by creating symlinks on each node that map physical pod paths to their virtual names. Log collectors follow the symlinks and see the names they expect.
+
+vCluster Platform offers two deployment options:
+
+- **Central HostPath Mapper**: A single DaemonSet on the control plane cluster handles path remapping for all tenant clusters. Recommended for fleet deployments.
+- **Per-cluster HostPath Mapper**: A DaemonSet installed in each tenant cluster's namespace. Better suited to small environments or where per-cluster isolation is needed.
+
+See [Central HostPath Mapper](../monitoring/central-hostpath-mapper.mdx) for setup instructions for both options.
