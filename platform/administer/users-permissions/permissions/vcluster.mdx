@@ -144,3 +144,92 @@ In this example:
 - All other users default to `cluster-admin`.
 
 Custom mapping rules allow more precise and secure access control inside the virtual cluster.
+
+### Custom ClusterRoles
+
+The platform UI's **Permissions** section lists only the four built-in roles: `cluster-admin`, `admin`, `edit`, and `view`. To use any other role, inject it into the tenant cluster using the `objects` field and reference it by name in `access.rules`.
+
+Two approaches are available depending on what you need:
+
+- **Define a new ClusterRole** — specify exactly the rules you want. Use this when you need to remove specific permissions from a built-in role.
+- **Aggregate into a built-in role** — add rules to an existing role using Kubernetes label selectors. Use this when you need to extend a built-in role with additional access, without redefining its full rule set.
+
+:::note
+If the tenant cluster is deployed from a template, add `objects` to the **template's** `spec.template`. The template controls those fields and overrides any changes made directly on the tenant cluster.
+:::
+
+#### Define a new ClusterRole
+
+Kubernetes RBAC is additive. A ClusterRole only grants what its rules explicitly allow. To restrict specific verbs from a built-in role, define a new ClusterRole that includes only the permissions you want.
+
+One common scenario is a team that uses `edit` but must not be able to create PersistentVolumeClaims. For example, a shared PersistentVolume references a sensitive secret, and unrestricted PVC creation would expose that access.
+
+```yaml
+apiVersion: management.loft.sh/v1
+kind: VirtualClusterTemplate
+metadata:
+  name: restricted-storage
+spec:
+  template:
+    objects: |
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRole
+      metadata:
+        name: edit-no-pvc-write
+      rules:
+        - apiGroups: [""]
+          resources: ["pods", "services", "configmaps", "secrets", "endpoints"]
+          verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+        - apiGroups: [""]
+          resources: ["persistentvolumeclaims"]
+          verbs: ["get", "list", "watch", "delete"]
+        - apiGroups: ["apps"]
+          resources: ["deployments", "statefulsets", "daemonsets", "replicasets"]
+          verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+    access:
+      defaultClusterRole: cluster-admin
+      rules:
+        - teams:
+            - storage-restricted-team
+          clusterRole: edit-no-pvc-write
+```
+
+`create`, `update`, and `patch` are omitted from the `persistentvolumeclaims` entry. Those verbs return `Forbidden` for users assigned this role. To build from the full `edit` rule set, run `kubectl get clusterrole edit -o yaml`. Copy its `rules` section into `objects` and remove the verbs you want to block.
+
+#### Extend a built-in role using aggregation
+
+Kubernetes ClusterRole aggregation lets you inject additional rules into a built-in role using label selectors. The built-in `admin`, `edit`, and `view` roles each automatically aggregate any ClusterRole carrying the corresponding label:
+
+| Label | Aggregates into |
+|-------|----------------|
+| `rbac.authorization.k8s.io/aggregate-to-admin: "true"` | `admin` |
+| `rbac.authorization.k8s.io/aggregate-to-edit: "true"` | `edit` |
+| `rbac.authorization.k8s.io/aggregate-to-view: "true"` | `view` |
+
+The following example adds namespace creation to the `admin` role. Any team assigned `admin` automatically gains the added permission.
+
+```yaml
+apiVersion: management.loft.sh/v1
+kind: VirtualClusterInstance
+metadata:
+  name: vcluster-rbac-example
+spec:
+  template:
+    objects: |
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRole
+      metadata:
+        name: admin-create-namespace
+        labels:
+          rbac.authorization.k8s.io/aggregate-to-admin: "true"
+      rules:
+        - apiGroups: [""]
+          resources: ["namespaces"]
+          verbs: ["create"]
+    access:
+      defaultClusterRole: view
+      rules:
+        - teams:
+            - api-framework
+          clusterRole: admin
+```
