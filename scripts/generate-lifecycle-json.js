@@ -23,37 +23,49 @@ const __dirname = dirname(__filename);
 const rootDir = join(__dirname, '..');
 
 /**
- * Parse date from "Month Day, Year" format to ISO 8601 (YYYY-MM-DD)
+ * Parse date to ISO 8601 (YYYY-MM-DD).
+ * Supports "YYYY Mon DD" (e.g. "2026 Apr 29") and legacy "Month Day, Year".
  */
 function parseDate(dateStr) {
   if (!dateStr || dateStr.trim() === '') return null;
 
-  // Handle special cases like "April 1, 2025*" (with asterisk)
   const cleaned = dateStr.replace(/\*/, '').trim();
 
   const months = {
     'January': '01', 'February': '02', 'March': '03', 'April': '04',
     'May': '05', 'June': '06', 'July': '07', 'August': '08',
     'September': '09', 'October': '10', 'November': '11', 'December': '12',
-    'Aug': '08'  // Handle abbreviated months
+    'Jan': '01', 'Feb': '02', 'Mar': '03', 'Apr': '04',
+    'Jun': '06', 'Jul': '07', 'Aug': '08',
+    'Sep': '09', 'Oct': '10', 'Nov': '11', 'Dec': '12'
   };
 
-  // Parse "Month Day, Year"
-  const match = cleaned.match(/(\w+)\s+(\d+),\s+(\d{4})/);
-  if (!match) {
-    console.warn(`Warning: Could not parse date "${dateStr}"`);
-    return null;
+  // "YYYY Mon DD" — current format
+  const ymdMatch = cleaned.match(/(\d{4})\s+(\w+)\s+(\d+)/);
+  if (ymdMatch) {
+    const [_, year, month, day] = ymdMatch;
+    const monthNum = months[month];
+    if (!monthNum) {
+      console.warn(`Warning: Unknown month "${month}" in date "${dateStr}"`);
+      return null;
+    }
+    return `${year}-${monthNum}-${day.padStart(2, '0')}`;
   }
 
-  const [_, month, day, year] = match;
-  const monthNum = months[month];
-
-  if (!monthNum) {
-    console.warn(`Warning: Unknown month "${month}" in date "${dateStr}"`);
-    return null;
+  // "Month Day, Year" — legacy format
+  const legacyMatch = cleaned.match(/(\w+)\s+(\d+),\s+(\d{4})/);
+  if (legacyMatch) {
+    const [_, month, day, year] = legacyMatch;
+    const monthNum = months[month];
+    if (!monthNum) {
+      console.warn(`Warning: Unknown month "${month}" in date "${dateStr}"`);
+      return null;
+    }
+    return `${year}-${monthNum}-${day.padStart(2, '0')}`;
   }
 
-  return `${year}-${monthNum}-${day.padStart(2, '0')}`;
+  console.warn(`Warning: Could not parse date "${dateStr}"`);
+  return null;
 }
 
 /**
