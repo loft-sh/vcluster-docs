@@ -1060,6 +1060,114 @@ deployment** with:
 -   Route 53 latency-based routing with health checks for automatic failover
 -   Platform deployed on both clusters sharing the same Kine database
 
+## Access the management API
+
+Multi-region platforms run an embedded Kubernetes API server inside each
+region's vCluster Platform pod. The `v1.management.loft.sh` aggregated
+APIService that exists on a standard platform deployment is **not** registered
+on the host EKS cluster — each region registers it inside its own embedded API
+server instead. This changes how automation and integrations such as Argo CD
+or Terraform call the management API.
+
+The aggregated APIService is cluster-scoped, so a single host EKS cluster can
+register only one. With multiple region pods sharing the same host cluster,
+that one registration can't route correctly to all of them. Each region
+therefore registers the APIService locally, and the platform's own HTTPS
+endpoint is the integration surface.
+
+### Standard vs. multi-region behavior
+
+| Aspect | Standard platform | Multi-region platform |
+| --- | --- | --- |
+| `v1.management.loft.sh` location | Aggregated APIService on the host EKS cluster | Local APIService inside each region's embedded API server |
+| Endpoint | `${EKS_ENDPOINT}/apis/management.loft.sh/v1/...` | `https://<platform-url>/kubernetes/management/apis/management.loft.sh/v1/...` |
+| Authentication | Host cluster bearer token (for example, an EKS IAM token) | [Platform access key](../../authentication/access-keys.mdx) |
+| `kubectl get apiservice v1.management.loft.sh` on host EKS | Returns the registration | Returns nothing — by design |
+
+### Call the management API
+
+Build requests against:
+
+```text
+https://<platform-url>/kubernetes/management/apis/management.loft.sh/v1/<resource>
+```
+
+Authenticate with a platform access key as a bearer token. For instructions on
+[creating an access key](../../authentication/access-keys.mdx#create-an-access-key),
+scope it to the project, user, or tenant cluster the caller needs.
+
+#### kubectl
+
+<InterpolatedCodeBlock
+  code={
+`kubectl --server https://[[VAR:PLATFORM_HOST:platform.example.com]]/kubernetes/management \\
+  --token "$LOFT_ACCESS_KEY" \\
+  get virtualclusterinstances -A`
+  }
+  language="bash"
+/>
+
+#### curl
+
+<InterpolatedCodeBlock
+  code={
+`curl -H "Authorization: Bearer $LOFT_ACCESS_KEY" \\
+  https://[[VAR:PLATFORM_HOST:platform.example.com]]/kubernetes/management/apis/management.loft.sh/v1/projects`
+  }
+  language="bash"
+/>
+
+#### Argo CD declarative cluster
+
+Register the platform as an Argo CD cluster by creating a `cluster`-type
+secret in the Argo CD namespace. Argo CD treats `server` as the API endpoint
+and authenticates with `bearerToken`:
+
+<InterpolatedCodeBlock
+  code={
+`apiVersion: v1
+kind: Secret
+metadata:
+  name: platform-[[VAR:REGION:region-a]]
+  namespace: argocd
+  labels:
+    argocd.argoproj.io/secret-type: cluster
+stringData:
+  name: platform-[[VAR:REGION:region-a]]
+  server: https://[[VAR:PLATFORM_HOST:platform.example.com]]/kubernetes/management
+  config: |
+    {
+      "bearerToken": "[[VAR:LOFT_ACCESS_KEY:<spec.key from your AccessKey>]]",
+      "tlsClientConfig": { "insecure": false }
+    }`
+  }
+  language="yaml"
+/>
+
+For the wider Argo CD integration (project import, SSO, AppProject sync), see
+[Argo CD integration](../../../integrations/argocd.mdx).
+
+### Upgrading from 4.7.x to 4.8.0
+
+This routing change shipped in platform version 4.8.0 and applies to
+multi-region deployments only. Automation that called the management API via
+the host EKS endpoint stops working after the upgrade — there is no in-place
+compatibility shim. Update callers to use the platform HTTPS endpoint above,
+and switch authentication from your host-cluster bearer token (for example,
+an EKS IAM token) to a platform access key.
+
+Standard (non-multi-region) platform deployments are unaffected. The host EKS
+APIService keeps working as before.
+
+### Troubleshooting
+
+| Symptom | Cause | Resolution |
+| --- | --- | --- |
+| `404` from `${EKS_ENDPOINT}/apis/management.loft.sh/...` | Caller is using the host EKS endpoint on a multi-region platform | Switch to `https://<platform-url>/kubernetes/management/...` |
+| `kubectl get apiservice v1.management.loft.sh` returns nothing on host EKS | Expected on multi-region — the APIService lives inside the embedded API server | None; verify from inside the embedded API server if needed |
+| `401` or `403` via the platform endpoint | Access key is invalid, expired, or scoped without permission for the requested resource | Regenerate the key or widen its scope; check the owning user's role bindings |
+| TLS verification errors against the platform endpoint | Caller doesn't trust the platform's certificate chain | Configure the same CA bundle the platform UI uses; avoid `insecure=true` in production |
+
 ## Upgrade a multi-region deployment
 
 This runbook describes how to upgrade vCluster Platform across regions with
