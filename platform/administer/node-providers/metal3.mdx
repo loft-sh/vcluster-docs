@@ -96,19 +96,65 @@ deploy:
 </TabItem>
 <TabItem value="dhcp" label="DHCP Server">
 
-Handles PXE boot by acting as a proxy between bare metal servers and Ironic, which may reside in a different network. When Metal3 is also deployed by the provider, the Ironic endpoint URLs are configured automatically.
+Handles PXE and HTTP Boot by acting as a proxy between bare metal servers and Ironic, which may reside in a different network. When Metal3 is also deployed by the provider, the Ironic endpoint URLs are configured automatically.
+
+**Deployment fields (NodeProvider `metal3.deploy.dhcp`):**
+
+| Field | Description | Default |
+|---|---|---|
+| `enabled` | Deploy the DHCP server. | `false` |
+| `chartRepo` | Override the Helm chart repository. | `oci://ghcr.io/loft-sh/charts` |
+| `chart` | Override the Helm chart name. | `vcluster-platform-dhcp-server` |
+| `version` | Override the Helm chart version. | Bundled version |
+| `helmValues` | Raw YAML passed as values to the chart. | — |
 
 **Helm values:**
 
 | Value | Description | Default |
 |---|---|---|
-| `networkAttachmentDefinition.vip` | Virtual IP with prefix for the DHCP server. Injected into the NetworkAttachmentDefinition under `ipam.static`. | — |
-| `networkAttachmentDefinition.config` | CNI configuration JSON for the NetworkAttachmentDefinition. Use `bridge` if Control Plane Cluster nodes have a bridge attached to the provisioning network. Use `macvlan` if the bare metal servers are on the same network as the Control Plane Cluster nodes. | — |
-| `proxy.ironicHttpUrl` | Ironic HTTP endpoint for image serving | Auto-configured when Metal3 is enabled |
-| `proxy.ironicApiUrl` | Ironic API endpoint | Auto-configured when Metal3 is enabled |
-| `proxy.image.registry` | Container image registry | `ghcr.io` |
-| `proxy.image.repository` | Container image repository | `loft-sh/vcluster-platform-dhcp-server` |
-| `proxy.image.tag` | Container image tag | Chart app version |
+| `image.registry` | Container image registry. | `ghcr.io` |
+| `image.repository` | Container image repository. | `loft-sh/vcluster-platform-dhcp-server` |
+| `image.tag` | Container image tag. | Chart app version |
+| `image.pullPolicy` | Image pull policy. | `Always` |
+| `imagePullSecrets` | Pull secrets for the image. | `[]` |
+| `hostNetwork` | Run the pod on the host network. When `true`, the pod also runs as root and the Multus NetworkAttachmentDefinition is not attached. | `false` |
+| `podAnnotations` / `podLabels` | Extra pod metadata. | `{}` |
+| `resources` | Container resource requests and limits. | `{}` |
+| `nodeSelector` / `tolerations` / `affinity` | Pod scheduling constraints. | `{}` / `[]` / `{}` |
+| `securityContext` | Container security context. Overridden to `runAsUser: 0` when `hostNetwork` is `true`. | `NET_BIND_SERVICE` capability, `runAsNonRoot: true`, `runAsUser: 1000` |
+| `extraArgs` | Extra arguments appended to the server binary. Use to set the IPA inspector and installer kernel parameters. | `[]` |
+| `extraEnv` | Extra environment variables on the server container. | `[]` |
+| `networkAttachmentDefinition.vip` | Virtual IP with prefix for the DHCP server. Injected into the NetworkAttachmentDefinition under `ipam.static`. Ignored when `hostNetwork: true`. | `192.168.100.3/24` |
+| `networkAttachmentDefinition.config` | CNI configuration JSON for the NetworkAttachmentDefinition. Use `bridge` if Control Plane Cluster nodes have a bridge attached to the provisioning network. Use `macvlan` if the bare metal servers are on the same network as the Control Plane Cluster nodes. | bridge `br0` |
+| `dhcp.serverIP` | IP the DHCP server advertises as itself. | `$(SERVER_IP)` (pod env) |
+| `dhcp.port` | DHCP listen port. | `67` |
+| `dhcp.listenAddr` | DHCP listen address. Set to `$(SERVER_IP):{{ .Values.dhcp.port }}` under `hostNetwork` to avoid answering on shared bridges. Rendered with `tpl`. | `0.0.0.0:67` |
+| `tftp.port` | TFTP listen port. | `69` |
+| `tftp.listenAddr` | TFTP listen address. Set to `""` to disable TFTP entirely (HTTP Boot still works). Rendered with `tpl`. | `$(SERVER_IP):69` |
+| `http.port` / `http.listenAddr` / `http.advertiseUrl` | HTTP boot file server config. Rendered with `tpl`. | `8080` |
+| `proxy.callbackPort` / `proxy.callbackListenAddr` / `proxy.callbackAdvertiseUrl` | IPA callback proxy config. Rendered with `tpl`. | `8081` |
+| `proxy.ironicHttpUrl` | Ironic HTTP endpoint for image serving. | Auto-configured when Metal3 is enabled |
+| `proxy.ironicApiUrl` | Ironic API endpoint. | Auto-configured when Metal3 is enabled |
+
+**Server flags (via `extraArgs`):**
+
+| Flag | Description |
+|---|---|
+| `--inspector-collectors` | Comma-separated list overriding the `ipa-inspection-collectors` kernel parameter in the inspector iPXE script. |
+| `--inspector-extra-kernel-param` | Extra kernel parameter appended to the inspector iPXE script. May be specified multiple times. |
+| `--installer-extra-kernel-param` | Extra kernel parameter appended to the installer iPXE script. May be specified multiple times. |
+| `--callback-insecure-skip-verify` | Skip TLS verification when the callback proxy forwards to IPA. |
+
+**Per-BareMetalHost DHCP annotations:**
+
+The DHCP server reads these annotations from the matched `BareMetalHost` to build the DHCP reply.
+
+| Annotation | Description |
+|---|---|
+| `metal3.vcluster.com/ip-address` | IPv4 address with prefix (CIDR) to lease. Required. |
+| `metal3.vcluster.com/gateway` | Default gateway. If unset, the first host address in the `ip-address` CIDR is used. |
+| `metal3.vcluster.com/dns-servers` | Comma-separated DNS servers. |
+| `metal3.vcluster.com/ntp-servers` | Comma-separated NTP servers. |
 
 Example with a bridge:
 
@@ -144,6 +190,21 @@ deploy:
             "master": "eth0",
             "mode": "bridge"
           }
+```
+
+Example with `hostNetwork` and custom IPA kernel parameters:
+
+```yaml
+deploy:
+  dhcp:
+    enabled: true
+    helmValues: |
+      hostNetwork: true
+      dhcp:
+        listenAddr: "$(SERVER_IP):67"
+      extraArgs:
+        - --inspector-extra-kernel-param=console=ttyS0,115200n8
+        - --installer-extra-kernel-param=console=ttyS0,115200n8
 ```
 
 </TabItem>
