@@ -423,11 +423,80 @@ test-kubevirt-node-1-9xm54   Ready    &lt;none&gt;   27s   v1.33.4
 </Step>
 </Flow>
 
-## Network configuration properties
+## Configuration properties
+
+Properties are key-value pairs on the NodeProvider, NodeType, or NodeClaim that control provisioning behavior. NodeClaim properties take precedence over NodeType. NodeType properties take precedence over NodeProvider.
+
+### Inline VM template
+
+#### `kubevirt.vcluster.com/vm-template`
+
+**Type:** `string` (inline YAML of a `VirtualMachine` resource)
+
+Allows a NodeClaim to fully specify its `VirtualMachine` template inline, bypassing the NodeProvider's `virtualMachineTemplate` and any NodeType. When this property is set on a NodeClaim, the provider skips the default NodeType-based scheduling and uses the supplied template directly. The claim does not need a `typeRef` in this case.
+
+This is useful when a tenant wants to create a one-off VM whose shape does not match any predefined NodeType.
+
+:::note Standalone Machines only
+This property is currently only compatible with standalone Machines. It cannot be used with NodeClaims created by a tenant cluster's node pool. This is not enforced. Setting it on a node-pool claim will produce undefined behavior.
+:::
+
+### Image configuration
+
+The image configuration properties synthesize a root-disk `DataVolumeTemplate`, volume, and disk and prepend them to the VM template. The synthesized disk is prepended to the VM's disk list, so it takes boot precedence over any other OS disks defined in the template.
+
+#### `vcluster.com/os-image`
+
+**Type:** `string`
+
+<!-- vale Vale.Terms = NO -->
+References an [OSImage](../../use-platform/machines/os-images.mdx) resource by name. The OSImage's properties merge into the NodeClaim's properties. If the OSImage sets `kubevirt.vcluster.com/image-url` or `kubevirt.vcluster.com/image-datasource`, the NodeClaim's source-related fields (`image-url`, `image-checksum`, `image-datasource`) are discarded before the overlay to avoid mismatched sources.
+<!-- vale Vale.Terms = YES -->
+
+#### `kubevirt.vcluster.com/image-url`
+
+**Type:** `string` (HTTP(S) URL or `docker://` reference)
+
+<!-- vale Vale.Terms = NO -->
+URL of the OS image. HTTP and HTTPS URLs produce an `http` DataVolume source; `docker://` URLs produce a `registry` source. Mutually exclusive with `kubevirt.vcluster.com/image-datasource`.
+<!-- vale Vale.Terms = YES -->
+
+#### `kubevirt.vcluster.com/image-checksum`
+
+**Type:** `string`
+
+Checksum of the OS image, used only when `image-url` is an HTTP(S) URL.
+
+#### `kubevirt.vcluster.com/image-datasource`
+
+**Type:** `string` (`<name>` or `<namespace>/<name>`)
+
+References a CDI `DataSource`. The provider sets the DataVolume's `sourceRef` to this DataSource. If you only supply `<name>`, the provider looks up the DataSource in the same namespace as the VM. Mutually exclusive with `kubevirt.vcluster.com/image-url`.
+
+#### `kubevirt.vcluster.com/root-disk-size`
+
+**Type:** `string` (Kubernetes quantity, for example `40Gi`)
+**Required:** Yes, whenever image configuration is used.
+
+Storage request for the synthesized root-disk DataVolume. Provisioning fails if image configuration is set without a root-disk size.
+
+#### `kubevirt.vcluster.com/image-datavolume-template`
+
+**Type:** `string` (inline YAML)
+
+A partial `DataVolumeTemplate` that is deep-merged onto the defaults before the platform applies the image source and disk size. Use this to override fields like `storage.accessModes` or `storage.storageClassName`. The platform always sets the DataVolume's `source` and `sourceRef` based on the image properties. You cannot override them here.
+
+#### `kubevirt.vcluster.com/root-disk-template`
+
+**Type:** `string` (inline YAML)
+
+A partial disk entry that is deep-merged onto the default root disk (`bus: virtio`) before being prepended to the VM's `domain.devices.disks` list. Use this to set the bus, boot order, or other disk fields.
+
+### Network configuration
 
 KubeVirt node types support additional properties for network configuration with cloud-init:
 
-### `kubevirt.vcluster.com/network-cidr`
+#### `kubevirt.vcluster.com/network-cidr`
 
 **Type:** `string` (CIDR notation)
 
@@ -437,14 +506,14 @@ Specifies a CIDR range for allocating IP addresses to the VM. Example: `10.100.0
 - `kubevirt.vcluster.com/network-interface`: Interface name in the VM
 - `kubevirt.vcluster.com/network-nameservers`: DNS nameservers
 
-### `kubevirt.vcluster.com/network-interface`
+#### `kubevirt.vcluster.com/network-interface`
 
 **Type:** `string`
 **Required with:** network configuration
 
 The name of the network interface in the VM to configure, e.g. `eth0`, `eth1`, `enp1s0`.
 
-### `kubevirt.vcluster.com/network-ip-range`
+#### `kubevirt.vcluster.com/network-ip-range`
 
 **Type:** `string` (comma-separated IP ranges)
 
@@ -452,13 +521,13 @@ Specifies IP ranges to use for allocation instead of using CIDR-based allocation
 
 Example: `10.0.0.20-10.0.0.30,10.0.0.40-10.0.0.50`
 
-### `kubevirt.vcluster.com/network-nameservers`
+#### `kubevirt.vcluster.com/network-nameservers`
 
 **Type:** `string` (comma-separated)
 
 DNS nameservers to configure in the VM. Example: `8.8.8.8,8.8.4.4`
 
-### `kubevirt.vcluster.com/network-data`
+#### `kubevirt.vcluster.com/network-data`
 
 **Type:** `string` (base64-encoded cloud-init network-config)
 
@@ -466,46 +535,68 @@ Allows providing a complete custom network configuration for cloud-init.
 When set, this overrides automatic network configuration.
 
 <!-- vale off -->
-### `kubevirt.vcluster.com/network-attachment-definition` {#kubevirt-vcluster-com-network-attachment-definition}
+#### `kubevirt.vcluster.com/network-attachment-definition` {#kubevirt-vcluster-com-network-attachment-definition}
 <!-- vale on -->
 
 **Type:** `string` (format: `[<namespace>/]<name>`)
 
-Specifies a reference to a Multus NetworkAttachmentDefinition.
-This allows connecting the VM to another network (e.g., through a bridge).
-It must exist in the respective namespace in the host cluster.
+References a Multus `NetworkAttachmentDefinition` that already exists in the target namespace on the control plane cluster. The provider injects a `multus` network and a corresponding interface into the VM template using this NAD. If a network or interface with the same name already exists in the template, it is overwritten.
 
-Automatically injects a network `multus` and interface using that network in the VM template.
-If it already exists in the template, it will be overwritten.
+This property is the supported way to attach a VM to an additional network such as a bridge. Set it on the NodeType for VMs that should share a network, or on the NodeClaim for a one-off attachment.
+
+### Node environment selection
+
+#### `vcluster.com/network-environment`
+
+**Type:** `string`
+
+Names the [NodeEnvironment](./overview.mdx#node-environments) whose properties merge into the NodeClaim's effective property set. The platform resolves this from the merged properties of NodeProvider, NodeType, and NodeClaim. When set, this property takes precedence over the typed `NodeClaim.spec.environmentRef` field.
+
+Use this to declare environment-level defaults at the provider or type level, or to keep network configuration separate from provider and type definitions.
+
+### SSH and user data
+
+The `vcluster.com/ssh-keys`, `vcluster.com/user-data`, `vcluster.com/user-data-template`, and `vcluster.com/user-data-template-secret` properties behave identically across providers. See the [metal3 reference](./metal3.mdx#ssh-and-user-data) for details. The templating values available are:
+
+| Field | Description |
+|-------|-------------|
+| `.Values.NodeClaim` | The NodeClaim being provisioned |
+| `.Values.Project` | The project the node belongs to |
+| `.Values.Properties` | Merged properties |
+| `.Values.SSHKeys` | SSH public keys to inject |
+
+The KubeVirt provider does not contribute additional template values beyond these.
 
 ## Netris integration
 
-KubeVirt VMs can be integrated with [Netris](https://www.netris.io/) for automated network configuration and IP management.
+You can integrate KubeVirt VMs with [Netris](https://www.netris.io/) for automated network configuration and IP management.
 
 ### `netris.vcluster.com/server-cluster`
 
 **Type:** `string`
 
-Specifies the Netris server cluster to use for this VM. When set, vCluster Platform will:
-1. Query the Netris server cluster to collect subnet, gateway and vxlan id information
-2. Allocate an IP address from the subnet
-3. Create Multus NetworkAttachment definition `netris-<node provider name>-<server cluster name>` using the bridge plugin with the `nbr-<vnet vxlan id>` bridge
-4. Inject cloud-init network configuration with the allocated IP
-5. Inject a network and interface into the VM template (see [below](#kubevirt-vcluster-com-network-attachment-definition))
+Specifies the Netris server cluster to use for this VM. When set, vCluster Platform:
+1. Queries the Netris server cluster to collect subnet, gateway and vxlan id information.
+2. Allocates an IP address from the subnet.
+3. Creates Multus NetworkAttachment definition `netris-<node provider name>-<server cluster name>` using the bridge plugin with the `nbr-<vnet vxlan id>` bridge.
+4. Injects cloud-init network configuration with the allocated IP.
+5. Injects a network and interface into the VM template through the [`kubevirt.vcluster.com/network-attachment-definition`](#kubevirt-vcluster-com-network-attachment-definition) property.
+
+The interface injection itself is a generic mechanism. Netris is one way to drive it, but any NodeType or NodeClaim can set `kubevirt.vcluster.com/network-attachment-definition` directly to attach a VM to an existing NAD without involving Netris.
 
 **Required properties:**
 - `kubevirt.vcluster.com/network-interface`: Interface to configure
 - `kubevirt.vcluster.com/network-nameservers`: DNS servers
 
 **Prerequisites:**
-- [Netris integration](/vcluster/next/configure/vcluster-yaml/integrations/netris) must be enabled and configured in the vCluster configuration
-- vCluster Platform license must include the Netris feature
-- Bridge with the `nbr-<vnet vxlan id>` must exist on the host cluster nodes
+- [Netris integration](/vcluster/next/configure/vcluster-yaml/integrations/netris) must be enabled and configured in the vCluster configuration.
+- vCluster Platform license must include the Netris feature.
+- Bridge with the `nbr-<vnet vxlan id>` must exist on the host cluster nodes.
 
 **Optional properties:**
 - `kubevirt.vcluster.com/network-attachment-definition`
 
-    If specified, the integration will not create another Multus NetworkAttachmentDefinition, but instead use this one.
+   If specified, the integration does not create another Multus NetworkAttachmentDefinition, but instead uses this one.
 
 ### Example with Netris and Multus
 
