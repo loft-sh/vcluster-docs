@@ -185,7 +185,7 @@ export class Step extends React.Component {
 
   render() {
     return (
-      <li className={ `${styles.step} ${this.props.current ? styles.current : ""} `} onClick={this.props.onClick} style={this.props.style} >
+      <li className={ `${styles.step} flow-step ${this.props.current ? styles.current : ""} `} onClick={this.props.onClick} style={this.props.style} >
         {this.props.children}
       </li>
     )
