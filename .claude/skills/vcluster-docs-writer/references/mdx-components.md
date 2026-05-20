@@ -93,6 +93,58 @@ Use `<Flow>` and `<Step>` components for multi-step procedures:
 4. **Use heading levels consistently** within steps (typically h3 `###`)
 5. **Never nest admonitions** inside `<Step>` components
 
+## Highlight Component
+
+Use `<Highlight>` to label which environment a step runs in, typically inside a `<Flow>` / `<Step>` block. It renders a small colored badge inline with the step description.
+
+### Import
+
+```mdx
+import Highlight from '@site/src/components/Highlight/Highlight';
+```
+
+### Available colors
+
+| `color` prop | Hex | Use for |
+|---|---|---|
+| _(none)_ | `#E6E7E9` | Control plane cluster steps (default) |
+| `"secondary"` | `#FFE0CC` | Tenant cluster steps |
+| `"success"` | `--ifm-color-success-lightest` | Admonition-aligned: light green |
+| `"info"` | `--ifm-color-info-lightest` | Admonition-aligned: light blue |
+| `"warning"` | `--ifm-color-warning-lightest` | Admonition-aligned: light yellow |
+| `"danger"` | `--ifm-color-danger-lightest` | Admonition-aligned: light red |
+
+Text color is always `#050B24` (brand black) regardless of background.
+
+### Convention: "Tenant Cluster" always uses `secondary`
+
+Every step that runs inside a tenant cluster must use `color="secondary"`. Default (no color) is used for control plane cluster steps. This pairing creates a consistent visual distinction across all multi-environment walkthroughs.
+
+```mdx
+<Step>
+  <Highlight color="secondary">Tenant Cluster</Highlight> Verify the resource was created
+
+  ```bash
+  kubectl --context="${VCLUSTER_CTX}" get pods
+  ```
+</Step>
+
+<Step>
+  <Highlight>Control Plane Cluster</Highlight> Confirm sync
+
+  ```bash
+  kubectl --context="${HOST_CTX}" get pods -n "${VCLUSTER_NS}"
+  ```
+</Step>
+```
+
+### What not to do
+
+- Do not pass arbitrary hex values or CSS color names — they silently fall back to the default gray.
+- Do not use `color="primary"` — it is not in the allowed set.
+- Do not use `<Highlight>` for general emphasis in prose; it is only for environment labels in step flows.
+- Do not use `color="green"` in new content — it is a legacy alias for `secondary` retained only for versioned docs compatibility.
+
 ## Admonition Types
 
 Docusaurus provides several admonition types. Use them consistently:
