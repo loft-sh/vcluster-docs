@@ -30,6 +30,10 @@ vCluster also enforces Gateway API reference authorization before sync. Cross-na
 The control plane cluster must have standard-channel `v1` Gateway API CRDs installed (compatible with the embedded `v1.5.1` CRDs) and a Gateway API controller running. vCluster does not install either. To import a host `GatewayClass` into the tenant cluster, also enable [`sync.fromHost.gatewayClasses`](../../from-host/gateway-classes.mdx).
 :::
 
+:::note Version requirement
+Gateway API sync requires a vCluster chart version that includes the `sync.toHost.gatewayApi` and `sync.fromHost.gatewayClasses` configuration fields. If Helm rejects either field as an additional property, upgrade vCluster before using these examples.
+:::
+
 :::tip Replaces the custom-resource workaround
 For native Gateway API sync, use this configuration instead of [custom-resource syncing](../advanced/custom-resources.mdx). The custom-resource path is now only needed for Gateway API extensions outside the supported set (for example, Istio waypoint Gateways using the `HBONE` listener).
 :::
@@ -41,20 +45,114 @@ sync:
   toHost:
     gatewayApi:
       enabled: true
+  fromHost:
+    gatewayClasses:
+      enabled: true
+      selector:
+        matchLabels:
+          gateway-demo.loft.sh/sync: "yes"
 ```
+
+The examples on this page use `GatewayClass` names such as `gw-demo-01` and `gw-demo-02`. Create those `GatewayClass` resources in the control plane cluster before applying the tenant examples, or change each `gatewayClassName` to an existing imported `GatewayClass`. Replace `GATEWAY_CONTROLLER_NAME` with the `controllerName` for your Gateway API controller.
+
+```bash title="Create the example GatewayClasses in the control plane cluster"
+export HOST_CONTEXT="$(kubectl config current-context)"
+export GATEWAY_CONTROLLER_NAME="gateway.envoyproxy.io/gatewayclass-controller"
+
+for GATEWAY_CLASS in gw-demo-01 gw-demo-02 gw-demo-03 gw-demo-05 gw-demo-07 gw-demo-09; do
+  kubectl --context "$HOST_CONTEXT" apply -f - <<EOF
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: ${GATEWAY_CLASS}
+  labels:
+    gateway-demo.loft.sh/sync: "yes"
+spec:
+  controllerName: ${GATEWAY_CONTROLLER_NAME}
+EOF
+done
+```
+
+:::note LoadBalancer behavior on single-node clusters
+Most examples create a `Gateway` with listener ports `80` or `443`. On single-node clusters, only one LoadBalancer service can usually bind each host port at a time. Run the examples one at a time, or use controller-specific settings such as NodePort or custom listener ports.
+:::
 
 ## Example: HTTP route
 
 The tenant defines a `Gateway` with an HTTP listener and an `HTTPRoute` that points at a same-namespace Service backend. vCluster syncs all three objects to the control plane cluster and the host Gateway controller programs the data plane.
+
+Apply the namespace and backend resources first:
+
+```yaml title="HTTP backend in the tenant cluster"
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gw-demo-01
+  labels:
+    gateway-demo.loft.sh/case: "01-http-route-basic"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: basic-echo-html
+  namespace: gw-demo-01
+data:
+  index.html: |
+    gateway demo 01 basic http route
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: basic-echo
+  namespace: gw-demo-01
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: basic-echo
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: basic-echo
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.27-alpine
+          ports:
+            - name: http
+              containerPort: 80
+          volumeMounts:
+            - name: html
+              mountPath: /usr/share/nginx/html/index.html
+              subPath: index.html
+              readOnly: true
+      volumes:
+        - name: html
+          configMap:
+            name: basic-echo-html
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: basic-echo
+  namespace: gw-demo-01
+spec:
+  selector:
+    app.kubernetes.io/name: basic-echo
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+```
 
 ```yaml title="HTTP Gateway and route in the tenant cluster"
 apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
 metadata:
   name: edge
-  namespace: gw-smoke-01
+  namespace: gw-demo-01
 spec:
-  gatewayClassName: gw-smoke-01
+  gatewayClassName: gw-demo-01
   listeners:
     - name: http
       protocol: HTTP
@@ -70,13 +168,13 @@ apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
   name: basic
-  namespace: gw-smoke-01
+  namespace: gw-demo-01
 spec:
   parentRefs:
     - name: edge
       sectionName: http
   hostnames:
-    - basic.gw-smoke.test
+    - basic.gw-demo.test
   rules:
     - matches:
         - path:
@@ -90,34 +188,129 @@ spec:
 Inspect the synced status from the tenant context:
 
 ```bash title="Check Gateway and HTTPRoute status"
-kubectl get gateway edge -n gw-smoke-01 -o yaml
-kubectl get httproute basic -n gw-smoke-01 -o yaml
+kubectl get gateway edge -n gw-demo-01 -o yaml
+kubectl get httproute basic -n gw-demo-01 -o yaml
 ```
 
 The `Gateway` should report `Accepted=True` and usually `Programmed=True`. The `HTTPRoute` should report a parent for `edge` with `Accepted=True` and `ResolvedRefs=True`. The host-assigned address mirrors back to `status.addresses` on the tenant Gateway.
 
 ```bash title="Send traffic through the host data plane"
-ADDR=$(kubectl get gateway edge -n gw-smoke-01 -o jsonpath='{.status.addresses[0].value}')
-curl -H 'Host: basic.gw-smoke.test' "http://${ADDR}:80/"
+ADDR=$(kubectl get gateway edge -n gw-demo-01 -o jsonpath='{.status.addresses[0].value}')
+curl -H 'Host: basic.gw-demo.test' "http://${ADDR}:80/"
 ```
 
 ## Example: TLS passthrough route
 
-`TLSRoute` is supported when the host Gateway controller implements it. The tenant defines a `Gateway` with a TLS listener in passthrough mode and a `TLSRoute` that selects the backend by SNI.
+`TLSRoute` is supported when the host Gateway controller implements it. The tenant defines a `Gateway` with a TLS listener in passthrough mode and a `TLSRoute` that selects the backend by SNI. Because the listener is passthrough, the backend itself terminates TLS — it must present a certificate for the route's hostname.
+
+Apply the namespace first:
+
+```yaml title="TLS passthrough namespace"
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gw-demo-02
+  labels:
+    gateway-demo.loft.sh/case: "02-tls-route-passthrough"
+```
+
+Create a self-signed certificate for the backend hostname and a synced TLS Secret:
+
+```bash title="Create the backend TLS Secret"
+openssl req -x509 -newkey rsa:2048 -nodes -days 365 \
+  -subj "/CN=tls.gw-demo.test" \
+  -addext "subjectAltName=DNS:tls.gw-demo.test" \
+  -keyout tls-echo.key \
+  -out tls-echo.crt
+
+kubectl -n gw-demo-02 create secret tls tls-echo-cert \
+  --cert=tls-echo.crt \
+  --key=tls-echo.key
+kubectl -n gw-demo-02 annotate secret tls-echo-cert vcluster.loft.sh/force-sync=true
+```
+
+Then create the TLS-terminating backend Service:
+
+```yaml title="TLS backend in the tenant cluster"
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: tls-echo-config
+  namespace: gw-demo-02
+data:
+  Caddyfile: |
+    {
+      auto_https off
+    }
+
+    :8443 {
+      tls /etc/certs/tls.crt /etc/certs/tls.key
+      respond "gateway demo 02 tls passthrough\n"
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tls-echo
+  namespace: gw-demo-02
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: tls-echo
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: tls-echo
+    spec:
+      containers:
+        - name: caddy
+          image: caddy:2.8-alpine
+          ports:
+            - name: https
+              containerPort: 8443
+          volumeMounts:
+            - name: caddy-config
+              mountPath: /etc/caddy
+              readOnly: true
+            - name: tls-echo-cert
+              mountPath: /etc/certs
+              readOnly: true
+      volumes:
+        - name: caddy-config
+          configMap:
+            name: tls-echo-config
+        - name: tls-echo-cert
+          secret:
+            secretName: tls-echo-cert
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tls-echo
+  namespace: gw-demo-02
+spec:
+  selector:
+    app.kubernetes.io/name: tls-echo
+  ports:
+    - name: https
+      port: 443
+      targetPort: https
+```
 
 ```yaml title="TLS passthrough Gateway and route"
 apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
 metadata:
   name: edge
-  namespace: gw-smoke-02
+  namespace: gw-demo-02
 spec:
-  gatewayClassName: gw-smoke-02
+  gatewayClassName: gw-demo-02
   listeners:
     - name: tls
       protocol: TLS
       port: 443
-      hostname: tls.gw-smoke.test
+      hostname: tls.gw-demo.test
       tls:
         mode: Passthrough
       allowedRoutes:
@@ -131,13 +324,13 @@ apiVersion: gateway.networking.k8s.io/v1
 kind: TLSRoute
 metadata:
   name: passthrough
-  namespace: gw-smoke-02
+  namespace: gw-demo-02
 spec:
   parentRefs:
     - name: edge
       sectionName: tls
   hostnames:
-    - tls.gw-smoke.test
+    - tls.gw-demo.test
   rules:
     - name: tls-echo
       backendRefs:
@@ -146,8 +339,8 @@ spec:
 ```
 
 ```bash title="Verify TLSRoute end-to-end"
-ADDR=$(kubectl get gateway edge -n gw-smoke-02 -o jsonpath='{.status.addresses[0].value}')
-curl -k --connect-to "tls.gw-smoke.test:443:${ADDR}:443" "https://tls.gw-smoke.test:443/"
+ADDR=$(kubectl get gateway edge -n gw-demo-02 -o jsonpath='{.status.addresses[0].value}')
+curl -k --connect-to "tls.gw-demo.test:443:${ADDR}:443" "https://tls.gw-demo.test:443/"
 ```
 
 :::note Controller support varies
@@ -162,14 +355,86 @@ Gateway API distinguishes three cross-namespace references: route attachment to 
 
 The Gateway lives in one namespace and accepts routes from any namespace whose label matches the selector.
 
+Apply the edge namespace, route namespace, and backend resources first:
+
+```yaml title="Selected namespace and backend resources"
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gw-demo-03-edge
+  labels:
+    gateway-demo.loft.sh/case: "03-cross-namespace-route-selector"
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gw-demo-03-apps
+  labels:
+    gateway-demo.loft.sh/case: "03-cross-namespace-route-selector"
+    gateway-demo.loft.sh/route-access: demo-03
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: selected-echo-html
+  namespace: gw-demo-03-apps
+data:
+  index.html: |
+    gateway demo 03 selected namespace route
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: selected-echo
+  namespace: gw-demo-03-apps
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: selected-echo
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: selected-echo
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.27-alpine
+          ports:
+            - name: http
+              containerPort: 80
+          volumeMounts:
+            - name: html
+              mountPath: /usr/share/nginx/html/index.html
+              subPath: index.html
+              readOnly: true
+      volumes:
+        - name: html
+          configMap:
+            name: selected-echo-html
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: selected-echo
+  namespace: gw-demo-03-apps
+spec:
+  selector:
+    app.kubernetes.io/name: selected-echo
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+```
+
 ```yaml title="Gateway accepting routes from selected namespaces"
 apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
 metadata:
   name: shared
-  namespace: gw-smoke-03-edge
+  namespace: gw-demo-03-edge
 spec:
-  gatewayClassName: gw-smoke-03
+  gatewayClassName: gw-demo-03
   listeners:
     - name: http
       protocol: HTTP
@@ -182,7 +447,7 @@ spec:
           from: Selector
           selector:
             matchLabels:
-              gateway-smoke-test.loft.sh/route-access: smoke-03
+              gateway-demo.loft.sh/route-access: demo-03
 ```
 
 The route then targets the Gateway by name and namespace:
@@ -192,14 +457,14 @@ apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
   name: selected
-  namespace: gw-smoke-03-apps
+  namespace: gw-demo-03-apps
 spec:
   parentRefs:
     - name: shared
-      namespace: gw-smoke-03-edge
+      namespace: gw-demo-03-edge
       sectionName: http
   hostnames:
-    - selector.gw-smoke.test
+    - selector.gw-demo.test
   rules:
     - matches:
         - path:
@@ -216,18 +481,122 @@ If the route's namespace does not match the selector, vCluster does not sync the
 
 When an `HTTPRoute` or `TLSRoute` points at a Service in a different namespace, that target namespace must contain a `ReferenceGrant` permitting the route's namespace.
 
+Apply the route namespace, backend namespace, and backend resources first:
+
+```yaml title="Cross-namespace backend resources"
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gw-demo-05-routes
+  labels:
+    gateway-demo.loft.sh/case: "05-cross-namespace-backend-referencegrant"
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gw-demo-05-backends
+  labels:
+    gateway-demo.loft.sh/case: "05-cross-namespace-backend-referencegrant"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backend-echo-html
+  namespace: gw-demo-05-backends
+data:
+  index.html: |
+    gateway demo 05 cross namespace backend allowed
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend-echo
+  namespace: gw-demo-05-backends
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: backend-echo
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: backend-echo
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.27-alpine
+          ports:
+            - name: http
+              containerPort: 80
+          volumeMounts:
+            - name: html
+              mountPath: /usr/share/nginx/html/index.html
+              subPath: index.html
+              readOnly: true
+      volumes:
+        - name: html
+          configMap:
+            name: backend-echo-html
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-echo
+  namespace: gw-demo-05-backends
+spec:
+  selector:
+    app.kubernetes.io/name: backend-echo
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+```
+
 ```yaml title="HTTPRoute referencing a backend in another namespace"
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: edge
+  namespace: gw-demo-05-routes
+spec:
+  gatewayClassName: gw-demo-05
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 80
+      allowedRoutes:
+        kinds:
+          - group: gateway.networking.k8s.io
+            kind: HTTPRoute
+        namespaces:
+          from: Same
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: ReferenceGrant
+metadata:
+  name: allow-routes-to-echo
+  namespace: gw-demo-05-backends
+spec:
+  from:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      namespace: gw-demo-05-routes
+  to:
+    - group: ""
+      kind: Service
+      name: backend-echo
+---
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
   name: backend-grant
-  namespace: gw-smoke-05-routes
+  namespace: gw-demo-05-routes
 spec:
   parentRefs:
     - name: edge
       sectionName: http
   hostnames:
-    - backend-grant.gw-smoke.test
+    - backend-grant.gw-demo.test
   rules:
     - matches:
         - path:
@@ -235,23 +604,8 @@ spec:
             value: /
       backendRefs:
         - name: backend-echo
-          namespace: gw-smoke-05-backends
+          namespace: gw-demo-05-backends
           port: 80
----
-apiVersion: gateway.networking.k8s.io/v1beta1
-kind: ReferenceGrant
-metadata:
-  name: allow-routes-to-echo
-  namespace: gw-smoke-05-backends
-spec:
-  from:
-    - group: gateway.networking.k8s.io
-      kind: HTTPRoute
-      namespace: gw-smoke-05-routes
-  to:
-    - group: ""
-      kind: Service
-      name: backend-echo
 ```
 
 :::note How `ReferenceGrant` is enforced
@@ -267,46 +621,154 @@ Either mode supports cross-namespace `ReferenceGrant`. Choose multi-namespace mo
 
 An HTTPS `Gateway` listener can reference a TLS Secret in a separate namespace if that namespace contains a `ReferenceGrant` for the Gateway.
 
+Apply the edge namespace and certificate namespace first:
+
+```yaml title="HTTPS Gateway namespaces"
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gw-demo-07-edge
+  labels:
+    gateway-demo.loft.sh/case: "07-cross-namespace-certificate-referencegrant"
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gw-demo-07-certs
+  labels:
+    gateway-demo.loft.sh/case: "07-cross-namespace-certificate-referencegrant"
+```
+
+Create a synced TLS Secret for the HTTPS listener:
+
+```bash title="Create the cross-namespace certificate Secret"
+openssl req -x509 -newkey rsa:2048 -nodes -days 365 \
+  -subj "/CN=cert-grant.gw-demo.test" \
+  -addext "subjectAltName=DNS:cert-grant.gw-demo.test" \
+  -keyout edge.key \
+  -out edge.crt
+
+kubectl -n gw-demo-07-certs create secret tls edge-cert \
+  --cert=edge.crt \
+  --key=edge.key
+kubectl -n gw-demo-07-certs annotate secret edge-cert vcluster.loft.sh/force-sync=true
+```
+
+Then create the backend resources for the HTTPS route:
+
+```yaml title="HTTPS route backend resources"
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: https-echo-html
+  namespace: gw-demo-07-edge
+data:
+  index.html: |
+    gateway demo 07 cross namespace certificate allowed
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: https-echo
+  namespace: gw-demo-07-edge
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: https-echo
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: https-echo
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.27-alpine
+          ports:
+            - name: http
+              containerPort: 80
+          volumeMounts:
+            - name: html
+              mountPath: /usr/share/nginx/html/index.html
+              subPath: index.html
+              readOnly: true
+      volumes:
+        - name: html
+          configMap:
+            name: https-echo-html
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: https-echo
+  namespace: gw-demo-07-edge
+spec:
+  selector:
+    app.kubernetes.io/name: https-echo
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+```
+
 ```yaml title="HTTPS Gateway with cross-namespace certificate"
+apiVersion: gateway.networking.k8s.io/v1
+kind: ReferenceGrant
+metadata:
+  name: allow-edge-cert
+  namespace: gw-demo-07-certs
+spec:
+  from:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      namespace: gw-demo-07-edge
+  to:
+    - group: ""
+      kind: Secret
+      name: edge-cert
+---
 apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
 metadata:
   name: edge
-  namespace: gw-smoke-07-edge
+  namespace: gw-demo-07-edge
 spec:
-  gatewayClassName: gw-smoke-07
+  gatewayClassName: gw-demo-07
   listeners:
     - name: https
       protocol: HTTPS
       port: 443
-      hostname: cert-grant.gw-smoke.test
+      hostname: cert-grant.gw-demo.test
       tls:
         mode: Terminate
         certificateRefs:
           - kind: Secret
             name: edge-cert
-            namespace: gw-smoke-07-certs
+            namespace: gw-demo-07-certs
       allowedRoutes:
         kinds:
           - group: gateway.networking.k8s.io
             kind: HTTPRoute
         namespaces:
           from: Same
----
-apiVersion: gateway.networking.k8s.io/v1beta1
-kind: ReferenceGrant
+```
+
+```yaml title="HTTPRoute through the HTTPS listener"
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
 metadata:
-  name: allow-edge-cert
-  namespace: gw-smoke-07-certs
+  name: https-app
+  namespace: gw-demo-07-edge
 spec:
-  from:
-    - group: gateway.networking.k8s.io
-      kind: Gateway
-      namespace: gw-smoke-07-edge
-  to:
-    - group: ""
-      kind: Secret
-      name: edge-cert
+  parentRefs:
+    - name: edge
+      sectionName: https
+  hostnames:
+    - cert-grant.gw-demo.test
+  rules:
+    - backendRefs:
+        - name: https-echo
+          port: 80
 ```
 
 ## Reference authorization
@@ -327,39 +789,153 @@ For deeper recipes (including how to recover from each event), see [Gateway API 
 
 `BackendTLSPolicy` tells the Gateway controller to originate TLS to a backend and validate it against a CA bundle. vCluster syncs the policy and translates the CA ConfigMap reference for the host. The policy is only effective if the host Gateway controller implements `BackendTLSPolicy`.
 
+Apply the namespace first:
+
+```yaml title="BackendTLSPolicy namespace"
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gw-demo-09
+  labels:
+    gateway-demo.loft.sh/case: "09-backend-tls-policy"
+```
+
+Create a backend certificate and synced CA bundle:
+
+```bash title="Create backend TLS material"
+openssl req -x509 -newkey rsa:2048 -nodes -days 365 \
+  -subj "/CN=backend.gw-demo.test" \
+  -addext "subjectAltName=DNS:backend.gw-demo.test" \
+  -keyout backend.key \
+  -out backend.crt
+
+kubectl -n gw-demo-09 create secret tls backend-cert \
+  --cert=backend.crt \
+  --key=backend.key
+kubectl -n gw-demo-09 annotate secret backend-cert vcluster.loft.sh/force-sync=true
+
+kubectl -n gw-demo-09 create configmap backend-ca --from-file=ca.crt=backend.crt
+kubectl -n gw-demo-09 annotate configmap backend-ca vcluster.loft.sh/force-sync=true
+```
+
+Then create the TLS-speaking backend Service:
+
+```yaml title="TLS backend resources"
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backend-caddy-config
+  namespace: gw-demo-09
+data:
+  Caddyfile: |
+    {
+      auto_https off
+    }
+
+    :8443 {
+      tls /etc/certs/tls.crt /etc/certs/tls.key
+      respond "gateway demo 09 backend tls policy\n"
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: secure-backend
+  namespace: gw-demo-09
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: secure-backend
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: secure-backend
+    spec:
+      containers:
+        - name: caddy
+          image: caddy:2.8-alpine
+          ports:
+            - name: https
+              containerPort: 8443
+          volumeMounts:
+            - name: caddy-config
+              mountPath: /etc/caddy
+              readOnly: true
+            - name: backend-cert
+              mountPath: /etc/certs
+              readOnly: true
+      volumes:
+        - name: caddy-config
+          configMap:
+            name: backend-caddy-config
+        - name: backend-cert
+          secret:
+            secretName: backend-cert
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: secure-backend
+  namespace: gw-demo-09
+spec:
+  selector:
+    app.kubernetes.io/name: secure-backend
+  ports:
+    - name: https
+      port: 443
+      targetPort: https
+      appProtocol: https
+```
+
 ```yaml title="HTTPRoute with BackendTLSPolicy"
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: edge
+  namespace: gw-demo-09
+spec:
+  gatewayClassName: gw-demo-09
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 80
+      hostname: backend-tls.gw-demo.test
+      allowedRoutes:
+        kinds:
+          - group: gateway.networking.k8s.io
+            kind: HTTPRoute
+        namespaces:
+          from: Same
+---
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
   name: backend-tls
-  namespace: gw-smoke-09
+  namespace: gw-demo-09
 spec:
   parentRefs:
     - name: edge
       sectionName: http
   hostnames:
-    - backend-tls.gw-smoke.test
+    - backend-tls.gw-demo.test
   rules:
-    - matches:
-        - path:
-            type: PathPrefix
-            value: /
-      backendRefs:
+    - backendRefs:
         - name: secure-backend
           port: 443
 ---
-apiVersion: gateway.networking.k8s.io/v1alpha3
+apiVersion: gateway.networking.k8s.io/v1
 kind: BackendTLSPolicy
 metadata:
   name: secure-backend
-  namespace: gw-smoke-09
+  namespace: gw-demo-09
 spec:
   targetRefs:
     - group: ""
       kind: Service
       name: secure-backend
   validation:
-    hostname: secure-backend.gw-smoke.test
+    hostname: backend.gw-demo.test
     caCertificateRefs:
       - group: ""
         kind: ConfigMap
