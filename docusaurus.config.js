@@ -485,9 +485,9 @@ const config = {
     }
   ),
 
-  // Enable experimental faster features with required v4 flags
+  // Enable faster features with required v4 flags
   future: {
-    experimental_faster: true,
+    faster: true,
     v4: {
       removeLegacyPostBuildHeadAttribute: true,
     },
