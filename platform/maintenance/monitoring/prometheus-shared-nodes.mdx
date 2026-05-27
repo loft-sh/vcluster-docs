@@ -1,0 +1,90 @@
+---
+title: "Prometheus node metrics on shared nodes"
+sidebar_label: "Prometheus on shared nodes"
+sidebar_position: 6
+description: "Troubleshoot Prometheus failing to scrape kubelet and cAdvisor node metrics from tenant clusters running on shared nodes, and choose a fix based on your setup."
+---
+
+When Prometheus tries to scrape kubelet or cAdvisor metrics from a tenant cluster running in Shared Nodes mode, the scrape targets time out or refuse connections even though nodes are visible and workloads are running.
+
+## Root cause
+
+vCluster enables kubelet proxying by default (`networking.advanced.proxyKubelets.byIP: true` and `byHostname: true` in the default Helm values). This feature intercepts kubelet traffic going into the tenant cluster so vCluster can rewrite pod names and namespaces from host-cluster values to their virtual equivalents.
+
+As a side effect, each node synced into the tenant cluster is given a virtual identity:
+
+- With `byIP: true`, the node's IP address is replaced by the ClusterIP of a per-node Kubernetes Service created in the vCluster namespace on the control plane cluster.
+- With `byHostname: true`, the node hostname is replaced with a synthetic name like `<node-name>.nodes.vcluster.com`.
+
+Prometheus discovers scrape targets by reading node objects from the tenant cluster's Kubernetes API. It then attempts to open a connection to those virtual addresses (for example `https://10.96.42.1:10250/metrics/cadvisor`). If the per-node service ClusterIP is not routable from where Prometheus runs — most commonly when Prometheus is outside the tenant cluster or on a separate connected cluster — the scrape times out.
+
+## Affected tenancy models
+
+| Tenancy model | Affected | Reason |
+|---|---|---|
+| Shared Nodes | Yes | Node IPs are virtualized by default via `proxyKubelets` |
+| Private Nodes | No | The tenant cluster has dedicated real nodes with reachable IPs |
+
+## Fix
+
+Choose an approach based on where Prometheus runs and your operational requirements.
+
+### Option 1: OTel fleet monitoring (recommended for production)
+
+The recommended production approach is to deploy an OpenTelemetry Collector on the Control Plane Cluster. The collector scrapes cAdvisor and kubelet metrics using the control plane cluster's real node IPs, then pushes enriched metrics to a central Prometheus via `remote_write`. Because the collector operates at the control plane cluster level, it never reads tenant cluster node objects or depends on virtual node IPs.
+
+This approach also adds per-tenant identity labels (`vcluster_name`, `vcluster_project`, etc.) to every metric, making it suitable for multi-tenant observability.
+
+See [Fleet monitoring with OpenTelemetry](./fleet-monitoring-otel.mdx) for a complete setup guide covering both Shared Nodes and Private Nodes tenancy models.
+
+<!-- vale off -->
+### Option 2: API server proxy scraping (Prometheus inside the tenant cluster)
+<!-- vale on -->
+
+If Prometheus runs inside the tenant cluster (for example, via `kube-prometheus-stack`), configure it to route kubelet and cAdvisor scrapes through the Kubernetes API server proxy instead of connecting to node IPs directly. Requests that go through the API server are intercepted by vCluster, forwarded to the real kubelet on the control plane cluster, and returned with pod names and namespaces already rewritten to virtual equivalents.
+
+Replace direct node address targeting with the API server proxy path:
+
+```yaml title="Prometheus scrape config for cAdvisor via API server proxy"
+scrape_configs:
+  - job_name: cadvisor
+    scheme: https
+    tls_config:
+      ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+      insecure_skip_verify: true
+    bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+    kubernetes_sd_configs:
+      - role: node
+    relabel_configs:
+      - action: labelmap
+        regex: __meta_kubernetes_node_label_(.+)
+      - target_label: __address__
+        replacement: kubernetes.default.svc:443
+      - source_labels: [__meta_kubernetes_node_name]
+        regex: (.+)
+        target_label: __metrics_path__
+        replacement: /api/v1/nodes/$1/proxy/metrics/cadvisor
+```
+
+Apply the same pattern to the kubelet metrics job, using `/metrics` instead of `/metrics/cadvisor` in the `__metrics_path__` replacement.
+
+### Option 3: Disable kubelet proxying
+
+If your setup requires Prometheus to scrape node IPs directly, disable the kubelet proxy feature in your `vcluster.yaml`. Setting both options to `false` causes vCluster to pass through the real node addresses from the control plane cluster unchanged, making them discoverable and reachable by Prometheus.
+
+```yaml title="vcluster.yaml"
+networking:
+  advanced:
+    proxyKubelets:
+      byHostname: false
+      byIP: false
+```
+
+:::warning Trade-offs
+Disabling `proxyKubelets` has two consequences:
+
+- **Metrics are not rewritten.** Pod and namespace labels in the returned metrics reflect the control plane cluster's internal naming, not the tenant cluster's virtual names. If multiple tenant clusters share the same node, metrics from different tenant clusters will have overlapping pod/namespace label values.
+- **Infrastructure exposure.** Real node IPs reveal the control plane cluster's internal network topology to anyone with access to the tenant cluster's node objects.
+
+Only use this option if the tenant cluster is fully trusted and metric label overlap is acceptable.
+:::
