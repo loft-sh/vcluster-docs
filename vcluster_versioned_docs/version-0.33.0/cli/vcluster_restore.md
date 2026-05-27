@@ -32,6 +32,8 @@ vcluster restore my-vcluster container:///data/my-local-snapshot.tar.gz
 ## Flags
 
 ```
+      --azure-resource-group string         Azure resource group where the storage account is located
+      --azure-subscription-id string        Azure subscription ID where the storage account is located
   -h, --help                                help for restore
       --pod-env stringArray                 Additional environment variables for the created pod. Use key=value. E.g.: MY_ENV=my-value
       --pod-image string                    Image to use for the created pod

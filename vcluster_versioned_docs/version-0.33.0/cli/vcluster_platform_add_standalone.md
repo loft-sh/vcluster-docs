@@ -33,6 +33,7 @@ vcluster platform add standalone my-cluster --project my-project --access-key my
       --host string         The host where to reach the platform
       --insecure            If the platform host is insecure
       --project string      The project to import the vCluster into
+      --skip-config-sync    If true, will skip syncing the config from the platform
 ```
 
 
