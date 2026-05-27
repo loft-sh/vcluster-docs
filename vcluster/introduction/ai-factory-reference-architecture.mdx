@@ -1,0 +1,203 @@
+---
+title: AI Factory Reference Architecture
+sidebar_label: AI Factory Architecture
+sidebar_position: 4
+sidebar_class_name: host-nodes private-nodes standalone
+description: Reference architecture for AI cloud providers and enterprises. Full stack from bare metal to tenant workloads, covering node topology, tenant isolation, networking, storage, observability, and identity.
+---
+
+import GlossaryTerm from '@site/src/components/GlossaryTerm';
+
+This page describes a reference architecture for AI infrastructure platforms that provision isolated GPU environments for multiple tenants from a shared pool of GPU infrastructure. Use it as a blueprint when designing your deployment, and follow the cross-references to configure each layer.
+
+The architecture has four layers:
+
+1. **Bare metal** — server inventory, OS imaging, and hardware lifecycle (vMetal)
+2. **Control Plane Cluster** — the Kubernetes cluster that runs tenant cluster control planes (vCluster Platform)
+3. **Tenant workload clusters** — the isolated Kubernetes environments tenants interact with (vCluster)
+4. **Platform services** — observability, identity, storage, and networking that spans all layers
+
+{/* TODO: Replace with final reference architecture diagram from design */}
+<figure>
+  <img
+    style={{ display: 'block', margin: '0 auto', maxWidth: '100%' }}
+    src="/docs/img/production-paths/ai-factory.png"
+    alt="AI factory reference architecture: central control plane managing private GPU nodes and shared node pools for tenant workloads"
+  />
+  <figcaption>AI factory reference architecture: bare metal to tenant workloads</figcaption>
+</figure>
+
+## Layer 1: Bare metal
+
+[vMetal](https://www.vmetal.ai/docs/) manages the full hardware lifecycle for your GPU fleet: PXE boot, OS imaging, BMC lifecycle management, and hardware inventory. When a bare metal host registers, vMetal provisions the OS, configures firmware, and makes the machine available to the node provisioner.
+
+### Node topology
+
+- **CPU nodes** host the Control Plane Cluster. Typically two or three machines in HA configuration, sized for control plane pod density and platform services. These machines do not run GPU workloads.
+- **GPU nodes** are dedicated to tenant workloads. Each tenant cluster receives its own set of GPU nodes. Tenants share no compute, memory, or hardware.
+
+### Hardware lifecycle
+
+vMetal integrates with the [Metal3 node provider](/platform/administer/node-providers/metal3) in vCluster Platform. When a tenant cluster is created or a tenant scales their compute, Platform calls vMetal to provision machines from the available pool. vMetal joins them to the correct tenant cluster and reclaims them on release. See [Bare metal overview](/platform/administer/bare-metal/overview) for the full lifecycle model.
+
+## Layer 2: Control plane cluster
+
+The <GlossaryTerm term="control-plane-cluster">Control Plane Cluster</GlossaryTerm> is the Kubernetes cluster that hosts the control planes of all tenant clusters. vCluster Platform runs here and manages provisioning, access control, and lifecycle.
+
+**Control Plane Cluster options:**
+
+- [vCluster Standalone](../deploy/control-plane/binary/overview.mdx) — a zero-dependency Kubernetes distribution that runs directly on your CPU nodes. The natural choice when building from bare metal with no existing Kubernetes substrate.
+- An existing managed Kubernetes cluster (EKS, AKS, GKE) — if you already operate a cloud cluster for platform services.
+
+For AI cloud deployments, vCluster Standalone is the typical choice. It solves the "cluster one" problem. The platform does not depend on a third-party Kubernetes distribution and bootstraps entirely from vCluster tooling. Deploy in [HA mode](../deploy/control-plane/binary/high-availability.mdx) before taking production traffic.
+
+**Tenant cluster control planes**
+
+Each <GlossaryTerm term="tenant-cluster">tenant cluster</GlossaryTerm> runs as a single StatefulSet pod on the Control Plane Cluster. The pod contains the Kubernetes API server, controller manager, data store, and syncer. From the tenant's perspective this is indistinguishable from a dedicated cluster. From your operations perspective, control planes are namespaced workloads you manage through Platform.
+
+See [Control plane sizing](../deploy/control-plane/sizing-and-performance.mdx) for resource recommendations at scale.
+
+## Layer 3: Tenant workload clusters
+
+vCluster supports two worker node models. The choice sets the isolation level each tenant receives.
+
+- **Private nodes.** Each tenant cluster runs on dedicated bare metal GPU nodes with its own CNI, CSI, and compute. No infrastructure is shared between tenants. Standard for AI cloud providers and regulated deployments. See [Private Nodes](../deploy/worker-nodes/private-nodes/overview.mdx).
+- **Shared nodes with dedicated node pools.** Tenant clusters run on the Control Plane Cluster's shared node pool. Each tenant gets exclusive access to a labeled subset of nodes. CNI, CSI, and platform services are shared. Right for enterprise dev and experiment tiers. See [Architecture: worker nodes](./architecture.mdx#shared-nodes).
+
+The rest of this section covers the private nodes model in detail, as it is standard for AI cloud deployments.
+
+### Node joining and automation
+
+Nodes join using `vcluster node join` with a per-tenant token. For automated provisioning at scale, configure [Auto Nodes](/platform/administer/node-providers/overview) or the [Metal3 node provider](/platform/administer/node-providers/metal3) to have Platform drive the join and reclaim lifecycle.
+
+See [Join private nodes](../deploy/worker-nodes/private-nodes/join.mdx) and [Node requirements](../deploy/worker-nodes/private-nodes/node-requirements.mdx).
+
+### Control plane connectivity
+
+Each tenant's control plane pod on the Control Plane Cluster connects to its private nodes over an encrypted VPN tunnel. This means nodes do not need to be on the same network as the Control Plane Cluster. See [VPN for private nodes](../deploy/worker-nodes/private-nodes/vpn.mdx).
+
+<!-- vale off -->
+### Per-tenant GPU stack
+<!-- vale on -->
+
+Each tenant cluster runs its own GPU stack, isolated from other tenants:
+
+| Component | Purpose | Notes |
+|---|---|---|
+| GPU Operator | Drives NVIDIA GPU drivers, container runtime, device plugins | Deployed per tenant from template |
+| Scheduler (Kueue, Run.ai, Volcano) | Job queuing and GPU quota enforcement | Choose based on tenant workload type |
+| CNI (Calico or Cilium) | Per-tenant network policy and pod networking | Installed during private node join |
+| CSI driver | Per-tenant persistent storage | See [Storage](#storage) below |
+| vNode | Strong per-workload isolation at the node level | Optional. See [Virtual Nodes](#virtual-nodes) |
+
+[Certified Stacks](/platform/integrations/certified-stacks) provide pre-validated configurations for GPU Operator and schedulers. Use them as the base template for new tenant clusters.
+
+### Virtual Nodes
+
+[vNode](https://www.vnode.com/docs/) adds a strong isolation boundary between tenant workloads at the node level using Linux user namespaces and seccomp. It is not a separate deployment mode. It is an optional isolation layer that applies to any node model, including shared nodes, private nodes, and Standalone.
+
+On shared nodes, vNode is the primary mechanism for cross-tenant workload isolation. Tenants share physical infrastructure, but each gets its own isolated node view. On private nodes, the value shifts to intra-tenant protection. vNode contains privileged workloads, agentic code execution, and root access within the tenant's own nodes, preventing node escape.
+
+Enable vNode by setting `sync.toHost.pods.runtimeClassName: vnode` in the cluster template.
+
+vNode is recommended when:
+- Tenants run agentic or dynamic code execution workloads
+- Tenants need root access inside containers without the risk of node escape
+- Workloads use GPU access through CDI (Container Device Interface)
+- Multiple tenants share physical nodes and require strong workload boundaries
+
+See [Virtual Nodes](./architecture.mdx#virtual-nodes) and the [vNode documentation](https://www.vnode.com/docs/).
+
+## Layer 4: Platform services
+
+### Network isolation
+
+**CNI selection.** Each private-node tenant cluster installs its own CNI during node join. Calico and Cilium are the common choices. The CNI governs pod-to-pod networking, NetworkPolicy enforcement, and load balancer integration within the tenant cluster.
+
+**Netris for L2/L3 and InfiniBand isolation.** On bare metal, Netris provides switch-level VLAN and VXLAN isolation between tenant networks. Each tenant cluster gets an exclusive network segment at the switch layer, eliminating any L2 adjacency between tenants. For InfiniBand workloads requiring NCCL, Netris manages IB subnet partitioning so each tenant's training jobs run on a dedicated partition with full fabric bandwidth.
+
+See [Netris integration](../third-party-integrations/netris.mdx) and [Bare Metal (Netris)](../deploy/control-plane/kubernetes-pod/environment/netris.mdx).
+
+### Storage
+
+Each tenant cluster mounts its own CSI driver. The driver runs inside the tenant cluster namespace and has no visibility into other tenants' volumes or StorageClasses.
+
+- Sync StorageClasses from the Control Plane Cluster into tenant clusters. See [Storage Classes sync](../configure/vcluster-yaml/sync/from-host/storage-classes.mdx).
+- Sync CSI driver metadata. See [CSI nodes](../configure/vcluster-yaml/sync/from-host/csi-nodes.mdx) and [CSI drivers](../configure/vcluster-yaml/sync/from-host/csi-drivers.mdx).
+- Set up volume snapshots for tenant backup. See [Volume snapshots](../configure/vcluster-yaml/snapshots.mdx).
+
+For tenant data durability, configure the backing store for each control plane. See [Backing store options](../configure/vcluster-yaml/control-plane/components/backing-store/overview.mdx).
+
+### Observability
+
+**Prometheus and Grafana.** Each tenant cluster exposes a ServiceMonitor that Platform's Prometheus instance scrapes. Grafana dashboards provide per-tenant cluster visibility. See [Aggregating metrics](/platform/maintenance/monitoring/aggregating-metrics) and [Fleet monitoring (OpenTelemetry)](/platform/maintenance/monitoring/fleet-monitoring-otel).
+
+**OpenCost.** OpenCost provides per-tenant cost attribution across GPU, CPU, and memory. This enables chargeback and quota enforcement. See [Cost control](/platform/configure/platform-configs/cost-control).
+
+**Audit logging.** Every API call against Platform and tenant cluster control planes is logged. See [Audit logging](/platform/configure/platform-configs/audit).
+
+### Identity and access
+
+**SSO.** Connect vCluster Platform to your corporate identity provider using OIDC or SAML. All human access to Platform and tenant clusters flows through the IdP. See [SSO configuration](/platform/configure/platform-configs/single-sign-on).
+
+**Project-scoped RBAC.** Platform organizes tenant clusters into projects. RBAC is scoped to the project boundary. Tenants can only see clusters within their project. Platform engineers have broader access. See [Users and permissions](/platform/administer/users-permissions/overview) and [Projects](/platform/administer/projects/create).
+
+**Cluster access control.** Platform issues tenant kubeconfigs scoped to the tenant cluster. Tenants cannot reach the Control Plane Cluster, other tenant clusters, or platform internals. See [Access control](/platform/administer/users-permissions/overview).
+
+## Architecture decisions summary
+
+| Layer | Decision | Options | Guidance |
+|---|---|---|---|
+| Bare metal | Machine lifecycle | vMetal (recommended) or manual join | [vMetal docs](https://www.vmetal.ai/docs/), [Metal3 node provider](/platform/administer/node-providers/metal3) |
+| Control Plane Cluster | Foundation | vCluster Standalone or managed Kubernetes | [Standalone](../deploy/control-plane/binary/overview.mdx), [Architecture](./architecture.mdx) |
+| Tenant isolation | Node model | Private nodes (standard for AI cloud) | [Private Nodes](../deploy/worker-nodes/private-nodes/overview.mdx) |
+| Workload isolation | Runtime layer | vNode (optional, recommended for untrusted) | [vNode docs](https://www.vnode.com/docs/) |
+| Networking | L2/L3 isolation | Netris (bare metal) or cloud VPC | [Netris integration](../third-party-integrations/netris.mdx) |
+| GPU stack | Scheduler | Kueue, Run.ai, or Volcano | [Certified Stacks](/platform/integrations/certified-stacks) |
+| Observability | Metrics | Prometheus + OpenCost + Grafana | [Monitoring overview](/platform/maintenance/monitoring/overview) |
+| Identity | Auth | OIDC / SAML through Platform SSO | [SSO configuration](/platform/configure/platform-configs/single-sign-on) |
+
+## Use cases on this architecture
+
+The four-layer stack supports different platform types. The layers themselves stay the same. What changes is tenant isolation model, workload runtime, and compliance posture.
+
+| Use case | Node model | vNode | Key additions | Production guide |
+|---|---|---|---|---|
+| AI Cloud: Managed Kubernetes Service | Private nodes per customer | Recommended for privileged/agentic workloads | Customer-facing provisioning API, vBilling, Certified Stacks | [AI Cloud](../production-guide/ai-cloud.mdx) |
+| Enterprise AI Factory | Mixed: private for production ML, shared for dev/experiment | Recommended for untrusted code execution | Corporate SSO, chargeback through OpenCost, self-service portal | [Enterprise AI Factory](../production-guide/enterprise-ai-factory.mdx) |
+| Sovereign AI Cloud | Private nodes per customer | Required for regulated or multi-tenant isolation | Netris for hard network isolation, air-gap support, per-tenant audit trails, compliance governance profiles | [AI Cloud](../production-guide/ai-cloud.mdx) |
+| Agentic workloads | Private or shared nodes | Required | vNode UID remapping, seccomp profiles, CDI for GPU passthrough | [vNode docs](https://www.vnode.com/docs/) |
+
+### Sovereign AI clouds
+
+Sovereign deployments add compliance requirements on top of the baseline architecture. The stack is identical. The additions are:
+
+- **Hard network isolation at the switch layer** using Netris VLAN/VXLAN and IB subnet partitioning. See [Netris integration](../third-party-integrations/netris.mdx).
+- **Air-gap support.** vCluster Standalone and the full platform operate without external network dependencies. Certified Stacks can be mirrored to a private registry.
+- **Per-tenant audit trails.** Every API call against Platform and tenant cluster control planes is logged. See [Audit logging](/platform/configure/platform-configs/audit).
+- **Custom governance profiles.** Per-project policies enforce data residency and tenant separation at provisioning time. See [Projects](/platform/administer/projects/create) and [Quotas](/platform/administer/projects/quotas).
+
+### Agentic workloads
+
+Agentic workloads require root access, dynamic package installation, and arbitrary code execution. vNode provides the isolation boundary that makes this safe on shared or dedicated GPU nodes:
+
+- **UID remapping** maps root inside the container (UID 0) to an unprivileged host user (UID 100000+). Container escapes do not yield host root.
+- **Namespace isolation** gives each agent its own PID, network, and mount namespace. No cross-agent visibility.
+- **Capability scoping** confines privileged Linux capabilities to the container's namespace.
+- **Direct GPU passthrough** using CDI delivers native GPU performance without VM overhead.
+
+See [vNode documentation](https://www.vnode.com/docs/) for security validation results and configuration.
+
+<!-- vale off -->
+## Next steps
+<!-- vale on -->
+
+<!-- vale off -->
+- [AI Cloud: Managed Kubernetes Service](../production-guide/ai-cloud.mdx) — Day 0, Day 1, and Day 2 path for building a managed GPU service on this architecture
+- [Enterprise AI Factory](../production-guide/enterprise-ai-factory.mdx) — Day 0, Day 1, and Day 2 path for an internal AI platform
+- [Architecture](./architecture.mdx) — control plane deployment options and worker node models
+- [Building a GPU cloud platform](./gpu-cloud-platform.mdx) — how vCluster fits into your platform and which node model to choose
+- [Private Nodes](../deploy/worker-nodes/private-nodes/overview.mdx) — deploy dedicated GPU infrastructure per tenant
+- [vMetal](https://www.vmetal.ai/docs/) — machine provisioning and lifecycle management for bare metal
+- [vNode](https://www.vnode.com/docs/) — workload isolation layer for GPU tenants
+<!-- vale on -->
