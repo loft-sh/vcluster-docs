@@ -131,6 +131,35 @@ jobs:
           echo "GOPRIVATE=github.com/loft-sh/vcluster-pro*" >>"$GITHUB_ENV"
           echo "GOPROXY=https://proxy.golang.org,direct" >>"$GITHUB_ENV"
 
+      # loft-enterprise's release pipeline cuts its own tag + release first
+      # (which triggers our dispatch), then creates matching upstream tags
+      # in loft-sh/{agentapi,api} in subsequent steps. Without a wait, the
+      # bump step's `go mod tidy` below races the upstream tag creation
+      # and fails with `unknown revision <version>`. Empirically the gap
+      # was ~30s-2min on v4.7.3-rc.1 (2026-05-27). Polling on the GitHub
+      # API directly (not `go list`) sidesteps Go's module proxy cache,
+      # which can lag tag creation. 10s × 60 = 10 min ceiling.
+      - name: Wait for agentapi + api tags to be published
+        if: steps.classify.outputs.skip != 'true' && steps.inputs.outputs.event == 'platform-released'
+        env:
+          VERSION: ${{ steps.inputs.outputs.version }}
+          GH_TOKEN: ${{ secrets.GH_ACCESS_TOKEN }}
+        run: |
+          set -eo pipefail
+          for repo in loft-sh/agentapi loft-sh/api; do
+            attempt=0
+            until gh api "repos/${repo}/git/refs/tags/${VERSION}" >/dev/null 2>&1; do
+              attempt=$((attempt + 1))
+              if [ "$attempt" -ge 60 ]; then
+                echo "::error::${repo}: tag ${VERSION} not present after 10 minutes; upstream pipeline never published it" >&2
+                exit 1
+              fi
+              echo "${repo}: waiting for tag ${VERSION} (attempt ${attempt}/60)"
+              sleep 10
+            done
+            echo "::notice::${repo}: tag ${VERSION} present (attempt ${attempt:-0})"
+          done
+
       # The platform partials generator reflects against the loft-sh/api +
       # loft-sh/agentapi types pinned in this repo's go.mod. Without bumping
       # the pins to the just-released version, the regen sees identical
