@@ -316,6 +316,11 @@ func (in HelmTaskRelease) OpenAPIModelName() string {
 }
 
 // OpenAPIModelName returns the OpenAPI model name for this type.
+func (in ImportVirtualClustersSpec) OpenAPIModelName() string {
+	return "com.github.loft-sh.api.v4.pkg.apis.storage.v1.ImportVirtualClustersSpec"
+}
+
+// OpenAPIModelName returns the OpenAPI model name for this type.
 func (in InstanceAccess) OpenAPIModelName() string {
 	return "com.github.loft-sh.api.v4.pkg.apis.storage.v1.InstanceAccess"
 }
@@ -646,6 +651,16 @@ func (in Quotas) OpenAPIModelName() string {
 }
 
 // OpenAPIModelName returns the OpenAPI model name for this type.
+func (in RancherIntegrationSpec) OpenAPIModelName() string {
+	return "com.github.loft-sh.api.v4.pkg.apis.storage.v1.RancherIntegrationSpec"
+}
+
+// OpenAPIModelName returns the OpenAPI model name for this type.
+func (in RancherProjectRef) OpenAPIModelName() string {
+	return "com.github.loft-sh.api.v4.pkg.apis.storage.v1.RancherProjectRef"
+}
+
+// OpenAPIModelName returns the OpenAPI model name for this type.
 func (in RequirePreset) OpenAPIModelName() string {
 	return "com.github.loft-sh.api.v4.pkg.apis.storage.v1.RequirePreset"
 }
@@ -768,6 +783,11 @@ func (in Storage) OpenAPIModelName() string {
 // OpenAPIModelName returns the OpenAPI model name for this type.
 func (in StreamContainer) OpenAPIModelName() string {
 	return "com.github.loft-sh.api.v4.pkg.apis.storage.v1.StreamContainer"
+}
+
+// OpenAPIModelName returns the OpenAPI model name for this type.
+func (in SyncMembersSpec) OpenAPIModelName() string {
+	return "com.github.loft-sh.api.v4.pkg.apis.storage.v1.SyncMembersSpec"
 }
 
 // OpenAPIModelName returns the OpenAPI model name for this type.
