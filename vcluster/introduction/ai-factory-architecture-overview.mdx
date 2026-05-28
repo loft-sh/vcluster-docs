@@ -1,14 +1,14 @@
 ---
-title: AI Factory Reference Architecture
+title: AI Factory Architecture Overview
 sidebar_label: AI Factory Architecture
 sidebar_position: 4
 sidebar_class_name: host-nodes private-nodes standalone
-description: Reference architecture for AI cloud providers and enterprises. Full stack from bare metal to tenant workloads, covering node topology, tenant isolation, networking, storage, observability, and identity.
+description: Architecture overview for AI cloud providers and enterprises. Full stack from bare metal to tenant workloads, covering node topology, tenant isolation, networking, storage, observability, and identity.
 ---
 
 import GlossaryTerm from '@site/src/components/GlossaryTerm';
 
-This page describes a reference architecture for AI infrastructure platforms that provision isolated GPU environments for multiple tenants from a shared pool of GPU infrastructure. Use it as a blueprint when designing your deployment, and follow the cross-references to configure each layer.
+This page describes the architecture for AI infrastructure platforms that provision isolated GPU environments for multiple tenants from a shared pool of GPU infrastructure. It covers node topology, tenant isolation, networking, storage, observability, and identity. Use it as a starting point when designing your deployment, and follow the cross-references to configure each layer.
 
 The architecture has four layers:
 
@@ -22,9 +22,9 @@ The architecture has four layers:
   <img
     style={{ display: 'block', margin: '0 auto', maxWidth: '100%' }}
     src="/docs/img/production-paths/ai-factory.png"
-    alt="AI factory reference architecture: central control plane managing private GPU nodes and shared node pools for tenant workloads"
+    alt="AI factory architecture: central control plane managing private GPU nodes and shared node pools for tenant workloads"
   />
-  <figcaption>AI factory reference architecture: bare metal to tenant workloads</figcaption>
+  <figcaption>AI factory architecture: bare metal to tenant workloads</figcaption>
 </figure>
 
 ## Layer 1: Bare metal
@@ -49,13 +49,25 @@ The <GlossaryTerm term="control-plane-cluster">Control Plane Cluster</GlossaryTe
 - [vCluster Standalone](../deploy/control-plane/binary/overview.mdx) — a zero-dependency Kubernetes distribution that runs directly on your CPU nodes. The natural choice when building from bare metal with no existing Kubernetes substrate.
 - An existing managed Kubernetes cluster (EKS, AKS, GKE) — if you already operate a cloud cluster for platform services.
 
-For AI cloud deployments, vCluster Standalone is the typical choice. It solves the "cluster one" problem. The platform does not depend on a third-party Kubernetes distribution and bootstraps entirely from vCluster tooling. Deploy in [HA mode](../deploy/control-plane/binary/high-availability.mdx) before taking production traffic.
+For AI cloud deployments, vCluster Standalone is the typical choice. It solves the "cluster one" problem: the platform does not depend on a third-party Kubernetes distribution and bootstraps entirely from vCluster tooling. Deploy in [HA mode](../deploy/control-plane/binary/high-availability.mdx) before taking production traffic.
 
 **Tenant cluster control planes**
 
 Each <GlossaryTerm term="tenant-cluster">tenant cluster</GlossaryTerm> runs as a single StatefulSet pod on the Control Plane Cluster. The pod contains the Kubernetes API server, controller manager, data store, and syncer. From the tenant's perspective this is indistinguishable from a dedicated cluster. From your operations perspective, control planes are namespaced workloads you manage through Platform.
 
 See [Control plane sizing](../deploy/control-plane/sizing-and-performance.mdx) for resource recommendations at scale.
+
+### Control plane HA
+
+In HA mode, Platform components run across multiple replicas, and high-traffic tenant control planes can be configured for additional replicas.
+
+**Control Plane Cluster quorum.** Standalone HA requires at least three nodes to maintain quorum. The cluster tolerates the loss of one node without service interruption. Loss of two or more nodes requires intervention. See [Standalone HA](../deploy/control-plane/binary/high-availability.mdx).
+
+**Tenant control plane replicas.** Each tenant control plane runs as a single pod by default. For tenants with SLA requirements, configure additional replicas. See [Container control plane HA](../deploy/control-plane/kubernetes-pod/high-availability.mdx).
+
+**Backing store.** The default embedded SQLite store is suitable for development and small tenant clusters. For production clusters with high API write rates, use the external etcd or PostgreSQL store. See [Backing store options](../configure/vcluster-yaml/control-plane/components/backing-store/overview.mdx).
+
+**Failure modes.** When a tenant control plane pod is evicted or fails, Kubernetes reschedules it on another Control Plane Cluster node. The tenant's API server recovers without manual intervention. Recovery time depends on backing store replication mode and pod scheduling latency.
 
 ## Layer 3: Tenant workload clusters
 
@@ -82,13 +94,13 @@ Each tenant's control plane pod on the Control Plane Cluster connects to its pri
 
 Each tenant cluster runs its own GPU stack, isolated from other tenants:
 
-| Component | Purpose | Notes |
+| Component | Purpose | Required |
 |---|---|---|
-| GPU Operator | Drives NVIDIA GPU drivers, container runtime, device plugins | Deployed per tenant from template |
-| Scheduler (Kueue, Run.ai, Volcano) | Job queuing and GPU quota enforcement | Choose based on tenant workload type |
-| CNI (Calico or Cilium) | Per-tenant network policy and pod networking | Installed during private node join |
-| CSI driver | Per-tenant persistent storage | See [Storage](#storage) below |
-| vNode | Strong per-workload isolation at the node level | Optional. See [Virtual Nodes](#virtual-nodes) |
+| GPU Operator | Drives NVIDIA GPU drivers, container runtime, device plugins | Required |
+| Scheduler (Kueue, Run.ai, Volcano) | Job queuing and GPU quota enforcement | Required |
+| CNI (Calico or Cilium) | Per-tenant network policy and pod networking | Required |
+| CSI driver | Per-tenant persistent storage | Required |
+| vNode | Strong per-workload isolation at the node level | Optional |
 
 [Certified Stacks](/platform/integrations/certified-stacks) provide pre-validated configurations for GPU Operator and schedulers. Use them as the base template for new tenant clusters.
 
@@ -97,6 +109,13 @@ Each tenant cluster runs its own GPU stack, isolated from other tenants:
 [vNode](https://www.vnode.com/docs/) adds a strong isolation boundary between tenant workloads at the node level using Linux user namespaces and seccomp. It is not a separate deployment mode. It is an optional isolation layer that applies to any node model, including shared nodes, private nodes, and Standalone.
 
 On shared nodes, vNode is the primary mechanism for cross-tenant workload isolation. Tenants share physical infrastructure, but each gets its own isolated node view. On private nodes, the value shifts to intra-tenant protection. vNode contains privileged workloads, agentic code execution, and root access within the tenant's own nodes, preventing node escape.
+
+**Isolation mechanics.** vNode enforces boundaries at the Linux kernel level:
+
+- **UID remapping.** Root inside the container (UID 0) maps to an unprivileged host user (UID 100000+). A container escape does not yield host root.
+- **Namespace isolation.** Each workload gets its own PID, network, mount, UTS, and IPC namespace. Processes in one workload cannot see or signal processes in another.
+- **Seccomp enforcement.** A seccomp profile restricts the syscall surface. Syscalls required by the workload are explicitly allowlisted; the rest are blocked.
+- **CDI-based GPU passthrough.** The Container Device Interface delivers direct GPU access without requiring privileged mode or host-level device exposure.
 
 Enable vNode by setting `sync.toHost.pods.runtimeClassName: vnode` in the cluster template.
 
@@ -112,15 +131,33 @@ See [Virtual Nodes](./architecture.mdx#virtual-nodes) and the [vNode documentati
 
 ### Network isolation
 
+**Traffic paths.** Three distinct traffic paths exist in this architecture:
+
+- *Tenant API traffic.* Tenant users reach the tenant API server pod on the Control Plane Cluster over TLS. Platform issues per-tenant kubeconfigs scoped to that endpoint.
+- *Control plane to node traffic.* The tenant API server communicates with kubelets and the CNI on private GPU nodes over an encrypted VPN tunnel. GPU nodes do not need L3 reachability to the Control Plane Cluster.
+- *Pod-to-pod traffic.* Within the tenant cluster, the tenant's CNI manages pod networking and NetworkPolicy enforcement.
+
+**East-west isolation.** On private nodes, each tenant cluster installs its own CNI and each private node belongs to exactly one tenant cluster. There is no L2 or L3 adjacency between tenant node pools. Netris enforces this at the switch layer with per-tenant VLAN or VXLAN segments.
+
 **CNI selection.** Each private-node tenant cluster installs its own CNI during node join. Calico and Cilium are the common choices. The CNI governs pod-to-pod networking, NetworkPolicy enforcement, and load balancer integration within the tenant cluster.
 
-**Netris for L2/L3 and InfiniBand isolation.** On bare metal, Netris provides switch-level VLAN and VXLAN isolation between tenant networks. Each tenant cluster gets an exclusive network segment at the switch layer, eliminating any L2 adjacency between tenants. For InfiniBand workloads requiring NCCL, Netris manages IB subnet partitioning so each tenant's training jobs run on a dedicated partition with full fabric bandwidth.
+**Netris for L2/L3 and InfiniBand isolation.** On bare metal, Netris provides switch-level VLAN and VXLAN isolation between tenant networks. Each tenant cluster gets an exclusive network segment at the switch layer, eliminating any L2 adjacency between tenants. For InfiniBand workloads requiring NCCL, Netris manages IB subnet partitioning so each tenant's training jobs run on a dedicated partition with full fabric bandwidth. For RoCE deployments, Netris applies per-tenant VLAN or VXLAN segments with QoS policies that prevent one tenant's traffic from affecting another's.
 
 See [Netris integration](../third-party-integrations/netris.mdx) and [Bare Metal (Netris)](../deploy/control-plane/kubernetes-pod/environment/netris.mdx).
 
 ### Storage
 
 Each tenant cluster mounts its own CSI driver. The driver runs inside the tenant cluster namespace and has no visibility into other tenants' volumes or StorageClasses.
+
+**Common storage backends:**
+
+| Backend | Use case | Notes |
+|---|---|---|
+| Rook-Ceph | Distributed block storage on the tenant's own nodes | No external dependency; requires spare capacity on GPU nodes |
+| NFS | Shared file storage accessible across tenant nodes | Simple to provision; latency-sensitive for checkpoint-heavy workloads |
+| Weka | High-performance parallel file system | Optimized for AI/ML checkpoint and dataset I/O at scale |
+| Longhorn | Lightweight replicated block storage | Well suited for dev and experiment tiers |
+| Cloud-native CSI (EBS, Azure Disk, etc.) | Managed cloud block storage | Available when GPU nodes run on cloud infrastructure |
 
 - Sync StorageClasses from the Control Plane Cluster into tenant clusters. See [Storage Classes sync](../configure/vcluster-yaml/sync/from-host/storage-classes.mdx).
 - Sync CSI driver metadata. See [CSI nodes](../configure/vcluster-yaml/sync/from-host/csi-nodes.mdx) and [CSI drivers](../configure/vcluster-yaml/sync/from-host/csi-drivers.mdx).
@@ -140,22 +177,46 @@ For tenant data durability, configure the backing store for each control plane. 
 
 **SSO.** Connect vCluster Platform to your corporate identity provider using OIDC or SAML. All human access to Platform and tenant clusters flows through the IdP. See [SSO configuration](/platform/configure/platform-configs/single-sign-on).
 
-**Project-scoped RBAC.** Platform organizes tenant clusters into projects. RBAC is scoped to the project boundary. Tenants can only see clusters within their project. Platform engineers have broader access. See [Users and permissions](/platform/administer/users-permissions/overview) and [Projects](/platform/administer/projects/create).
+**Authentication flow.** When a tenant user authenticates:
+
+1. The browser redirects to the corporate IdP.
+2. The IdP issues an identity token.
+3. Platform validates the token and maps the identity to a team and project.
+4. Platform issues a scoped kubeconfig for the tenant's cluster.
+5. API calls hit the tenant control plane pod. The kube-apiserver validates tokens against the same OIDC issuer.
+
+**Project-scoped RBAC.** Platform organizes tenant clusters into projects. RBAC is scoped to the project boundary. Tenants can only see clusters within their project. Within a tenant cluster, RBAC bindings control access to namespaces and resources. Templates enforce default RBAC policies so every tenant cluster starts with a known permission set. See [Users and permissions](/platform/administer/users-permissions/overview) and [Projects](/platform/administer/projects/create).
 
 **Cluster access control.** Platform issues tenant kubeconfigs scoped to the tenant cluster. Tenants cannot reach the Control Plane Cluster, other tenant clusters, or platform internals. See [Access control](/platform/administer/users-permissions/overview).
 
+## Sizing reference
+
+These configurations are starting points. Actual sizing depends on tenant count, workload characteristics, control plane fanout, and checkpoint I/O patterns.
+
+| Tier | Control Plane Cluster | Tenant cluster count |
+|---|---|---|
+| Small | 3 nodes | Up to 10 tenant clusters |
+| Medium | 3 nodes (larger instances) | 10–50 tenant clusters |
+| Large | 5+ nodes | 50–200+ tenant clusters |
+
+**GPU nodes.** GPU node counts are driven entirely by tenant workload requirements. Control Plane Cluster nodes are CPU-only; no GPU workloads run on control plane nodes.
+
+**Control plane pod density.** Platform schedules one control plane pod per tenant cluster. Pod resource requirements grow with tenant activity, CRD count, and API request rate. See [Control plane sizing](../deploy/control-plane/sizing-and-performance.mdx) for per-pod recommendations.
+
+**Scaling.** Scale the Control Plane Cluster vertically before adding nodes. For large deployments, distribute control plane load across multiple regions. See [Platform HA](/platform/maintenance/reliability-scaling/high-availability) and [Multi-region Platform](/platform/administer/clusters/advanced/multi-region).
+
 ## Architecture decisions summary
 
-| Layer | Decision | Options | Guidance |
-|---|---|---|---|
-| Bare metal | Machine lifecycle | vMetal (recommended) or manual join | [vMetal docs](https://www.vmetal.ai/docs/), [Metal3 node provider](/platform/administer/node-providers/metal3) |
-| Control Plane Cluster | Foundation | vCluster Standalone or managed Kubernetes | [Standalone](../deploy/control-plane/binary/overview.mdx), [Architecture](./architecture.mdx) |
-| Tenant isolation | Node model | Private nodes (standard for AI cloud) | [Private Nodes](../deploy/worker-nodes/private-nodes/overview.mdx) |
-| Workload isolation | Runtime layer | vNode (optional, recommended for untrusted) | [vNode docs](https://www.vnode.com/docs/) |
-| Networking | L2/L3 isolation | Netris (bare metal) or cloud VPC | [Netris integration](../third-party-integrations/netris.mdx) |
-| GPU stack | Scheduler | Kueue, Run.ai, or Volcano | [Certified Stacks](/platform/integrations/certified-stacks) |
-| Observability | Metrics | Prometheus + OpenCost + Grafana | [Monitoring overview](/platform/maintenance/monitoring/overview) |
-| Identity | Auth | OIDC / SAML through Platform SSO | [SSO configuration](/platform/configure/platform-configs/single-sign-on) |
+| Layer | Decision | Options | Required | Guidance |
+|---|---|---|---|---|
+| Bare metal | Machine lifecycle | vMetal (recommended) or manual join | No | [vMetal docs](https://www.vmetal.ai/docs/), [Metal3 node provider](/platform/administer/node-providers/metal3) |
+| Control Plane Cluster | Foundation | vCluster Standalone or managed Kubernetes | Yes | [Standalone](../deploy/control-plane/binary/overview.mdx), [Architecture](./architecture.mdx) |
+| Tenant isolation | Node model | Private nodes (standard for AI cloud) | Yes | [Private Nodes](../deploy/worker-nodes/private-nodes/overview.mdx) |
+| Workload isolation | Runtime layer | vNode (optional, recommended for untrusted) | No | [vNode docs](https://www.vnode.com/docs/) |
+| Networking | L2/L3 isolation | Netris (bare metal) or cloud VPC | No | [Netris integration](../third-party-integrations/netris.mdx) |
+| GPU stack | Scheduler | Kueue, Run.ai, or Volcano | Yes | [Certified Stacks](/platform/integrations/certified-stacks) |
+| Observability | Metrics | Prometheus + OpenCost + Grafana | Yes | [Monitoring overview](/platform/maintenance/monitoring/overview) |
+| Identity | Auth | OIDC / SAML through Platform SSO | Yes | [SSO configuration](/platform/configure/platform-configs/single-sign-on) |
 
 ## Use cases on this architecture
 
