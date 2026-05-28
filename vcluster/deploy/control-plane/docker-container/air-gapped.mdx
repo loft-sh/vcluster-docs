@@ -1,0 +1,219 @@
+---
+title: Deploy vind in an air-gapped environment
+sidebar_label: Air-gapped
+sidebar_position: 2
+sidebar_class_name: standalone docker
+description: Configure vind for environments without internet access, covering registry mirrors, image overrides, and the vm-container bootstrap.
+---
+
+import InterpolatedCodeBlock from '@site/src/components/InterpolatedCodeBlock';
+import PageVariables from '@site/src/components/PageVariables';
+
+<PageVariables
+  VCLUSTER_VERSION="0.34.0"
+  REGISTRY="your-registry.internal"
+/>
+
+vind makes five distinct network calls during cluster creation and operation. In an air-gapped environment where Docker containers cannot reach public registries or GitHub, each one must be handled separately.
+
+## How vind uses the network
+
+| Step | When | What vind contacts | Configurable? |
+|------|------|--------------------|---------------|
+| 1 | Before `vcluster create` | Pulls `alpine` on the Docker host for pre-creation checks | No — pre-pull required |
+| 2 | Inside the vm-container at bootstrap | Downloads `install-standalone.sh` from GitHub | No — custom image or bridge proxy required |
+| 3 | During vCluster startup | Pulls internal vCluster images (k3s, CoreDNS, syncer) | Yes — `controlPlane.advanced.defaultImageRegistry` |
+| 4 | When workloads run | Pulls workload container images | Yes — containerd registry mirror using a volume mount |
+| 5 | For StatefulSet pods | Pulls `alpine` for the rewriteHosts init container | Yes — `sync.toHost.pods.rewriteHosts.initContainer.image` |
+
+Steps 1 and 2 have no native config override. The sections below cover each step with its workaround.
+
+## Prerequisites
+
+- Docker installed and running with access to your internal registry
+- vCluster CLI installed — see [Deployment basics](./basics.mdx#step-1-install-vcluster-cli)
+- `install-standalone.sh` and the `vcluster-linux-<arch>-standalone` binary downloaded from the [vCluster releases page](https://github.com/loft-sh/vcluster/releases) on an internet-connected machine
+- Required images mirrored to your internal registry (`images.txt` is listed under [vCluster release assets](https://github.com/loft-sh/vcluster/releases))
+
+## Step 1: Pre-pull Alpine on the Docker host
+
+Before `vcluster create` runs, vind pulls `alpine` directly on the host for pre-creation checks including port availability, containerd socket detection, and network reachability. There is no config flag to override this image name.
+
+Pull Alpine from your internal registry and retag it so vind finds it under the expected name:
+
+<InterpolatedCodeBlock
+  code={`docker pull [[GLOBAL:REGISTRY]]/library/alpine:latest
+docker tag [[GLOBAL:REGISTRY]]/library/alpine:latest alpine:latest`}
+  language="bash"
+/>
+
+vind's registry proxy (enabled by default) then serves this image from the host Docker cache for all subsequent pulls inside the cluster, so the network is not contacted again.
+
+## Step 2: Provide the vm-container bootstrap assets
+
+After the vm-container starts, the vCluster binary inside it downloads `install-standalone.sh` from GitHub. This URL is hardcoded in the CLI binary. Choose one of the following workarounds.
+
+### Option A: Build a custom vm-container image (recommended)
+
+On an internet-connected machine, build a custom image that pre-downloads the install script and binary:
+
+<InterpolatedCodeBlock
+  code={`FROM ghcr.io/loft-sh/vm-container:latest
+RUN mkdir -p /vcluster-install && \\
+    curl -sfL https://github.com/loft-sh/vcluster/releases/download/v[[GLOBAL:VCLUSTER_VERSION]]/install-standalone.sh \\
+      -o /vcluster-install/install-standalone.sh && \\
+    curl -sfL https://github.com/loft-sh/vcluster/releases/download/v[[GLOBAL:VCLUSTER_VERSION]]/vcluster-linux-amd64-standalone \\
+      -o /vcluster-install/vcluster && \\
+    chmod +x /vcluster-install/vcluster`}
+  language="dockerfile"
+/>
+
+Push the image to your internal registry:
+
+<InterpolatedCodeBlock
+  code={`docker build -t [[GLOBAL:REGISTRY]]/vind:v[[GLOBAL:VCLUSTER_VERSION]]-airgapped .
+docker push [[GLOBAL:REGISTRY]]/vind:v[[GLOBAL:VCLUSTER_VERSION]]-airgapped`}
+  language="bash"
+/>
+
+Reference the image in your `vcluster.yaml`:
+
+<InterpolatedCodeBlock
+  code={`experimental:
+  docker:
+    image: [[GLOBAL:REGISTRY]]/vind:v[[GLOBAL:VCLUSTER_VERSION]]-airgapped`}
+  language="yaml"
+/>
+
+### Option B: Serve the assets from the Docker bridge network
+
+If you cannot build a custom image, run a file server on the Docker host that is reachable from inside the vind containers.
+
+Find the Docker bridge gateway IP:
+
+```bash
+docker network inspect bridge | grep Gateway
+```
+
+This is usually `172.17.0.1`. Serve the install script and binary at the expected GitHub URL path:
+
+<InterpolatedCodeBlock
+  code={`mkdir -p /tmp/vcluster-mirror/loft-sh/vcluster/releases/download/v[[GLOBAL:VCLUSTER_VERSION]]
+cp install-standalone.sh vcluster-linux-amd64-standalone \\
+  /tmp/vcluster-mirror/loft-sh/vcluster/releases/download/v[[GLOBAL:VCLUSTER_VERSION]]/
+cd /tmp/vcluster-mirror && python3 -m http.server 9999 --bind 0.0.0.0`}
+  language="bash"
+/>
+
+Configure the container to use the server as a proxy:
+
+<InterpolatedCodeBlock
+  code={`experimental:
+  docker:
+    env:
+      - HTTPS_PROXY=http://[[VAR:GATEWAY_IP:172.17.0.1]]:9999`}
+  language="yaml"
+/>
+
+:::warning
+The proxy must listen on the Docker bridge interface, not loopback (`127.0.0.1`). A proxy bound to loopback on the host is not reachable from inside the vm-container.
+:::
+
+## Step 3: Redirect internal vCluster images
+
+`controlPlane.advanced.defaultImageRegistry` prepends a registry prefix to all images vCluster deploys internally, including k3s, CoreDNS, syncer, etcd, and backing store images. It does not affect workload images.
+
+Mirror all images listed in `images.txt` from the [vCluster release assets](https://github.com/loft-sh/vcluster/releases) into your registry at the same repository path, then configure:
+
+<InterpolatedCodeBlock
+  code={`controlPlane:
+  advanced:
+    defaultImageRegistry: [[GLOBAL:REGISTRY]]/vcluster/`}
+  language="yaml"
+/>
+
+## Step 4: Route workload image pulls through a registry mirror
+
+Workload images are pulled by the k3s containerd runtime inside the cluster. Configure containerd mirrors by mounting a `registries.yaml` file into the vind container.
+
+Create `registries.yaml` on the host:
+
+<InterpolatedCodeBlock
+  code={`mirrors:
+  docker.io:
+    endpoint:
+      - "https://[[GLOBAL:REGISTRY]]"
+  ghcr.io:
+    endpoint:
+      - "https://[[GLOBAL:REGISTRY]]"
+configs:
+  "[[GLOBAL:REGISTRY]]":
+    auth:
+      username: [[VAR:USERNAME:username]]
+      password: [[VAR:PASSWORD:password]]`}
+  language="yaml"
+/>
+
+Mount it into the vind container in your `vcluster.yaml`:
+
+<InterpolatedCodeBlock
+  code={`experimental:
+  docker:
+    volumes:
+      - "[[VAR:HOST_PATH:/path/to/registries.yaml]]:/etc/rancher/k3s/registries.yaml"`}
+  language="yaml"
+/>
+
+## Step 5: Override the rewriteHosts init container image
+
+When syncing StatefulSet pods, vCluster runs a short-lived init container using `mirror.gcr.io/library/alpine:3.20` to rewrite FQDNs. Override this in your `vcluster.yaml`:
+
+<InterpolatedCodeBlock
+  code={`sync:
+  toHost:
+    pods:
+      rewriteHosts:
+        initContainer:
+          image:
+            registry: [[GLOBAL:REGISTRY]]
+            repository: library/alpine
+            tag: "3.20"`}
+  language="yaml"
+/>
+
+The `image` field takes `registry`, `repository`, and `tag` sub-fields, not a plain string. This format was introduced in v0.27.0.
+
+## Complete vcluster.yaml
+
+The following combines all configurable layers. Replace registry, version, and path values for your environment.
+
+<InterpolatedCodeBlock
+  code={`controlPlane:
+  advanced:
+    defaultImageRegistry: [[GLOBAL:REGISTRY]]/vcluster/
+
+experimental:
+  docker:
+    image: [[GLOBAL:REGISTRY]]/vind:v[[GLOBAL:VCLUSTER_VERSION]]-airgapped
+    volumes:
+      - "[[VAR:HOST_PATH:/path/to/registries.yaml]]:/etc/rancher/k3s/registries.yaml"
+
+sync:
+  toHost:
+    pods:
+      rewriteHosts:
+        initContainer:
+          image:
+            registry: [[GLOBAL:REGISTRY]]
+            repository: library/alpine
+            tag: "3.20"`}
+  language="yaml"
+/>
+
+After preparing the host (Steps 1 and 2), create the cluster:
+
+```bash
+vcluster create my-cluster --values vcluster.yaml
+```
+
+For next steps, see the [Docker (vind) Quick Start](../../../quick-start/docker.mdx) to verify your cluster is working and explore pause/resume, LoadBalancer services, and worker nodes.
