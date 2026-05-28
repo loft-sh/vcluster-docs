@@ -51,6 +51,7 @@ before running this command:
       --password string      The password to use for the admin account. (If empty this will be the namespace UID)
       --reset                If true, existing vCluster Platform resources, including the deployment, will be deleted before installing vCluster platform
       --reuse-values         Reuse previous vCluster platform helm values on upgrade (default true)
+      --secure               If true, verify TLS certificates when connecting to the platform (by default, TLS verification is skipped during bootstrap because the platform starts with a self-signed certificate)
       --upgrade              If true, vCluster platform will try to upgrade the release
       --values string        Path to a file for extra vCluster platform helm chart values
       --version string       The vCluster platform version to install (default "latest")
