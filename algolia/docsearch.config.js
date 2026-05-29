@@ -26,6 +26,7 @@ new Crawler({
   ],
   renderJavaScript: false,
   ignoreCanonicalTo: true,
+  ignoreNoIndex: true,
   discoveryPatterns: [
     "https://www.vcluster.com/docs/**",
     "https://www.vnode.com/docs/**",
