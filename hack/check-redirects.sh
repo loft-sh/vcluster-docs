@@ -213,8 +213,10 @@ detect_changes() {
         [[ -z "$added_path" ]] && continue
         local added_dir="${added_path%/*}"
         local pos
-        pos="$(grep -m1 '^sidebar_position:' "${REPO_ROOT}/${added_path}" 2>/dev/null | awk '{print $2}')"
-        [[ -n "$pos" ]] && ADDED_BY_POS="${ADDED_BY_POS}${added_dir}/${pos}=${added_path}"$'\n'
+        pos="$(grep -m1 '^sidebar_position:' "${REPO_ROOT}/${added_path}" 2>/dev/null | awk '{print $2}')" || true
+        if [[ -n "$pos" ]]; then
+            ADDED_BY_POS="${ADDED_BY_POS}${added_dir}/${pos}=${added_path}"$'\n'
+        fi
     done <<<"$ADDED_FILES"
 }
 
