@@ -1,0 +1,172 @@
+---
+title: Secure vCluster Deployments
+sidebar_label: Security
+description: Understand vCluster security boundaries and apply baseline guardrails for tenant workloads, the control plane cluster, and the vCluster control plane.
+---
+
+:::note Plan before you deploy
+Several deployment decisions cannot be changed after initial deployment, including rootless mode, worker node type, backing store, and control plane distro. Review the [deployment overview](../deploy/README.mdx) and this page before deploying production tenant clusters.
+:::
+
+vCluster security depends on where a workload runs, which resources vCluster synchronizes, and who controls the configuration. A secure deployment starts by separating three boundaries:
+
+- **Inside the tenant cluster**
+  - Kubernetes RBAC
+  - Admission control
+  - Resource limits
+  - Tenant-defined network policies
+
+- **Between the tenant cluster and the control plane cluster**
+  - vCluster sync configuration
+
+- **Outside the tenant cluster**
+  - Platform RBAC and approved templates
+  - Control plane pod hardening
+  - Private nodes, vNode, and vMetal
+
+## Baseline security configuration
+
+A hardened baseline combines four controls:
+
+- A [Pod Security Standard](../configure/vcluster-yaml/policies/pod-security-standard.mdx) applied to tenant namespaces blocks privileged containers, host path mounts, and other high-risk pod configurations inside the tenant cluster.
+- A [ResourceQuota](../configure/vcluster-yaml/policies/resource-quota.mdx) and [LimitRange](../configure/vcluster-yaml/policies/limit-range.mdx) in the control plane cluster namespace prevent a runaway or malicious tenant workload from exhausting shared node capacity or etcd storage.
+- [NetworkPolicies](../configure/vcluster-yaml/policies/network-policy.mdx) in the control plane cluster namespace restrict traffic between vCluster components and other workloads on the shared cluster. `policies.networkPolicy` defaults to `false` and requires CNI support to take effect.
+- Storing synced pod [service account tokens](../configure/vcluster-yaml/sync/to-host/core/pods/overview.mdx) in Secrets rather than pod annotations scopes token access to Secret-level RBAC. Anyone who can read pod specs can read tokens stored in annotations.
+
+Enable all four together:
+
+```yaml title="vcluster.yaml"
+policies:
+  podSecurityStandard: baseline
+  resourceQuota:
+    enabled: true
+  limitRange:
+    enabled: true
+  networkPolicy:
+    enabled: true
+
+sync:
+  toHost:
+    pods:
+      useSecretsForSATokens: true
+```
+
+:::warning NetworkPolicy support
+NetworkPolicies only take effect when the control plane cluster's CNI implements Kubernetes NetworkPolicy. Creating NetworkPolicy resources without a controller that enforces them does not isolate traffic.
+:::
+
+## Workload security inside the tenant cluster
+
+### Kubernetes RBAC
+
+Kubernetes RBAC inside the tenant cluster controls what users and service accounts can do in the tenant environment. This is separate from Platform RBAC, which controls who can create or manage tenant clusters.
+
+Key access to restrict at the tenant level:
+
+- **Pod and workload creation**: Any user who can create a Pod can run arbitrary container images and influence sync behavior. Limit `create` on Pods, Deployments, StatefulSets, and Jobs to subjects that need it.
+- **`exec` and `attach`**: `pods/exec` and `pods/attach` grant interactive shell access to running containers. Grant these verbs only to users who genuinely need them.
+- **Secret access**: Restrict `get`, `list`, and `watch` on Secrets to minimize exposure of credentials and service account tokens.
+- **Cluster-scoped resources**: ClusterRoles, ClusterRoleBindings, and CRDs affect the entire tenant cluster. Prefer namespace-scoped Roles and RoleBindings for tenant users over cluster-scoped grants.
+
+When Platform templates define tenant cluster configuration, review the initial RBAC grants created at cluster instantiation time. Tenants with `cluster-admin` inside the tenant cluster can still be constrained at the sync and Platform governance layers.
+
+### NetworkPolicy
+
+vCluster-managed NetworkPolicies (created by `policies.networkPolicy`) protect traffic in the control plane cluster namespace where vCluster itself runs. These are separate from NetworkPolicies that tenant users create inside the tenant cluster for application-to-application traffic. Both layers require CNI support on their respective clusters.
+
+Use namespace-level NetworkPolicies inside the tenant cluster to restrict lateral movement between applications:
+
+- Apply a default-deny ingress policy in namespaces that do not need cross-namespace traffic.
+- Restrict egress from sensitive workloads to the services they actually call.
+
+### Admission control
+
+Use `policies.podSecurityStandard` when the platform operator needs to enforce a Pod Security Standard uniformly across all tenant namespaces. Tenants cannot remove or loosen PSA labels that vCluster applies.
+
+For granular, platform-managed admission policies that tenants cannot override, use [central admission control](../configure/vcluster-yaml/policies/admission-control.mdx). Central admission control is a vCluster Pro feature. It configures webhooks in the tenant cluster. The webhooks point through the vCluster proxy to a service in the control plane cluster or to an external policy service. Tenants can install their own admission controllers, but they cannot mutate or delete the centrally configured hooks.
+
+Test admission webhooks with `failurePolicy: Ignore` before switching to `failurePolicy: Fail` in production. A misconfigured webhook with `failurePolicy: Fail` can block all workload creation in the tenant cluster.
+
+## Control plane cluster boundary
+
+vCluster synchronizes selected resources between the tenant cluster and the control plane cluster. Review sync settings before allowing non-admin users to create or modify vCluster configurations.
+
+### Sync to host
+
+vCluster creates [`sync.toHost`](../configure/vcluster-yaml/sync/to-host/overview.mdx) resources in the control plane cluster after translating names, labels, and namespaces. Normal workloads such as Pods, Services, ConfigMaps, Secrets, and PersistentVolumeClaims require this. It also means tenant-created objects can create real Kubernetes objects in the control plane cluster.
+
+Limit `sync.toHost` to the resources tenants actually need. Treat advanced options such as namespace sync, custom resource sync, service account sync, and host deployments as security-sensitive.
+
+### Sync from host
+
+vCluster copies [`sync.fromHost`](../configure/vcluster-yaml/sync/from-host/overview.mdx) resources from the control plane cluster into the tenant cluster. Tenants cannot modify these resources or write changes back to the control plane cluster.
+
+Use selectors and explicit mappings when syncing shared or sensitive resources such as StorageClasses, RuntimeClasses, Secrets, ConfigMaps, and custom resources.
+
+### vCluster RBAC
+
+vCluster automatically generates the control plane cluster RBAC it needs based on enabled features and synchronized resources. This governs what the vCluster syncer can do in the control plane cluster, not what tenant users can do inside the tenant cluster.
+
+For restricted environments, use [RBAC configuration](../configure/vcluster-yaml/rbac.mdx) to disable automatic RBAC generation, use an administrator-managed ServiceAccount, or overwrite the generated rules.
+
+## Harden the vCluster control plane
+
+The vCluster control plane runs as a workload in the control plane cluster. Harden it like any other privileged control plane component:
+
+- Apply a [Pod Security Standard label](https://kubernetes.io/docs/concepts/security/pod-security-admission/#pod-security-levels) to the control plane cluster namespace where vCluster runs. This is independent of `policies.podSecurityStandard`, which labels namespaces inside the tenant cluster — the host namespace label is a backstop on the control plane cluster side. `baseline` enforcement works with the default vCluster deployment. `restricted` enforcement requires [rootless mode](../deploy/control-plane/kubernetes-pod/security/rootless-mode.mdx) to be enabled first.
+- Run the vCluster pod as a non-root user with [rootless mode](../deploy/control-plane/kubernetes-pod/security/rootless-mode.mdx).
+- Configure [`controlPlane.statefulSet.security.podSecurityContext` and `controlPlane.statefulSet.security.containerSecurityContext`](../deploy/control-plane/kubernetes-pod/security/hardening-guide/host-nodes/5-policies.mdx) for user IDs, file system groups, privilege escalation, capabilities, and seccomp settings.
+- Configure the [control plane ServiceAccount](../configure/vcluster-yaml/rbac.mdx) explicitly when your organization manages RBAC outside of the vCluster Helm chart.
+- Use the [CIS hardening guide](../deploy/control-plane/kubernetes-pod/security/hardening-guide/overview.mdx) for API server audit logging, EventRateLimit, encryption at rest, admission plugin settings, and hardened Kubernetes component arguments.
+- Use [FIPS images](../deploy/control-plane/kubernetes-pod/security/fips.mdx), [air-gapped deployment](../deploy/control-plane/kubernetes-pod/security/air-gapped.mdx), or [corporate proxy configuration](../deploy/control-plane/kubernetes-pod/security/corporate-proxy.mdx) when required by your environment.
+
+
+## Platform governance
+
+When users create tenant clusters through vCluster Platform, templates are the main security boundary for vCluster configuration.
+
+- Keep templates required for projects where non-admin users create tenant clusters.
+- Put approved security settings directly into [VirtualClusterTemplates](/platform/administer/templates/create-templates).
+- Limit which templates a project can use with [allowed templates](/platform/administer/projects/allowed/templates).
+- Limit which control plane clusters a project can use with allowed clusters.
+- Use [Platform RBAC](/platform/administer/users-permissions/overview) to separate platform administrators from project users.
+- Use [Least Privilege Mode](/platform/configure/agent-settings/least-privilege-mode) for Platform agents on external control plane clusters when your organization needs reduced agent permissions.
+- Configure [agent security contexts](/platform/configure/agent-settings/security-context) for connected control plane clusters.
+
+Do not allow untrusted project users to create tenant clusters without an approved template. A user with full control over `vcluster.yaml` can loosen sync settings, expose control plane cluster resources, or deploy resources directly to the control plane cluster.
+
+## Tenancy and isolation profiles
+
+These controls apply to the baseline profile, where tenant workloads run on shared nodes of the control plane cluster. Two additional profiles move the isolation boundary further out.
+
+### vNode
+
+vCluster defines the tenant cluster boundary. vNode strengthens workload isolation on shared nodes using a runtime sandbox.
+
+Use vNode when tenants share physical nodes but workloads need stronger runtime containment than standard containers provide. This is especially relevant for privileged workloads, Docker-in-Docker, `hostPID`, host path access, GPU workloads, or user-supplied model inference code.
+
+vNode does not replace vCluster policy guardrails. Continue to use Pod Security Standards, NetworkPolicies, quotas, reviewed sync settings, and approved templates. See the [vNode docs](https://www.vnode.com/docs/) for configuration details.
+
+### Private nodes
+
+Private nodes move tenant workloads off the control plane cluster's shared worker nodes. The vCluster control plane still runs in the control plane cluster, but workload execution moves to nodes dedicated to the tenant cluster.
+
+Use private nodes when tenants require dedicated node capacity, stronger workload isolation, or direct control over node-level Kubernetes behavior. See [Private Nodes](../deploy/worker-nodes/private-nodes/overview.mdx) for deployment details.
+
+For GPU or PCIe device exclusivity, bare-metal compliance, or sovereign deployments, private nodes can be provisioned as dedicated physical servers using vMetal. vMetal adds bare-metal operational security requirements outside the scope of vCluster itself, including BMC credential handling, OS image integrity, PXE and provisioning network exposure, Metal3 and Ironic hardening, and BareMetalHost access control. See the [vMetal docs](https://www.vmetal.ai/docs/) for bare-metal-specific controls.
+
+## Production checklist
+
+Before deploying production tenant clusters, verify:
+
+- [ ] The control plane cluster CNI enforces NetworkPolicy.
+- [ ] `policies.podSecurityStandard`, `policies.resourceQuota`, `policies.limitRange`, and `policies.networkPolicy` are configured intentionally.
+- [ ] `sync.toHost` and `sync.fromHost` are limited to required resources.
+- [ ] Tenant RBAC restricts Pod creation, `exec`, Secret access, and cluster-scoped role grants to intended subjects.
+- [ ] Central admission control is tested with `failurePolicy: Ignore` before using `failurePolicy: Fail`.
+- [ ] vCluster control plane pods run with the required security context, rootless mode, and ServiceAccount model.
+- [ ] API server audit logging, EventRateLimit, and encryption settings meet compliance requirements.
+- [ ] Non-admin Platform users can create tenant clusters only from approved templates.
+- [ ] Platform Agent permissions and security contexts meet the control plane cluster's trust requirements.
+- [ ] The isolation profile is explicit: shared nodes, shared nodes with vNode, private nodes, or private nodes with vMetal.
+- [ ] vMetal deployments validate BMC credential storage and rotation, OS image checksums, provisioning network segmentation, BareMetalHost and NodeProvider RBAC, and control plane access to BMC networks.
