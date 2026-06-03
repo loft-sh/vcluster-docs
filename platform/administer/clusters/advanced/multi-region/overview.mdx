@@ -17,18 +17,84 @@ import FeatureTable from '@site/src/components/FeatureTable';
 ## What is multi-region platform?
 
 A multi-region platform deployment runs vCluster Platform instances in two or more
-regions, all backed by a single shared database. A leader election mechanism ensures that only one platform instance
-writes to the shared database at a time, while a custom DERP server provides
-encrypted relay connectivity between regions. Health-checking DNS configuration ensures that failover occurs seamlessly in the event of a regional outage 
-and clients are routed to the lowest-latency region.
+regions, all backed by a single shared database. A leader election mechanism ensures
+that only one platform instance writes to the shared database at a time. A custom
+DERP server provides encrypted relay connectivity between regions. Health-checking
+DNS configuration ensures that failover occurs seamlessly during a regional outage
+and routes clients to the lowest-latency region.
 
-<figure class="frame">
-  <img
-    src="/docs/media/platform/diagrams/multi-region-architecture.png"
-    alt="Multi-region platform architecture"
-  />
-  <figcaption>Multi-region platform architecture with shared Kine database and latency-based routing</figcaption>
-</figure>
+```mermaid
+flowchart TD
+    DNS["platform.example.com\nRoute 53 — latency-based routing"]
+
+    DNS -->|"latency routing"| US_LB["ALB — us-east-1"]
+    DNS -->|"latency routing"| EU_LB["ALB — eu-west-1"]
+
+    subgraph MRDB["Multi-region embedded Kubernetes cluster"]
+        subgraph US_EKS["EKS — us-east-1"]
+            subgraph US_NS["vcluster-platform"]
+                US_K8S["k8s API"] --> US_KINE["Kine"]
+                US_DERP["DERP\nus.platform.example.com"]
+            end
+            US_LB --> US_K8S
+        end
+
+        subgraph EU_EKS["EKS — eu-west-1"]
+            subgraph EU_NS["vcluster-platform"]
+                EU_K8S["k8s API"] --> EU_KINE["Kine"]
+                EU_DERP["DERP\neu.platform.example.com"]
+            end
+            EU_LB --> EU_K8S
+        end
+
+        RDS[("Amazon RDS\nshared database")]
+        US_KINE --> RDS
+        EU_KINE --> RDS
+        US_DERP <-->|"encrypted relay"| EU_DERP
+    end
+```
+
+## How it works
+
+Two mechanisms keep the platform available and consistent across regions: health-checked DNS routing handles failover, and leader election coordinates database writes.
+
+```mermaid
+flowchart TD
+    CLIENT["Client"]
+
+    subgraph R53["Route 53 — latency-based routing"]
+        HC_US["Health check\nus-east-1"]
+        HC_EU["Health check\neu-west-1"]
+    end
+
+    CLIENT -->|"platform.example.com"| R53
+    R53 -->|"nearest healthy region"| US_LB["ALB — us-east-1"]
+    R53 -->|"nearest healthy region"| EU_LB["ALB — eu-west-1"]
+
+    HC_US -.->|"polls /healthz"| US_LB
+    HC_EU -.->|"polls /healthz"| EU_LB
+
+    subgraph CLUSTER["Multi-region embedded Kubernetes cluster"]
+        US_LB --> US_POD["k8s API — us-east-1\nleader (write lease)"]
+        EU_LB --> EU_POD["k8s API — eu-west-1\nfollower (read only)"]
+
+        US_POD <-->|"lease coordination"| EU_POD
+
+        DB[("Amazon RDS")]
+        US_POD -->|"writes"| DB
+        EU_POD -.->|"reads"| DB
+    end
+```
+
+### Failover
+
+Route 53 runs health checks against each region's ALB every 10 seconds. After three consecutive failures, it removes that region from the routing pool. Traffic shifts automatically to the remaining healthy region. When the failed region recovers and its health checks pass, Route 53 reinstates it. No configuration changes are required.
+
+### Write coordination
+
+The two embedded k8s API servers compete for a write lease stored in the shared RDS database. The region that holds the lease is the leader and processes all writes. The other region is the follower. It serves reads and forwards writes to the leader. If the leader fails, the follower acquires the lease and becomes the new leader. The leader role is dynamic. Either region can hold it at any time.
+
+All writes go through the leader to a single database, so the follower incurs cross-region latency for write operations. Read-heavy workloads are less affected.
 
 ## Why deploy multi-region?
 
@@ -48,7 +114,7 @@ you need one or more of the following:
 |---|---|---|---|
 | **What is replicated** | The platform itself (full replicas in each region) | Only the agent endpoints (platform stays in one region) | Multiple platform replicas in a single cluster |
 | **Shared database** | Yes — all regions share a single Kine-backed database | No — single platform database | Yes — all replicas share a single Kine-backed database |
-| **Failover** | Automatic via DNS health checks | No platform failover | Automatic via leader election within the cluster |
+| **Failover** | Automatic through DNS health checks | No platform failover | Automatic through leader election within the cluster |
 | **Use case** | Platform HA, low-latency platform API access | Low-latency `kubectl` access to clusters | Platform HA within a single region |
 
 Both features can be used together: multi-region platform provides platform-level
@@ -64,9 +130,9 @@ workloads.
   database writes, since all writes go through the leader to a single database.
   Read-heavy workloads are less affected.
 - **Cost control unavailable**: The cost control feature requires a single-region
-  database and is not compatible with the shared Kine backend.
+  database and isn't compatible with the shared Kine backend.
 - **Fresh install only**: Converting an existing single-region installation to
-  multi-region is not supported.
+  multi-region isn't supported.
 
 :::info Related docs
 For routing `kubectl` traffic directly to clusters without replicating the
@@ -77,7 +143,7 @@ DERP relays provide cross-region connectivity, see
 
 :::warning Important
 Converting an existing single-region platform installation to
-multi-region is not supported. Multi-region must be configured as a fresh
+multi-region isn't supported. Multi-region must be configured as a fresh
 installation. See [Deploy (AWS/EKS)](./deploy.mdx) for step-by-step setup instructions.
 :::
 
