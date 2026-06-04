@@ -1751,6 +1751,21 @@ func (in VirtualClusterInstanceJoinScriptStatus) OpenAPIModelName() string {
 }
 
 // OpenAPIModelName returns the OpenAPI model name for this type.
+func (in VirtualClusterInstanceJoinScript) OpenAPIModelName() string {
+	return "com.github.loft-sh.api.v4.pkg.apis.management.v1.VirtualClusterInstanceJoinScript"
+}
+
+// OpenAPIModelName returns the OpenAPI model name for this type.
+func (in VirtualClusterInstanceJoinScriptList) OpenAPIModelName() string {
+	return "com.github.loft-sh.api.v4.pkg.apis.management.v1.VirtualClusterInstanceJoinScriptList"
+}
+
+// OpenAPIModelName returns the OpenAPI model name for this type.
+func (in VirtualClusterInstanceJoinScriptStatus) OpenAPIModelName() string {
+	return "com.github.loft-sh.api.v4.pkg.apis.management.v1.VirtualClusterInstanceJoinScriptStatus"
+}
+
+// OpenAPIModelName returns the OpenAPI model name for this type.
 func (in VirtualClusterInstanceKubeConfig) OpenAPIModelName() string {
 	return "com.github.loft-sh.api.v4.pkg.apis.management.v1.VirtualClusterInstanceKubeConfig"
 }
