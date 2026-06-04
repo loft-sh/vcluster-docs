@@ -1,0 +1,191 @@
+---
+title: Overview
+sidebar_label: Overview
+sidebar_position: 1
+---
+
+import Flow, {Step} from "@site/src/components/Flow";
+import FeatureTable from '@site/src/components/FeatureTable';
+import InterpolatedCodeBlock from '@site/src/components/InterpolatedCodeBlock';
+import VirtualMachinesDiagram from '@site/static/media/diagrams/virtual-machines-diagram.svg';
+
+<FeatureTable names="vm-management" />
+
+:::warning Experimental Feature
+Virtual machine management is experimental. Breaking changes may occur between releases. The feature is enabled on a per-customer basis. Don't use it for production workloads without guidance from vCluster Labs.
+:::
+
+vCluster Platform integrates with [KubeVirt](https://kubevirt.io/) to manage virtual machines (VMs) on connected Control Plane Clusters.
+Administrators can deploy KubeVirt, create reusable VM templates, and manage KubeVirt `VirtualMachine` resources from the platform UI.
+
+<figure>
+  <VirtualMachinesDiagram style={{width: '100%', height: 'auto'}} role="img" aria-label="Virtual machine management diagram" />
+</figure>
+
+## Basic setup
+
+Create a [KubeVirt node provider](../node-providers/kubevirt.mdx) to connect vCluster Platform to a cluster where VMs should run.
+The provider can deploy KubeVirt automatically, or it can use an existing KubeVirt installation.
+
+<InterpolatedCodeBlock
+  language="yaml"
+  title="kubevirt-vms.yaml"
+  code={
+`# Connect vCluster Platform to the KubeVirt cluster.
+apiVersion: management.loft.sh/v1
+kind: NodeProvider
+metadata:
+  name: [[VAR:NODE_PROVIDER:kubevirt-vms]]
+spec:
+  displayName: "KubeVirt VMs"
+  # Defaults that apply to Machines created through this provider.
+  properties:
+    # Use vcluster.com/os-image instead when you have a reusable OSImage resource.
+    kubevirt.vcluster.com/image-url: docker://quay.io/containerdisks/ubuntu:22.04
+    kubevirt.vcluster.com/root-disk-size: 20Gi
+    # Optional: reference a NodeEnvironment for network defaults.
+    # vcluster.com/network-environment: [[VAR:NETWORK_ENVIRONMENT:default]]
+  kubeVirt:
+    # Create VMs in this connected Control Plane Cluster.
+    clusterRef:
+      cluster: [[VAR:CLUSTER_NAME:my-kubevirt-cluster]]
+      namespace: [[VAR:NAMESPACE:vcluster-platform]]
+    # Deploy KubeVirt automatically if it isn't already installed.
+    deploy:
+      kubevirt:
+        enabled: true
+    # Base KubeVirt VirtualMachine template for this provider.
+    virtualMachineTemplate:
+      spec:
+        runStrategy: Always
+        template:
+          spec:
+            domain:
+              resources:
+                requests:
+                  cpu: "1"
+                  memory: 2Gi
+    nodeTypes:
+    - name: small-ubuntu
+      displayName: "Small Ubuntu VM"
+      maxCapacity: 10`
+  }
+/>
+
+This configuration creates a KubeVirt provider with one VM size. vCluster Platform uses the provider template and properties when it creates VMs.
+
+Apply the provider to the management cluster:
+
+<InterpolatedCodeBlock
+  language="bash"
+  code={
+`kubectl apply -f [[VAR:FILE:kubevirt-vms.yaml]]`
+  }
+/>
+
+## When to use virtual machines
+
+Virtual machines are a good fit when teams need VM-level isolation or guest operating system control while keeping provisioning inside Kubernetes. Common use cases include:
+
+- **Self-service compute**: Give teams a catalog of VM sizes without granting direct access to the KubeVirt cluster.
+- **Isolated workloads**: Run workloads that need stronger isolation than containers, custom kernels, or full guest operating systems.
+- **Tenant cluster private nodes**: Provision VMs that join tenant clusters as private worker nodes through [auto nodes](/docs/vcluster/deploy/worker-nodes/private-nodes/auto-nodes/).
+- **Reusable templates**: Standardize VM CPU and memory through node types and templates. Configure images and network defaults with properties.
+
+## Prerequisites
+
+Before managing virtual machines, you need:
+
+- A connected Control Plane Cluster where VMs should run.
+- KubeVirt installed on that cluster, or a KubeVirt node provider configured with `spec.kubeVirt.deploy.kubevirt.enabled: true`.
+- Containerized disk images, Containerized Data Importer (CDI) data volumes, or data sources that KubeVirt can use for VM storage.
+- Optional [OS images](../../use-platform/machines/os-images.mdx) and [SSH keys](../../use-platform/machines/ssh-keys.mdx) for reusable provisioning configuration.
+
+## Manage virtual machines
+
+After the provider is configured, administrators can use the platform's virtual machine views to inspect and operate KubeVirt resources across connected clusters.
+
+The VM management views cover:
+
+| Resource | Purpose |
+|---|---|
+| `VirtualMachine` | Desired VM configuration and run strategy. |
+| `VirtualMachineInstance` | Running VM instance status, phase, IP addresses, and console access. |
+| `DataVolume` | Persistent disk content imported or cloned through CDI. |
+| `VirtualMachineSnapshot` | Snapshot request for a VM. |
+| `VirtualMachineRestore` | Restore request from a VM snapshot. |
+
+Available actions depend on KubeVirt state and user permissions.
+For example, administrators can start, stop, restart, pause, and unpause VMs.
+They can also open a VM console, inspect guest logs, create snapshots, and restore from snapshots.
+
+## Workflow
+
+Use this workflow to configure a provider, create a VM-backed machine, and verify the KubeVirt VM on the target cluster.
+
+<Flow>
+  <Step>
+    ### Configure the provider
+
+    Create a KubeVirt `NodeProvider` with a base `virtualMachineTemplate`.
+    The provider controls where VMs run and which base template they use.
+  </Step>
+
+  <Step>
+    ### Define available VM sizes
+
+    Define one or more node types that represent available VM sizes.
+    Each node type can override or merge parts of the provider template.
+  </Step>
+
+  <Step>
+    ### Create a Machine
+
+    Create a Machine from the platform UI.
+    A tenant cluster can also create a Machine through auto nodes.
+  </Step>
+
+  <Step>
+    ### Verify the VM
+
+    Verify the platform-created VM on the KubeVirt cluster:
+
+```bash
+kubectl get virtualmachines -n vcluster-platform
+kubectl get virtualmachineinstances -n vcluster-platform
+```
+
+    Use the platform UI to view VM status, open the console, inspect logs, and manage snapshots.
+  </Step>
+</Flow>
+
+## Configure images, storage, and networking
+
+KubeVirt VM configuration is controlled by the provider template, node types, Machine properties, and reusable resources.
+
+Common properties include:
+
+| Property | Description |
+|---|---|
+| `vcluster.com/os-image` | References an `OSImage` resource. Use this for reusable image defaults. |
+| `vcluster.com/ssh-keys` | References one or more `SSHKey` resources. |
+| `vcluster.com/network-environment` | References a `NodeEnvironment` whose properties merge into the Machine. |
+| `vcluster.com/user-data` | Provides inline cloud-init user data. |
+| `vcluster.com/user-data-template` | Renders user data from an inline Go template. |
+| `vcluster.com/user-data-template-secret` | References a Secret that contains a user-data template. |
+| `kubevirt.vcluster.com/vm-template` | Supplies a full VM template override. |
+| `kubevirt.vcluster.com/merge-virtual-machine-template` | Merges VM template changes into the provider template. |
+| `kubevirt.vcluster.com/image-url` | Uses an HTTP, HTTPS, or `docker://` image source. |
+| `kubevirt.vcluster.com/image-datasource` | References a CDI `DataSource`. |
+| `kubevirt.vcluster.com/root-disk-size` | Sets the root disk size when image configuration is used. |
+| `kubevirt.vcluster.com/network-data` | Provides base64-encoded cloud-init network data. |
+| `kubevirt.vcluster.com/network-attachment-definition` | Attaches the VM to a NetworkAttachmentDefinition. |
+
+For the full provider configuration, template behavior, image properties, and Netris networking example, see the [KubeVirt node provider documentation](../node-providers/kubevirt.mdx).
+
+## Access control
+
+Virtual machine management uses platform permissions and Kubernetes role-based access control (RBAC) on the connected cluster.
+Users must have permission to view or operate the relevant KubeVirt resources before the platform can show VM details or perform actions on their behalf.
+
+If a user shouldn't manage infrastructure, don't grant access to the VM management views or the underlying KubeVirt resources.
