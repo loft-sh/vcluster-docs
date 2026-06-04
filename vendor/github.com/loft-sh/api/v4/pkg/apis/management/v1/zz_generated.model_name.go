@@ -156,11 +156,6 @@ func (in AuthenticationPassword) OpenAPIModelName() string {
 }
 
 // OpenAPIModelName returns the OpenAPI model name for this type.
-func (in AuthenticationRancher) OpenAPIModelName() string {
-	return "com.github.loft-sh.api.v4.pkg.apis.management.v1.AuthenticationRancher"
-}
-
-// OpenAPIModelName returns the OpenAPI model name for this type.
 func (in AuthenticationSAML) OpenAPIModelName() string {
 	return "com.github.loft-sh.api.v4.pkg.apis.management.v1.AuthenticationSAML"
 }
@@ -461,6 +456,11 @@ func (in DatabaseConnectorStatus) OpenAPIModelName() string {
 }
 
 // OpenAPIModelName returns the OpenAPI model name for this type.
+func (in DatabaseKine) OpenAPIModelName() string {
+	return "com.github.loft-sh.api.v4.pkg.apis.management.v1.DatabaseKine"
+}
+
+// OpenAPIModelName returns the OpenAPI model name for this type.
 func (in DirectClusterEndpointToken) OpenAPIModelName() string {
 	return "com.github.loft-sh.api.v4.pkg.apis.management.v1.DirectClusterEndpointToken"
 }
@@ -646,6 +646,41 @@ func (in NamespacedNameArgs) OpenAPIModelName() string {
 }
 
 // OpenAPIModelName returns the OpenAPI model name for this type.
+func (in NetworkPeer) OpenAPIModelName() string {
+	return "com.github.loft-sh.api.v4.pkg.apis.management.v1.NetworkPeer"
+}
+
+// OpenAPIModelName returns the OpenAPI model name for this type.
+func (in NetworkPeerDebug) OpenAPIModelName() string {
+	return "com.github.loft-sh.api.v4.pkg.apis.management.v1.NetworkPeerDebug"
+}
+
+// OpenAPIModelName returns the OpenAPI model name for this type.
+func (in NetworkPeerDebugList) OpenAPIModelName() string {
+	return "com.github.loft-sh.api.v4.pkg.apis.management.v1.NetworkPeerDebugList"
+}
+
+// OpenAPIModelName returns the OpenAPI model name for this type.
+func (in NetworkPeerDebugOptions) OpenAPIModelName() string {
+	return "com.github.loft-sh.api.v4.pkg.apis.management.v1.NetworkPeerDebugOptions"
+}
+
+// OpenAPIModelName returns the OpenAPI model name for this type.
+func (in NetworkPeerList) OpenAPIModelName() string {
+	return "com.github.loft-sh.api.v4.pkg.apis.management.v1.NetworkPeerList"
+}
+
+// OpenAPIModelName returns the OpenAPI model name for this type.
+func (in NetworkPeerSpec) OpenAPIModelName() string {
+	return "com.github.loft-sh.api.v4.pkg.apis.management.v1.NetworkPeerSpec"
+}
+
+// OpenAPIModelName returns the OpenAPI model name for this type.
+func (in NetworkPeerStatus) OpenAPIModelName() string {
+	return "com.github.loft-sh.api.v4.pkg.apis.management.v1.NetworkPeerStatus"
+}
+
+// OpenAPIModelName returns the OpenAPI model name for this type.
 func (in NodeClaim) OpenAPIModelName() string {
 	return "com.github.loft-sh.api.v4.pkg.apis.management.v1.NodeClaim"
 }
@@ -813,6 +848,26 @@ func (in OIDCClientSpec) OpenAPIModelName() string {
 // OpenAPIModelName returns the OpenAPI model name for this type.
 func (in OIDCClientStatus) OpenAPIModelName() string {
 	return "com.github.loft-sh.api.v4.pkg.apis.management.v1.OIDCClientStatus"
+}
+
+// OpenAPIModelName returns the OpenAPI model name for this type.
+func (in OSImage) OpenAPIModelName() string {
+	return "com.github.loft-sh.api.v4.pkg.apis.management.v1.OSImage"
+}
+
+// OpenAPIModelName returns the OpenAPI model name for this type.
+func (in OSImageList) OpenAPIModelName() string {
+	return "com.github.loft-sh.api.v4.pkg.apis.management.v1.OSImageList"
+}
+
+// OpenAPIModelName returns the OpenAPI model name for this type.
+func (in OSImageSpec) OpenAPIModelName() string {
+	return "com.github.loft-sh.api.v4.pkg.apis.management.v1.OSImageSpec"
+}
+
+// OpenAPIModelName returns the OpenAPI model name for this type.
+func (in OSImageStatus) OpenAPIModelName() string {
+	return "com.github.loft-sh.api.v4.pkg.apis.management.v1.OSImageStatus"
 }
 
 // OpenAPIModelName returns the OpenAPI model name for this type.
@@ -1098,6 +1153,26 @@ func (in ResetAccessKeySpec) OpenAPIModelName() string {
 // OpenAPIModelName returns the OpenAPI model name for this type.
 func (in ResetAccessKeyStatus) OpenAPIModelName() string {
 	return "com.github.loft-sh.api.v4.pkg.apis.management.v1.ResetAccessKeyStatus"
+}
+
+// OpenAPIModelName returns the OpenAPI model name for this type.
+func (in SSHKey) OpenAPIModelName() string {
+	return "com.github.loft-sh.api.v4.pkg.apis.management.v1.SSHKey"
+}
+
+// OpenAPIModelName returns the OpenAPI model name for this type.
+func (in SSHKeyList) OpenAPIModelName() string {
+	return "com.github.loft-sh.api.v4.pkg.apis.management.v1.SSHKeyList"
+}
+
+// OpenAPIModelName returns the OpenAPI model name for this type.
+func (in SSHKeySpec) OpenAPIModelName() string {
+	return "com.github.loft-sh.api.v4.pkg.apis.management.v1.SSHKeySpec"
+}
+
+// OpenAPIModelName returns the OpenAPI model name for this type.
+func (in SSHKeyStatus) OpenAPIModelName() string {
+	return "com.github.loft-sh.api.v4.pkg.apis.management.v1.SSHKeyStatus"
 }
 
 // OpenAPIModelName returns the OpenAPI model name for this type.
@@ -1568,6 +1643,21 @@ func (in VirtualClusterInstanceDebugShellPods) OpenAPIModelName() string {
 // OpenAPIModelName returns the OpenAPI model name for this type.
 func (in VirtualClusterInstanceDebugShellPodsList) OpenAPIModelName() string {
 	return "com.github.loft-sh.api.v4.pkg.apis.management.v1.VirtualClusterInstanceDebugShellPodsList"
+}
+
+// OpenAPIModelName returns the OpenAPI model name for this type.
+func (in VirtualClusterInstanceJoinScript) OpenAPIModelName() string {
+	return "com.github.loft-sh.api.v4.pkg.apis.management.v1.VirtualClusterInstanceJoinScript"
+}
+
+// OpenAPIModelName returns the OpenAPI model name for this type.
+func (in VirtualClusterInstanceJoinScriptList) OpenAPIModelName() string {
+	return "com.github.loft-sh.api.v4.pkg.apis.management.v1.VirtualClusterInstanceJoinScriptList"
+}
+
+// OpenAPIModelName returns the OpenAPI model name for this type.
+func (in VirtualClusterInstanceJoinScriptStatus) OpenAPIModelName() string {
+	return "com.github.loft-sh.api.v4.pkg.apis.management.v1.VirtualClusterInstanceJoinScriptStatus"
 }
 
 // OpenAPIModelName returns the OpenAPI model name for this type.
