@@ -1,0 +1,135 @@
+---
+sidebar_label: Troubleshooting External Database
+sidebar_position: 5
+title: Troubleshooting External Database
+description: Addressing common issues when deploying vCluster Platform with an external database.
+---
+
+import Tabs from "@theme/Tabs";
+import TabItem from "@theme/TabItem";
+import VersionBadge from '@site/src/components/VersionBadge';
+import InterpolatedCodeBlock from "@site/src/components/InterpolatedCodeBlock";
+import PageVariables from "@site/src/components/PageVariables";
+
+<VersionBadge platformVersion="v4.8.0"/>
+
+<PageVariables
+  PLATFORM_DOMAIN="platform.example.com"
+  ACCOUNT_ID="123456789012"
+  AWS_REGION="us-east-1"
+  DB_VPC_ID="vpc-xxxxxxxxx"
+  DB_SG_ID="sg-xxxxxxxxx"
+  CLUSTER_CONTEXT="arn:aws:eks:us-east-1:123456789012:cluster/platform-ha"
+/>
+
+## Platform pods are crashlooping
+
+Check pod logs for errors:
+
+<InterpolatedCodeBlock
+  code={
+`kubectl --context [[GLOBAL:CLUSTER_CONTEXT]] \\
+  logs -n vcluster-platform -l app=loft --tail=50`
+  }
+  language="bash"
+/>
+
+Common causes:
+- **Database connectivity errors**: Verify that VPC peering is active, routes
+  exist on the correct route tables (including public route tables if nodes are
+  in public subnets), and the database security group allows port 3306 from the
+  cluster VPC CIDR.
+- **IAM authentication failures**: Confirm the Pod Identity association exists,
+  the Pod Identity Agent add-on is `ACTIVE`, and the `RDSIAMAuthKine` IAM
+  policy contains the correct `DbiResourceId`.
+- **Resource exhaustion**: Check node resource usage with
+  `kubectl top nodes` and pod resource usage with `kubectl top pods -n vcluster-platform`.
+
+## Leader election is stuck
+
+If the platform is unresponsive but pods are running, the leader lease may be
+stuck. Check the lease status:
+
+<InterpolatedCodeBlock
+  code={
+`kubectl --context [[GLOBAL:CLUSTER_CONTEXT]] \\
+  get lease -n vcluster-platform -o wide`
+  }
+  language="bash"
+/>
+
+If the lease holder is a pod that no longer exists, restart the deployment to
+force a new leader election:
+
+<InterpolatedCodeBlock
+  code={
+`kubectl --context [[GLOBAL:CLUSTER_CONTEXT]] \\
+  rollout restart deployment/loft -n vcluster-platform`
+  }
+  language="bash"
+/>
+
+## ALB health checks failing
+
+Check the ingress status:
+
+<InterpolatedCodeBlock
+  code={
+`kubectl --context [[GLOBAL:CLUSTER_CONTEXT]] \\
+  get ingress -n vcluster-platform loft`
+  }
+  language="bash"
+/>
+
+Verify the ALB target group health in the AWS console or with:
+
+<InterpolatedCodeBlock
+  code={
+`aws elbv2 describe-target-health \\
+  --target-group-arn [[VAR:TARGET_GROUP_ARN:arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/k8s-vcluster-loft-xxxxxxxxxx/xxxxxxxxxx]]`
+  }
+  language="bash"
+/>
+
+Common causes:
+- The platform pods are not ready (check `kubectl get pods`).
+- The `/healthz` endpoint is not reachable from the ALB (check security groups
+  and the ALB target type matches the service configuration).
+
+## Database connection timeouts
+
+If pods start but log database connection errors:
+
+1. Verify VPC peering is active:
+
+<InterpolatedCodeBlock
+  code={
+`aws ec2 describe-vpc-peering-connections \\
+  --filters "Name=status-code,Values=active" \\
+  --region [[GLOBAL:AWS_REGION]] \\
+  --query 'VpcPeeringConnections[].{ID:VpcPeeringConnectionId,Requester:RequesterVpcInfo.VpcId,Accepter:AccepterVpcInfo.VpcId}'`
+  }
+  language="bash"
+/>
+
+2. Verify routes from the EKS VPC to the database VPC exist:
+
+<InterpolatedCodeBlock
+  code={
+`aws ec2 describe-route-tables \\
+  --filters "Name=vpc-id,Values=[[VAR:EKS_VPC_ID:vpc-yyyyyyyyy]]" \\
+  --region [[GLOBAL:AWS_REGION]] \\
+  --query 'RouteTables[].Routes[?DestinationCidrBlock==\`10.1.0.0/16\`]'`
+  }
+  language="bash"
+/>
+
+3. Test connectivity from within the cluster:
+
+<InterpolatedCodeBlock
+  code={
+`kubectl run dbtest --image=busybox --restart=Never --rm -it -- \\
+  nc -zv [[VAR:RDS_ENDPOINT:mariadb-ha-platform.xxxxxxxxxxxx.us-east-1.rds.amazonaws.com]] 3306`
+  }
+  language="bash"
+/>
