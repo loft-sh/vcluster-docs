@@ -11,14 +11,19 @@ const (
 	NodeProviderTypeKubeVirt   string = "kubeVirt"
 	NodeProviderTypeTerraform  string = "terraform"
 	NodeProviderTypeClusterAPI string = "clusterAPI"
+	NodeProviderTypeMetal3     string = "metal3"
 
 	// NodeProviderConditionTypeInitialized is the condition that indicates if the node provider is initialized.
 	NodeProviderConditionTypeInitialized = "Initialized"
+
+	// NodeProviderConditionTypeDeployed is the condition that indicates if infrastructure components are deployed.
+	NodeProviderConditionTypeDeployed = "Deployed"
 )
 
 var (
 	NodeProviderConditions = []agentstoragev1.ConditionType{
 		NodeProviderConditionTypeInitialized,
+		NodeProviderConditionTypeDeployed,
 	}
 )
 
@@ -102,6 +107,10 @@ type NodeProviderSpec struct {
 	// +optional
 	ClusterAPI *NodeProviderClusterAPI `json:"clusterAPI,omitempty"`
 
+	// Metal3 configures a node provider using metal3.io BareMetalHost resources.
+	// +optional
+	Metal3 *NodeProviderMetal3 `json:"metal3,omitempty"`
+
 	// DisplayName is the name that should be displayed in the UI
 	// +optional
 	DisplayName string `json:"displayName,omitempty"`
@@ -110,8 +119,8 @@ type NodeProviderSpec struct {
 type NodeProviderClusterAPI struct {
 	ClusterAPIObjects `json:",inline"`
 
-	// ClusterRef is a reference to connected host cluster in which KubeVirt operator is running
-	ClusterRef *NodeProviderClusterRef `json:"clusterRef,omitempty"`
+	// ClusterRef is a reference to connected control plane cluster in which KubeVirt operator is running
+	ClusterRef NodeProviderClusterRef `json:"clusterRef,omitempty"`
 
 	// NodeTypes define NodeTypes that should be automatically created for this provider.
 	NodeTypes []ClusterAPINodeTypeSpec `json:"nodeTypes,omitempty"`
@@ -122,7 +131,7 @@ type NodeProviderBCM struct {
 	// SecretRef is a reference to secret with keys for BCM auth.
 	SecretRef *NamespacedRef `json:"secretRef"`
 
-	// Endpoint is a address for head node.
+	// Endpoint is an address for head node.
 	Endpoint string `json:"endpoint"`
 
 	// NodeTypes define NodeTypes that should be automatically created for this provider.
@@ -278,8 +287,12 @@ type KubeVirtNodeTypeSpec struct {
 
 // NodeProviderKubeVirt defines the configuration for a KubeVirt node provider.
 type NodeProviderKubeVirt struct {
-	// ClusterRef is a reference to connected host cluster in which KubeVirt operator is running
-	ClusterRef *NodeProviderClusterRef `json:"clusterRef,omitempty"`
+	// ClusterRef is a reference to connected control plane cluster in which KubeVirt operator is running
+	ClusterRef NodeProviderClusterRef `json:"clusterRef,omitempty"`
+
+	// Deploy configures components deployed into the connected control plane cluster.
+	// +optional
+	Deploy KubeVirtProviderDeployment `json:"deploy,omitempty"`
 
 	// VirtualMachineTemplate is a KubeVirt VirtualMachine template to use by NodeTypes managed by this NodeProvider
 	VirtualMachineTemplate *runtime.RawExtension `json:"virtualMachineTemplate,omitempty"`
@@ -288,12 +301,128 @@ type NodeProviderKubeVirt struct {
 	NodeTypes []KubeVirtNodeTypeSpec `json:"nodeTypes"`
 }
 
+type KubeVirtProviderDeployment struct {
+	// KubeVirt configures the KubeVirt operator deployment.
+	// +optional
+	KubeVirt KubeVirtDeployment `json:"kubevirt,omitempty"`
+}
+
+type KubeVirtDeployment struct {
+	// Enabled controls whether the KubeVirt operator is deployed into the cluster.
+	Enabled bool `json:"enabled"`
+
+	// ChartRepo overrides the Helm chart repository used to install the KubeVirt operator.
+	// +optional
+	ChartRepo string `json:"chartRepo,omitempty"`
+
+	// Chart overrides the Helm chart name used to install the KubeVirt operator.
+	// +optional
+	Chart string `json:"chart,omitempty"`
+
+	// Version overrides the Helm chart version used to install the KubeVirt operator.
+	// +optional
+	Version string `json:"version,omitempty"`
+
+	// HelmValues is raw YAML that will be passed as values to the KubeVirt Helm chart.
+	// +optional
+	HelmValues string `json:"helmValues,omitempty"`
+}
+
 type NodeProviderClusterRef struct {
 	// Cluster is the connected cluster the VMs will be created in
 	Cluster string `json:"cluster"`
 
 	// Namespace is the namespace inside the connected cluster holding VMs
 	Namespace string `json:"namespace,omitempty"`
+}
+
+type MultusDeployment struct {
+	// Enabled controls whether Multus CNI is deployed into the cluster.
+	Enabled bool `json:"enabled"`
+
+	// HelmValues is raw YAML that will be passed as values to the Multus Helm chart.
+	// +optional
+	HelmValues string `json:"helmValues,omitempty"`
+}
+
+type DHCPDeployment struct {
+	// Enabled controls whether the DHCP server is deployed into the cluster.
+	Enabled bool `json:"enabled"`
+
+	// ChartRepo overrides the Helm chart repository used to install the DHCP server.
+	// +optional
+	ChartRepo string `json:"chartRepo,omitempty"`
+
+	// Chart overrides the Helm chart name used to install the DHCP server.
+	// +optional
+	Chart string `json:"chart,omitempty"`
+
+	// Version overrides the Helm chart version used to install the DHCP server.
+	// +optional
+	Version string `json:"version,omitempty"`
+
+	// HelmValues is raw YAML that will be passed as values to the DHCP Helm chart.
+	// +optional
+	HelmValues string `json:"helmValues,omitempty"`
+}
+
+type Metal3Deployment struct {
+	// Enabled controls whether Metal3 and Ironic are deployed into the cluster.
+	Enabled bool `json:"enabled"`
+
+	// ChartRepo overrides the Helm chart repository used to install Metal3.
+	// +optional
+	ChartRepo string `json:"chartRepo,omitempty"`
+
+	// Chart overrides the Helm chart name used to install Metal3.
+	// +optional
+	Chart string `json:"chart,omitempty"`
+
+	// Version overrides the Helm chart version used to install Metal3.
+	// +optional
+	Version string `json:"version,omitempty"`
+
+	// HelmValues is raw YAML that will be passed as values to the Metal3 Helm chart.
+	// +optional
+	HelmValues string `json:"helmValues,omitempty"`
+}
+
+type Metal3ProviderDeployment struct {
+	// Multus configures the Multus CNI deployment.
+	// +optional
+	Multus MultusDeployment `json:"multus,omitempty"`
+
+	// DHCP configures the DHCP server deployment.
+	// +optional
+	DHCP DHCPDeployment `json:"dhcp,omitempty"`
+
+	// Metal3 configures the Metal3/Ironic deployment.
+	// +optional
+	Metal3 Metal3Deployment `json:"metal3,omitempty"`
+}
+
+type NodeProviderMetal3 struct {
+	// ClusterRef is a reference to connected control plane cluster in which KubeVirt operator is running
+	ClusterRef NodeProviderClusterRef `json:"clusterRef,omitempty"`
+
+	Deploy Metal3ProviderDeployment `json:"deploy,omitempty"`
+
+	// NodeTypes define NodeTypes that should be automatically created for this provider.
+	NodeTypes []Metal3NodeTypeSpec `json:"nodeTypes,omitempty"`
+}
+
+type Metal3NodeTypeSpec struct {
+	NamedNodeTypeSpec `json:",inline"`
+
+	// BareMetalHosts is a list of BareMetalHosts to use for this NodeType.
+	// +optional
+	BareMetalHosts Metal3BareMetalHosts `json:"bareMetalHosts,omitempty"`
+}
+
+type Metal3BareMetalHosts struct {
+	// Selector is a label selector to select the BareMetalHosts to use for this NodeType.
+	// +optional
+	Selector *metav1.LabelSelector `json:"selector,omitempty"`
 }
 
 // NodeProviderStatus defines the observed state of NodeProvider.
