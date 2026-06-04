@@ -12,6 +12,7 @@ export const vclusterHiddenVersions = [];
 export const platformHiddenVersions = [];
 
 export const vclusterEOLVersions = [
+  { to: "https://vcluster.com/docs/v0.30", label: "v0.30 (EOL)" },
   { to: "https://vcluster.com/docs/v0.29", label: "v0.29 (EOL)" },
   { to: "https://vcluster.com/docs/v0.28", label: "v0.28 (EOL)" },
   { to: "https://vcluster.com/docs/v0.27", label: "v0.27 (EOL)" },
