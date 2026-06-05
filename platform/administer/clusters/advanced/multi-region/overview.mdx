@@ -1,0 +1,214 @@
+---
+sidebar_label: Overview
+sidebar_position: 1
+title: Overview
+description: Deploy vCluster Platform across multiple AWS regions with shared database, latency-based DNS failover, and regional ALB ingress.
+toc_max_heading_level: 3
+---
+
+import VersionBadge from '@site/src/components/VersionBadge';
+import InterpolatedCodeBlock from "@site/src/components/InterpolatedCodeBlock";
+import FeatureTable from '@site/src/components/FeatureTable';
+import MultiRegionArchitecture from '@site/static/media/diagrams/multi-region-architecture.svg';
+import HealthDnsLeaderElection from '@site/static/media/diagrams/health-dns-leader-election.svg';
+
+<FeatureTable names="multi-region-platform" />
+
+<VersionBadge platformVersion="v4.8.0"/>
+
+## What is multi-region platform?
+
+A multi-region platform deployment runs vCluster Platform instances in two or more
+regions, all backed by a single shared database. A leader election mechanism ensures
+that only one platform instance writes to the shared database at a time. A custom
+DERP server provides encrypted relay connectivity between regions. Health-checking
+DNS configuration ensures that failover occurs seamlessly during a regional outage
+and routes clients to the lowest-latency region.
+
+<figure>
+  <MultiRegionArchitecture style={{width: '100%', height: 'auto'}} role="img" aria-label="Multi-region platform architecture: Route 53 latency-based routing to regional ALBs, each fronting an EKS cluster with a vcluster-platform namespace containing a k8s API, Kine, and DERP node. Both Kine instances connect to a shared Amazon RDS database. The DERP nodes are linked by an encrypted relay." />
+  <figcaption>Multi-region platform architecture with shared Kine database, latency-based routing, and DERP relay</figcaption>
+</figure>
+
+## How it works
+
+Two mechanisms keep the platform available and consistent across regions: health-checked DNS routing handles failover, and leader election coordinates database writes.
+
+<figure>
+  <HealthDnsLeaderElection style={{width: '100%', height: 'auto'}} role="img" aria-label="Failover and write coordination: Client connects to Route 53 which contains health checks polling each regional ALB. Route 53 routes to the nearest healthy region. Inside the multi-region cluster, the leader k8s API holds the write lease and writes to Amazon RDS; the follower reads only. A bidirectional lease coordination arrow connects the two k8s API instances." />
+  <figcaption>Health-checked DNS routing and leader election for write coordination</figcaption>
+</figure>
+
+### Failover
+
+Route 53 runs health checks against each region's ALB every 10 seconds. After three consecutive failures, it removes that region from the routing pool. Traffic shifts automatically to the remaining healthy region. When the failed region recovers and its health checks pass, Route 53 reinstates it. No configuration changes are required.
+
+### Write coordination
+
+The two embedded k8s API servers compete for a write lease stored in the shared RDS database. The region that holds the lease is the leader and processes all writes. The other region is the follower. It serves reads and forwards writes to the leader. If the leader fails, the follower acquires the lease and becomes the new leader. The leader role is dynamic. Either region can hold it at any time.
+
+All writes go through the leader to a single database, so the follower incurs cross-region latency for write operations. Read-heavy workloads are less affected.
+
+## Why deploy multi-region?
+
+A single-region platform works for most deployments. Consider multi-region when
+you need one or more of the following:
+
+- **Regional failover**: If a region goes down, Route 53 health checks detect
+  the failure and automatically redirect traffic to a healthy region. The shared
+  database ensures no state is lost during failover.
+- **High availability for the control plane**: Running platform replicas across
+  regions eliminates the platform as a single point of failure. Connected
+  clusters continue operating through the surviving region.
+
+### How it differs from other deployment modes
+
+| | Multi-region platform | [Regional Cluster Endpoints](../regional-cluster-endpoints.mdx) | [Platform External Database](../external-database/external-database.mdx) |
+|---|---|---|---|
+| **What is replicated** | The platform itself (full replicas in each region) | Only the agent endpoints (platform stays in one region) | Multiple platform replicas in a single cluster |
+| **Shared database** | Yes — all regions share a single Kine-backed database | No — single platform database | Yes — all replicas share a single Kine-backed database |
+| **Failover** | Automatic through DNS health checks | No platform failover | Automatic through leader election within the cluster |
+| **Use case** | Platform HA, low-latency platform API access | Low-latency `kubectl` access to clusters | Platform HA within a single region |
+
+Both features can be used together: multi-region platform provides platform-level
+HA, while Regional Cluster Endpoints provide low-latency `kubectl` access to
+workloads.
+
+### Trade-offs
+
+- **Operational complexity**: Multi-region requires managing VPC peering,
+  cross-region networking, shared database infrastructure, and coordinated
+  upgrades.
+- **Database latency**: The non-leader region incurs cross-region latency for
+  database writes, since all writes go through the leader to a single database.
+  Read-heavy workloads are less affected.
+- **Cost control unavailable**: The cost control feature requires a single-region
+  database and isn't compatible with the shared Kine backend.
+- **Fresh install only**: Converting an existing single-region installation to
+  multi-region isn't supported.
+
+:::info Related docs
+For routing `kubectl` traffic directly to clusters without replicating the
+platform, see [Regional Cluster Endpoints](../regional-cluster-endpoints.mdx). For details on how
+DERP relays provide cross-region connectivity, see
+[DERP relay](../derp-relay.mdx).
+:::
+
+:::warning Important
+Converting an existing single-region platform installation to
+multi-region isn't supported. Multi-region must be configured as a fresh
+installation. See [Deploy (AWS/EKS)](./deploy.mdx) for step-by-step setup instructions.
+:::
+
+## Access the management API
+
+Multi-region platforms run an embedded Kubernetes API server inside each
+region's vCluster Platform pod. The `v1.management.loft.sh` aggregated
+APIService isn't registered on the host EKS cluster. Each region registers it
+inside its own embedded API server instead. This changes how automation and
+integrations such as Argo CD or Terraform call the management API.
+
+The aggregated APIService is cluster-scoped, so a single host EKS cluster can
+register only one. With multiple region pods sharing the same host cluster,
+that one registration can't route correctly to all of them. Each region
+therefore registers the APIService locally, and the platform's own HTTPS
+endpoint is the integration surface.
+
+### Compare standard and multi-region behavior
+
+| Aspect | Standard platform | Multi-region platform |
+| --- | --- | --- |
+| APIService location | Aggregated on the host EKS cluster | Local, inside each region's embedded API server |
+| Authentication | Host cluster bearer token (for example, an EKS IAM token) | [Platform access key](../../../authentication/access-keys.mdx) |
+| APIService visibility on host EKS | Shows the registration | Shows nothing |
+
+The endpoint shape differs by deployment type:
+
+- **Standard platform**: `${EKS_ENDPOINT}/apis/management.loft.sh/v1/<resource>`
+- **Multi-region platform**: `https://<platform-url>/kubernetes/management/apis/management.loft.sh/v1/<resource>`
+
+### Call the management API
+
+Build requests against:
+
+```text
+https://<platform-url>/kubernetes/management/apis/management.loft.sh/v1/<resource>
+```
+
+Authenticate with a platform access key as a bearer token. For instructions on
+[creating an access key](../../../authentication/access-keys.mdx#create-an-access-key),
+scope it to the project, user, or tenant cluster the caller needs.
+
+#### Use kubectl
+
+<InterpolatedCodeBlock
+  code={
+`kubectl --server https://[[VAR:PLATFORM_HOST:platform.example.com]]/kubernetes/management \\
+  --token "$ACCESS_KEY" \\
+  get virtualclusterinstances -A`
+  }
+  language="bash"
+/>
+
+#### Use curl
+
+<InterpolatedCodeBlock
+  code={
+`curl -H "Authorization: Bearer $ACCESS_KEY" \\
+  https://[[VAR:PLATFORM_HOST:platform.example.com]]/kubernetes/management/apis/management.loft.sh/v1/projects`
+  }
+  language="bash"
+/>
+
+#### Register an Argo CD cluster
+
+Register the platform as an Argo CD cluster by creating a `cluster`-type
+secret in the Argo CD namespace. Argo CD treats `server` as the API endpoint
+and authenticates with `bearerToken`:
+
+<InterpolatedCodeBlock
+  code={
+`apiVersion: v1
+kind: Secret
+metadata:
+  name: platform-[[VAR:REGION:region-a]]
+  namespace: argocd
+  labels:
+    argocd.argoproj.io/secret-type: cluster
+stringData:
+  name: platform-[[VAR:REGION:region-a]]
+  server: https://[[VAR:PLATFORM_HOST:platform.example.com]]/kubernetes/management
+  config: |
+    {
+      "bearerToken": "[[VAR:ACCESS_KEY:<spec.key from your AccessKey>]]",
+      "tlsClientConfig": { "insecure": false }
+    }`
+  }
+  language="yaml"
+/>
+
+For the wider Argo CD integration (project import, SSO, AppProject sync), see
+[Argo CD integration](../../../../integrations/argocd.mdx).
+
+### Upgrade from 4.7.x to 4.8.0
+
+This routing change shipped in platform version 4.8.0 and applies to
+multi-region deployments only. Automation that called the management API using
+the host EKS endpoint stops working after the upgrade. There's no in-place
+compatibility shim.
+
+Update callers to use the platform HTTPS endpoint. Switch authentication
+from your host-cluster bearer token (for example, an EKS IAM token) to a
+platform access key.
+
+Standard (non-multi-region) platform deployments are unaffected. The host EKS
+APIService keeps working as before.
+
+### Troubleshoot common errors
+
+| Symptom | Cause | Resolution |
+| --- | --- | --- |
+| `404` from the host EKS endpoint | Caller is using the host EKS endpoint on a multi-region platform | Switch to the platform HTTPS endpoint shown in [Call the management API](#call-the-management-api) |
+| The host EKS cluster has no `v1.management.loft.sh` APIService | Expected on multi-region, as the APIService lives inside the embedded API server | None; verify from inside the embedded API server if needed |
+| `401` or `403` from the platform endpoint | Access key is invalid, expired, or scoped without permission for the requested resource | Regenerate the key or widen its scope; check the owning user's role bindings |
+| TLS verification errors against the platform endpoint | Caller doesn't trust the platform's certificate chain | Configure the same CA bundle the platform UI uses; avoid `insecure=true` in production |
