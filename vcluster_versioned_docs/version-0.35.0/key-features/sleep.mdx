@@ -96,7 +96,7 @@ Auto sleep involves two main actions: **sleeping** and **waking**. These actions
 - Bare pods are not restored: Bare pods deleted during the Sleeping step cannot be recovered.
 
 ### Without an agent
-**How it works**: The tenant cluster instance manages auto sleep itself by scaling down workloads (pods, Deployments, StatefulSets, etc.) while keeping the control plane active.
+**How it works**: The tenant cluster instance manages auto sleep itself by scaling down workloads, such as pods, Deployments, and StatefulSets, while keeping the control plane active.
 
 **What happens**:
 - Workloads are scaled down to zero replicas
@@ -169,11 +169,28 @@ spec:
 Auto sleep tracks certain actions to detect activity and wake the cluster when necessary. To wake a sleeping cluster or update the last active time, auto sleep captures the following actions:
 
 - Accessing cluster resources through API calls (for example `kubectl get <resource>`).
-- Attempting to contact ingress endpoints (NGINX and Istio only).
+- Attempting to contact ingress endpoints.
+- Attempting to contact Gateway API `HTTPRoute` endpoints when the selected Gateway controller supports request mirroring.
 
 :::note
 Ingress activity detection with the [ingress-nginx](https://github.com/kubernetes/ingress-nginx/tree/main) (deprecated) ingress controller relies on the [mirror-target](https://github.com/kubernetes/ingress-nginx/blob/main/docs/user-guide/nginx-configuration/annotations.md#mirror) annotation, which will overwrite any previously set mirror-target annotation.
 :::
+
+#### Gateway API HTTPRoute activity detection {#gateway-api-httproute-activity-detection}
+
+Gateway-backed auto sleep for HTTP traffic depends on `HTTPRoute` request mirroring support. Platform uses a managed request mirror rule to observe traffic and update activity for the sleeping tenant cluster.
+
+A Gateway controller can support `HTTPRoute` traffic without supporting request mirroring. In that case, Gateway endpoints can still be usable, but automatic wakeup from HTTP traffic is not available through that controller.
+
+Check the connected cluster status and Gateway controller documentation before relying on Gateway-backed wakeup. If a controller supports request mirroring but does not advertise it in `GatewayClass` status, set the `sleepmode.loft.sh/request-mirror-controller-allowlist` annotation on the Platform `Cluster` resource with the controller names that should be treated as request-mirror-capable.
+
+If Gateway API CRDs are installed on a Control Plane Cluster after vCluster Platform is already running, restart Platform. This runs CRD discovery again and starts the Gateway API sleep-mode controllers:
+
+```bash title="Restart vCluster Platform"
+kubectl rollout restart deployment/loft -n vcluster-platform
+```
+
+If your Platform deployment or namespace differs, adjust the command.
 
 #### Last activity update interval
 
@@ -181,7 +198,7 @@ The platform periodically checks for activity to determine when an environment s
 
 By default, the interval is **5 minutes**, meaning that the inactivity timeout will only be reset if it occurs more than 5 minutes after the previous update.
 
-You can customize this interval by setting the platform environment variable `SLEEP_MODE_LAST_ACTIVITY_UPDATE_INTERVAL` via the `vCluster-platform` chart Helm values:
+You can customize this interval by setting the platform environment variable `SLEEP_MODE_LAST_ACTIVITY_UPDATE_INTERVAL` in the `vCluster-platform` chart Helm values:
 
 ```yaml
 env:
@@ -223,13 +240,13 @@ It's possible that certain requests such as `kubectl exec` or `kubectl port-forw
 
 There are multiple ways to approach this problem of active connections preventing a tenant cluster from sleeping:
 
-1. You can tell the platform to timeout idle streaming connections (such as `kubectl exec`, `kubectl port-forward` etc.) after a certain time period with the annotation `loft.sh/streaming-connection-idle-timeout: '3600'` on a **cluster**. With this annotation set, the platform will close connections automatically that are idle after the given seconds. By default, the platform will not timeout any connections. This will only apply to new opened connections to that cluster and not affect already running connections.
-2. Tell the platform to ignore all active connections for determining tenant cluster activity via the annotation `sleepmode.loft.sh/ignore-active-conntections: 'true'`. This will put a tenant cluster to sleep even though there still might be open connections such as `kubectl exec` or `kubectl port-forward`.
+1. You can tell the platform to time out idle streaming connections, such as `kubectl exec` and `kubectl port-forward`, after a certain time period with the annotation `loft.sh/streaming-connection-idle-timeout: '3600'` on a **cluster**. With this annotation set, the platform will close connections automatically that are idle after the given seconds. By default, the platform will not time out any connections. This will only apply to new opened connections to that cluster and not affect already running connections.
+2. Tell the platform to ignore all active connections for determining tenant cluster activity with the annotation `sleepmode.loft.sh/ignore-active-conntections: 'true'`. This will put a tenant cluster to sleep even though there still might be open connections such as `kubectl exec` or `kubectl port-forward`.
 3. Configure your kubelets with the flag `--streaming-connection-idle-timeout duration` (see [Kubernetes docs](https://kubernetes.io/docs/reference/command-line-tools-reference/kubelet/)). This behaves essentially as option 1, however this configuration is independent of the platform.
 
 ### Connect to the platform
 
-When you connect a tenant cluster instance that has sleep configured to the platform (via an agent), the platform agent automatically takes over auto sleep management. The tenant cluster instance stops managing its own auto sleep and the agent handles all sleep/wake operations.
+When you connect a tenant cluster instance that has sleep configured to the platform through an agent, the platform agent automatically takes over auto sleep management. The tenant cluster instance stops managing its own auto sleep and the agent handles all sleep/wake operations.
 
 ### Transition from instance-managed to agent-managed auto sleep
 
@@ -253,6 +270,10 @@ sync:
     ingresses:
       enabled: true
 ```
+
+## Gateway API configuration
+
+For new HTTP endpoint deployments, prefer Gateway API over ingress-nginx. To publish tenant-created Gateway API routes through the Control Plane Cluster, enable [Gateway API sync](../configure/vcluster-yaml/sync/to-host/networking/gateway-api.mdx). To let tenants attach routes to platform-owned shared Gateways, configure [imported Gateways and GatewayClasses](../configure/vcluster-yaml/sync/from-host/gateways.mdx).
 
 ### Reachability for ingress activity detection
 
