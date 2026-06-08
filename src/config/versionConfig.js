@@ -12,6 +12,8 @@ export const vclusterHiddenVersions = ["0.35.0"];
 export const platformHiddenVersions = ["4.10.0"];
 
 export const vclusterEOLVersions = [
+  { to: "https://vcluster-v0-32--vcluster-docs-site.netlify.app/docs/vcluster/", label: "v0.32 (EOS)" },
+  { to: "https://vcluster-v0-31--vcluster-docs-site.netlify.app/docs/vcluster/", label: "v0.31 (EOS)" },
   { to: "https://vcluster.com/docs/v0.30", label: "v0.30 (EOL)" },
   { to: "https://vcluster.com/docs/v0.29", label: "v0.29 (EOL)" },
   { to: "https://vcluster.com/docs/v0.28", label: "v0.28 (EOL)" },
