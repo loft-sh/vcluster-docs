@@ -26,6 +26,7 @@ export const vclusterEOLVersions = [
 ];
 
 export const platformEOLVersions = [
+  { to: "https://platform-v4-6--vcluster-docs-site.netlify.app/docs/platform/", label: "v4.6 (EOS)" },
   { to: "https://platform-v4-5--vcluster-docs-site.netlify.app/docs/platform/", label: "v4.5 (EOS)" },
   { to: "https://platform-v4-4--vcluster-docs-site.netlify.app/docs/platform/", label: "v4.4 (EOS)" },
   { to: "https://platform-v4-3--vcluster-docs-site.netlify.app/docs/platform/", label: "v4.3 (EOL)" },
