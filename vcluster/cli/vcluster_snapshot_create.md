@@ -43,9 +43,10 @@ vcluster snapshot create my-vcluster --driver docker
       --customer-key-encryption-file string   AWS customer key encryption file used for SSE-C. Mutually exclusive with kms-key-id
       --driver string                         The driver to use for managing the virtual cluster, can be either helm, platform, or docker.
   -h, --help                                  help for create
-      --include-volumes                       Create CSI volume snapshots (shared and private nodes only)
+      --include-volumes                       Create CSI volume snapshots (shared and private nodes only). Deprecated: volume snapshot and restore will be removed in an upcoming release.
       --kms-key-id string                     AWS KMS key ID that is configured for given S3 bucket. If set, aws-kms SSE will be used
       --server-side-encryption string         AWS Server-Side encryption algorithm
+      --snapshot-temp-dir string              Temporary directory for snapshot operations. If set to empty string, the OS default directory for temporary files will be used
       --standalone                            Target the local standalone vCluster on this host
 ```
 

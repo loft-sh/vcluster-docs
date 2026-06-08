@@ -31,9 +31,8 @@ flowchart LR
         Destroy("delete VirtualMachine")
     end
 
-    subgraph host_cluster["KubeVirt Host Cluster"]
+    subgraph host_cluster["KubeVirt Control Plane Cluster"]
         direction TB
-        KubeVirtVM["KubeVirt VirtualMachine"]
         KubeVirtVM["KubeVirt VirtualMachine"]
     end
 
@@ -79,6 +78,87 @@ Here's the workflow:
 This entire process depends on the guest OS image having **cloud-init installed and enabled**. Furthermore, the image must be compatible with KubeVirt's `cloudInitNoCloud` data source. Standard cloud images for distributions like Ubuntu are generally compatible. If you use custom images, you must ensure they meet this requirement.
 :::
 
+## Infrastructure deployment
+
+The KubeVirt provider can deploy the KubeVirt and CDI operators onto the control plane cluster, or use an installation that you manage yourself. By default the provider expects KubeVirt to already be installed on the target cluster. To have the provider install it, enable the deployment under `spec.kubeVirt.deploy.kubevirt`:
+
+```yaml
+apiVersion: management.loft.sh/v1
+kind: NodeProvider
+metadata:
+  name: kubevirt-provider
+spec:
+  kubeVirt:
+    clusterRef:
+      cluster: my-cluster
+      namespace: vcluster-platform
+    deploy:
+      kubevirt:
+        enabled: true
+        helmValues: |
+          kubevirt:
+            operator:
+              kubevirtVersion: v1.8.2
+```
+
+**Deployment fields (NodeProvider `kubeVirt.deploy.kubevirt`):**
+
+| Field | Description | Default |
+|---|---|---|
+| `enabled` | Deploy the KubeVirt and CDI operators. Immutable after creation. | `false` |
+| `chartRepo` | Override the Helm chart repository. | `oci://ghcr.io/loft-sh/charts` |
+| `chart` | Override the Helm chart name. | `kubevirt` |
+| `version` | Override the Helm chart version. | Bundled version |
+| `helmValues` | Raw YAML applied to both the operators and the KubeVirt and CDI resources (see below). | — |
+
+**Configure the operators:**
+
+| Value | Description | Default |
+|---|---|---|
+| `kubevirt.operator.image.registry` / `.org` / `.name` / `.tag` | KubeVirt operator image. | `quay.io` / `kubevirt` / `virt-operator` / `v1.8.2` |
+| `kubevirt.operator.kubevirtVersion` | KubeVirt version the operator installs. | `v1.8.2` |
+| `cdi.operator.image.registry` / `.org` / `.name` / `.tag` | CDI operator image. | `quay.io` / `kubevirt` / `cdi-operator` / `v1.65.0` |
+| `cdi.operator.cdiVersion` | CDI version the operator installs. | `v1.65.0` |
+| `cdi.operator.serviceMonitorNamespace` | Namespace for the CDI `ServiceMonitor`. Empty disables its creation. | `""` |
+| `imagePullSecrets` | Pull secrets for the operator images. | `[]` |
+
+**Configure the KubeVirt and CDI resources:**
+
+The same `helmValues` also populate the `KubeVirt` and `CDI` resources that the provider applies. The platform renders `kubevirt.spec` verbatim into the `KubeVirt` resource `.spec`, and `cdi.spec` into the `CDI` resource `.spec`, so KubeVirt and CDI configuration such as feature gates is controllable from here.
+
+| Value | Description | Default |
+|---|---|---|
+| `kubevirt.spec` | Rendered into the `KubeVirt` resource `.spec`. | Minimal configuration, no feature gates. |
+| `cdi.spec` | Rendered into the `CDI` resource `.spec`. | Feature gates `HonorWaitForFirstConsumer` and `WebhookPvcRendering`, Linux node selectors. |
+
+For example, to enable a KubeVirt feature gate and add a CDI feature gate:
+
+```yaml
+deploy:
+  kubevirt:
+    enabled: true
+    helmValues: |
+      kubevirt:
+        spec:
+          configuration:
+            developerConfiguration:
+              featureGates:
+                - LiveMigration
+      cdi:
+        spec:
+          config:
+            featureGates:
+              - HonorWaitForFirstConsumer
+              - WebhookPvcRendering
+              - ExpandDisks
+```
+
+:::note Guarded against existing installations
+Before deploying, the platform checks the target cluster for the KubeVirt CRD (`kubevirts.kubevirt.io`). When KubeVirt is already present, the provider does not redeploy it. The provider removes KubeVirt on provider deletion only when it deployed it (`enabled: true`).
+
+`deploy.kubevirt.enabled`, `clusterRef.cluster` and `clusterRef.namespace` are immutable after creating the provider. To change them, create a new provider.
+:::
+
 ## Configuration
 
 A KubeVirt `NodeProvider` configuration consists of a reference to the control plane cluster, a base VM template, and a list of node types.
@@ -100,8 +180,8 @@ spec:
   kubeVirt:
     # clusterRef allows configuration of where KubeVirt is running and where VirtualMachines will be created.
     clusterRef:
-      cluster: test-kubevirt-1 # is a name of Host Cluster already connected to Platform
-      namespace: vcluster-platform # is a namespace in this host cluster where VirtualMachines will be created
+      cluster: test-kubevirt-1 # name of the control plane cluster already connected to the platform
+      namespace: vcluster-platform # namespace in this control plane cluster where VirtualMachines will be created
     # Base template for all Virtual Machines created by this provider
     virtualMachineTemplate:
       spec:
@@ -348,7 +428,7 @@ Verify the VirtualMachine on the Target Cluster.
 The `NodeClaim` triggers the `NodeProvider` to create a `VirtualMachine`. Switch your `kubectl` context to the target KubeVirt cluster (`test-kubevirt-1`) and inspect the VM object.
 
 ```bash
-# Switch context to the KubeVirt host cluster
+# Switch context to the KubeVirt control plane cluster
 kubectx test-kubevirt-1
 
 # Check for the running Virtual Machine
@@ -468,15 +548,16 @@ KubeVirt provisioning supports additional properties for network configuration w
 Specifies a CIDR range for allocating IP addresses to the VM. Example: `10.100.0.0/24`
 
 **Required properties:**
-- `kubevirt.vcluster.com/network-interface`: Interface name in the VM
 - `kubevirt.vcluster.com/network-nameservers`: DNS nameservers
+
+**Optional properties:**
+- `kubevirt.vcluster.com/network-interface`: Interface name in the VM (defaults to `enp1s0`)
 
 #### `kubevirt.vcluster.com/network-interface`
 
 **Type:** `string`
-**Required with:** network configuration
 
-The name of the network interface in the VM to configure, for example `eth0`, `eth1`, or `enp1s0`. It should normally match the default name from the operating system's device enumeration.
+The name of the network interface in the VM to configure, for example `eth0`, `eth1`, or `enp1s0`. It should normally match the default name from the operating system's device enumeration. Optional for CIDR-based configuration. Defaults to `enp1s0` when unset.
 
 #### `kubevirt.vcluster.com/network-ip-range`
 
@@ -508,6 +589,26 @@ When set, this overrides automatic network configuration.
 References a Multus `NetworkAttachmentDefinition` that already exists in the target namespace on the control plane cluster. The provider injects a `multus` network and a corresponding interface into the VM template using this NAD. If a network or interface with the same name already exists in the template, it is overwritten.
 
 This property is the supported way to attach a VM to an additional network such as a bridge. Set it on the NodeType for VMs that should share a network, or on the NodeClaim for a one-off attachment.
+
+The following properties tune the injected interface. They only take effect when `kubevirt.vcluster.com/network-attachment-definition` is set.
+
+#### `kubevirt.vcluster.com/interface-binding`
+
+**Type:** `string`
+
+Sets the binding method for the injected interface. One of `bridge`, `masquerade`, `sriov`, `passt`, or `slirp`. Defaults to `bridge`.
+
+#### `kubevirt.vcluster.com/interface-template`
+
+**Type:** `string` (YAML)
+
+A partial KubeVirt interface definition merged over the default injected interface (`{name: multus, bridge: {}}`). Use it for binding-specific options that `kubevirt.vcluster.com/interface-binding` does not cover. The interface name is always forced to `multus`, because KubeVirt requires the interface name to match the network name.
+
+#### `kubevirt.vcluster.com/multus-default`
+
+**Type:** `string` (`"true"` or `"false"`)
+
+When `"true"`, the Multus network becomes the VM's default network, and the pod network and its interface are removed, since KubeVirt rejects a VM that has both. Defaults to `"false"`.
 
 ### Node environment selection
 

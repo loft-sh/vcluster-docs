@@ -15,7 +15,7 @@ vcluster node upgrade [flags]
 
 ```
       --binaries-path string       The path to the kubeadm binaries (default "/usr/local/bin")
-      --bundle-repository string   The repository to use for downloading the Kubernetes bundle (default "https://github.com/loft-sh/kubernetes/releases/download")
+      --bundle-repository string   The repository to use for downloading the Kubernetes bundle. If empty, the default baked into the upgrade image is used.
       --cni-binaries-path string   The path to the CNI binaries (default "/opt/cni/bin")
   -h, --help                       help for upgrade
       --image string               The image to use for the upgrade

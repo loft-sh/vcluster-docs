@@ -27,3 +27,11 @@ vcluster version [flags]
   -n, --namespace string    The kubernetes namespace to use
   -s, --silent              Run in silent mode and prevents any vcluster log output except panics & fatals
 ```
+
+```
+
+```
+
+
+## Flags
+## Global and inherited flags

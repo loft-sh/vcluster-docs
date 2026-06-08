@@ -55,6 +55,7 @@ vcluster create test --namespace test
       --set-parameters stringArray        [PLATFORM] If a template is used, this can be used to set a specific parameter. E.g. --set-parameter 'my-param=my-value'
       --set-params stringArray            [PLATFORM] If a template is used, this can be used to set a specific parameter. E.g. --set-param 'my-param=my-value'
       --skip-wait                         [PLATFORM] If true, will not wait until the virtual cluster is running
+      --snapshot-temp-dir string          Temporary directory for snapshot operations. If set to empty string, the OS default directory for temporary files will be used
       --team string                       [PLATFORM] The team to create the space for
       --template string                   [PLATFORM] The vCluster platform template to use
       --template-version string           [PLATFORM] The vCluster platform template version to use
