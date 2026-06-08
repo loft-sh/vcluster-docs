@@ -1,0 +1,188 @@
+---
+title: Confidential compute
+sidebar_label: Confidential compute
+sidebar_position: 8
+description: Understand how vCluster, private nodes, vMetal, and vNode fit with confidential compute requirements.
+sidebar_class_name: private-nodes standalone
+---
+
+import TenancySupport from '../../../../_fragments/tenancy-support.mdx';
+import ConfidentialComputeArchitecture from '@site/static/media/diagrams/confidential-compute-architecture.svg';
+
+<TenancySupport privateNodes="true" standalone="true" />
+
+Confidential compute protects workload code and data while it is in use by
+running it inside a hardware-backed trusted execution environment, such as
+Intel TDX or AMD SEV-SNP. A confidential compute platform combines hardware,
+firmware, a confidential runtime, workload policy, attestation, and tenant
+Kubernetes isolation.
+
+vCluster, vNode, and vMetal fit into that build as platform layers around the
+confidential runtime:
+
+- **vCluster** provides each tenant with an isolated Kubernetes control plane
+  and a scheduling boundary for workloads.
+- **Private nodes** give the tenant dedicated worker nodes for workloads that
+  require dedicated compute.
+- **Auto nodes** connect workload demand to node provisioning through vCluster
+  Platform.
+- **vMetal** provisions and recycles physical servers that have the required
+  CPU, firmware, OS image, drivers, and runtime configuration.
+- **vNode** adds a runtime isolation layer for privileged or untrusted
+  workloads inside the tenant environment.
+- **Kata Containers, Confidential Containers, and attestation services** provide
+  the hardware-backed confidential runtime and verification flow.
+
+## Reference architecture
+
+Use vCluster as the tenant Kubernetes layer, vMetal as the bare-metal lifecycle
+layer, and vNode as an additional tenant workload isolation layer. Then install
+and operate the confidential compute runtime on the private nodes selected for
+confidential workloads.
+
+<figure>
+  <ConfidentialComputeArchitecture style={{width: '100%', height: 'auto'}} role="img" aria-label="Confidential compute architecture with vCluster, vMetal, vNode, and a confidential container runtime" />
+  <figcaption>Confidential compute architecture with vCluster, vMetal, vNode, and a confidential container runtime</figcaption>
+</figure>
+
+In this model, vCluster decides which tenant gets access to which Kubernetes
+environment, auto nodes selects the right capacity, vMetal prepares and joins
+the machine, vNode strengthens the workload boundary, and the confidential
+runtime executes the workload in the hardware-backed environment.
+
+## Implementation checklist
+
+1. Select hardware that supports the target confidential compute technology.
+2. Configure firmware and host OS images for TDX, SEV-SNP, or your selected
+   hardware-backed environment.
+3. Install and configure Kata Containers, Confidential Containers, runtime
+   classes, and attestation services on the private node image.
+4. Register the hardware in vMetal or another node provider.
+5. Add node type properties that describe the confidential compute capability.
+6. Configure `privateNodes.autoNodes` to select those node types.
+7. Add vNode where tenant workloads need stronger runtime isolation.
+8. Validate scheduling, RuntimeClass selection, attestation, and workload
+   execution from inside the tenant vCluster.
+
+## Build the capacity layer
+
+Start by creating node types that represent confidential-capable hardware.
+Node type properties become selector requirements, so you can expose hardware
+features such as `tdx`, `sev-snp`, GPU model, firmware track, or image family
+to vCluster auto nodes.
+
+```yaml title="NodeProvider with confidential-capable node type"
+apiVersion: management.loft.sh/v1
+kind: NodeProvider
+metadata:
+  name: bare-metal
+spec:
+  # Use the Metal3 node provider when capacity comes from physical servers.
+  metal3:
+    clusterRef:
+      cluster: datacenter
+      namespace: metal3
+    nodeTypes:
+      - name: tdx-large
+        resources:
+          cpu: "64"
+          memory: 512Gi
+        # Expose confidential compute traits as node type properties.
+        properties:
+          confidential-compute: tdx
+        bareMetalHosts:
+          # Select only BareMetalHost resources prepared for TDX workloads.
+          selector:
+            matchLabels:
+              confidential-compute: tdx
+```
+
+This node provider creates a `tdx-large` node type. Auto nodes can select this
+node type when a tenant cluster requests TDX-capable capacity.
+
+Use [vMetal](https://www.vmetal.ai/docs/) when the confidential-capable
+capacity comes from physical servers. vMetal can register servers, select them
+through `BareMetalHost` labels, provision the OS image, and join the server to
+the tenant cluster as a private node.
+
+Prepare the OS image and bootstrap flow for the confidential runtime before
+offering the node type to tenants. This typically includes firmware settings,
+kernel support, container runtime configuration, a RuntimeClass, and access
+to the attestation service used by your environment.
+
+## Route workloads to confidential nodes
+
+Configure private nodes with auto nodes and require the confidential-capable
+node type property. vCluster Platform provisions matching nodes when the tenant
+cluster needs capacity.
+
+```yaml title="vcluster.yaml"
+privateNodes:
+  # Enable dedicated worker nodes for this tenant cluster.
+  enabled: true
+  autoNodes:
+    - provider: bare-metal
+      dynamic:
+        - name: confidential-workers
+          # Require a node type that advertises TDX support.
+          nodeTypeSelector:
+            - property: confidential-compute
+              operator: In
+              values:
+                - tdx
+```
+
+This configuration lets vCluster Platform provision matching private nodes when
+the tenant cluster needs confidential-capable worker capacity.
+
+Tenant workloads can then use the RuntimeClass that your node image exposes
+for Kata Containers or Confidential Containers.
+
+```yaml title="Confidential workload"
+apiVersion: v1
+kind: Pod
+metadata:
+  name: confidential-workload
+spec:
+  # Use the confidential runtime configured on the private node image.
+  runtimeClassName: kata-qemu-tdx
+  # Schedule only onto nodes that advertise TDX support.
+  nodeSelector:
+    confidential-compute: tdx
+  containers:
+    - name: app
+      image: ghcr.io/example/confidential-app:1.0.0
+```
+
+This pod runs with the confidential RuntimeClass and schedules onto nodes
+that match the confidential compute property.
+
+## Add vNode for tenant isolation
+
+vNode adds a runtime isolation layer for tenant workloads. It is useful when
+tenants need privileged workloads, host-like APIs, or stronger node-level
+boundaries without giving those workloads direct access to the underlying host.
+
+For confidential compute builds, use vNode as an isolation layer around tenant
+workloads and pair it with the confidential RuntimeClass exposed on prepared
+private nodes. This is a useful pattern for platform teams that need both tenant
+isolation and hardware-backed workload execution.
+
+Review the [vNode architecture](https://www.vnode.com/docs/architecture/) and
+[vNode limitations](https://www.vnode.com/docs/limitations/) while designing
+the runtime stack. Validate vNode, Kata Containers, Confidential Containers,
+the node image, and the target hardware together before publishing the node
+type to tenant teams.
+
+## Learn more
+
+Use these upstream resources to plan the confidential runtime and attestation
+parts of the platform.
+
+| Resource | Use it for |
+|---|---|
+| [Kata Containers](https://katacontainers.io/) | Lightweight virtualized containers |
+| [Kata Containers documentation](https://github.com/kata-containers/kata-containers/tree/main/docs) | Runtime architecture and configuration |
+| [Confidential Containers](https://confidentialcontainers.org/) | Kubernetes workloads that use hardware-backed trusted execution environments |
+| [Confidential Containers documentation](https://github.com/confidential-containers/documentation) | Operator, runtime, and attestation guidance |
+| [CNCF TAG Confidential Computing](https://tag-confidential-computing.cncf.io/) | Community resources and ecosystem background |
