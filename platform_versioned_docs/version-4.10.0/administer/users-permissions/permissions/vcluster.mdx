@@ -1,0 +1,235 @@
+---
+title: Manage access to the tenant cluster
+
+sidebar_label: vCluster 
+sidebar_position: 3
+---
+
+import Tabs from "@theme/Tabs";
+import TabItem from "@theme/TabItem";
+import Flow, { Step } from "@site/src/components/Flow";
+import NavStep from "@site/src/components/NavStep";
+import Label from "@site/src/components/Label";
+import Button from "@site/src/components/Button";
+
+# Management access to the tenant cluster
+
+Management access controls who can view, edit, or configure the tenant cluster object in the platform. It is separate from in-cluster access, which governs permissions inside the Kubernetes environment of the tenant cluster.
+
+## Default management access
+
+By default, the following users and roles have management access to a tenant cluster:
+
+* **Global administrators**—Access all tenant clusters on the platform.
+* **Project administrators**—Access all tenant clusters within their assigned projects.
+* **Tenant cluster owners**—Automatically receive access to the specific tenant cluster they create or own.
+* **Users with physical cluster permissions**—Any user or team with RBAC permissions on the underlying (physical) cluster and the `use` verb on the `virtualclusterinstances` resource in the `management.loft.sh` API group can access tenant clusters running on that cluster.
+
+## Grant management access using the UI
+
+To extend access to additional users or teams, use the **Permissions** section for each tenant cluster in the platform UI:
+
+<Flow id="grant-management-access">
+  <Step>
+  Open the **Project** dropdown in the top-left corner and select the project that contains the tenant cluster.
+  </Step>
+  <Step>
+  Click **Tenant Clusters** in the sidebar to view the list.
+  </Step>
+  <Step>
+  Click **Edit** on the target tenant cluster.
+  </Step>
+  <Step>
+  Open the **Permissions** tab.
+  </Step>
+  <Step>
+  Use the **Add permission to** field to select the user or team.
+  </Step>
+  <Step>
+  If the user or team does not appear, confirm that they have access to the project.
+  </Step>
+  <Step>
+  Choose a **ClusterRole** to assign (e.g., `cluster-admin`, `edit`, or `view`). This role determines the user's Kubernetes permissions inside the tenant cluster.
+  </Step>
+  <Step>
+  Click **Save changes**.
+  </Step>
+</Flow>
+
+The platform grants the selected user or team management access to the tenant cluster object.
+
+## vCluster roles
+
+vCluster roles define what users and teams can do inside the tenant cluster. Kubernetes RBAC governs this access.
+
+### Default cluster role assignment
+
+By default, the platform assigns the `cluster-admin` Kubernetes ClusterRole to users with tenant cluster access. This role grants full access in all namespaces.
+
+### Change the default cluster role
+
+Administrators can override the default role in the tenant cluster template or in the tenant cluster configuration.
+
+<Flow id="change-default-role">
+  <Step>
+  Open the tenant cluster or template configuration.
+  </Step>
+  <Step>
+  Locate the **Default Cluster Role** field.
+  </Step>
+  <Step>
+  Enter a more limited role such as `edit` or `view`.
+  </Step>
+  <Step>
+  Save the updated configuration.
+  </Step>
+</Flow>
+
+### Define custom role mapping rules
+
+Use mapping rules to assign specific users or teams to specific cluster roles.
+
+- A user or team that matches at least one rule does **not** receive the default role.
+- If multiple rules match, the system assigns all specified roles.
+- If no rule matches, the system assigns the default role.
+
+<!-- vale off -->
+
+<Flow id="configure-role-mapping">
+  <Step>
+  Open the tenant cluster or template YAML configuration.
+  </Step>
+  <Step>
+  Locate or create the `access.rules` section.
+  </Step>
+  <Step>
+  List `subjects` for each user or team.
+  </Step>
+  <Step>
+  Define the ClusterRole for each rule.
+  </Step>
+  <Step>
+  Save and apply the configuration.
+  </Step>
+</Flow>
+
+<!-- vale on -->
+
+#### Example
+
+```yaml
+apiVersion: management.loft.sh/v1
+kind: VirtualCluster
+metadata:
+  name: example-vcluster
+spec:
+  defaultClusterRole: cluster-admin
+  access:
+    rules:
+      - subjects:
+          - kind: User
+            name: Person 1
+        clusterRole: edit
+      - subjects:
+          - kind: Team
+            name: DevTeam
+        clusterRole: view
+```
+
+In this example:
+
+- Person 1 receives the `edit` role.
+- DevTeam receives the `view` role.
+- Person 1, if part of DevTeam, receives both roles.
+- All other users default to `cluster-admin`.
+
+Custom mapping rules allow more precise and secure access control inside the tenant cluster.
+
+### Custom ClusterRoles
+
+The platform UI's **Permissions** section lists only the four built-in roles: `cluster-admin`, `admin`, `edit`, and `view`. To use any other role, inject it into the tenant cluster using the `objects` field and reference it by name in `access.rules`.
+
+Two approaches are available depending on what you need:
+
+- **Define a new ClusterRole** — specify exactly the rules you want. Use this when you need to remove specific permissions from a built-in role.
+- **Aggregate into a built-in role** — add rules to an existing role using Kubernetes label selectors. Use this when you need to extend a built-in role with additional access, without redefining its full rule set.
+
+:::note
+If the tenant cluster is deployed from a template, add `objects` to the **template's** `spec.template`. The template controls those fields and overrides any changes made directly on the tenant cluster.
+:::
+
+#### Define a new ClusterRole
+
+Kubernetes RBAC is additive. A ClusterRole only grants what its rules explicitly allow. To restrict specific verbs from a built-in role, define a new ClusterRole that includes only the permissions you want.
+
+One common scenario is a team that uses `edit` but must not be able to create PersistentVolumeClaims. For example, a shared PersistentVolume references a sensitive secret, and unrestricted PVC creation would expose that access.
+
+```yaml
+apiVersion: management.loft.sh/v1
+kind: VirtualClusterTemplate
+metadata:
+  name: restricted-storage
+spec:
+  template:
+    objects: |
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRole
+      metadata:
+        name: edit-no-pvc-write
+      rules:
+        - apiGroups: [""]
+          resources: ["pods", "services", "configmaps", "secrets", "endpoints"]
+          verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+        - apiGroups: [""]
+          resources: ["persistentvolumeclaims"]
+          verbs: ["get", "list", "watch", "delete"]
+        - apiGroups: ["apps"]
+          resources: ["deployments", "statefulsets", "daemonsets", "replicasets"]
+          verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+    access:
+      defaultClusterRole: cluster-admin
+      rules:
+        - teams:
+            - storage-restricted-team
+          clusterRole: edit-no-pvc-write
+```
+
+`create`, `update`, and `patch` are omitted from the `persistentvolumeclaims` entry. Those verbs return `Forbidden` for users assigned this role. To build from the full `edit` rule set, run `kubectl get clusterrole edit -o yaml`. Copy its `rules` section into `objects` and remove the verbs you want to block.
+
+#### Extend a built-in role using aggregation
+
+Kubernetes ClusterRole aggregation lets you inject additional rules into a built-in role using label selectors. The built-in `admin`, `edit`, and `view` roles each automatically aggregate any ClusterRole carrying the corresponding label:
+
+| Label | Aggregates into |
+|-------|----------------|
+| `rbac.authorization.k8s.io/aggregate-to-admin: "true"` | `admin` |
+| `rbac.authorization.k8s.io/aggregate-to-edit: "true"` | `edit` |
+| `rbac.authorization.k8s.io/aggregate-to-view: "true"` | `view` |
+
+The following example adds namespace creation to the `admin` role. Any team assigned `admin` automatically gains the added permission.
+
+```yaml
+apiVersion: management.loft.sh/v1
+kind: VirtualClusterInstance
+metadata:
+  name: vcluster-rbac-example
+spec:
+  template:
+    objects: |
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRole
+      metadata:
+        name: admin-create-namespace
+        labels:
+          rbac.authorization.k8s.io/aggregate-to-admin: "true"
+      rules:
+        - apiGroups: [""]
+          resources: ["namespaces"]
+          verbs: ["create"]
+    access:
+      defaultClusterRole: view
+      rules:
+        - teams:
+            - api-framework
+          clusterRole: admin
+```
