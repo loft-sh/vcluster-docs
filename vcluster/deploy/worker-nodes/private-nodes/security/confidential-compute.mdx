@@ -11,33 +11,27 @@ import ConfidentialComputeArchitecture from '@site/static/media/diagrams/confide
 
 <TenancySupport privateNodes="true" standalone="true" />
 
-Confidential compute protects workload code and data while it is in use by
-running it inside a hardware-backed trusted execution environment, such as
-Intel TDX or AMD SEV-SNP. A confidential compute platform combines hardware,
-firmware, a confidential runtime, workload policy, attestation, and tenant
-Kubernetes isolation.
+This page shows how to build a confidential compute platform using vCluster.
+There's no vCluster-specific confidential compute feature. vCluster provides
+tenant isolation and workload routing around the confidential runtime you deploy
+on the worker nodes. If your confidential compute stack runs on standard
+Kubernetes, it runs through vCluster.
 
-vCluster, vNode, and vMetal fit into that build as platform layers around the
-confidential runtime:
-
-- **vCluster** provides each tenant with an isolated Kubernetes control plane
-  and a scheduling boundary for workloads.
-- **Private nodes** give the tenant dedicated worker nodes for workloads that
-  require dedicated compute.
-- **Auto nodes** connect workload demand to node provisioning through vCluster
-  Platform.
-- **vMetal** provisions and recycles physical servers that have the required
-  CPU, firmware, OS image, drivers, and runtime configuration.
-- **vNode** adds a runtime isolation layer for privileged or untrusted
-  workloads inside the tenant environment.
-- **Kata Containers, Confidential Containers, and attestation services** provide
-  the hardware-backed confidential runtime and verification flow.
+Confidential compute protects workload code and data in use by running it inside
+a hardware-backed trusted execution environment. Common examples are Intel TDX
+and AMD SEV-SNP. vCluster gives each tenant a dedicated Kubernetes control plane
+and routes workloads to confidential-capable nodes using standard Kubernetes
+mechanisms such as RuntimeClass, node selectors, and node labels. The
+hardware-backed protection covers workload data on the worker nodes. Tenants get
+hardware-backed workload protection combined with Kubernetes-level isolation from
+other tenants on the same platform.
 
 ## Reference architecture
 
-Use vCluster as the tenant Kubernetes layer, vMetal as the bare-metal lifecycle
-layer, and vNode as an additional tenant workload isolation layer. Then install
-and operate the confidential compute runtime on the private nodes selected for
+Use vCluster as the tenant Kubernetes layer. Add vMetal if the
+confidential-capable capacity comes from physical servers you manage, and add
+vNode if tenant workloads need stronger runtime isolation. Then install and
+operate the confidential compute runtime on the private nodes selected for
 confidential workloads.
 
 <figure>
@@ -46,9 +40,26 @@ confidential workloads.
 </figure>
 
 In this model, vCluster decides which tenant gets access to which Kubernetes
-environment, auto nodes selects the right capacity, vMetal prepares and joins
+environment. Auto nodes selects the right capacity, vMetal prepares and joins
 the machine, vNode strengthens the workload boundary, and the confidential
-runtime executes the workload in the hardware-backed environment.
+runtime executes the workload in the hardware-backed environment. For the
+strongest isolation guarantee, assign private nodes to a single tenant cluster
+rather than sharing nodes across tenants.
+
+The components in this architecture each cover a distinct layer:
+
+- **vCluster** provides each tenant with an isolated Kubernetes control plane
+  and a scheduling boundary for workloads.
+- **Private nodes** give the tenant dedicated worker nodes for workloads that
+  require dedicated compute.
+- **Auto nodes** connect workload demand to node provisioning through vCluster
+  Platform.
+- **vMetal** (optional) provisions and recycles physical servers that have the
+  required CPU, firmware, OS image, drivers, and runtime configuration.
+- **vNode** (optional) adds a runtime isolation layer for privileged or
+  untrusted workloads inside the tenant environment.
+- **Kata Containers, Confidential Containers, and attestation services** provide
+  the hardware-backed confidential runtime and verification flow.
 
 ## Implementation checklist
 
@@ -60,9 +71,10 @@ runtime executes the workload in the hardware-backed environment.
 4. Register the hardware in vMetal or another node provider.
 5. Add node type properties that describe the confidential compute capability.
 6. Configure `privateNodes.autoNodes` to select those node types.
-7. Add vNode where tenant workloads need stronger runtime isolation.
-8. Validate scheduling, RuntimeClass selection, attestation, and workload
-   execution from inside the tenant vCluster.
+7. Enable RuntimeClass sync so tenant clusters can use the confidential runtime.
+8. Add vNode where tenant workloads need stronger runtime isolation.
+9. Validate scheduling, RuntimeClass selection, attestation, and workload
+   execution from inside the tenant cluster.
 
 ## Build the capacity layer
 
@@ -71,7 +83,7 @@ Node type properties become selector requirements, so you can expose hardware
 features such as `tdx`, `sev-snp`, GPU model, firmware track, or image family
 to vCluster auto nodes.
 
-```yaml title="NodeProvider with confidential-capable node type"
+```yaml title="NodeProvider — platform admin"
 apiVersion: management.loft.sh/v1
 kind: NodeProvider
 metadata:
@@ -100,23 +112,46 @@ spec:
 This node provider creates a `tdx-large` node type. Auto nodes can select this
 node type when a tenant cluster requests TDX-capable capacity.
 
-Use [vMetal](https://www.vmetal.ai/docs/) when the confidential-capable
-capacity comes from physical servers. vMetal can register servers, select them
-through `BareMetalHost` labels, provision the OS image, and join the server to
-the tenant cluster as a private node.
+If the confidential-capable capacity comes from physical servers,
+[vMetal](https://www.vmetal.ai/docs/) can register servers, provision the OS
+image, and join each server to the tenant cluster as a private node. Any node
+provider that can attach a prepared worker to the cluster works. vMetal is one
+option, not a requirement.
 
 Prepare the OS image and bootstrap flow for the confidential runtime before
 offering the node type to tenants. This typically includes firmware settings,
 kernel support, container runtime configuration, a RuntimeClass, and access
 to the attestation service used by your environment.
 
+:::note Attestation requirements
+The node image must include any device plugins required for quote generation,
+such as the Intel TDX attestation driver or AMD SEV-SNP device plugin. It must
+also include the Data Center Attestation Primitives libraries your attestation
+service expects. The attestation service endpoint must be reachable from the
+private nodes. If your platform enforces network policies, add an egress rule
+that permits attestation traffic before publishing the node type to tenants.
+:::
+
+## Make RuntimeClass available to tenants
+
+RuntimeClass objects live in the control plane cluster. By default, they aren't
+visible inside the tenant cluster. Enable `sync.fromHost.runtimeClasses` so that
+the RuntimeClass your node image installs is available to tenant workloads.
+
+```yaml title="vcluster.yaml — platform admin"
+sync:
+  fromHost:
+    runtimeClasses:
+      enabled: true
+```
+
 ## Route workloads to confidential nodes
 
-Configure private nodes with auto nodes and require the confidential-capable
-node type property. vCluster Platform provisions matching nodes when the tenant
-cluster needs capacity.
+A platform admin configures the tenant cluster to use confidential nodes by
+requiring the confidential-capable node type property. vCluster Platform
+provisions matching nodes when the tenant cluster needs capacity.
 
-```yaml title="vcluster.yaml"
+```yaml title="vcluster.yaml — platform admin"
 privateNodes:
   # Enable dedicated worker nodes for this tenant cluster.
   enabled: true
@@ -135,10 +170,12 @@ privateNodes:
 This configuration lets vCluster Platform provision matching private nodes when
 the tenant cluster needs confidential-capable worker capacity.
 
-Tenant workloads can then use the RuntimeClass that your node image exposes
-for Kata Containers or Confidential Containers.
+Tenants can then schedule workloads using the RuntimeClass your node image
+exposes for Kata Containers or Confidential Containers. Private nodes join the
+tenant cluster as real nodes, so their OS-level labels are visible inside the
+cluster and the `nodeSelector` works without any additional configuration.
 
-```yaml title="Confidential workload"
+```yaml title="Pod spec — tenant"
 apiVersion: v1
 kind: Pod
 metadata:
@@ -159,9 +196,9 @@ that match the confidential compute property.
 
 ## Add vNode for tenant isolation
 
-vNode adds a runtime isolation layer for tenant workloads. It is useful when
-tenants need privileged workloads, host-like APIs, or stronger node-level
-boundaries without giving those workloads direct access to the underlying host.
+vNode adds a runtime isolation layer for tenant workloads. It's useful when
+tenants need privileged workloads or host-like APIs without giving those
+workloads direct access to the underlying host.
 
 For confidential compute builds, use vNode as an isolation layer around tenant
 workloads and pair it with the confidential RuntimeClass exposed on prepared
@@ -170,9 +207,11 @@ isolation and hardware-backed workload execution.
 
 Review the [vNode architecture](https://www.vnode.com/docs/architecture/) and
 [vNode limitations](https://www.vnode.com/docs/limitations/) while designing
-the runtime stack. Validate vNode, Kata Containers, Confidential Containers,
-the node image, and the target hardware together before publishing the node
-type to tenant teams.
+the runtime stack. vNode operates at the OS layer using Linux user namespaces,
+while Kata Containers operates at the VM layer. Their interaction depends on
+kernel version and node configuration. Validate vNode, Kata Containers,
+Confidential Containers, the node image, and the target hardware together
+before publishing the node type to tenant teams.
 
 ## Learn more
 
