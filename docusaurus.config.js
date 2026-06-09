@@ -257,7 +257,7 @@ const config = {
           [remarkVersionTokens, { siteDir: __dirname }],
         ],
         lastVersion: "0.34.0",
-        onlyIncludeVersions: ["current", "0.35.0", "0.34.0", "0.33.0", "0.32.0", "0.31.0"],
+        onlyIncludeVersions: ["current", "0.35.0", "0.34.0", "0.33.0"],
         versions: {
           current: {
             label: "main 🚧",
@@ -278,16 +278,6 @@ const config = {
             banner: "none",
             badge: true,
           },
-          "0.32.0": {
-            label: "v0.32 (EOS)",
-            banner: "none",
-            badge: true,
-          },
-          "0.31.0": {
-            label: "v0.31 (EOS)",
-            banner: "none",
-            badge: true,
-          },
         },
       },
     ],
@@ -305,10 +295,16 @@ const config = {
           [remarkVersionTokens, { siteDir: __dirname }],
         ],
         lastVersion: "4.9.0",
-        onlyIncludeVersions: ["current", "4.9.0", "4.8.0", "4.7.0"],
+        onlyIncludeVersions: ["current", "4.10.0", "4.9.0", "4.8.0", "4.7.0"],
         versions: {
           current: {
             label: "main 🚧",
+          },
+          "4.10.0": {
+            label: "v4.10",
+            banner: "unreleased",
+            badge: true,
+            noIndex: true,
           },
           "4.9.0": {
             label: "v4.9 Stable",

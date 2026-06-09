@@ -1,0 +1,225 @@
+---
+sidebar_label: Upgrade
+sidebar_position: 3
+title: Upgrade a Multi-Region Platform Deployment
+description: Rolling upgrade runbook for vCluster Platform across multiple regions with minimal downtime.
+toc_max_heading_level: 3
+---
+
+import Tabs from "@theme/Tabs";
+import TabItem from "@theme/TabItem";
+import VersionBadge from '@site/src/components/VersionBadge';
+import InterpolatedCodeBlock from "@site/src/components/InterpolatedCodeBlock";
+import PageVariables from "@site/src/components/PageVariables";
+
+<VersionBadge platformVersion="v4.8.0"/>
+
+This runbook describes how to upgrade vCluster Platform across regions with
+minimal downtime. The process upgrades one region at a time while the other
+continues serving traffic through Route 53 failover.
+
+## Prerequisites
+
+- Updated values files for each region (for example, `platform-us-east-1-values.yaml` and `platform-eu-west-1-values.yaml`)
+- `kubectl` contexts configured for both clusters
+- The target chart version available in the Helm repository
+
+## Configure your values
+
+The commands in this runbook reference your cluster context ARNs. Set them below once and all commands update automatically.
+
+<details>
+<summary>Expand to set page variables</summary>
+
+<PageVariables
+  FIRST_REGION_CONTEXT="arn:aws:eks:us-east-1:123456789012:cluster/platform-multi-region-us-east-1"
+  SECOND_REGION_CONTEXT="arn:aws:eks:eu-west-1:123456789012:cluster/platform-multi-region-eu-west-1"
+/>
+
+</details>
+
+## Step 1 - Scale down the first region
+
+Pick the region to upgrade first and scale its platform deployment to zero.
+Scaling down before upgrading prevents leader election from switching between
+different platform versions during the upgrade, which could cause unexpected
+behavior. Route 53 routes all traffic to the other region while this one is
+offline.
+
+Optionally, identify which region currently holds the leader lease so you can
+choose to upgrade the non-leader region first, minimizing leader re-elections:
+
+<InterpolatedCodeBlock
+  code={
+`for CTX in [[GLOBAL:FIRST_REGION_CONTEXT]] [[GLOBAL:SECOND_REGION_CONTEXT]]; do
+  echo "=== $CTX ==="
+  kubectl --context "$CTX" get lease -n vcluster-platform -o wide
+  echo
+done`
+  }
+  language="bash"
+/>
+
+<InterpolatedCodeBlock
+  code={
+`kubectl --context [[GLOBAL:FIRST_REGION_CONTEXT]] \\
+  scale deployment -n vcluster-platform loft --replicas=0`
+  }
+  language="bash"
+/>
+
+Wait for all pods to stop before proceeding.
+
+<InterpolatedCodeBlock
+  code={
+`kubectl --context [[GLOBAL:FIRST_REGION_CONTEXT]] \\
+  get pods -n vcluster-platform -l app=loft --watch`
+  }
+  language="bash"
+/>
+
+## Step 2 - Upgrade the first region
+
+Upgrade the first region with the updated values file. The deployment stays at
+zero replicas after the upgrade because the tool doesn't override the manual
+scale-down.
+
+<Tabs
+  defaultValue="cli"
+  values={[
+    { label: "vCluster CLI", value: "cli" },
+    { label: "Helm", value: "helm" },
+  ]}
+>
+  <TabItem value="cli">
+
+<InterpolatedCodeBlock
+  code={
+`vcluster platform start \\
+  --namespace vcluster-platform \\
+  --kube-context [[GLOBAL:FIRST_REGION_CONTEXT]] \\
+  --values [[VAR:FIRST_REGION_VALUES_FILE:platform-us-east-1-values.yaml]] \\
+  --upgrade \\
+  --no-tunnel`
+  }
+  language="bash"
+/>
+
+  </TabItem>
+  <TabItem value="helm">
+
+<InterpolatedCodeBlock
+  code={
+`helm upgrade loft vcluster-platform --install --create-namespace --repository-config='' \\
+  --namespace vcluster-platform \\
+  --repo "https://charts.loft.sh/" \\
+  --version [[VAR:CHART_VERSION:4.8.0]] \\
+  --kube-context [[GLOBAL:FIRST_REGION_CONTEXT]] \\
+  -f [[VAR:FIRST_REGION_VALUES_FILE:platform-us-east-1-values.yaml]] \\
+  --server-side=true --force-conflicts`
+  }
+  language="bash"
+/>
+
+  </TabItem>
+</Tabs>
+
+## Step 3 - Upgrade the second region (rolling)
+
+Upgrade the second region without scaling down. This performs a rolling update
+so the region continues serving traffic during the upgrade.
+
+<Tabs
+  defaultValue="cli"
+  values={[
+    { label: "vCluster CLI", value: "cli" },
+    { label: "Helm", value: "helm" },
+  ]}
+>
+  <TabItem value="cli">
+
+<InterpolatedCodeBlock
+  code={
+`vcluster platform start \\
+  --namespace vcluster-platform \\
+  --kube-context [[GLOBAL:SECOND_REGION_CONTEXT]] \\
+  --values [[VAR:SECOND_REGION_VALUES_FILE:platform-eu-west-1-values.yaml]] \\
+  --upgrade \\
+  --no-tunnel`
+  }
+  language="bash"
+/>
+
+  </TabItem>
+  <TabItem value="helm">
+
+<InterpolatedCodeBlock
+  code={
+`helm upgrade loft vcluster-platform --install --create-namespace --repository-config='' \\
+  --namespace vcluster-platform \\
+  --repo "https://charts.loft.sh/" \\
+  --version [[VAR:CHART_VERSION:4.8.0]] \\
+  --kube-context [[GLOBAL:SECOND_REGION_CONTEXT]] \\
+  -f [[VAR:SECOND_REGION_VALUES_FILE:platform-eu-west-1-values.yaml]] \\
+  --server-side=true --force-conflicts`
+  }
+  language="bash"
+/>
+
+  </TabItem>
+</Tabs>
+
+Wait for the rollout to complete.
+
+<InterpolatedCodeBlock
+  code={
+`kubectl --context [[GLOBAL:SECOND_REGION_CONTEXT]] \\
+  rollout status deployment/loft -n vcluster-platform`
+  }
+  language="bash"
+/>
+
+## Step 4 - Scale up the first region
+
+Bring the first region back online.
+
+Replace the replica count with the `replicaCount` value from the region's values file.
+
+<InterpolatedCodeBlock
+  code={
+`kubectl --context [[GLOBAL:FIRST_REGION_CONTEXT]] \\
+  scale deployment -n vcluster-platform loft --replicas=[[VAR:REPLICA_COUNT:3]]`
+  }
+  language="bash"
+/>
+
+Wait for all pods to become ready.
+
+<InterpolatedCodeBlock
+  code={
+`kubectl --context [[GLOBAL:FIRST_REGION_CONTEXT]] \\
+  rollout status deployment/loft -n vcluster-platform`
+  }
+  language="bash"
+/>
+
+## Step 5 - Verify all deployments
+
+Confirm that both platform and agent deployments are running the expected image.
+
+<InterpolatedCodeBlock
+  code={
+`for CTX in [[GLOBAL:FIRST_REGION_CONTEXT]] [[GLOBAL:SECOND_REGION_CONTEXT]]; do
+  echo "=== $CTX ==="
+  echo -n "Platform: " && kubectl --context "$CTX" get deployment -n vcluster-platform loft \\
+    -o jsonpath='{.spec.template.spec.containers[0].image}' && echo
+  echo -n "Agent:    " && kubectl --context "$CTX" get deployment -n vcluster-agent loft \\
+    -o jsonpath='{.spec.template.spec.containers[0].image}' && echo
+  echo
+done`
+  }
+  language="bash"
+/>
+
+The platform automatically upgrades connected agents after the platform upgrade
+completes.
