@@ -1,0 +1,156 @@
+---
+title: Enforce storage quotas per tenant cluster
+sidebar_label: Storage quota enforcement
+sidebar_position: 7
+description: Enforce per-cluster storage limits inside vCluster Platform tenant clusters using ResourceQuota objects or Kyverno policies applied at provisioning time through templates.
+---
+
+import StorageQuotaEnforcementDiagram from '@site/static/media/diagrams/storage-quota-enforcement.svg';
+
+vCluster Platform [project quotas](../administer/projects/quotas.mdx) track aggregate storage consumption across all tenant clusters in a project. They reject new resources when the project total would be exceeded, but don't distribute limits evenly across namespaces or enforce per-PVC caps inside individual tenant clusters.
+
+This guide covers two patterns for enforcing storage limits within a tenant cluster. Both can be applied automatically at provisioning time through templates so that every new tenant cluster starts with the right guardrails in place.
+
+<figure>
+  <StorageQuotaEnforcementDiagram style={{width: '100%', height: 'auto'}} role="img" aria-label="Storage quota enforcement flow for tenant PVC creation" />
+  <figcaption>Storage quota enforcement flow for tenant PVC creation</figcaption>
+</figure>
+
+Project quotas provide the outer platform-level guardrail. ResourceQuota and Kyverno provide tenant-cluster admission controls that enforce limits before a PVC is created.
+
+Use ResourceQuota for namespace-level aggregate limits. Use Kyverno when you need per-PVC size limits or storage class allowlists. Use both when tenants need bounded total usage and per-object guardrails.
+
+## Pattern 1: ResourceQuota inside the tenant cluster
+
+A Kubernetes ResourceQuota object enforces aggregate limits on PVC count and total storage requests within a namespace. It's namespace-scoped, so cluster-wide tenant enforcement requires one per namespace. Adding one to a tenant cluster template deploys it inside every tenant cluster created from that template.
+
+### Add a ResourceQuota to a tenant cluster template
+
+In the `objects` field of a VirtualClusterTemplate, include a ResourceQuota for each namespace you want to constrain. vCluster Platform applies the objects inside the tenant cluster at provisioning time.
+
+```yaml
+apiVersion: management.loft.sh/v1
+kind: VirtualClusterTemplate
+metadata:
+  name: standard-tenant
+spec:
+  template:
+    helmRelease:
+      chart:
+        version: "0.25.0"
+    objects: |-
+      apiVersion: v1
+      kind: ResourceQuota
+      metadata:
+        name: storage-quota
+        namespace: default
+      spec:
+        hard:
+          requests.storage: "100Gi"
+          count/persistentvolumeclaims: "20"
+```
+
+To limit storage from a specific storage class, use the scoped resource name:
+
+```yaml
+spec:
+  hard:
+    ceph-rbd.storageclass.storage.k8s.io/requests.storage: "50Gi"
+```
+
+Repeat the ResourceQuota block for each namespace that requires enforcement.
+
+:::note Namespace templates
+For per-namespace enforcement that applies when a namespace is created inside a tenant cluster, use a Space template with a ResourceQuota in the `objects` field instead. See [Create a template](../administer/templates/create-templates.mdx).
+:::
+
+When a tenant or namespace admin creates a PVC that would push usage past the configured limit, the API server rejects the request with an error:
+
+```
+Error from server (Forbidden): persistentvolumeclaims "my-pvc" is forbidden:
+exceeded quota: storage-quota, requested: requests.storage=20Gi,
+used: requests.storage=90Gi, limited: requests.storage=100Gi
+```
+
+## Pattern 2: Kyverno policies
+
+ResourceQuota handles aggregate limits per namespace, but it can't cap the size of an individual PVC or restrict which storage classes tenants may use. [Kyverno](https://kyverno.io) fills those gaps.
+
+Install Kyverno inside the tenant cluster as an [App](../administer/templates/create-templates.mdx) in the tenant cluster template, then add the ClusterPolicy manifests to the `objects` field. Kyverno's admission webhook must be running before tenants create PVCs for the policies to take effect.
+
+The examples below use `kyverno.io/v1`. Adjust the API version and validation syntax for the Kyverno version installed in your tenant clusters.
+
+### Restrict individual PVC size
+
+The following ClusterPolicy rejects any PVC whose storage request exceeds 50Gi:
+
+```yaml
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: restrict-pvc-size
+spec:
+  validationFailureAction: Enforce
+  background: false
+  rules:
+    - name: max-pvc-storage-request
+      match:
+        any:
+          - resources:
+              kinds:
+                - PersistentVolumeClaim
+      validate:
+        message: "PVC storage requests must not exceed 50Gi."
+        deny:
+          conditions:
+            any:
+              - key: "{{ request.object.spec.resources.requests.storage }}"
+                operator: GreaterThan
+                value: "50Gi"
+```
+
+### Restrict allowed storage classes
+
+The following ClusterPolicy limits PVCs to an approved set of storage classes, preventing tenants from requesting storage from arbitrary provisioners such as Ceph RBD:
+
+```yaml
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: restrict-storage-class
+spec:
+  validationFailureAction: Enforce
+  background: false
+  rules:
+    - name: allowed-storage-classes
+      match:
+        any:
+          - resources:
+              kinds:
+                - PersistentVolumeClaim
+      validate:
+        message: "Only 'standard' and 'fast-ssd' storage classes are permitted."
+        pattern:
+          spec:
+            storageClassName: "standard | fast-ssd"
+```
+
+Add these manifests to the `objects` field of the tenant cluster template alongside any ResourceQuota objects. Kyverno must already be running inside the tenant cluster to enforce the policies.
+
+## Comparison
+
+| Capability | ResourceQuota | Kyverno |
+|---|---|---|
+| Aggregate storage limit per namespace | Yes | No |
+| PVC count limit per namespace | Yes | No |
+| Storage class-scoped aggregate limit | Yes | No |
+| Per-PVC maximum size | No | Yes |
+| Restrict allowed storage classes | No | Yes |
+| Applied automatically using templates | Yes | Yes (requires Kyverno App) |
+
+Use ResourceQuota for aggregate enforcement and Kyverno for per-object rules and storage class governance. The two approaches work together and can be included in the same template.
+
+## Related
+
+- [Manage Quotas](../administer/projects/quotas.mdx): project-level quota configuration including aggregate `requests.storage` and `count/persistentvolumeclaims` limits
+- [Create a template](../administer/templates/create-templates.mdx): add objects and Apps to a tenant cluster template
