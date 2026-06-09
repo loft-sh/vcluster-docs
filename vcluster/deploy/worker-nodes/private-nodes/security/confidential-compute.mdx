@@ -26,6 +26,21 @@ hardware-backed protection covers workload data on the worker nodes. Tenants get
 hardware-backed workload protection combined with Kubernetes-level isolation from
 other tenants on the same platform.
 
+Where the TEE sits in the stack determines how you configure the node image and
+what tenants need to do to use it:
+
+- **Cloud-provider Confidential VMs** (GCP Confidential VMs, Azure Confidential
+  Computing, AWS Nitro Enclaves): the hypervisor applies hardware-backed
+  protection to the entire VM. All workloads on the node run inside the TEE.
+  Attestation runs at node bootstrap time, before the node joins the cluster. No
+  RuntimeClass is required.
+- **Pod-level runtime** (Kata Containers, Confidential Containers): each pod
+  runs in a lightweight VM backed by a hardware TEE. Requires a RuntimeClass on
+  the node image and a `runtimeClassName` in the pod spec. This approach works
+  on any compatible bare metal or cloud VM.
+
+The sections below apply to both paths unless noted.
+
 ## Reference architecture
 
 Use vCluster as the tenant Kubernetes layer. Add vMetal if the
@@ -58,23 +73,29 @@ The components in this architecture each cover a distinct layer:
   required CPU, firmware, OS image, drivers, and runtime configuration.
 - **vNode** (optional) adds a runtime isolation layer for privileged or
   untrusted workloads inside the tenant environment.
-- **Kata Containers, Confidential Containers, and attestation services** provide
-  the hardware-backed confidential runtime and verification flow.
+- **A confidential runtime** — either a cloud-provider Confidential VM or a
+  pod-level runtime such as Kata Containers and Confidential Containers —
+  provides the hardware-backed TEE and attestation.
 
 ## Implementation checklist
 
-1. Select hardware that supports the target confidential compute technology.
-2. Configure firmware and host OS images for TDX, SEV-SNP, or your selected
-   hardware-backed environment.
-3. Install and configure Kata Containers, Confidential Containers, runtime
-   classes, and attestation services on the private node image.
+1. Select hardware or cloud instance types that support the target confidential
+   compute technology.
+2. Configure firmware, Shielded VM features (secure boot, vTPM, integrity
+   monitoring), and host OS images.
+3. Prepare the node image for your runtime path:
+   - **Cloud-provider VMs**: enable Confidential VM features and configure
+     bootstrap attestation.
+   - **Pod-level runtime**: install Kata Containers, Confidential Containers,
+     runtime classes, and attestation services.
 4. Register the hardware in vMetal or another node provider.
 5. Add node type properties that describe the confidential compute capability.
 6. Configure `privateNodes.autoNodes` to select those node types.
-7. Enable RuntimeClass sync so tenant clusters can use the confidential runtime.
+7. *(Pod-level path only)* Enable RuntimeClass sync so tenant clusters can
+   reference the runtime.
 8. Add vNode where tenant workloads need stronger runtime isolation.
-9. Validate scheduling, RuntimeClass selection, attestation, and workload
-   execution from inside the tenant cluster.
+9. Validate scheduling, attestation, and workload execution from inside the
+   tenant cluster.
 
 ## Build the capacity layer
 
@@ -120,19 +141,39 @@ option, not a requirement.
 
 Prepare the OS image and bootstrap flow for the confidential runtime before
 offering the node type to tenants. This typically includes firmware settings,
-kernel support, container runtime configuration, a RuntimeClass, and access
-to the attestation service used by your environment.
+Shielded VM features (secure boot, vTPM, and integrity monitoring), kernel
+support, and the confidential runtime configuration for your chosen path.
 
-:::note Attestation requirements
-The node image must include any device plugins required for quote generation,
-such as the Intel TDX attestation driver or AMD SEV-SNP device plugin. It must
-also include the Data Center Attestation Primitives libraries your attestation
-service expects. The attestation service endpoint must be reachable from the
-private nodes. If your platform enforces network policies, add an egress rule
-that permits attestation traffic before publishing the node type to tenants.
+Confidential VMs can't be live-migrated. Set `on_host_maintenance` to
+`TERMINATE` in your node configuration to prevent migration attempts from
+failing the node.
+
+Confidential node types also require an explicit zone, not just a region.
+Cloud providers enforce zone placement for Confidential VM instances.
+
+:::note Attestation
+**Cloud-provider VMs**: attestation runs as a bootstrap gate before the node
+joins the cluster. The gate script checks for hardware markers such as
+`/dev/sev-guest` for SEV-SNP or `/dev/tdx_guest` for TDX and blocks the
+kubeadm join if verification fails. No external attestation service is required
+for this mode.
+
+**Pod-level runtime**: each pod generates an attestation quote at workload
+start time. The node image must include device plugins for quote generation,
+such as the Intel TDX attestation driver or AMD SEV-SNP device plugin, and
+the Data Center Attestation Primitives libraries your attestation service
+expects. The attestation service endpoint must be reachable from the private
+nodes. If your platform enforces network policies, add an egress rule that
+permits attestation traffic before publishing the node type to tenants.
 :::
 
 ## Make RuntimeClass available to tenants
+
+:::info Pod-level runtime path only
+This section applies to Kata Containers and Confidential Containers. If you're
+using cloud-provider Confidential VMs, skip this section — all workloads on the
+node run inside the TEE without a RuntimeClass.
+:::
 
 RuntimeClass objects live in the control plane cluster. By default, they aren't
 visible inside the tenant cluster. Enable `sync.fromHost.runtimeClasses` so that
@@ -170,12 +211,16 @@ privateNodes:
 This configuration lets vCluster Platform provision matching private nodes when
 the tenant cluster needs confidential-capable worker capacity.
 
-Tenants can then schedule workloads using the RuntimeClass your node image
-exposes for Kata Containers or Confidential Containers. Private nodes join the
-tenant cluster as real nodes, so their OS-level labels are visible inside the
-cluster and the `nodeSelector` works without any additional configuration.
+Private nodes join the tenant cluster as real nodes, so their OS-level labels
+are visible inside the cluster and the `nodeSelector` works without any
+additional configuration.
 
-```yaml title="Pod spec — tenant"
+For the pod-level runtime path, tenants add a `runtimeClassName` referencing
+the RuntimeClass installed on the node image. For cloud-provider Confidential
+VMs, omit `runtimeClassName` — protection applies at the VM level and standard
+containers run inside the TEE without modification.
+
+```yaml title="Pod spec — tenant (pod-level runtime path)"
 apiVersion: v1
 kind: Pod
 metadata:
@@ -215,13 +260,13 @@ before publishing the node type to tenant teams.
 
 ## Learn more
 
-Use these upstream resources to plan the confidential runtime and attestation
-parts of the platform.
+For the pod-level runtime path, use these resources to plan the confidential
+runtime and attestation parts of the platform. For cloud-provider Confidential
+VMs, refer to your cloud provider's documentation.
 
 | Resource | Use it for |
 |---|---|
-| [Kata Containers](https://katacontainers.io/) | Lightweight virtualized containers |
+| [Kata Containers](https://katacontainers.io/) | Pod-level virtualized container runtime |
 | [Kata Containers documentation](https://github.com/kata-containers/kata-containers/tree/main/docs) | Runtime architecture and configuration |
 | [Confidential Containers](https://confidentialcontainers.org/) | Kubernetes workloads that use hardware-backed trusted execution environments |
 | [Confidential Containers documentation](https://github.com/confidential-containers/documentation) | Operator, runtime, and attestation guidance |
-| [CNCF TAG Confidential Computing](https://tag-confidential-computing.cncf.io/) | Community resources and ecosystem background |
