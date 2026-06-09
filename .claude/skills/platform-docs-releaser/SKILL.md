@@ -27,7 +27,7 @@ The config flip PR changes only the version visibility in `docusaurus.config.js`
 - Updates `lastVersion` to point to the new version
 - Adds the new version to the dropdown with "Stable" label
 - Demotes the previous stable version label (removes "Stable" suffix)
-- Updates SEO sitemap priorities, announcement bar, and netlify redirect
+- Updates SEO sitemap priorities, announcement bar, and netlify redirect (adds new version, removes previous)
 
 This separation means all the heavy lifting (version creation, API partials, content, link fixes) is done during the rc-1 window, and release day is a low-risk config change.
 
@@ -267,13 +267,22 @@ announcementBar: {
 
 #### 5. `netlify.toml` — redirect
 
+**CRITICAL:** Add the redirect for the new `lastVersion` AND remove the redirect for the previous `lastVersion` (X.Z.0). The previous version is still in `onlyIncludeVersions` — its versioned URL serves real content and must not redirect.
+
 ```toml
+# ADD this block for the new lastVersion (canonical URL is the unversioned path)
 [[redirects]]
   from = "/docs/platform/X.Y.0/*"
   to = "/docs/platform/:splat"
   status = 301
   force = true
+
+# REMOVE the block for X.Z.0 — it is now a live versioned URL, not the lastVersion
 ```
+
+Only two categories of versions belong in this redirect section:
+- The current `lastVersion` (whose canonical URL is the unversioned path)
+- Truly EOL/archived versions that are no longer in `onlyIncludeVersions`
 
 #### 6. `hack/test-platform-X.Y.hurl` — create hurl test
 
@@ -290,7 +299,7 @@ This PR is small, reviewable, and safe to merge by anyone with merge rights.
 | `src/config/versionConfig.js` | Add version to `platformHiddenVersions` array | rc-1 |
 | `docusaurus.config.js` | `lastVersion`, labels, SEO, announcement bar | Release day |
 | `src/config/versionConfig.js` | Remove version from `platformHiddenVersions` | Release day |
-| `netlify.toml` | Redirect | Release day |
+| `netlify.toml` | Add redirect for new lastVersion; remove redirect for previous lastVersion | Release day |
 | `hack/test-platform-X.Y.hurl` | New test file | Release day |
 | Platform support dates file | Release/EOL dates | User |
 

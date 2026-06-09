@@ -8,10 +8,13 @@
  * `versions` and `onlyIncludeVersions` config.
  */
 
-export const vclusterHiddenVersions = [];
-export const platformHiddenVersions = [];
+export const vclusterHiddenVersions = ["0.35.0"];
+export const platformHiddenVersions = ["4.10.0"];
 
 export const vclusterEOLVersions = [
+  { to: "https://vcluster.com/docs/v0.32", label: "v0.32 (EOS)" },
+  { to: "https://vcluster.com/docs/v0.31", label: "v0.31 (EOS)" },
+  { to: "https://vcluster.com/docs/v0.30", label: "v0.30 (EOL)" },
   { to: "https://vcluster.com/docs/v0.29", label: "v0.29 (EOL)" },
   { to: "https://vcluster.com/docs/v0.28", label: "v0.28 (EOL)" },
   { to: "https://vcluster.com/docs/v0.27", label: "v0.27 (EOL)" },
@@ -26,9 +29,10 @@ export const vclusterEOLVersions = [
 ];
 
 export const platformEOLVersions = [
-  { to: "https://platform-v4-5--vcluster-docs-site.netlify.app/docs/platform/", label: "v4.5 (EOS)" },
-  { to: "https://platform-v4-4--vcluster-docs-site.netlify.app/docs/platform/", label: "v4.4 (EOS)" },
-  { to: "https://platform-v4-3--vcluster-docs-site.netlify.app/docs/platform/", label: "v4.3 (EOL)" },
+  { to: "https://vcluster.com/docs/v4.6", label: "v4.6" },
+  { to: "https://vcluster.com/docs/v4.5", label: "v4.5 (EOS)" },
+  { to: "https://vcluster.com/docs/v4.4", label: "v4.4 (EOS)" },
+  { to: "https://vcluster.com/docs/v4.3", label: "v4.3 (EOL)" },
   { to: "https://vcluster.com/docs/v4.2", label: "v4.2 (EOL)" },
   { to: "https://loft.sh/docs/getting-started/install", label: "v3.4 (EOL)" },
 ];

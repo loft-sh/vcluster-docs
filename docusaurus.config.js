@@ -60,7 +60,6 @@ const config = {
   ],
 
   onBrokenLinks: "throw",
-  onBrokenMarkdownLinks: "warn",
 
   // Even if you don't use internationalization, you can use this field to set
   // useful metadata like html lang. For example, if your site is Chinese, you
@@ -73,6 +72,9 @@ const config = {
   themes: ["@saucelabs/theme-github-codeblock", "@docusaurus/theme-mermaid"],
   markdown: {
     mermaid: true,
+    hooks: {
+      onBrokenMarkdownLinks: "warn",
+    },
   },
 
   presets: [
@@ -255,10 +257,16 @@ const config = {
           [remarkVersionTokens, { siteDir: __dirname }],
         ],
         lastVersion: "0.34.0",
-        onlyIncludeVersions: ["current", "0.34.0", "0.33.0", "0.32.0", "0.31.0", "0.30.0"],
+        onlyIncludeVersions: ["current", "0.35.0", "0.34.0", "0.33.0"],
         versions: {
           current: {
             label: "main 🚧",
+          },
+          "0.35.0": {
+            label: "v0.35",
+            banner: "unreleased",
+            badge: true,
+            noIndex: true,
           },
           "0.34.0": {
             label: "v0.34 Stable",
@@ -267,21 +275,6 @@ const config = {
           },
           "0.33.0": {
             label: "v0.33",
-            banner: "none",
-            badge: true,
-          },
-          "0.32.0": {
-            label: "v0.32 (EOS)",
-            banner: "none",
-            badge: true,
-          },
-          "0.31.0": {
-            label: "v0.31 (EOS)",
-            banner: "none",
-            badge: true,
-          },
-          "0.30.0": {
-            label: "v0.30 (EOL)",
             banner: "none",
             badge: true,
           },
@@ -302,10 +295,16 @@ const config = {
           [remarkVersionTokens, { siteDir: __dirname }],
         ],
         lastVersion: "4.9.0",
-        onlyIncludeVersions: ["current", "4.9.0", "4.8.0", "4.7.0", "4.6.0"],
+        onlyIncludeVersions: ["current", "4.10.0", "4.9.0", "4.8.0", "4.7.0"],
         versions: {
           current: {
             label: "main 🚧",
+          },
+          "4.10.0": {
+            label: "v4.10",
+            banner: "unreleased",
+            badge: true,
+            noIndex: true,
           },
           "4.9.0": {
             label: "v4.9 Stable",
@@ -319,11 +318,6 @@ const config = {
           },
           "4.7.0": {
             label: "v4.7",
-            banner: "none",
-            badge: true,
-          },
-          "4.6.0": {
-            label: "v4.6",
             banner: "none",
             badge: true,
           },
@@ -485,9 +479,9 @@ const config = {
     }
   ),
 
-  // Enable experimental faster features with required v4 flags
+  // Enable faster features with required v4 flags
   future: {
-    experimental_faster: true,
+    faster: true,
     v4: {
       removeLegacyPostBuildHeadAttribute: true,
     },
