@@ -1,0 +1,233 @@
+---
+sidebar_label: Authenticate to PostgreSQL with Kerberos
+sidebar_position: 6
+title: Authenticate to an External PostgreSQL Database with Kerberos
+description: Configure the vCluster Platform embedded database to authenticate to an external PostgreSQL backend using Kerberos/GSSAPI with a mounted keytab.
+---
+
+import Tabs from "@theme/Tabs";
+import TabItem from "@theme/TabItem";
+import VersionBadge from '@site/src/components/VersionBadge';
+import InterpolatedCodeBlock from "@site/src/components/InterpolatedCodeBlock";
+import PageVariables from "@site/src/components/PageVariables";
+
+<VersionBadge platformVersion="v4.10.0"/>
+
+<PageVariables
+  REALM="EXAMPLE.COM"
+  KDC_HOST="kdc.example.com"
+  PRINCIPAL="krb5-db-user"
+  PG_FQDN="postgres.example.com"
+  DB_NAME="kine"
+/>
+
+## Overview
+
+When you run vCluster Platform with an
+[external database](./external-database.mdx), the platform's embedded database
+connects to your PostgreSQL backend. Instead of a static password or a cloud IAM
+token, that connection can authenticate with **Kerberos/GSSAPI** using a mounted
+keytab. This suits enterprises that already operate a Kerberos realm (an MIT KDC
+or Active Directory) and require Kerberos for all database access.
+
+Authentication is configured entirely through existing Helm values: a passwordless
+`config.database.dataSource` that carries the client principal and points at a
+mounted keytab, plus the generic `volumes`, `volumeMounts`, and `env` values to
+mount the keytab and `krb5.conf`. No platform-specific Kerberos fields are
+required.
+
+:::note
+This applies to the platform's **external PostgreSQL** backend only. Kerberos
+authentication for the [Database Connector](../../../connector/database.mdx)
+(the tenant cluster datastore path) is not covered here.
+:::
+
+## Prerequisites
+
+Before you begin, ensure you have:
+
+- A **control plane cluster** running **Kubernetes v1.36.0 or later**, with
+  vCluster Platform **v4.10.0 or later**. Earlier platform builds do not include
+  the GSSAPI-capable database and fail to start against a Kerberos datasource.
+- An existing **Kerberos environment**:
+  - A KDC and realm (for example `EXAMPLE.COM`).
+  - A **client principal** for the platform, for example
+    `krb5-db-user@EXAMPLE.COM`, that you can export to a keytab.
+- A **PostgreSQL server built with GSSAPI support**, reachable from the control
+  plane cluster at a stable fully qualified domain name (FQDN), with:
+  - The service principal `postgres/<postgres-fqdn>@REALM` present in the server's
+    keytab and referenced by `krb_server_keyfile`.
+  - A `pg_hba.conf` rule that authenticates the platform connection with `gss`.
+  - A login role and database that the client principal maps to (see
+    [Step 2](#step-2---create-the-postgresql-role-and-database)).
+- The platform already configured for an **external database deployment**
+  (`config.database.enabled`). Follow the
+  [external database overview](./external-database.mdx) and the
+  [deployment walkthrough](./deploy.mdx) for the surrounding high-availability
+  setup; this page covers only the Kerberos authentication wiring.
+
+## Step 1 - Create the database principal and export a keytab
+
+Create the client principal in your KDC and export it to a keytab file. With MIT
+Kerberos, use `kadmin`:
+
+<InterpolatedCodeBlock
+  code={
+`kadmin -q "addprinc -randkey [[GLOBAL:PRINCIPAL]]@[[GLOBAL:REALM]]"
+kadmin -q "ktadd -k [[GLOBAL:PRINCIPAL]].keytab [[GLOBAL:PRINCIPAL]]@[[GLOBAL:REALM]]"`
+  }
+  language="bash"
+/>
+
+This produces a `[[GLOBAL:PRINCIPAL]].keytab` file containing credentials for the
+principal. Keep this file safe; anyone holding it can authenticate as the
+principal.
+
+## Step 2 - Create the PostgreSQL role and database
+
+Create a passwordless login role whose name matches the principal's short name and
+a database the role can use. Because the `pg_hba.conf` rule below uses
+`include_realm=0`, PostgreSQL strips the `@REALM` suffix, so the principal
+`krb5-db-user@EXAMPLE.COM` maps to the role `krb5-db-user`.
+
+<InterpolatedCodeBlock
+  code={
+`CREATE ROLE "[[GLOBAL:PRINCIPAL]]" LOGIN;
+CREATE DATABASE [[GLOBAL:DB_NAME]] OWNER "[[GLOBAL:PRINCIPAL]]";`
+  }
+  language="sql"
+/>
+
+Point PostgreSQL at its service keytab in `postgresql.conf`:
+
+```ini
+krb_server_keyfile = '/etc/postgres-keytab/krb5.keytab'
+```
+
+Add a `gss` rule to `pg_hba.conf` so remote TCP connections authenticate over
+Kerberos. The principal short name maps to the login role of the same name:
+
+<InterpolatedCodeBlock
+  code={`host    all    all    0.0.0.0/0    gss include_realm=0 krb_realm=[[GLOBAL:REALM]]`}
+  language="text"
+/>
+
+:::info
+`krbsrvname` in the datasource (Step 4) selects the `postgres` service principal,
+and `krb_realm` restricts which realm's principals the rule accepts. Keep
+`include_realm=0` and the role name aligned, otherwise the mapped role will not
+match and the connection is rejected.
+:::
+
+## Step 3 - Create the keytab Secret and krb5.conf ConfigMap
+
+Create a Kubernetes Secret holding the client keytab and a ConfigMap holding the
+client `krb5.conf`, both in the platform namespace (`vcluster-platform`).
+
+<InterpolatedCodeBlock
+  code={
+`kubectl create secret generic kine-keytab \\
+  --from-file=krb5.keytab=[[GLOBAL:PRINCIPAL]].keytab \\
+  --namespace vcluster-platform`
+  }
+  language="bash"
+/>
+
+Create a `krb5.conf` that points at your KDC. Disable DNS canonicalization and
+reverse lookups when your service DNS names do not have matching PTR records, so
+the service principal name the platform requests matches the host it dials:
+
+<InterpolatedCodeBlock
+  code={
+"[libdefaults]\n default_realm = [[GLOBAL:REALM]]\n dns_lookup_realm = false\n dns_lookup_kdc = false\n dns_canonicalize_hostname = false\n rdns = false\n[realms]\n [[GLOBAL:REALM]] = {\n   kdc = [[GLOBAL:KDC_HOST]]\n   admin_server = [[GLOBAL:KDC_HOST]]\n }"
+  }
+  language="ini"
+/>
+
+Create the ConfigMap from that file:
+
+```bash
+kubectl create configmap krb5-conf \
+  --from-file=krb5.conf=krb5.conf \
+  --namespace vcluster-platform
+```
+
+## Step 4 - Configure the platform Helm values
+
+Add the Kerberos datasource and the keytab/`krb5.conf` mounts to your platform
+values file (`platform-kerberos-values.yaml`). The datasource carries **no
+password**: the principal lives in the user part of the connection string,
+`krb5_keytab` points at the mounted keytab, and `krbsrvname` selects the PostgreSQL
+service principal.
+
+<InterpolatedCodeBlock
+  code={"config:\n  database:\n    enabled: true\n    # Passwordless GSSAPI datasource. The principal in the user part is URL-encoded\n    # (@ becomes %40); krb5_keytab points at the mounted keytab.\n    dataSource: \"postgres://[[GLOBAL:PRINCIPAL]]%40[[GLOBAL:REALM]]@[[GLOBAL:PG_FQDN]]:5432/[[GLOBAL:DB_NAME]]?krb5_keytab=/etc/kine-keytab/krb5.keytab&krbsrvname=postgres&sslmode=disable\"\n    extraArgs:\n      - --datastore-max-open-connections=5\n      - --datastore-max-idle-connections=2\n\n# KRB5_CONFIG tells the GSSAPI client where to read the realm configuration.\nenv:\n  KRB5_CONFIG: /etc/krb5.conf\n\n# Mount the client keytab and krb5.conf into the platform pod.\nvolumes:\n  - name: kine-keytab\n    secret:\n      secretName: kine-keytab\n  - name: krb5-conf\n    configMap:\n      name: krb5-conf\n\nvolumeMounts:\n  - name: kine-keytab\n    mountPath: /etc/kine-keytab\n    readOnly: true\n  - name: krb5-conf\n    mountPath: /etc/krb5.conf\n    subPath: krb5.conf\n    readOnly: true"}
+  language="yaml"
+/>
+
+:::warning
+The principal in the datasource user part must be **URL-encoded**: write the `@`
+between the principal and the realm as `%40` (for example
+`krb5-db-user%40EXAMPLE.COM`). The datasource **host must exactly match** the host
+in the PostgreSQL service principal (`postgres/<host>@REALM`) baked into the server
+keytab. A mismatch makes the GSSAPI handshake fail even when every other value is
+correct.
+:::
+
+Merge these values with the rest of your external database configuration
+(`replicaCount`, ingress, and so on) from the
+[deployment walkthrough](./deploy.mdx).
+
+## Step 5 - Install and verify
+
+Install or upgrade the platform with the values file:
+
+<Tabs
+  defaultValue="cli"
+  values={[
+    { label: "vCluster CLI", value: "cli" },
+    { label: "Helm", value: "helm" },
+  ]}
+>
+  <TabItem value="cli">
+
+```bash
+vcluster platform start \
+  --namespace vcluster-platform \
+  --values platform-kerberos-values.yaml
+```
+
+  </TabItem>
+  <TabItem value="helm">
+
+```bash
+helm upgrade loft vcluster-platform --install --create-namespace --repository-config='' \
+  --namespace vcluster-platform \
+  --repo "https://charts.loft.sh/" \
+  -f platform-kerberos-values.yaml
+```
+
+  </TabItem>
+</Tabs>
+
+Wait for the deployment to become ready:
+
+```bash
+kubectl rollout status deployment/loft -n vcluster-platform
+```
+
+A ready replica confirms the GSSAPI handshake succeeded: the datasource carries no
+password and `pg_hba.conf` permits only `gss` for remote connections, so Kerberos
+is the only path by which the platform could have authenticated.
+
+If the deployment stays unready, check the platform pod logs:
+
+```bash
+kubectl logs -n vcluster-platform -l app=loft --tail=100
+```
+
+A wrong or absent principal surfaces a `KDC_ERR_C_PRINCIPAL_UNKNOWN` error: the KDC
+has no such principal, so the credential could not be acquired. Confirm that the
+principal in the datasource exactly matches the one exported into the mounted
+keytab. See [Troubleshooting External Database](./troubleshoot.mdx) for more
+Kerberos failure modes.
