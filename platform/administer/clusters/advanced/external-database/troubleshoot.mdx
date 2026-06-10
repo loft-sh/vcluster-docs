@@ -1,6 +1,6 @@
 ---
 sidebar_label: Troubleshooting External Database
-sidebar_position: 5
+sidebar_position: 6
 title: Troubleshooting External Database
 description: Addressing common issues when deploying vCluster Platform with an external database.
 ---
@@ -35,9 +35,9 @@ Check pod logs for errors:
 />
 
 Common causes:
-- **Database connectivity errors**: Verify that VPC peering is active, routes
-  exist on the correct route tables (including public route tables if nodes are
-  in public subnets), and the database security group allows port 3306 from the
+- **Database connectivity errors**: Verify that VPC peering is active and routes
+  exist on the correct route tables. Include public route tables if nodes are in
+  public subnets. Confirm the database security group allows port 3306 from the
   cluster VPC CIDR.
 - **IAM authentication failures**: Confirm the Pod Identity association exists,
   the Pod Identity Agent add-on is `ACTIVE`, and the `RDSIAMAuthKine` IAM
@@ -133,3 +133,48 @@ If pods start but log database connection errors:
   }
   language="bash"
 />
+
+## Kerberos authentication failures
+
+When the platform authenticates to a PostgreSQL backend over
+[Kerberos](./kerberos.mdx), the GSSAPI handshake output appears in the platform pod
+logs. Check the current logs with:
+
+<InterpolatedCodeBlock
+  code={
+`kubectl --context [[GLOBAL:CLUSTER_CONTEXT]] \\
+  logs -n vcluster-platform -l app=loft --tail=100`
+  }
+  language="bash"
+/>
+
+If the pod restarted, check the previous container logs as well:
+
+<InterpolatedCodeBlock
+  code={
+`kubectl --context [[GLOBAL:CLUSTER_CONTEXT]] \\
+  logs -n vcluster-platform -l app=loft --tail=100 --previous`
+  }
+  language="bash"
+/>
+
+Common causes:
+- **`KDC_ERR_C_PRINCIPAL_UNKNOWN`**: The KDC has no such principal. The principal
+  in the datasource does not match the one exported into the mounted keytab, or it
+  was never created in the KDC. Confirm both name and realm.
+- **`no GSSAPI provider registered`**: The platform build predates GSSAPI support.
+  Upgrade to v4.10.0 or later.
+- **Handshake fails despite a valid principal**: The datasource host does not match
+  the host in the PostgreSQL service principal (`postgres/<host>@REALM`) baked into
+  the server keytab. Make the datasource host and the service principal host
+  identical, or disable DNS canonicalization in `krb5.conf`
+  (`dns_canonicalize_hostname = false`, `rdns = false`).
+- **`gss authentication failed` from PostgreSQL**: The `pg_hba.conf` rule did not
+  map the principal to a login role, or PostgreSQL matched a broader `host` rule
+  before the Kerberos rule. Verify the `gss` rule appears before broader rules,
+  the role name matches the principal short name, and `include_realm=0` and
+  `krb_realm` are set correctly.
+- **TLS or certificate errors**: Kerberos authenticates the database connection,
+  but TLS is configured separately. Verify the datasource `sslmode` and any
+  database CA or client certificate values match your PostgreSQL server
+  requirements.
