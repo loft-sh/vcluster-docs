@@ -1,0 +1,267 @@
+---
+title: Connect to Akuity
+sidebar_label: Connect to Akuity
+sidebar_position: 3
+---
+
+import Tabs from "@theme/Tabs";
+import TabItem from "@theme/TabItem";
+import Flow, { Step } from "@site/src/components/Flow";
+import Button from "@site/src/components/Button";
+import Label from "@site/src/components/Label";
+
+This guide connects vCluster Platform to an [Akuity](https://akuity.io)-managed Argo CD instance. At the end you will have a connector that registers tenant clusters and control plane clusters with Akuity and provisions the Akuity agent inside each cluster automatically.
+
+For a self-hosted Argo CD server, see [Connect to Argo CD](./connect-argocd.mdx) instead.
+
+## How the Akuity agent works
+
+When you use an Akuity connector, Argo CD does not connect directly to your cluster's API server. Instead, Akuity uses a lightweight agent running inside each registered cluster that establishes an outbound connection to the Akuity control plane. The managed Akuity Argo CD instance communicates with the cluster through that persistent connection.
+
+This means the cluster's API server does not need to be publicly reachable — the agent runs inside the cluster and connects outward — so private clusters are fully supported.
+
+You do not install or manage the agent manually. When a cluster is registered with an Akuity connector, Platform:
+
+1. Calls the Akuity API to register the cluster and retrieve the agent installation manifest.
+2. Applies the manifest to the cluster. The agent is installed in its own namespace within the cluster.
+3. Stores a hash of the applied manifest in a cluster annotation. If the manifest changes (for example, after an Akuity agent version update), Platform detects the drift and applies the updated manifest automatically.
+
+When the integration is disabled or the connector is changed, Platform removes the agent namespace from the cluster and deregisters it from Akuity.
+
+## Prerequisites
+
+- vCluster Platform running with admin access
+- An Akuity organization with an active Argo CD instance
+- An Akuity API key (see below)
+
+### Akuity API key permissions
+
+The Akuity API key must have a [custom role](https://docs.akuity.io/organizations/custom-roles/) with the following permissions on the target Argo CD instance. The built-in **Owner** role satisfies all of these. For least-privilege access, create a custom role with only the permissions below.
+
+| Resource | Permission | Why |
+|----------|------------|-----|
+| Argo CD Cluster | `Get` | Fetch cluster registration state and agent manifests |
+| Argo CD Cluster | `Create` | Register new tenant clusters and control plane clusters |
+| Argo CD Cluster | `Update` | Update cluster registration when connector or access key changes |
+| Argo CD Cluster | `Delete` | Deregister clusters when the integration is disabled |
+
+See the [Akuity API key documentation](https://docs.akuity.io/organizations/api-keys) for instructions on creating an API key and attaching a custom role.
+
+## Step 1: Create a connector
+
+<Tabs
+  defaultValue="ui"
+  values={[
+    { label: "Platform UI", value: "ui" },
+    { label: "YAML", value: "yaml" },
+  ]}
+>
+  <TabItem value="ui">
+
+<Flow>
+  <Step>
+    Click <Label>Connectors</Label> and select the <Label>Argo CD</Label> tab.
+  </Step>
+  <Step>
+    Click <Button>Add ArgoCD Connector</Button>.
+  </Step>
+  <Step>
+    In the <Label>Display name</Label> field, enter a human-readable name for the connector.
+    The <Label>ArgoCD Connector ID</Label> is auto-generated from the display name and is used to reference this connector from clusters.
+  </Step>
+  <Step>
+    Enable the <Label>Use Akuity API</Label> toggle, then fill in:
+    - <Label>Organization ID</Label>: your Akuity organization ID
+    - <Label>Argo CD Instance</Label>: the Argo CD instance ID within your organization
+    - <Label>API Key ID</Label> and <Label>API Key Secret</Label>: your Akuity API key credentials
+  </Step>
+  <Step>
+    In the <Label>Server URL</Label> field, enter the Akuity instance URL. The format is `https://<akuityInstanceId>.cd.akuity.cloud/`.
+  </Step>
+  <Step>
+    If Argo CD is installed in a namespace other than `argocd`, update the <Label>Argo CD Namespace</Label> field.
+  </Step>
+  <Step>
+    Select an authentication method and fill in the credentials:
+    - <Label>Authenticate with Argo CD API token</Label>: paste your token in the <Label>Argo CD API Token</Label> field.
+    - <Label>Authenticate with username / password</Label>: fill in <Label>Username</Label> and <Label>Password</Label>.
+  </Step>
+  <Step>
+    In the <Label>Agent Configuration</Label> section, select an <Label>Agent Size</Label> for the cluster workload.
+    Optionally override <Label>Replicas</Label> and <Label>Memory</Label> for the `argocd-repo-server` (see [Agent sizing](#agent-sizing) below).
+  </Step>
+  <Step>
+    Click <Button>Create ArgoCD Connector</Button>.
+  </Step>
+</Flow>
+
+  </TabItem>
+  <TabItem value="yaml">
+
+Set `connectorType: "akuity"` to use Akuity. Akuity supports two authentication methods for the Argo CD API. If `token` is set, the controller uses bearer token authentication. Otherwise it falls back to `username` and `password`. Apply the Secret with `kubectl apply`.
+
+<Tabs
+  defaultValue="token"
+  values={[
+    { label: "Token", value: "token" },
+    { label: "Basic auth", value: "basic" },
+  ]}
+>
+  <TabItem value="token">
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: akuity-prod
+  namespace: loft
+  labels:
+    loft.sh/connector-type: argocd
+type: Opaque
+stringData:
+  connectorType: "akuity"
+  server: "https://<akuity-instance-id>.cd.akuity.cloud/"
+  token: "<argocd-api-token>"
+  namespace: "argocd"
+  insecure: "false"
+  akuityOrgId: "<your-org-id>"
+  akuityInstanceId: "<your-instance-id>"
+  akuityApiKeyId: "<api-key-id>"
+  akuityApiKeySecret: "<api-key-secret>"
+  akuityAgentSize: "CLUSTER_SIZE_MEDIUM"
+  akuityRepoServerReplicas: "1"
+  akuityRepoServerMemory: "1Gi"
+```
+
+  </TabItem>
+  <TabItem value="basic">
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: akuity-prod
+  namespace: loft
+  labels:
+    loft.sh/connector-type: argocd
+type: Opaque
+stringData:
+  connectorType: "akuity"
+  server: "https://<akuity-instance-id>.cd.akuity.cloud/"
+  username: "<argocd-username>"
+  password: "<argocd-password>"
+  namespace: "argocd"
+  insecure: "false"
+  akuityOrgId: "<your-org-id>"
+  akuityInstanceId: "<your-instance-id>"
+  akuityApiKeyId: "<api-key-id>"
+  akuityApiKeySecret: "<api-key-secret>"
+  akuityAgentSize: "CLUSTER_SIZE_MEDIUM"
+  akuityRepoServerReplicas: "1"
+  akuityRepoServerMemory: "1Gi"
+```
+
+  </TabItem>
+</Tabs>
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `connectorType` | Yes | Must be `"akuity"` |
+| `server` | Yes | Akuity instance URL. Format: `https://<akuityInstanceId>.cd.akuity.cloud/` |
+| `token` | If set, bearer token authentication is used | Argo CD API bearer token for the Akuity instance |
+| `username` | Required when `token` is not set | Argo CD username |
+| `password` | Required when `token` is not set | Argo CD password |
+| `namespace` | No | Namespace where Argo CD is installed. Defaults to `argocd` |
+| `insecure` | No | Set to `"true"` to skip TLS verification. Defaults to `"false"` |
+| `akuityOrgId` | Yes | Akuity organization ID |
+| `akuityInstanceId` | Yes | Argo CD instance ID within your Akuity organization |
+| `akuityApiKeyId` | Yes | Akuity API key ID, used to register and manage clusters via the Akuity API |
+| `akuityApiKeySecret` | Yes | Akuity API key secret |
+| `akuityAgentSize` | No | Agent size profile: `CLUSTER_SIZE_SMALL`, `CLUSTER_SIZE_MEDIUM` (default), or `CLUSTER_SIZE_LARGE`. See [Agent sizing](#agent-sizing). |
+| `akuityRepoServerReplicas` | No | Override the `argocd-repo-server` replica count. See [Agent sizing](#agent-sizing). |
+| `akuityRepoServerMemory` | No | Override `argocd-repo-server` memory. Sets both `requests` and `limits`. See [Agent sizing](#agent-sizing). |
+
+  </TabItem>
+</Tabs>
+
+## Agent sizing
+
+Three fields in the connector Secret control how the Akuity agent is provisioned inside each registered cluster.
+
+### `akuityAgentSize`
+
+This field is sent to the Akuity API when the cluster is registered and determines the overall resource profile of the agent as defined by Akuity. It is an Akuity-level concept, not a direct Kubernetes resource value — Akuity translates this into the appropriate CPU and memory requests for the agent workloads on its end.
+
+| Value | Recommended for |
+|-------|----------------|
+| `CLUSTER_SIZE_SMALL` | Development or low-traffic clusters with few Applications |
+| `CLUSTER_SIZE_MEDIUM` | General-purpose clusters (default) |
+| `CLUSTER_SIZE_LARGE` | High-throughput clusters with many Applications or frequent syncs |
+
+### `akuityRepoServerReplicas` and `akuityRepoServerMemory`
+
+These fields let you override specific resource settings on the `argocd-repo-server` Deployment inside the cluster, independently of the size profile. Platform applies a kustomization patch to the agent manifest before installing it:
+
+- `akuityRepoServerReplicas` sets `spec.replicas` on the `argocd-repo-server` Deployment.
+- `akuityRepoServerMemory` sets both `resources.requests.memory` and `resources.limits.memory` to the same value on the `argocd-repo-server` container. Accepts standard Kubernetes memory quantity strings, for example `"1Gi"` or `"512Mi"`.
+
+Both fields are optional and independent of `akuityAgentSize`. Use them when the size profile alone does not give you the control you need over repo server memory or replica count.
+
+## Step 2: Enable the connector on a cluster
+
+### On a tenant cluster
+
+Add the `integrations.argoCD` block to the tenant cluster's `vcluster.yaml`. The `connector` field references the Secret name from Step 1.
+
+```yaml
+integrations:
+  argoCD:
+    enabled: true
+    connector: akuity-prod
+```
+
+The connector can also be set directly in the `VirtualClusterInstance` manifest:
+
+```yaml
+apiVersion: management.loft.sh/v1
+kind: VirtualClusterInstance
+metadata:
+  name: app-dev
+  namespace: p-team-a
+spec:
+  template:
+    metadata:
+      name: vcluster
+    spec:
+      helmRelease:
+        values: |
+          integrations:
+            argoCD:
+              enabled: true
+              connector: akuity-prod
+```
+
+When the `VirtualClusterInstance` reconciles, Platform registers the tenant cluster with Akuity, retrieves the agent manifest, and installs the agent into the cluster.
+
+### On a control plane cluster
+
+To register a control plane cluster with Akuity, add `spec.argoCD` to the Cluster object:
+
+```yaml
+apiVersion: management.loft.sh/v1
+kind: Cluster
+metadata:
+  name: my-cluster
+spec:
+  argoCD:
+    enabled: true
+    connector: akuity-prod
+```
+
+:::warning Disabling the integration
+Disabling the integration removes the cluster from Akuity, uninstalls the agent namespace from the cluster, and deletes all `ArgoCDApplication` objects managed by Platform. This applies whether the integration is configured via `vcluster.yaml`, a `VirtualClusterInstance` manifest, or a `Cluster` object. Any applications deployed by the integration will be removed from Argo CD.
+:::
+
+## Next step
+
+With the connector enabled, you can declare Argo CD Applications in your tenant cluster or control plane cluster configuration. See [Deploy applications](./deploy-applications.mdx).
