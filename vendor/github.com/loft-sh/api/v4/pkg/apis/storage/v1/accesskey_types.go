@@ -205,14 +205,12 @@ type AccessKeyScopeRole struct {
 type AccessKeyScopeRoleName string
 
 const (
-	AccessKeyScopeRoleAgent         AccessKeyScopeRoleName = "agent"
-	AccessKeyScopeRoleVCluster      AccessKeyScopeRoleName = "vcluster"
-	AccessKeyScopeRoleNetworkPeer   AccessKeyScopeRoleName = "network-peer"
-	AccessKeyScopeRoleLoftCLI       AccessKeyScopeRoleName = "loft-cli"
-	AccessKeyScopeRoleRunner        AccessKeyScopeRoleName = "runner"
-	AccessKeyScopeRoleWorkspace     AccessKeyScopeRoleName = "workspace"
-	AccessKeyScopeRoleMetricsWriter AccessKeyScopeRoleName = "metrics-writer"
-	AccessKeyScopeRoleMetricsReader AccessKeyScopeRoleName = "metrics-reader"
+	AccessKeyScopeRoleAgent       AccessKeyScopeRoleName = "agent"
+	AccessKeyScopeRoleVCluster    AccessKeyScopeRoleName = "vcluster"
+	AccessKeyScopeRoleNetworkPeer AccessKeyScopeRoleName = "network-peer"
+	AccessKeyScopeRoleLoftCLI     AccessKeyScopeRoleName = "loft-cli"
+	AccessKeyScopeRoleRunner      AccessKeyScopeRoleName = "runner"
+	AccessKeyScopeRoleWorkspace   AccessKeyScopeRoleName = "workspace"
 )
 
 type AccessKeyScopeCluster struct {
