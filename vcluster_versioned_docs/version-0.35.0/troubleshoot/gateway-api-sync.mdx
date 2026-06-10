@@ -1,0 +1,152 @@
+---
+title: Resolve Gateway API sync errors
+sidebar_label: Gateway API sync
+description: Troubleshoot RefNotPermitted, SyncError, and SyncWarning events emitted by vCluster while syncing Gateway API resources to the host.
+---
+
+# Resolve Gateway API sync errors
+
+vCluster validates Gateway API references in the tenant cluster before syncing them to the control plane cluster. When a `Gateway`, `HTTPRoute`, `TLSRoute`, `ReferenceGrant`, or `BackendTLSPolicy` is misconfigured or depends on an object that has no synced host counterpart, vCluster does not sync the resource and records a Warning event on the tenant object.
+
+This page covers the most common events. For the feature overview and full examples, see [Gateway API sync](../configure/vcluster-yaml/sync/to-host/networking/gateway-api.mdx).
+
+## `RefNotPermitted` on a route {#refnotpermitted-route}
+
+### Symptoms
+
+A tenant `HTTPRoute` or `TLSRoute` has no `Accepted` parent in its status, the host data plane returns the controller's no-route response, and `kubectl describe` on the tenant route shows:
+
+```text
+Warning  RefNotPermitted  Gateway API reference not permitted: authorize parentRefs[0]: HTTPRoute in namespace "<route-ns>" is not permitted by Gateway "<gateway>" in namespace "<gateway-ns>" allowedRoutes
+```
+
+### Cause
+
+The tenant `Gateway` listener's `allowedRoutes.namespaces` does not permit the route's namespace. Either `allowedRoutes.namespaces.from: Same` is set and the route lives in a different namespace, or `from: Selector` is set and the route's namespace does not match the selector.
+
+### Resolution
+
+Either move the route into a permitted namespace, label the route's namespace so it matches the listener selector, or relax the listener's `allowedRoutes.namespaces`. See [Route attachment by namespace selector](../configure/vcluster-yaml/sync/to-host/networking/gateway-api.mdx#route-attachment-by-namespace-selector) for the selector pattern.
+
+## `RefNotPermitted` on a cross-namespace backend reference {#refnotpermitted-backend}
+
+### Symptoms
+
+A tenant `HTTPRoute` or `TLSRoute` references a Service in a different namespace, has no `Accepted` parent in its status, and `kubectl describe` shows:
+
+```text
+Warning  RefNotPermitted  Gateway API reference not permitted: translate rules[0]: translate backendRefs[0]: HTTPRoute in namespace "<route-ns>" is not permitted to reference Service "<svc>" in namespace "<backend-ns>"
+```
+
+### Cause
+
+Gateway API requires a `ReferenceGrant` in the target namespace whenever a route references a backend Service in a different namespace. vCluster enforces the same rule before sync.
+
+### Resolution
+
+This event means the tenant `ReferenceGrant` did not authorize the reference at the time vCluster evaluated the route. Add a matching `ReferenceGrant` to the backend namespace that names the route's namespace, group, and kind. The grant pattern is in [Backend reference via ReferenceGrant](../configure/vcluster-yaml/sync/to-host/networking/gateway-api.mdx#backend-reference-via-referencegrant).
+
+## `RefNotPermitted` on a cross-namespace certificate reference {#refnotpermitted-cert}
+
+### Symptoms
+
+A tenant HTTPS `Gateway` references a TLS Secret in a different namespace, the listener does not become `Accepted`, and `kubectl describe` on the tenant `Gateway` shows:
+
+```text
+Warning  RefNotPermitted  Gateway API reference not permitted: authorize listeners[0].tls.certificateRefs[0]: Gateway in namespace "<gateway-ns>" is not permitted to reference Secret "<secret>" in namespace "<cert-ns>"
+```
+
+### Cause
+
+Same Gateway API rule as backend references: a `ReferenceGrant` in the certificate namespace must permit the `Gateway` to reference the Secret. vCluster enforces it before sync.
+
+### Resolution
+
+Add a `ReferenceGrant` to the certificate namespace that names the Gateway's namespace, group (`gateway.networking.k8s.io`), and kind (`Gateway`). The full pattern is in [TLS certificate via ReferenceGrant](../configure/vcluster-yaml/sync/to-host/networking/gateway-api.mdx#tls-certificate-via-referencegrant).
+
+<!-- vale off -->
+## `SyncError: referenced ConfigMap has no synced host object` {#syncerror-missing-ca-configmap}
+<!-- vale on -->
+
+### Symptoms
+
+A `BackendTLSPolicy` has empty status, the host Gateway controller reports no policy, and `kubectl describe` shows:
+
+```text
+Warning  SyncError  Error syncing: translate validation.caCertificateRefs[0]: referenced ConfigMap "<ca-configmap>" in namespace "<policy-ns>" has no synced host object
+```
+
+### Cause
+
+vCluster cannot translate the `BackendTLSPolicy`'s `validation.caCertificateRefs` because the referenced ConfigMap either does not exist in the tenant cluster or is not synced to the host. The same class of error occurs for Secret references that have not been synced.
+
+### Resolution
+
+1. Confirm the tenant ConfigMap exists:
+   ```bash
+   kubectl get configmap <ca-configmap> -n <policy-ns>
+   ```
+2. Make sure `sync.toHost.configMaps` is enabled and includes the CA ConfigMap. Default config syncing is opt-in, so either set `sync.toHost.configMaps.all: true` or label the ConfigMap so it matches the configured selector.
+3. Re-apply the `BackendTLSPolicy` and confirm the event clears.
+
+Timing tip: while the dependent Service is still being synced for the first time, the first emitted warning may name the Service instead of the CA. After the Service is synced, the stable error names the missing ConfigMap.
+
+## `SyncError: unsupported parentRef or backendRef` {#syncerror-unsupported-ref}
+
+### Symptoms
+
+An `HTTPRoute` or `TLSRoute` has empty status and `kubectl describe` shows one of:
+
+```text
+Warning  SyncError  Error syncing: translate parentRefs[0]: parentRef group "<group>" kind "<kind>" is not supported
+Warning  SyncError  Error syncing: translate rules[0]: translate backendRefs[0]: backendRef group "<group>" kind "<kind>" is not supported
+```
+
+### Cause
+
+vCluster's native Gateway API sync only translates core Gateway API kinds: `Gateway` for `parentRef`, and core Service for `backendRef`. Custom resource `parentRef` and `backendRef` kinds (such as Istio waypoints or service-mesh overlays) cannot be translated.
+
+### Resolution
+
+Either move the unsupported reference to a supported kind, or sync the custom resource separately using [`sync.toHost.customResources`](../configure/vcluster-yaml/sync/to-host/advanced/custom-resources.mdx). The custom-resource path still works for non-core Gateway API extensions; native sync is for core Gateway, HTTPRoute, TLSRoute, ReferenceGrant, and BackendTLSPolicy.
+
+## `SyncWarning: Gateway sync skipped (GatewayClass not selected)` {#syncwarning-gatewayclass-not-selected}
+
+### Symptoms
+
+A tenant `Gateway` is not visible on the host, its status is empty, and `kubectl describe` shows:
+
+```text
+Warning  SyncWarning  Gateway "<gateway>" sync skipped. The GatewayClass "<class>" does not match the selector under 'sync.fromHost.gatewayClasses.selector'
+```
+
+### Cause
+
+`sync.fromHost.gatewayClasses` is enabled with a selector, and the referenced `GatewayClass` does not have the required labels in the control plane cluster. vCluster did not sync the class into the tenant cluster, so the tenant `Gateway` has no valid `gatewayClassName`.
+
+### Resolution
+
+1. Confirm the host `GatewayClass` carries the expected labels:
+   ```bash
+   kubectl --context "$HOST_CONTEXT" get gatewayclass <class> --show-labels
+   ```
+2. Either label the host `GatewayClass` so it matches the selector, or change the tenant `Gateway` to reference a class that does. See [Gateway classes](../configure/vcluster-yaml/sync/from-host/gateway-classes.mdx) for the selector pattern.
+
+## Tenant Gateway has no host address {#no-host-address}
+
+### Symptoms
+
+The tenant `Gateway` reports `Accepted=True` but `status.addresses` stays empty, and `curl` to a discovered address fails.
+
+### Cause
+
+The host Gateway controller has not yet assigned an address, or the host platform does not provide one. For some controllers, an address only appears once a corresponding LoadBalancer Service is provisioned by the cloud provider. On clusters without LoadBalancer support, the host controller may publish a NodePort or require manual port-forwarding to the controller's Envoy/data-plane Service.
+
+### Resolution
+
+1. Inspect the host Gateway and its generated Service:
+   ```bash
+   kubectl --context "$HOST_CONTEXT" -n <host-ns> get gateway <name> -o wide
+   kubectl --context "$HOST_CONTEXT" -n <controller-ns> get svc
+   ```
+2. If the host platform does not provide LoadBalancer addresses, port-forward the controller's data-plane Service and curl that address directly. The tenant `Gateway` only mirrors what the host controller publishes; vCluster does not synthesize an address.

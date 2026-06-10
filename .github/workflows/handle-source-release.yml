@@ -1,0 +1,287 @@
+# Receiver for upstream release dispatches. Source repos (vcluster,
+# vcluster-cli inside the same repo, loft-enterprise / "platform") fire
+# `repository_dispatch` events when they cut a release; this workflow
+# decides where the docs land (current vs versioned vs skipped) and
+# regenerates the affected partials in a PR.
+#
+# Routing rules and version → folder mapping live in
+# hack/release/classify-version.sh — bats coverage in the same folder.
+# Per-event generator dispatch lives in hack/release/run-generator.sh.
+#
+# `client_payload` is untrusted (any pusher in the source repo can
+# craft it). Every field is plumbed through `env:` so it is never
+# interpolated into a `run:` block, and the classifier rejects malformed
+# versions before any side-effect runs.
+#
+# For platform-released the receiver also bumps loft-sh/api +
+# loft-sh/agentapi pins in go.mod to the released version before running
+# the platform partials generator. The generator reflects against
+# vendored Go types, so without the bump the regen would silently
+# produce no diff against the previous release's types and no PR would
+# open. The bumped go.mod + go.sum land in the same docs-sync PR
+# alongside the regenerated partials — both have to ship together to
+# compile on next regen.
+
+name: handle-source-release
+
+on:
+  repository_dispatch:
+    types:
+      - vcluster-released
+      - vcluster-cli-released
+      - platform-released
+  # Manual simulation; matches the dispatch contract one-for-one so a
+  # failed receiver run can be rerun without re-cutting the source release.
+  workflow_dispatch:
+    inputs:
+      event_type:
+        description: 'Which dispatch to simulate'
+        required: true
+        type: choice
+        options:
+          - vcluster-released
+          - vcluster-cli-released
+          - platform-released
+      version:
+        description: 'Released version (vcluster: vX.Y.Z e.g. v0.34.5; platform: vX.Y.Z e.g. v4.6.0). Must match a real released tag.'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout docs
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve event + version
+        id: inputs
+        env:
+          DISPATCH_EVENT: ${{ github.event.action }}
+          DISPATCH_VERSION: ${{ github.event.client_payload.version }}
+          MANUAL_EVENT: ${{ inputs.event_type }}
+          MANUAL_VERSION: ${{ inputs.version }}
+        run: |
+          set -eo pipefail
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            event="$MANUAL_EVENT"
+            version="$MANUAL_VERSION"
+          else
+            event="$DISPATCH_EVENT"
+            version="$DISPATCH_VERSION"
+          fi
+          # Cheap shape check; the classifier does the authoritative one.
+          if ! [[ "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.+-]+)?$ ]]; then
+            echo "::error::Refusing to proceed: version '$version' is not vX.Y.Z[-pre]" >&2
+            exit 1
+          fi
+          {
+            echo "event=$event"
+            echo "version=$version"
+          } >>"$GITHUB_OUTPUT"
+
+      - name: Classify version
+        id: classify
+        env:
+          VERSION: ${{ steps.inputs.outputs.version }}
+          EVENT_TYPE: ${{ steps.inputs.outputs.event }}
+        run: bash hack/release/classify-version.sh
+
+      - name: Skip notice
+        if: steps.classify.outputs.skip == 'true'
+        env:
+          EVENT: ${{ steps.inputs.outputs.event }}
+          VERSION: ${{ steps.inputs.outputs.version }}
+          CHANNEL: ${{ steps.classify.outputs.channel }}
+        run: |
+          echo "::notice::No docs change for $EVENT $VERSION (channel=$CHANNEL)"
+
+      - name: Set up Go
+        if: steps.classify.outputs.skip != 'true'
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      # vcluster's full module graph (pulled in by the cli generator's
+      # imports) transitively references private loft-sh/* modules
+      # (vcluster-pro). Without git auth, `go run` falls through to the
+      # public proxy, hits 404, then tries an unauthenticated `git
+      # ls-remote` and fails.
+      #
+      # GOPRIVATE is narrowed to the actually-private patterns. A broad
+      # `github.com/loft-sh/*` pattern forces direct VCS for public deps
+      # too — including the indirect github.com/loft-sh/external-types,
+      # whose sparse-then-dense git history reproducibly triggers a
+      # `git fetch --unshallow` race ("shallow file has changed since
+      # we read it") in `go mod tidy` after the platform pin bump.
+      # Mirrors loft-enterprise#6910.
+      - name: Configure git for private loft-sh modules
+        if: steps.classify.outputs.skip != 'true'
+        env:
+          GH_ACCESS_TOKEN: ${{ secrets.GH_ACCESS_TOKEN }}
+        run: |
+          set -eo pipefail
+          git config --global url."https://${GH_ACCESS_TOKEN}@github.com/".insteadOf "https://github.com/"
+          echo "GOPRIVATE=github.com/loft-sh/vcluster-pro*" >>"$GITHUB_ENV"
+          echo "GOPROXY=https://proxy.golang.org,direct" >>"$GITHUB_ENV"
+
+      # loft-enterprise's release pipeline cuts its own tag + release first
+      # (which triggers our dispatch), then creates matching upstream tags
+      # in loft-sh/{agentapi,api} in subsequent steps. Without a wait, the
+      # bump step's `go mod tidy` below races the upstream tag creation
+      # and fails with `unknown revision <version>`. Empirically the gap
+      # was ~30s-2min on v4.7.3-rc.1 (2026-05-27). Polling on the GitHub
+      # API directly (not `go list`) sidesteps Go's module proxy cache,
+      # which can lag tag creation. 10s × 60 = 10 min ceiling.
+      - name: Wait for agentapi + api tags to be published
+        if: steps.classify.outputs.skip != 'true' && steps.inputs.outputs.event == 'platform-released'
+        env:
+          VERSION: ${{ steps.inputs.outputs.version }}
+          GH_TOKEN: ${{ secrets.GH_ACCESS_TOKEN }}
+        run: |
+          set -eo pipefail
+          for repo in loft-sh/agentapi loft-sh/api; do
+            attempt=0
+            until gh api "repos/${repo}/git/refs/tags/${VERSION}" >/dev/null 2>&1; do
+              attempt=$((attempt + 1))
+              if [ "$attempt" -ge 60 ]; then
+                echo "::error::${repo}: tag ${VERSION} not present after 10 minutes; upstream pipeline never published it" >&2
+                exit 1
+              fi
+              echo "${repo}: waiting for tag ${VERSION} (attempt ${attempt}/60)"
+              sleep 10
+            done
+            echo "::notice::${repo}: tag ${VERSION} present (attempt ${attempt:-0})"
+          done
+
+      # The platform partials generator reflects against the loft-sh/api +
+      # loft-sh/agentapi types pinned in this repo's go.mod. Without bumping
+      # the pins to the just-released version, the regen sees identical
+      # types to last time and emits no diff — the receiver would silently
+      # produce no PR. The legacy sync-api.yaml `update-docs` job did this
+      # bump before opening the docs PR; with that job removed in DEVOPS-889
+      # PR #4, the bump moves here. Major-version segment is taken from the
+      # released version itself, so a future v5 cutover doesn't need code.
+      #
+      # `go mod vendor` is load-bearing: this repo carries a `vendor/` tree
+      # and `go run` resolves with vendor semantics. Without re-vendoring,
+      # `vendor/modules.txt` still records the previous version while go.mod
+      # claims the new one and the generator fails with "inconsistent
+      # vendoring". The bumped vendor tree ships in the same docs-sync PR
+      # alongside go.mod/go.sum + regenerated partials — they have to ship
+      # together to compile on next regen.
+      - name: Bump loft-sh/api + loft-sh/agentapi pins to released platform version
+        if: steps.classify.outputs.skip != 'true' && steps.inputs.outputs.event == 'platform-released'
+        env:
+          VERSION: ${{ steps.inputs.outputs.version }}
+        run: |
+          set -eo pipefail
+          stripped="${VERSION#v}"
+          major="v${stripped%%.*}"
+          echo "Bumping github.com/loft-sh/{api,agentapi}/${major} to ${VERSION}"
+          go mod edit -require "github.com/loft-sh/agentapi/${major}@${VERSION}"
+          go mod edit -require "github.com/loft-sh/api/${major}@${VERSION}"
+          go mod tidy
+          go mod vendor
+
+      # vcluster + vcluster-cli generators consume the released vCluster
+      # source tree. Platform generator builds against API types pinned in
+      # this repo's go.mod (see bump step above), so no source checkout is
+      # needed.
+      - name: Checkout vCluster source
+        if: steps.classify.outputs.skip != 'true' && (steps.inputs.outputs.event == 'vcluster-released' || steps.inputs.outputs.event == 'vcluster-cli-released')
+        uses: actions/checkout@v4
+        with:
+          repository: loft-sh/vcluster
+          ref: ${{ steps.inputs.outputs.version }}
+          path: source-vcluster
+          fetch-depth: 1
+
+      # The partials generator expects vcluster.schema.json /
+      # default_values.yaml; the source tree exposes them as
+      # chart/values.schema.json / chart/values.yaml. Keeping the rename
+      # here (instead of teaching the generator both names) keeps the
+      # generator's I/O contract obvious from its flag list.
+      - name: Stage vCluster schema for partials generator
+        if: steps.classify.outputs.skip != 'true' && steps.inputs.outputs.event == 'vcluster-released'
+        env:
+          STAGE_DIR: ${{ github.workspace }}/source-vcluster-staged
+        run: |
+          set -eo pipefail
+          mkdir -p "$STAGE_DIR"
+          cp source-vcluster/chart/values.schema.json "$STAGE_DIR/vcluster.schema.json"
+          cp source-vcluster/chart/values.yaml         "$STAGE_DIR/default_values.yaml"
+          echo "STAGED=$STAGE_DIR" >>"$GITHUB_ENV"
+
+      - name: Generate docs
+        if: steps.classify.outputs.skip != 'true'
+        env:
+          EVENT_TYPE: ${{ steps.inputs.outputs.event }}
+          TARGET_FOLDER: ${{ steps.classify.outputs.target_folder }}
+          # SOURCE_PATH only used by vcluster + vcluster-cli generators;
+          # platform generator ignores it.
+          SOURCE_PATH: ${{ steps.inputs.outputs.event == 'vcluster-released' && env.STAGED || (steps.inputs.outputs.event == 'vcluster-cli-released' && format('{0}/source-vcluster', github.workspace) || '') }}
+        run: bash hack/release/run-generator.sh
+
+      - name: Open or update PR
+        if: steps.classify.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EVENT: ${{ steps.inputs.outputs.event }}
+          VERSION: ${{ steps.inputs.outputs.version }}
+          CHANNEL: ${{ steps.classify.outputs.channel }}
+          TARGET_FOLDER: ${{ steps.classify.outputs.target_folder }}
+        run: |
+          set -eo pipefail
+          git config user.name  "Loft Bot"
+          git config user.email "loft-bot@users.noreply.github.com"
+
+          branch="docs-sync/${EVENT}-${VERSION}"
+          git checkout -B "$branch"
+
+          if git diff --quiet --exit-code; then
+            echo "::notice::No content changes for $EVENT $VERSION (target=$TARGET_FOLDER)"
+            exit 0
+          fi
+
+          git add -A
+          git commit -m "docs: sync ${EVENT} ${VERSION}" -m "Channel: ${CHANNEL}. Target: ${TARGET_FOLDER}."
+          git push -u origin "$branch" --force
+
+          if gh pr list --head "$branch" --state open --json number --jq '.[0].number' | grep -q .; then
+            echo "::notice::Existing PR on $branch updated by force-push."
+            exit 0
+          fi
+
+          gh pr create \
+            --base main \
+            --head "$branch" \
+            --title "docs: sync ${EVENT} ${VERSION}" \
+            --body "Auto-generated by handle-source-release. Channel: \`${CHANNEL}\`. Target: \`${TARGET_FOLDER}\`."
+
+      # Alerts a chosen Slack channel when a non-skip receiver run fails.
+      # Guarded on `skip != 'true'` because the classifier reports skip
+      # through outputs (alpha/beta/invalid versions) without failing the
+      # job — those runs are green by design and must not page anyone.
+      # `if: failure()` already excludes successful runs and dispatches
+      # that exit cleanly on no-content-diff. Webhook is optional: when
+      # the secret is unset (fork PRs, pre-provisioning), `ci-test-notify`
+      # logs a warning and no-ops, so this step never breaks the workflow.
+      - name: Notify Slack on receiver failure
+        if: failure() && steps.classify.outputs.skip != 'true'
+        uses: loft-sh/github-actions/.github/actions/ci-test-notify@b5a50da8a53ca1021b783290630061078bdb12cf # ci-test-notify/v1
+        with:
+          test-name: "docs-sync receiver — ${{ steps.inputs.outputs.event }} ${{ steps.inputs.outputs.version }}"
+          status: failure
+          details: |
+            Event: `${{ steps.inputs.outputs.event }}`
+            Version: `${{ steps.inputs.outputs.version }}`
+            Channel: `${{ steps.classify.outputs.channel || 'n/a' }}`
+            Target: `${{ steps.classify.outputs.target_folder || 'n/a' }}`
+          webhook-url: ${{ secrets.DOCS_SYNC_SLACK_WEBHOOK_URL }}

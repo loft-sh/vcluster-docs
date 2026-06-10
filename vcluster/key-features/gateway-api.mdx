@@ -1,0 +1,87 @@
+---
+title: Gateway API
+sidebar_label: Gateway API
+sidebar_position: 6
+sidebar_class_name: host-nodes
+description: Understand how vCluster and vCluster Platform use Kubernetes Gateway API for tenant cluster endpoints, routing, and auto sleep.
+---
+
+import TenancySupport from '../_fragments/tenancy-support.mdx';
+import InterpolatedCodeBlock from '@site/src/components/InterpolatedCodeBlock';
+
+<TenancySupport hostNodes="true" />
+
+Gateway API is the recommended path for new vCluster endpoint and tenant routing deployments. It provides a Kubernetes-native model for shared traffic infrastructure, explicit route attachment, and controller-owned status conditions.
+
+vCluster uses Gateway API in two main ways:
+
+- Expose the tenant cluster API server with a `TLSRoute`.
+- Sync tenant workload routes, such as `HTTPRoute` resources, to the Control Plane Cluster.
+
+vCluster Platform also uses Gateway API for Gateway-backed endpoint and auto sleep workflows. These workflows require Gateway API CRDs and a compatible controller on the connected Control Plane Cluster.
+
+## Relationship to ingress-nginx
+
+The upstream ingress-nginx project is deprecated. Existing ingress-based vCluster and Platform configurations continue to work in vCluster v0.35 and vCluster Platform v4.10, but Gateway API is the forward path for new deployments.
+
+There is no automatic ingress-to-Gateway migration in vCluster v0.35 or Platform v4.10. Plan the move explicitly: keep existing ingress configurations in place, validate a Gateway controller, create a test tenant cluster with Gateway-backed endpoints, and then migrate selected workloads.
+
+For a step-by-step adoption path, see [Migrate from ingress-nginx to Gateway API](../manage/ingress-nginx-to-gateway-api.mdx).
+
+## Gateway API uses in vCluster
+
+| Use case | Gateway API resource | Where to configure |
+| --- | --- | --- |
+| Expose the tenant cluster API server with TLS passthrough | `TLSRoute` | [Access and expose vCluster](../manage/accessing-vcluster.mdx#expose-vcluster) |
+| Let tenants publish HTTP workloads through a Gateway controller in the Control Plane Cluster | `HTTPRoute` | [Gateway API sync](../configure/vcluster-yaml/sync/to-host/networking/gateway-api.mdx) |
+| Let tenants create their own Gateway resources | `Gateway` | [Gateway API sync](../configure/vcluster-yaml/sync/to-host/networking/gateway-api.mdx) |
+| Let tenants attach routes to an admin-approved shared Gateway | Imported `Gateway` and `GatewayClass` | [Imported Gateways and GatewayClasses](../configure/vcluster-yaml/sync/from-host/gateways.mdx) |
+| Wake sleeping tenant clusters through HTTP traffic | `HTTPRoute` with RequestMirror support | [Auto Sleep](./sleep.mdx#gateway-api-httproute-activity-detection) |
+
+## Prerequisites
+
+Before adopting Gateway API, verify:
+
+- Gateway API CRDs are installed on the Control Plane Cluster.
+- A Gateway API-compatible controller is installed and healthy.
+- At least one `GatewayClass` is available for the controller you plan to use.
+- DNS and certificates are planned for the Gateway listener hostnames.
+- The selected controller supports the route kinds you need, such as `TLSRoute` for tenant cluster API server exposure and `HTTPRoute` for application traffic.
+- If you need Gateway-backed auto sleep, the selected controller supports `HTTPRoute` request mirroring or is explicitly allowed by Platform configuration.
+
+Gateway API support is controller-specific. A controller can support Gateway endpoints without supporting every feature needed for auto sleep wakeup.
+
+## Use shared gateways for tenancy
+
+Platform teams often want a small number of administrator-owned Gateways and many tenant-owned Routes. In that model, administrators create and operate the Gateway in the Control Plane Cluster. vCluster then imports a read-only representation into tenant clusters.
+
+Tenants attach `HTTPRoute` resources to that approved Gateway instead of creating their own Gateway.
+
+Use this model when DNS, certificates, listener policy, and infrastructure ownership should stay with the platform team. Use tenant-created Gateways when the tenant is allowed to own Gateway lifecycle and the controller supports that operating model.
+
+For the configuration model, see [Imported Gateways and GatewayClasses](../configure/vcluster-yaml/sync/from-host/gateways.mdx).
+
+## Validate routes
+
+Use these checks when validating a Gateway API rollout:
+
+```bash title="Check Gateway API CRDs"
+kubectl get crd gatewayclasses.gateway.networking.k8s.io gateways.gateway.networking.k8s.io httproutes.gateway.networking.k8s.io
+```
+
+<InterpolatedCodeBlock
+  title="Check GatewayClasses"
+  code={'kubectl get gatewayclass\n' +
+    'kubectl describe gatewayclass [[VAR:GATEWAY_CLASS_NAME:my-gateway-class]]'}
+  language="bash"
+/>
+
+<InterpolatedCodeBlock
+  title="Check route status"
+  code={'kubectl get httproute,tlsroute -A\n' +
+    'kubectl describe httproute [[VAR:ROUTE_NAME:my-route]] -n [[VAR:NAMESPACE:my-namespace]]\n' +
+    'kubectl describe tlsroute [[VAR:ROUTE_NAME:my-route]] -n [[VAR:NAMESPACE:my-namespace]]'}
+  language="bash"
+/>
+
+Look for accepted and programmed status conditions on Routes. If a Route is not accepted, check the referenced Gateway, Gateway listener settings, route kind support, cross-namespace attachment policy, and any required `ReferenceGrant` resources.

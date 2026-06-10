@@ -136,6 +136,63 @@ find vcluster vcluster_versioned_docs -name "*.mdx" \
   -exec sed -i 's|/platform/old/path|/platform/new/path|g' {} \;
 ```
 
+### Sidebar Navigation Conventions
+
+Docusaurus sidebar categories can be made clickable (navigating to a page on click) in two ways. Both are banned — sidebar section labels must expand/collapse only.
+
+**Anti-pattern 1: `link` field in `_category_.json`**
+
+```json
+// WRONG — do not add a link field
+{
+  "label": "Deploy",
+  "position": 2,
+  "link": {
+    "type": "generated-index"
+  }
+}
+```
+
+Remove the `link` field entirely. The `label` and `position` fields are sufficient.
+
+**Anti-pattern 2: `README.mdx` as a folder index (general docs)**
+
+Docusaurus automatically converts a `README.mdx` file into the category's landing page and makes the section label clickable — even without a `link` in `_category_.json`. Do not create `README.mdx` files as folder indices in general docs sections.
+
+Instead, use `overview.mdx` with an explicit `slug:` that matches the directory URL:
+
+```mdx
+---
+title: Networking
+sidebar_label: Overview
+sidebar_position: 0
+slug: /configure/vcluster-yaml/networking
+---
+```
+
+When converting an existing `README.mdx` to `overview.mdx`:
+
+1. Add `slug:` matching the directory's URL (plugin-relative, no `/vcluster/` prefix).
+2. Set `sidebar_label: Overview` — not the section name, to avoid duplication.
+3. Migrate `sidebar_position` and `sidebar_class_name` out of the MDX frontmatter and into `_category_.json` as `position` and `className` respectively. The `_category_.json` controls the section label in the sidebar; the `overview.mdx` frontmatter controls only the child item.
+4. Update any relative links inside the file that previously resolved from a directory URL — they now resolve from the slug URL.
+
+**`_category_.json` structure for a folder that has an `overview.mdx`:**
+
+```json
+{
+  "label": "Networking",
+  "position": 3,
+  "className": "host-nodes private-nodes"
+}
+```
+
+Do not add a `link` field.
+
+**Exception: `vcluster/configure/vcluster-yaml/` uses `README.mdx`**
+
+The `vcluster-yaml` section mirrors the structure of the `vcluster.yaml` config file — every folder is a yaml key. Labeling these pages "Overview" is semantically wrong because there is no `overview` key in the yaml. In this section only, use `README.mdx` (not `overview.mdx`) as the folder index. Docusaurus treats it as the category header click target; it does not appear as a named sidebar item. Do NOT set `sidebar_label: Overview` or `sidebar_position: 0` on these files — they are irrelevant once the file becomes the category index.
+
 ### PR Preview URLs
 
 Preview links MUST point to actual changed pages, NOT the docs root.
@@ -231,6 +288,8 @@ See `references/partials-guide.md` for complete patterns and troubleshooting.
 - ⚠️ **NEVER run `npm run build`** (user runs when needed)
 - ⚠️ **NEVER use URL paths for links** (use file paths with `.mdx`)
 - ⚠️ **NEVER place admonitions inside JSX components** like `<Step>`
+- ⚠️ **NEVER add a `link` field to `_category_.json`** — sidebar section labels must expand/collapse only, not navigate
+- ⚠️ **NEVER create `README.mdx` as a folder index** in general docs sections — use `overview.mdx` with an explicit `slug:` instead. **Exception**: `vcluster/configure/vcluster-yaml/` uses `README.mdx` because every folder is a yaml key and "Overview" is semantically wrong there (see Sidebar Navigation Conventions)
 
 ### Always-Do
 - ✅ **Always run vale** before finalizing documentation

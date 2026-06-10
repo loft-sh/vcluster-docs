@@ -510,3 +510,52 @@ This content won't be checked by Vale.
 ```
 
 <!-- vale on -->
+
+## Adding prose to generated partials
+
+The vCluster config partials under `vcluster/_partials/config/` are
+overwritten on every release by `hack/vcluster/partials/main.go`. Editing
+those files in place was the original workflow and the original failure
+mode: the next regeneration silently dropped the edit. Two routes exist
+now, both designed to survive regeneration.
+
+### Use the Extras map when prose belongs with a schema field
+
+If the prose is intrinsically tied to one schema path — a security
+warning that only makes sense alongside `controlPlane.standalone.joinNode`,
+a migration tip that belongs at the bottom of `controlPlane.distro` —
+add a `pathExtras` entry in `hack/vcluster/partials/main.go`:
+
+```go
+var pathExtras = map[string]Extras{
+    "controlPlane/standalone/joinNode": {
+        Before: "\n:::warning Security consideration\n...\n:::\n\n",
+    },
+}
+```
+
+`Before` lands above the rendered schema content, `After` below.
+The map keys are validated against the live schema before any output
+is written; a rename or removal upstream panics the generator with the
+full list of dangling keys, so the prose can be migrated explicitly
+instead of silently orphaned.
+
+### Use a separate, non-generated partial when prose stands alone
+
+If the prose is conceptual (an overview page, a how-to, a comparison)
+and only happens to live near generated content, write it as a
+hand-authored `.mdx` outside `vcluster/_partials/config/` and import it
+where needed. The generator will not touch it. This is the right choice
+when:
+
+- The prose can be read on its own without a specific schema field next
+  to it.
+- The prose references multiple schema paths.
+- The prose has its own headings, examples, and lifecycle (changes for
+  reasons unrelated to schema bumps).
+
+### Quick rule of thumb
+
+- One schema path, one or two paragraphs of prose → `pathExtras`.
+- Multi-paragraph prose, multiple references, own structure → separate
+  partial, imported manually.

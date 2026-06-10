@@ -2,7 +2,7 @@ package main
 
 import (
 	"bufio"
-	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
 	"io/fs"
@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/invopop/jsonschema"
 	"github.com/loft-sh/vcluster-docs/hack/platform/util"
 
 	clusterv1 "github.com/loft-sh/agentapi/v4/pkg/apis/loft/cluster/v1"
@@ -23,21 +22,35 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-var paths []string
-
 func main() {
-	if len(os.Args) != 2 {
-		panic("expected to be called with vcluster jsonschema path as first argument, e.g.\n" +
-			"go run hack/vcluster/partials/main.go configsrc/v0.21/vcluster.schema.json")
+	// Flags let the release-dispatch receiver redirect output into a
+	// versioned folder without modifying util.BasePath in source. Both
+	// default to empty, in which case the legacy util.BasePath /
+	// util.BaseResourcesPath defaults stand and unmodified scripted
+	// callers keep writing to the same locations.
+	var partialsBase, resourcesBase string
+	flag.StringVar(&partialsBase, "partials-base", "", "Override util.BasePath; receiver passes ${target_folder}/api/_partials/resources/")
+	flag.StringVar(&resourcesBase, "resources-base", "", "Override util.BaseResourcesPath; receiver passes ${target_folder}/api/resources")
+	flag.Parse()
+
+	if partialsBase != "" {
+		util.BasePath = partialsBase
 	}
-	jsonSchemaPath := os.Args[1]
+	if resourcesBase != "" {
+		util.BaseResourcesPath = resourcesBase
+	}
 
 	removeAllExceptPreserved(util.BasePath)
 
 	util.GenerateSection(&managementv1.ConfigStatus{}, true, path.Join(util.BasePath, "config/status_reference.mdx"))
 	util.GenerateSection(&managementv1.AuditPolicy{}, true, path.Join(util.BasePath, "config/status/audit/policy.mdx"))
 	util.GenerateSection(&managementv1.Audit{}, true, path.Join(util.BasePath, "config/status/audit.mdx"))
-	util.GenerateSection(&storagev1.RancherIntegrationSpec{}, true, path.Join(util.BasePath, "projects/spec/rancher.mdx"))
+	// RancherIntegrationSpec was removed from loft-sh/api/v4 in v4.9.0 — the
+	// legacy in-tree Rancher integration is replaced by the standalone
+	// vCluster Rancher operator (see /docs/platform/integrations/rancher and
+	// the migration guide). The previously-generated rancher.mdx is only
+	// imported by frozen versioned docs (4.5/4.6/4.7), which ship their own
+	// partial copies; current platform docs do not import it.
 	util.GenerateSection(&storagev1.VaultIntegrationSpec{}, true, path.Join(util.BasePath, "projects/spec/vault.mdx"))
 
 	util.GenerateMetadata(&util.ObjectInformation{
@@ -1115,29 +1128,6 @@ spec:
 	})
 
 	util.DefaultRequire = false
-	schema := &jsonschema.Schema{}
-	schemaBytes, err := os.ReadFile(jsonSchemaPath)
-	if err != nil {
-		panic(fmt.Errorf("failed to read schema file %q: %w", jsonSchemaPath, err))
-	}
-	err = json.Unmarshal(schemaBytes, schema)
-	if err != nil {
-		panic(fmt.Errorf("failed to parse JSON schema from %q: %w", jsonSchemaPath, err))
-	}
-
-	// fmt.Println("properties:")
-	// for childNode := schema.Properties.Oldest(); childNode != nil; childNode = childNode.Next() {
-	// 	fmt.Printf("%v : %v\n", childNode.Key, childNode.Value)
-	// }
-	// fmt.Println(paths)
-	for _, p := range paths {
-		p := strings.TrimPrefix(p, "/")
-		err := util.GenerateFromPathWithError(schema, util.BasePath+"/config", p, nil)
-		if err != nil {
-			fmt.Printf("Warning: Skipping path %q: %v\n", p, err)
-			continue
-		}
-	}
 }
 
 // removeAllExceptPreserved deletes basePath and recreates it, but first backs
