@@ -11,8 +11,10 @@ import ProAdmonition from "../../../../../../_partials/admonitions/pro-admonitio
 
 import TenancySupport from '../../../../../../_fragments/tenancy-support.mdx';
 import FeatureTable from '@site/src/components/FeatureTable';
+import InterpolatedCodeBlock from "@site/src/components/InterpolatedCodeBlock";
+import PageVariables from "@site/src/components/PageVariables";
 
-<FeatureTable names="vcp-distro-external-database,external-database-rds-iam" />
+<FeatureTable names="vcp-distro-external-database,external-database-rds-iam,external-database-kerberos" />
 
 
 
@@ -84,6 +86,8 @@ Replace `CONNECTION_STRING` with the connection string for your database. Exampl
 - PostgreSQL: `postgres://username:password@hostname:5432/vcluster-db`
 - MySQL: `mysql://root:password@tcp(192.168.86.9:3306)/vcluster`
 
+For passwordless authentication to PostgreSQL with a mounted keytab, see [Authenticate to PostgreSQL with Kerberos](#authenticate-to-postgresql-with-kerberos-gssapi).
+
 ### Connector configuration
 
 After completing the [prerequisites](#connector-platform-managed), reference the connector secret in your tenant cluster configuration:
@@ -100,6 +104,149 @@ controlPlane:
 :::note
 The tenant cluster must be [connected to the platform](/docs/vcluster/configure/vcluster-yaml/platform) to use the connector. This enables centralized management and monitoring of tenant clusters.
 :::
+
+## Authenticate to PostgreSQL with Kerberos (GSSAPI)
+
+<PageVariables
+  REALM="EXAMPLE.COM"
+  KDC_HOST="kdc.example.com"
+  PRINCIPAL="krb5-db-user"
+  PG_FQDN="postgres.example.com"
+  DB_NAME="kubernetes"
+/>
+
+When you use an external PostgreSQL `dataSource`, the tenant cluster's `kine` connects to your PostgreSQL backend. Instead of a static password in the connection string, that connection can authenticate with **Kerberos/GSSAPI** using a mounted keytab. This suits enterprises that already operate a Kerberos realm (an MIT KDC or Active Directory) and require Kerberos for all database access.
+
+Authentication relies on existing vcluster.yaml values. A passwordless `dataSource` carries the client principal and points at a mounted keytab. The generic `controlPlane.statefulSet` volume, mount, and environment values mount the keytab and `krb5.conf` into the control plane pod. No Kerberos-specific fields are required.
+
+:::note
+This applies to the **data source** path against **PostgreSQL** only. Kerberos is not used by the [connector](#connector-configuration) path, and GSSAPI is a PostgreSQL feature, so it does not apply to MySQL.
+:::
+
+:::important Kubernetes distro version
+GSSAPI support ships in the `kine` binary carried by the **stock** Kubernetes distro image from **v1.36** onward. The vCluster release itself is unchanged: set `controlPlane.distro.k8s.image` to a `v1.36` or later tag, as shown in [Step 4](#step-4---configure-the-vclusteryaml-file). Earlier distro images carry a `kine` build without GSSAPI and fail against a Kerberos data source.
+:::
+
+### Prerequisites
+
+Before you begin, ensure you have:
+
+- A tenant cluster running the Kubernetes distro image at **v1.36 or later** (see the admonition above).
+- An existing **Kerberos environment**:
+  - A KDC and realm (for example `EXAMPLE.COM`).
+  - A **client principal** for the tenant cluster, for example `krb5-db-user@EXAMPLE.COM`, that you can export to a keytab.
+- A **PostgreSQL server built with GSSAPI support**, reachable from the control plane cluster at a stable fully qualified domain name (FQDN), with:
+  - The service principal `postgres/<postgres-fqdn>@REALM` present in the server's keytab and referenced by `krb_server_keyfile`.
+  - A `pg_hba.conf` rule that authenticates the connection with `gss`.
+  - A login role and database that the client principal maps to (see [Step 2](#step-2---create-the-postgresql-role-and-database)).
+
+### Step 1 - Create the database principal and export a keytab
+
+Create the client principal in your KDC and export it to a keytab file. With MIT Kerberos, use `kadmin`:
+
+<InterpolatedCodeBlock
+  code={
+`kadmin -q "addprinc -randkey [[GLOBAL:PRINCIPAL]]@[[GLOBAL:REALM]]"
+kadmin -q "ktadd -k [[GLOBAL:PRINCIPAL]].keytab [[GLOBAL:PRINCIPAL]]@[[GLOBAL:REALM]]"`
+  }
+  language="bash"
+/>
+
+This produces a `krb5-db-user.keytab` file containing credentials for the principal. Keep this file secure. Anyone holding it can authenticate as the principal.
+
+### Step 2 - Create the PostgreSQL role and database
+
+Create a passwordless login role whose name matches the principal's short name and a database the role can use. Because the `pg_hba.conf` rule below uses `include_realm=0`, PostgreSQL strips the `@REALM` suffix, so the principal `krb5-db-user@EXAMPLE.COM` maps to the role `krb5-db-user`.
+
+<InterpolatedCodeBlock
+  code={
+`CREATE ROLE "[[GLOBAL:PRINCIPAL]]" LOGIN;
+CREATE DATABASE [[GLOBAL:DB_NAME]] OWNER "[[GLOBAL:PRINCIPAL]]";`
+  }
+  language="sql"
+/>
+
+Point PostgreSQL at its service keytab in `postgresql.conf`:
+
+```ini
+krb_server_keyfile = '/etc/postgres-keytab/krb5.keytab'
+```
+
+Add a `gss` rule to `pg_hba.conf` so remote TCP connections from the tenant cluster authenticate over Kerberos. PostgreSQL uses the first matching `pg_hba.conf` rule, so place this rule before broader `host` rules that use another authentication method. Scope the address range to the tenant cluster network where possible:
+
+<InterpolatedCodeBlock
+  code={`host    all    all    0.0.0.0/0    gss include_realm=0 krb_realm=[[GLOBAL:REALM]]`}
+  language="text"
+/>
+
+:::info
+`krbsrvname` in the data source (Step 4) selects the `postgres` service principal, and `krb_realm` restricts which realm's principals the rule accepts. Keep `include_realm=0` and the role name aligned, otherwise the mapped role will not match and the connection is rejected.
+:::
+
+### Step 3 - Create the keytab Secret and krb5.conf ConfigMap
+
+Create a Kubernetes Secret holding the client keytab and a ConfigMap holding the client `krb5.conf`, both in the tenant cluster's host namespace (for example `vcluster-my-vcluster`). The control plane pod mounts them in [Step 4](#step-4---configure-the-vclusteryaml-file).
+
+<InterpolatedCodeBlock
+  code={
+`kubectl create secret generic kine-keytab \\
+  --from-file=krb5.keytab=[[GLOBAL:PRINCIPAL]].keytab \\
+  --namespace vcluster-my-vcluster`
+  }
+  language="bash"
+/>
+
+Write a local `krb5.conf` file that points at your KDC. When your service DNS names lack matching PTR records, disable DNS canonicalization and reverse lookups so the service principal name matches the host the tenant cluster connects to:
+
+<InterpolatedCodeBlock
+  code={
+"[libdefaults]\n default_realm = [[GLOBAL:REALM]]\n dns_lookup_realm = false\n dns_lookup_kdc = false\n dns_canonicalize_hostname = false\n rdns = false\n[realms]\n [[GLOBAL:REALM]] = {\n   kdc = [[GLOBAL:KDC_HOST]]\n   admin_server = [[GLOBAL:KDC_HOST]]\n }"
+  }
+  language="ini"
+/>
+
+Create the ConfigMap from that file:
+
+```bash
+kubectl create configmap krb5-conf \
+  --from-file=krb5.conf=krb5.conf \
+  --namespace vcluster-my-vcluster
+```
+
+### Step 4 - Configure the vcluster.yaml file
+
+Pin the distro image to a GSSAPI-capable build, set the passwordless Kerberos data source, and mount the keytab and `krb5.conf` into the control plane pod through `controlPlane.statefulSet`. The data source carries **no password**. The principal lives in the user part of the connection string, `krb5_keytab` points at the mounted keytab, and `krbsrvname` selects the PostgreSQL service principal.
+
+<InterpolatedCodeBlock
+  code={"controlPlane:\n  distro:\n    k8s:\n      image:\n        registry: ghcr.io\n        repository: loft-sh/kubernetes\n        # GSSAPI-capable kine ships in the stock distro from v1.36.\n        tag: v1.36.1\n  backingStore:\n    database:\n      external:\n        enabled: true\n        # Passwordless GSSAPI data source. The principal in the user part is\n        # URL-encoded (@ becomes %40); krb5_keytab points at the mounted keytab.\n        dataSource: \"postgres://[[GLOBAL:PRINCIPAL]]%40[[GLOBAL:REALM]]@[[GLOBAL:PG_FQDN]]:5432/[[GLOBAL:DB_NAME]]?sslmode=disable&krbsrvname=postgres&krb5_keytab=/etc/kine-keytab/krb5.keytab\"\n  statefulSet:\n    # KRB5_CONFIG tells the GSSAPI client where to read the realm configuration.\n    env:\n      - name: KRB5_CONFIG\n        value: /etc/krb5.conf\n    # Mount the client keytab and krb5.conf into the control plane pod.\n    persistence:\n      addVolumes:\n        - name: kine-keytab\n          secret:\n            secretName: kine-keytab\n        - name: krb5-conf\n          configMap:\n            name: krb5-conf\n      addVolumeMounts:\n        - name: kine-keytab\n          mountPath: /etc/kine-keytab\n          readOnly: true\n        - name: krb5-conf\n          mountPath: /etc/krb5.conf\n          subPath: krb5.conf\n          readOnly: true"}
+  language="yaml"
+/>
+
+:::warning
+The principal in the data source user part must be **URL-encoded**. Write the `@` between the principal and the realm as `%40` (for example `krb5-db-user%40EXAMPLE.COM`). The data source **host must exactly match** the host in the PostgreSQL service principal (`postgres/<host>@REALM`) baked into the server keytab. A mismatch makes the GSSAPI handshake fail even when every other value is correct.
+:::
+
+:::note
+Kerberos authenticates the database connection, but it does not replace TLS. The example uses `sslmode=disable` for simplicity. For production, add the PostgreSQL TLS options your environment requires to the data source, such as `sslmode=verify-full`.
+:::
+
+### Step 5 - Create the tenant cluster and confirm authentication
+
+Create the tenant cluster with your configuration:
+
+```bash
+vcluster create my-vcluster --namespace vcluster-my-vcluster -f vcluster.yaml
+```
+
+The tenant cluster becomes ready once `kine` completes the GSSAPI handshake and connects to PostgreSQL. The data source carries no password, so Kerberos is the only authentication path available.
+
+If the tenant cluster stays unready, inspect the control plane pod logs:
+
+```bash
+kubectl logs -n vcluster-my-vcluster -l app=vcluster --tail=100
+```
+
+A working setup logs the GSSAPI provider registration for the principal, followed by a successful connection. A wrong or absent principal logs the provider registration followed by `failed GSS auth`, which proves Kerberos is enforced rather than bypassed. Confirm that the principal in the data source exactly matches the one exported into the mounted keytab, and that the data source host matches the PostgreSQL service principal.
 
 ## Network policies
 If you are using [network policies](../../../../policies/network-policy.mdx), the tenant cluster control plane traffic to the external database must be allowed.
