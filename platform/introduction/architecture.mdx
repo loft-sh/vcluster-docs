@@ -1,0 +1,173 @@
+---
+title: Architecture
+sidebar_label: Architecture
+sidebar_position: 3
+description: Understand the vCluster Platform management plane, connected cluster agents, resource lifecycle, and network paths.
+---
+
+import GlossaryTerm from '@site/src/components/GlossaryTerm';
+import PlatformArchitectureOverview from '@site/static/media/platform/diagrams/platform-architecture-overview.svg';
+import PlatformEntryPoints from '@site/static/media/platform/diagrams/platform-entry-points.svg';
+import PlatformTenantLifecycle from '@site/static/media/platform/diagrams/platform-tenant-lifecycle.svg';
+import PlatformNetworkPaths from '@site/static/media/platform/diagrams/platform-network-paths.svg';
+
+vCluster Platform is the management plane for your <GlossaryTerm term="tenant-cluster">tenant cluster</GlossaryTerm> fleet. It runs in Kubernetes and exposes UI, CLI, and API entry points. It also reconciles Platform resources into connected <GlossaryTerm term="control-plane-cluster">Control Plane Clusters</GlossaryTerm>.
+
+Platform does not replace vCluster. Platform manages projects, users, templates, connected clusters, access, lifecycle automation, and node provisioning. vCluster remains the runtime that creates and runs each tenant cluster control plane. For vCluster internals, see the [vCluster architecture](/docs/vcluster/introduction/architecture).
+
+<figure>
+  <PlatformArchitectureOverview style={{width: '100%', height: 'auto'}} role="img" aria-label="vCluster Platform management plane connected to two connected clusters" />
+  <figcaption>Platform management plane and connected clusters</figcaption>
+</figure>
+
+## Management plane
+
+The Platform management plane runs as the `vcluster-platform` Helm chart. A standard installation deploys these components into the Platform namespace.
+
+The management plane is responsible for:
+
+- **Platform manager**. Runs the controllers that reconcile Platform resources.
+- **API gateway**. Serves authenticated UI, CLI, integration, and automation requests.
+- **Web UI**. Provides the browser interface for the Platform API. It runs as part of the management API process, not as a separate deployment.
+- **Management API**. Serves resources such as Project, Cluster, VirtualClusterInstance, VirtualClusterTemplate, AccessKey, NodeProvider, and NodeClaim.
+- **Operational services**. Coordinate audit events, metrics, cost data, sleep and wake behavior, snapshots, backups, and configured integrations.
+
+By default, Platform stores management resources as Kubernetes custom resources in the cluster where Platform runs. High-availability and multi-region deployments can configure an external database instead of the management cluster's own etcd. Platform availability depends on the management plane and its backing datastore.
+
+Platform follows the Kubernetes controller model. Users and automation create or update API resources. Controllers compare those resources with the actual state of connected clusters. They then create, update, or clean up dependent resources.
+
+## Connected clusters and agents
+
+A connected cluster is a Kubernetes cluster registered with Platform. Connected clusters are where tenant cluster control planes and project workloads run. Platform automatically registers the cluster where it is installed as the local cluster. Smaller deployments can run tenant clusters there too.
+
+Connecting a cluster installs the same Platform chart in `agentOnly` mode. In this mode, the chart starts the Platform image as the agent. It does not start the full management plane. The agent runs in the connected cluster and authenticates with a cluster access key. It keeps cluster-side state in sync with Platform.
+
+The agent handles work that must happen inside the connected cluster:
+
+- Installing and updating cluster-side resources required by Platform.
+- Creating namespaces, RBAC, Helm releases, and Kubernetes resources for tenant clusters and spaces.
+- Reporting status, health, and resource data back to Platform.
+- Participating in proxy paths when Platform forwards requests to connected cluster or tenant cluster APIs.
+- Supporting sleep, wake, and lifecycle operations that depend on the cluster where the tenant resources run.
+
+The agent uses outbound connectivity to Platform. Connected clusters do not need inbound access from Platform for the basic management channel. If the connection to Platform is interrupted, existing tenant clusters continue operating. Platform proxy access and lifecycle operations resume once the connection is restored.
+
+## Failure behavior
+
+| Condition | What continues | What is affected |
+|---|---|---|
+| Platform is unavailable | Existing tenant workloads and tenant cluster API servers continue running in connected clusters. | UI, Platform API, proxy access, lifecycle operations, and status updates are unavailable until Platform returns. |
+| Agent connection is interrupted | Existing tenant clusters and workloads continue running in the connected cluster. | Platform cannot reconcile new changes for that connected cluster until the agent reconnects. |
+| Tenant cluster API is unreachable | Platform and other tenant clusters continue operating. | Access, status, and lifecycle operations for that tenant cluster may fail until connectivity returns. |
+
+## Entry points
+
+Platform exposes several entry points through the API gateway.
+
+| Entry point | Used by | Purpose |
+|---|---|---|
+| Web UI | Browser users | Manage projects, tenant clusters, users, templates, connected clusters, and settings. |
+| Platform API | UI, CLI, integrations, automation | Manage Platform resources such as projects, clusters, templates, users, and tenant cluster instances. |
+| CLI | Operators and automation | Calls the Platform API for login, create, connect, inspect, and lifecycle commands. |
+| Management Kubernetes API | CLI and Kubernetes clients | Proxies authenticated requests to Platform management resources under `/kubernetes/management`. |
+| Connected cluster proxy | CLI and UI workflows | Proxies authenticated requests to a connected cluster under `/kubernetes/cluster/<cluster>`. |
+| Project resource proxy | Tenant cluster and space access | Proxies project-scoped requests under `/kubernetes/project/<project>/virtualcluster/<name>` or `/kubernetes/project/<project>/space/<name>`. |
+
+These routes let users work with Platform and tenant resources. Users do not receive credentials for the connected cluster itself. Platform authenticates the request and checks access. It then applies impersonation and forwards the request to the target API server.
+
+<figure>
+  <PlatformEntryPoints style={{width: '100%', height: 'auto'}} role="img" aria-label="Platform API gateway routing requests to management, connected cluster, and tenant cluster APIs" />
+  <figcaption>Platform API gateway request paths</figcaption>
+</figure>
+
+## Project lifecycle
+
+Projects are the primary policy boundary in Platform. A Project groups tenant clusters, spaces, secrets, templates, quotas, and integrations. It also groups the users or teams who can access them.
+
+When a project is created, Platform reconciles the project into a project namespace in the management plane. That namespace holds tenant cluster instances and project secrets. Platform also reconciles project role bindings, access rules, quotas, integrations, and metadata. That metadata ties the namespace back to the project.
+
+Project namespaces are internal Platform namespaces. They are different from namespaces that tenant users create inside a tenant cluster.
+
+When a project changes, Platform updates the dependent resources. When a project is deleted, finalizers give Platform time to clean up project integrations and dependent resources before removing the project namespace.
+
+## Tenant resource lifecycle
+
+Most tenant resources follow the same pattern:
+
+1. A user, CLI command, integration, or GitOps workflow creates or updates a Platform API resource.
+2. Platform validates the request against project membership, allowed clusters, allowed templates, quotas, and policy.
+3. Platform reconciles the desired state into the selected connected cluster through the agent or proxy path.
+4. The connected cluster reports status back to Platform.
+5. Platform updates the resource status and displays it in the UI and API.
+
+For tenant clusters, the central resource is VirtualClusterInstance. A Platform-managed tenant cluster uses this resource as its desired state. It covers provisioning, configuration updates, upgrades, access, sleep behavior, and wake behavior. It also covers Argo CD registration and cleanup. An [externally deployed tenant cluster](../understand/externally-vs-platform-deployed.mdx) can also be registered with Platform. Its lifecycle stays owned by the external tool that created it.
+
+<figure>
+  <PlatformTenantLifecycle style={{width: '100%', height: 'auto'}} role="img" aria-label="Tenant resource lifecycle from request through policy, reconciliation, vCluster runtime, and status" />
+  <figcaption>Tenant resource lifecycle</figcaption>
+</figure>
+
+## Tenant cluster runtime
+
+Platform decides where and how a tenant cluster should be deployed, but vCluster runs the tenant cluster itself.
+
+During creation, Platform combines project policy, the selected VirtualClusterTemplate, user-provided parameters, and the selected connected cluster. It then installs or updates the vCluster Helm release in the target namespace. By default, that release creates the vCluster control plane StatefulSet. After that point, the vCluster runtime owns the Kubernetes control plane behavior.
+
+That runtime includes:
+
+- The tenant API server.
+- The syncer.
+- The data store.
+- CoreDNS.
+- The worker node model.
+- Resource synchronization.
+
+Use Platform documentation for fleet lifecycle questions:
+
+- Who can create or access a tenant cluster.
+- Which clusters and templates a project can use.
+- How Platform manages create, update, upgrade, sleep, wake, automatic deletion, and access.
+- How Platform provisions private nodes through node providers and node claims.
+
+Use the [vCluster architecture](/docs/vcluster/introduction/architecture) for runtime questions:
+
+- What runs inside the tenant cluster control plane.
+- How the syncer works.
+- How shared nodes and private nodes differ.
+- How tenant cluster networking behaves.
+- How vCluster Standalone and vind differ from Kubernetes hosted tenant clusters.
+
+## Network paths
+
+Platform supports multiple network paths depending on what is being accessed and how your environment is connected.
+
+<figure>
+  <PlatformNetworkPaths style={{width: '100%', height: 'auto'}} role="img" aria-label="Network paths for direct endpoint, Platform proxy, and Tailscale connectivity" />
+  <figcaption>Network paths to connected cluster and tenant cluster APIs</figcaption>
+</figure>
+
+### Direct endpoint
+
+A tenant cluster can expose a direct Kubernetes API endpoint. In this model, the user's kubeconfig points directly to the tenant cluster endpoint. Platform still controls identity, access, and lifecycle. Steady state `kubectl` traffic can go directly to the tenant cluster API server.
+
+Use direct endpoints when tenant cluster API servers are reachable from users or automation and you want the shortest request path.
+
+### Platform proxy
+
+Platform can proxy Kubernetes API requests through its API gateway. Users authenticate to Platform. Platform checks project and tenant cluster access. The gateway forwards the request to the connected cluster or tenant cluster API server.
+
+Use the proxy path when users should not receive connected cluster credentials. This path also works when the target cluster is only reachable from Platform or the agent. It also lets Platform centralize access checks and audit records.
+
+### Tailscale network path
+
+Platform also uses a Tailscale network path for environments where direct connectivity is unavailable or unreliable. Platform coordinates network peers and can relay traffic through DERP when peers cannot connect directly.
+
+This path is useful when connected clusters, tenant clusters, or users are behind NAT, firewall rules, or private networks. The agent and Platform establish the network relationship. DERP provides a relay path when peer-to-peer traffic cannot be established.
+
+For troubleshooting this path, see [tsnet connectivity](../troubleshoot/tsnet-connectivity.mdx). For narrower communication concepts, see [vCluster Platform communication](../understand/platform_communication.mdx).
+
+## Further reading
+
+- [Connected clusters](../understand/what-are-clusters.mdx)
+- [Projects](../understand/what-are-projects.mdx)
+- [vCluster architecture](/docs/vcluster/introduction/architecture)
