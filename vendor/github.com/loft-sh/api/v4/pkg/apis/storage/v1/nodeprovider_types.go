@@ -119,7 +119,7 @@ type NodeProviderSpec struct {
 type NodeProviderClusterAPI struct {
 	ClusterAPIObjects `json:",inline"`
 
-	// ClusterRef is a reference to connected control plane cluster in which KubeVirt operator is running
+	// ClusterRef is a reference to connected host cluster in which KubeVirt operator is running
 	ClusterRef NodeProviderClusterRef `json:"clusterRef,omitempty"`
 
 	// NodeTypes define NodeTypes that should be automatically created for this provider.
@@ -131,7 +131,7 @@ type NodeProviderBCM struct {
 	// SecretRef is a reference to secret with keys for BCM auth.
 	SecretRef *NamespacedRef `json:"secretRef"`
 
-	// Endpoint is an address for head node.
+	// Endpoint is a address for head node.
 	Endpoint string `json:"endpoint"`
 
 	// NodeTypes define NodeTypes that should be automatically created for this provider.
@@ -287,45 +287,14 @@ type KubeVirtNodeTypeSpec struct {
 
 // NodeProviderKubeVirt defines the configuration for a KubeVirt node provider.
 type NodeProviderKubeVirt struct {
-	// ClusterRef is a reference to connected control plane cluster in which KubeVirt operator is running
+	// ClusterRef is a reference to connected host cluster in which KubeVirt operator is running
 	ClusterRef NodeProviderClusterRef `json:"clusterRef,omitempty"`
-
-	// Deploy configures components deployed into the connected control plane cluster.
-	// +optional
-	Deploy KubeVirtProviderDeployment `json:"deploy,omitempty"`
 
 	// VirtualMachineTemplate is a KubeVirt VirtualMachine template to use by NodeTypes managed by this NodeProvider
 	VirtualMachineTemplate *runtime.RawExtension `json:"virtualMachineTemplate,omitempty"`
 
 	// NodeTypes define NodeTypes that should be automatically created for this provider.
 	NodeTypes []KubeVirtNodeTypeSpec `json:"nodeTypes"`
-}
-
-type KubeVirtProviderDeployment struct {
-	// KubeVirt configures the KubeVirt operator deployment.
-	// +optional
-	KubeVirt KubeVirtDeployment `json:"kubevirt,omitempty"`
-}
-
-type KubeVirtDeployment struct {
-	// Enabled controls whether the KubeVirt operator is deployed into the cluster.
-	Enabled bool `json:"enabled"`
-
-	// ChartRepo overrides the Helm chart repository used to install the KubeVirt operator.
-	// +optional
-	ChartRepo string `json:"chartRepo,omitempty"`
-
-	// Chart overrides the Helm chart name used to install the KubeVirt operator.
-	// +optional
-	Chart string `json:"chart,omitempty"`
-
-	// Version overrides the Helm chart version used to install the KubeVirt operator.
-	// +optional
-	Version string `json:"version,omitempty"`
-
-	// HelmValues is raw YAML that will be passed as values to the KubeVirt Helm chart.
-	// +optional
-	HelmValues string `json:"helmValues,omitempty"`
 }
 
 type NodeProviderClusterRef struct {
@@ -349,18 +318,6 @@ type DHCPDeployment struct {
 	// Enabled controls whether the DHCP server is deployed into the cluster.
 	Enabled bool `json:"enabled"`
 
-	// ChartRepo overrides the Helm chart repository used to install the DHCP server.
-	// +optional
-	ChartRepo string `json:"chartRepo,omitempty"`
-
-	// Chart overrides the Helm chart name used to install the DHCP server.
-	// +optional
-	Chart string `json:"chart,omitempty"`
-
-	// Version overrides the Helm chart version used to install the DHCP server.
-	// +optional
-	Version string `json:"version,omitempty"`
-
 	// HelmValues is raw YAML that will be passed as values to the DHCP Helm chart.
 	// +optional
 	HelmValues string `json:"helmValues,omitempty"`
@@ -369,18 +326,6 @@ type DHCPDeployment struct {
 type Metal3Deployment struct {
 	// Enabled controls whether Metal3 and Ironic are deployed into the cluster.
 	Enabled bool `json:"enabled"`
-
-	// ChartRepo overrides the Helm chart repository used to install Metal3.
-	// +optional
-	ChartRepo string `json:"chartRepo,omitempty"`
-
-	// Chart overrides the Helm chart name used to install Metal3.
-	// +optional
-	Chart string `json:"chart,omitempty"`
-
-	// Version overrides the Helm chart version used to install Metal3.
-	// +optional
-	Version string `json:"version,omitempty"`
 
 	// HelmValues is raw YAML that will be passed as values to the Metal3 Helm chart.
 	// +optional
@@ -402,7 +347,7 @@ type Metal3ProviderDeployment struct {
 }
 
 type NodeProviderMetal3 struct {
-	// ClusterRef is a reference to connected control plane cluster in which KubeVirt operator is running
+	// ClusterRef is a reference to connected host cluster in which KubeVirt operator is running
 	ClusterRef NodeProviderClusterRef `json:"clusterRef,omitempty"`
 
 	Deploy Metal3ProviderDeployment `json:"deploy,omitempty"`
