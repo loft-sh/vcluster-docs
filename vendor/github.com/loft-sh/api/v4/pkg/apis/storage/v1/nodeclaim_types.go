@@ -15,10 +15,6 @@ const (
 	NodeClaimConditionTypeScheduled = "Scheduled"
 	// NodeClaimConditionTypeNotDrifted is the condition that indicates if the node claim is not drifted from the desired state.
 	NodeClaimConditionTypeNotDrifted = "NotDrifted"
-	// NodeClaimConditionTypeDestroyed is the condition that indicates if the node claim has been successfully destroyed.
-	NodeClaimConditionTypeDestroyed = "Destroyed"
-	// NodeClaimConditionTypePreferredDeletion indicates the NodeClaim is a preferred candidate for deletion.
-	NodeClaimConditionTypePreferredDeletion = "PreferredDeletion"
 )
 
 var (
@@ -66,62 +62,8 @@ func (a *NodeClaim) SetConditions(conditions agentstoragev1.Conditions) {
 	a.Status.Conditions = conditions
 }
 
-func (a *NodeClaim) GetOwner() *UserOrTeam {
-	return a.Spec.Owner
-}
-
-func (a *NodeClaim) SetOwner(userOrTeam *UserOrTeam) {
-	a.Spec.Owner = userOrTeam
-}
-
-func (a *NodeClaim) GetAccess() []Access {
-	return a.Spec.Access
-}
-
-func (a *NodeClaim) SetAccess(access []Access) {
-	a.Spec.Access = access
-}
-
 // NodeClaimSpec defines spec of node claim.
 type NodeClaimSpec struct {
-	// DisplayName is the name of the NodeClaim that is displayed in the UI.
-	// +optional
-	DisplayName string `json:"displayName,omitempty"`
-
-	// Owner holds the owner of this object
-	// +optional
-	Owner *UserOrTeam `json:"owner,omitempty"`
-
-	// Access holds the access rights for users and teams
-	// +optional
-	Access []Access `json:"access,omitempty"`
-
-	// ProviderRef is the name of the NodeProvider that this NodeClaim is based on.
-	ProviderRef string `json:"providerRef"`
-
-	// TypeRef is the full name of the NodeType that this NodeClaim is based on.
-	// +optional
-	TypeRef string `json:"typeRef,omitempty"`
-
-	// EnvironmentRef is the name of the NodeEnvironment that this NodeClaim is based on.
-	// +optional
-	EnvironmentRef string `json:"environmentRef,omitempty"`
-
-	// Properties are extra properties for the NodeClaim.
-	// +optional
-	Properties map[string]string `json:"properties,omitempty"`
-
-	// Below are options specifically for scheduling with vCluster.
-
-	// VClusterRef references source vCluster.
-	// +optional
-	VClusterRef string `json:"vClusterRef,omitempty"`
-
-	// ControlPlane indicates if the node claim is for a control plane node. This is intentionally not omitempty as
-	// we want to ensure that the control plane is always set for easier checking in for example terraform templates.
-	// +optional
-	ControlPlane bool `json:"controlPlane"`
-
 	// Taints will be applied to the NodeClaim's node.
 	// +optional
 	Taints []corev1.Taint `json:"taints,omitempty"`
@@ -143,10 +85,24 @@ type NodeClaimSpec struct {
 	// Requirements are the requirements for the NodeClaim.
 	Requirements []corev1.NodeSelectorRequirement `json:"requirements,omitempty"`
 
-	// Power describes the desired power state of the machine.
+	// Properties are extra properties for the NodeClaim.
 	// +optional
-	// +kubebuilder:validation:XValidation:rule="!has(self.state) || self.state == '' || self.state == 'On' || self.state == 'Off'",message="state must be On or Off"
-	Power *NodeClaimPower `json:"power,omitempty"`
+	Properties map[string]string `json:"properties"`
+
+	// ProviderRef is the name of the NodeProvider that this NodeClaim is based on.
+	ProviderRef string `json:"providerRef"`
+
+	// TypeRef is the full name of the NodeType that this NodeClaim is based on.
+	// +optional
+	TypeRef string `json:"typeRef,omitempty"`
+
+	// VClusterRef references source vCluster. This is required.
+	VClusterRef string `json:"vClusterRef"`
+
+	// ControlPlane indicates if the node claim is for a control plane node. This is intentionally not omitempty as
+	// we want to ensure that the control plane is always set for easier checking in for example terraform templates.
+	// +optional
+	ControlPlane bool `json:"controlPlane"`
 }
 
 type NodeClaimStatus struct {
@@ -165,36 +121,6 @@ type NodeClaimStatus struct {
 	// Conditions describe the current state of the platform NodeClaim.
 	// +optional
 	Conditions agentstoragev1.Conditions `json:"conditions,omitempty"`
-
-	// Power describes the observed power state of the machine.
-	// +optional
-	Power *NodeClaimPower `json:"power,omitempty"`
-}
-
-// NodeClaimPowerState is the power state of a machine.
-type NodeClaimPowerState string
-
-const (
-	NodeClaimPowerStateOn  NodeClaimPowerState = "On"
-	NodeClaimPowerStateOff NodeClaimPowerState = "Off"
-)
-
-// NodeClaimRebootAnnotation triggers a one-shot reboot of the machine. The
-// controller removes the annotation once the reboot has been initiated.
-const NodeClaimRebootAnnotation = "machines.vcluster.com/reboot"
-
-type NodeClaimPower struct {
-	// State is the power state.
-	//
-	// In spec, only "On" and "Off" are meaningful; an empty value is treated
-	// as "On".
-	//
-	// In status, "On" and "Off" indicate the observed state is stable.
-	// Providers may also surface their native intermediate state (e.g.
-	// "Starting", "Stopping", "Migrating", ...) as a passthrough. An empty
-	// value means the state could not be determined.
-	// +optional
-	State NodeClaimPowerState `json:"state,omitempty"`
 }
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object

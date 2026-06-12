@@ -25,7 +25,6 @@ const (
 	SleepModeSleepTypeAnnotation         = "sleepmode.loft.sh/sleep-type"
 	SleepModeDisableIngressWakeup        = "sleepmode.loft.sh/disable-ingress-wakeup"
 	SleepModeDisableMetricsTracking      = "sleepmode.loft.sh/disable-metrics-tracking"
-	SleepScopeAnnotation                 = "sleepmode.loft.sh/scope"
 
 	// Not yet in spec annotations
 	SleepModeIgnoreAll                     = "sleepmode.loft.sh/ignore-all"
@@ -246,7 +245,7 @@ type LastActivityInfo struct {
 	// +optional
 	Name string `json:"name,omitempty"`
 
-	// VirtualCluster is the tenant cluster this activity happened in
+	// VirtualCluster is the virtual cluster this activity happened in
 	// +optional
 	VirtualCluster string `json:"virtualCluster,omitempty"`
 

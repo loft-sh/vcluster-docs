@@ -8,7 +8,7 @@ import (
 // +genclient:nonNamespaced
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 
-// RegisterVirtualCluster holds config request and response data for tenant clusters
+// RegisterVirtualCluster holds config request and response data for virtual clusters
 // +k8s:openapi-gen=true
 // +resource:path=registervirtualclusters,rest=RegisterVirtualClusterREST
 type RegisterVirtualCluster struct {
@@ -21,19 +21,19 @@ type RegisterVirtualCluster struct {
 
 // RegisterVirtualClusterSpec holds the specification
 type RegisterVirtualClusterSpec struct {
-	// ServiceUID uniquely identifies the tenant cluster based on the service uid.
+	// ServiceUID uniquely identifies the virtual cluster based on the service uid.
 	// +optional
 	ServiceUID string `json:"serviceUID,omitempty"`
 
-	// KubernetesVersion is the Kubernetes version of the tenant cluster.
+	// KubernetesVersion is the Kubernetes version of the virtual cluster.
 	// +optional
 	KubernetesVersion string `json:"kubernetesVersion,omitempty"`
 
-	// Project is the project name the tenant cluster should be in.
+	// Project is the project name the virtual cluster should be in.
 	// +optional
 	Project string `json:"project,omitempty"`
 
-	// Name is the tenant cluster instance name. If the name is already taken, the platform will construct a
+	// Name is the virtual cluster instance name. If the name is already taken, the platform will construct a
 	// name for the vcluster based on the service uid and this name.
 	// +optional
 	Name string `json:"name,omitempty"`
@@ -53,19 +53,15 @@ type RegisterVirtualClusterSpec struct {
 	// Values specifies the vCluster config.
 	// +optional
 	Values string `json:"values,omitempty"`
-
-	// Standalone specifies if the vCluster is standalone
-	// +optional
-	Standalone *bool `json:"standalone,omitempty"`
 }
 
 // RegisterVirtualClusterStatus holds the status
 type RegisterVirtualClusterStatus struct {
-	// Name is the actual name of the tenant cluster instance.
+	// Name is the actual name of the virtual cluster instance.
 	// +optional
 	Name string `json:"name,omitempty"`
 
-	// Namespace is the namespace of the tenant cluster instance.
+	// Namespace is the namespace of the virtual cluster instance.
 	// +optional
 	Namespace string `json:"namespace,omitempty"`
 }

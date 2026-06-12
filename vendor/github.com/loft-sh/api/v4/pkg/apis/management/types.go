@@ -114,7 +114,7 @@ type UserSpacesOptions struct {
 type UserVirtualClustersOptions struct {
 	metav1.TypeMeta `json:",inline"`
 
-	// Cluster where to retrieve tenant clusters from
+	// Cluster where to retrieve virtual clusters from
 	// +optional
 	Cluster []string `json:"cluster,omitempty"`
 }
@@ -160,14 +160,4 @@ type PodExecOptions struct {
 	// Command is the remote command to execute. argv array. Not executed within a shell.
 	// +listType=atomic
 	Command []string `json:"command" protobuf:"bytes,6,rep,name=command"`
-}
-
-// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
-
-type NetworkPeerDebugOptions struct {
-	metav1.TypeMeta `json:",inline"`
-
-	// Action is the action to perform on the network peer.
-	// +optional
-	Action string `json:"action,omitempty"`
 }
