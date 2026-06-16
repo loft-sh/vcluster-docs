@@ -46,7 +46,7 @@ header "Location" contains "https://www.vcluster.com/docs/vcluster/configure/vcl
 GET {{BASE_URL}}/docs/security/overview
 HTTP 301
 [Asserts]
-header "Location" contains "https://www.vcluster.com/docs/platform/understand/what-are-virtual-clusters#robust-security-and-isolation"
+header "Location" contains "/docs/vcluster/security/"
 
 # Test 8: Syncer redirect
 GET {{BASE_URL}}/docs/syncer/overview
