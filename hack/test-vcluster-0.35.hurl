@@ -104,7 +104,7 @@ header "Location" contains "/docs/vcluster/manage/backup-restore/backup#supporte
 GET {{BASE_URL}}/docs/platform-ui-link/vcluster/control-plane
 HTTP 301
 [Asserts]
-header "Location" contains "/docs/vcluster/category/components"
+header "Location" contains "/docs/vcluster/configure/vcluster-yaml/control-plane/"
 
 # Test 17: Backing store
 GET {{BASE_URL}}/docs/platform-ui-link/vcluster/backing-store
