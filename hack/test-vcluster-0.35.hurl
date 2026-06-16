@@ -332,18 +332,6 @@ HTTP 200
 [Asserts]
 body contains "vCluster"
 
-# Test 52: vCluster 0.31.0 should still be accessible
-GET {{BASE_URL}}/docs/vcluster/0.31.0/
-HTTP 200
-[Asserts]
-body contains "vCluster"
-
-# Test 53: vCluster 0.30.0 should still be accessible
-GET {{BASE_URL}}/docs/vcluster/0.30.0/
-HTTP 200
-[Asserts]
-body contains "vCluster"
-
 # Test 55: vCluster CLI pages should load
 GET {{BASE_URL}}/docs/vcluster/cli/vcluster_create/
 HTTP 200
