@@ -2,12 +2,12 @@
 title: End-to-end GitOps with ArgoCD
 sidebar_label: GitOps End-to-End
 sidebar_position: 1
-description: Complete guide to managing vCluster Platform and virtual clusters with ArgoCD, from platform installation to virtual cluster deployment.
+description: Complete guide to managing vCluster Platform and tenant clusters with ArgoCD, from platform installation to tenant cluster deployment.
 ---
 
 import InterpolatedCodeBlock from "@site/src/components/InterpolatedCodeBlock";
 
-This guide walks through the full lifecycle of managing platform resources with ArgoCD, covering platform installation, cluster connections, project creation, and virtual cluster deployment. Each section references the detailed documentation for that step and provides the ArgoCD-specific configuration needed.
+This guide walks through the full lifecycle of managing platform resources with ArgoCD, covering platform installation, cluster connections, project creation, and tenant cluster deployment. Each section references the detailed documentation for that step and provides the ArgoCD-specific configuration needed.
 
 :::info
 While this guide uses ArgoCD as the example, the same principles apply to other GitOps tools like Flux. Each section links to detailed documentation that includes tabs for alternative tooling.
@@ -79,9 +79,9 @@ ArgoCD does not deploy the Helm release secret. Platform configuration updates m
 
 For the full set of Helm configuration options and alternative installation methods, see the [platform installation with ArgoCD guide](../install/gitops.mdx).
 
-## 2. Connect a host cluster
+## 2. Connect a control plane cluster
 
-After the platform is running, connect host clusters where virtual clusters will be deployed. In a GitOps workflow, you can manage connected clusters as Kubernetes resources alongside your platform installation.
+After the platform is running, connect control plane clusters where tenant clusters will be deployed. In a GitOps workflow, you can manage connected clusters as Kubernetes resources alongside your platform installation.
 
 Each connected cluster requires two resources: a Cluster object and a Secret containing the cluster credentials.
 
@@ -177,11 +177,20 @@ spec:
   title="agent-application.yaml"
 />
 
+To also register the control plane cluster with Argo CD so it can receive shared infrastructure applications directly, add `spec.argoCD` to the Cluster object after creating a connector (see [Step 3](#3-create-a-project)):
+
+```yaml
+spec:
+  argoCD:
+    enabled: true
+    connector: argocd-main   # name of your connector Secret
+```
+
 For interactive setup methods using the UI or CLI, see the [connect a cluster guide](../administer/clusters/connect-cluster.mdx).
 
 ## 3. Create a project
 
-Projects organize virtual clusters and control access, templates, and quotas. In a GitOps workflow, define projects as Project custom resources.
+Projects organize tenant clusters and control access, templates, and quotas. In a GitOps workflow, define projects as Project custom resources.
 
 <InterpolatedCodeBlock
   code={`apiVersion: management.loft.sh/v1
@@ -209,11 +218,11 @@ spec:
   title="project.yaml"
 />
 
-### Enable ArgoCD integration on the project
+### Connect to Argo CD
 
-To sync virtual clusters into ArgoCD as deployment targets, enable the ArgoCD integration on the project. This is configured through the project spec and allows virtual clusters to appear as available clusters in the ArgoCD UI.
+To register tenant clusters with Argo CD, create a connector. A connector is a Kubernetes Secret in the Platform namespace that holds your Argo CD server credentials and endpoint. Once a connector exists, you reference it by name from each cluster you want registered. See [Connect to Argo CD](../integrations/argocd/connect-argocd.mdx) for the full setup, including required RBAC permissions and connector YAML.
 
-See the [ArgoCD integration guide](../integrations/argocd.mdx) for UI-based setup and configuration of SSO integration and App Project mapping.
+If you are using the project-level Argo CD integration from an earlier version of vCluster Platform, see [Argo CD (legacy)](../integrations/argocd/legacy.mdx).
 
 :::info management.loft.sh vs storage.loft.sh
 Define resources using the `management.loft.sh` API group. The `storage.loft.sh` group is used internally by platform controllers and appears in some spec fields as references to existing resources.
@@ -221,20 +230,20 @@ Define resources using the `management.loft.sh` API group. The `storage.loft.sh`
 
 For interactive project creation using the UI, see the [create a project guide](../administer/projects/create.mdx).
 
-## 4. Deploy virtual clusters
+## 4. Deploy tenant clusters
 
-With the platform, cluster, and project in place, deploy virtual clusters through ArgoCD. There are two approaches depending on how you want to manage the virtual cluster lifecycle.
+With the platform, cluster, and project in place, deploy tenant clusters through ArgoCD. There are two approaches depending on how you want to manage the tenant cluster lifecycle.
 
 ### Option A: Deploy with VirtualClusterInstance
 
 Create a VirtualClusterInstance resource that the platform manages. This gives you full platform features like sleep mode, auto-delete, and template enforcement.
 
 <InterpolatedCodeBlock
-  code={`apiVersion: storage.loft.sh/v1
+  code={`apiVersion: management.loft.sh/v1
 kind: VirtualClusterInstance
 metadata:
   name: [[VAR:VCLUSTER_NAME:dev-vcluster]]
-  namespace: loft-p-[[VAR:PROJECT_NAME:team-alpha]]
+  namespace: p-[[VAR:PROJECT_NAME:team-alpha]]
   annotations:
     argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
 spec:
@@ -252,18 +261,24 @@ spec:
           backingStore:
             etcd:
               deploy:
-                enabled: true`}
+                enabled: true
+        integrations:
+          argoCD:
+            enabled: true
+            connector: argocd-main`}
   language="yaml"
   title="virtualclusterinstance.yaml"
 />
 
 :::tip
-The namespace follows the pattern `loft-p-<project-name>`. The platform uses this convention to associate virtual clusters with projects.
+The namespace follows the pattern `p-<project-name>`. The platform uses this convention to associate tenant clusters with projects.
 :::
+
+When the `VirtualClusterInstance` reconciles, Platform registers the tenant cluster with Argo CD using the connector credentials. You can then declare Argo CD Applications in the tenant cluster configuration. See [Deploy applications](../integrations/argocd/deploy-applications.mdx).
 
 ### Option B: Deploy with Helm chart directly
 
-Deploy the vCluster Helm chart through an ArgoCD Application. This approach gives you direct control over the Helm release but does not provide platform lifecycle features unless you [register the virtual cluster afterward](../use-platform/virtual-clusters/add-virtual-clusters.mdx).
+Deploy the vCluster Helm chart through an ArgoCD Application. This approach gives you direct control over the Helm release but does not provide platform lifecycle features unless you [register the tenant cluster afterward](../use-platform/virtual-clusters/add-virtual-clusters.mdx).
 
 <InterpolatedCodeBlock
   code={`apiVersion: argoproj.io/v1alpha1
@@ -335,6 +350,6 @@ platform-gitops/
 ## Next steps
 
 - [Configure platform settings](../configure/introduction.mdx) for authentication, audit logging, and more
-- [Set up templates](../administer/templates/create-templates.mdx) to standardize virtual cluster configurations
+- [Set up templates](../administer/templates/create-templates.mdx) to standardize tenant cluster configurations
 - [Configure project quotas](../administer/projects/quotas.mdx) to control resource usage
-- [Enable sleep mode](/docs/vcluster/manage/sleep-wakeup) to reduce costs on idle virtual clusters
+- [Enable sleep mode](/docs/vcluster/manage/sleep-wakeup) to reduce costs on idle tenant clusters
