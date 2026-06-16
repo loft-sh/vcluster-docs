@@ -121,7 +121,7 @@ type UserSpacesOptions struct {
 type UserVirtualClustersOptions struct {
 	metav1.TypeMeta `json:",inline"`
 
-	// Cluster where to retrieve virtual clusters from
+	// Cluster where to retrieve tenant clusters from
 	// +optional
 	Cluster []string `json:"cluster,omitempty"`
 }
@@ -178,6 +178,17 @@ type PodExecOptions struct {
 	Command []string `json:"command" protobuf:"bytes,6,rep,name=command"`
 }
 
+// +k8s:conversion-gen:explicit-from=net/url.Values
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+
+type NetworkPeerDebugOptions struct {
+	metav1.TypeMeta `json:",inline"`
+
+	// Action is the action to perform on the network peer.
+	// +optional
+	Action string `json:"action,omitempty"`
+}
+
 func InstallOptions(scheme *runtime.Scheme) error {
 	return addKnownOptionsTypes(scheme)
 }
@@ -193,6 +204,7 @@ func addKnownOptionsTypes(scheme *runtime.Scheme) error {
 		&UserQuotasOptions{},
 		&BackupApplyOptions{},
 		&PodExecOptions{},
+		&NetworkPeerDebugOptions{},
 	)
 	return nil
 }
