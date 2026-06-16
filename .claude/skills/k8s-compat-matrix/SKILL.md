@@ -64,11 +64,17 @@ Trigger this skill when:
 
 ## Workflow: Prune EOL Version
 
+The matrix should only contain Kubernetes versions that are actively supported upstream. Check the official release calendar at https://kubernetes.io/releases/ for current EOL dates.
+
+When adding a new version, always check at the same time whether any existing versions have passed their EOL date. If so, prune them in the same PR.
+
+For each EOL version:
+
 ```bash
 node scripts/generate-compatibility-matrix.js --prune <version>
 ```
 
-Removes row, column, and all references. Validate and commit.
+Removes row, column, and all references. Repeat for each EOL version, then validate and commit.
 
 ## Workflow: Document Known Issue
 
