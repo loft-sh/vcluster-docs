@@ -11,20 +11,26 @@ import ConfidentialComputeArchitecture from '@site/static/media/diagrams/confide
 
 <TenancySupport privateNodes="true" />
 
-This page shows how to build a confidential compute platform using vCluster with private nodes.
-There's no vCluster-specific confidential compute feature. vCluster provides
-tenant isolation and workload routing around the confidential runtime you deploy
-on the worker nodes. If your confidential compute stack runs on standard
-Kubernetes, it runs through vCluster.
+This page explains where vCluster fits in a confidential compute platform and
+shows the configuration patterns to connect it to a confidential runtime.
+vCluster has no confidential compute feature of its own. It provides tenant
+isolation and workload routing around the confidential runtime you deploy on the
+worker nodes. If your confidential compute stack runs on standard Kubernetes, it
+runs through vCluster.
 
-Confidential compute protects workload code and data in use by running it inside
-a hardware-backed trusted execution environment. Common examples are Intel TDX
+For provider-specific instance settings, node image contents, attestation
+verification, and support boundaries, follow your provider and runtime
+documentation.
+
+[Confidential compute](https://confidentialcomputing.io/) protects workload code
+and data in use by running it inside a hardware-backed trusted execution
+environment (TEE). Common examples are Intel TDX
 and AMD SEV-SNP. vCluster gives each tenant a dedicated Kubernetes control plane
 and routes workloads to confidential-capable nodes using standard Kubernetes
 mechanisms such as RuntimeClass, node selectors, and node labels. The
-hardware-backed protection covers workload data on the worker nodes. Tenants get
-hardware-backed workload protection combined with Kubernetes-level isolation from
-other tenants on the same platform.
+TEE protects workload data on the worker nodes. Tenants get that hardware-level
+protection combined with Kubernetes-level isolation from other tenants through
+vCluster.
 
 Where the TEE sits in the stack determines how you configure the node image and
 what tenants need to do to use it:
@@ -32,12 +38,13 @@ what tenants need to do to use it:
 - **Cloud-provider Confidential VMs** (GCP Confidential VMs, Azure Confidential
   Computing, AWS EC2 instances with AMD SEV-SNP): the hypervisor applies hardware-backed
   protection to the entire VM. All workloads on the node run inside the TEE.
-  Attestation runs at node bootstrap time, before the node joins the cluster. No
-  RuntimeClass is required.
+  Attestation usually runs at node bootstrap time, before the node joins the
+  cluster. No RuntimeClass is required.
 - **Pod-level runtime** (Kata Containers, Confidential Containers): each pod
-  runs in a lightweight VM backed by a hardware TEE. Requires a RuntimeClass on
-  the node image and a `runtimeClassName` in the pod spec. This approach works
-  on any compatible bare metal or cloud VM.
+  runs in a lightweight VM backed by a hardware TEE. Requires the runtime on the
+  node image, a RuntimeClass object available to the tenant cluster, and a
+  `runtimeClassName` in the pod spec. This approach works on any compatible bare
+  metal or cloud VM.
 
 The sections below apply to both paths unless noted.
 
@@ -81,8 +88,8 @@ The components in this architecture each cover a distinct layer:
 
 1. Select hardware or cloud instance types that support the target confidential
    compute technology.
-2. Configure firmware, Shielded VM features (secure boot, vTPM, integrity
-   monitoring), and host OS images.
+2. Configure provider-specific VM options, firmware, Shielded VM features
+   (secure boot, vTPM, integrity monitoring), and host OS images.
 3. Prepare the node image for your runtime path:
    - **Cloud-provider VMs**: enable Confidential VM features and configure
      bootstrap attestation.
@@ -118,14 +125,14 @@ spec:
         resources:
           cpu: "64"
           memory: 512Gi
-        # Expose confidential compute traits as node type properties.
-        properties:
-          confidential-compute: tdx
         bareMetalHosts:
           # Select only BareMetalHost resources prepared for TDX workloads.
           selector:
             matchLabels:
               confidential-compute: tdx
+        # Expose confidential compute traits as node type properties.
+        properties:
+          confidential-compute: tdx
 ```
 
 This node provider creates a `tdx-large` node type. Auto nodes can select this
@@ -142,19 +149,24 @@ offering the node type to tenants. This typically includes firmware settings,
 Shielded VM features (secure boot, vTPM, and integrity monitoring), kernel
 support, and the confidential runtime configuration for your chosen path.
 
-Confidential VMs can't be live-migrated. Set `on_host_maintenance` to
-`TERMINATE` in your node configuration to prevent migration attempts from
-failing the node.
+Configure host maintenance behavior according to the provider and confidential
+compute technology. Some Confidential VM machine types support live migration,
+while others require stop-on-maintenance behavior such as
+`on_host_maintenance: TERMINATE` or the provider-specific equivalent. Confirm
+the supported maintenance policy for the selected instance type before
+publishing the node type.
 
-Confidential node types also require an explicit zone, not just a region.
-Cloud providers enforce zone placement for Confidential VM instances.
+Cloud-provider confidential node types also require an explicit zone, not just a
+region. Cloud providers enforce zone placement for Confidential VM instances.
 
 :::note Attestation
-**Cloud-provider VMs**: attestation runs as a bootstrap gate before the node
-joins the cluster. The gate script checks for hardware markers such as
-`/dev/sev-guest` for SEV-SNP or `/dev/tdx_guest` for TDX and blocks the
-kubeadm join if verification fails. No external attestation service is required
-for this mode.
+**Cloud-provider VMs**: attestation usually runs as a bootstrap gate before the
+node joins the cluster. The gate should request and verify provider or hardware
+attestation evidence against your policy before allowing the kubeadm join.
+Checking hardware markers such as `/dev/sev-guest` for SEV-SNP or
+`/dev/tdx_guest` for TDX is only a local sanity check. It does not replace quote
+or report verification. Depending on the provider and trust model, verification
+can be local, provider-managed, or performed by an external verifier.
 
 **Pod-level runtime**: each pod generates an attestation quote at workload
 start time. The node image must include device plugins for quote generation,
@@ -194,10 +206,57 @@ Private nodes join the tenant cluster as real nodes, so their OS-level labels
 are visible inside the cluster and the `nodeSelector` works without any
 additional configuration.
 
-For the pod-level runtime path, tenants add a `runtimeClassName` referencing
-the RuntimeClass installed on the node image. For cloud-provider Confidential
-VMs, omit `runtimeClassName` — protection applies at the VM level and standard
-containers run inside the TEE without modification.
+For the pod-level runtime path, tenants add a `runtimeClassName` referencing the
+RuntimeClass installed in the control plane cluster and exposed to the tenant
+cluster. RuntimeClass syncing is disabled by default, so the platform admin must
+sync the allowed RuntimeClass objects into the tenant cluster before tenants can
+reference them.
+
+The next two examples apply only to the pod-level runtime path. If you use
+cloud-provider Confidential VMs, the private node selection above is the
+vCluster-specific configuration; finish the VM image, maintenance policy, and
+attestation setup in your provider tooling.
+
+```yaml title="vcluster.yaml — platform admin (pod-level runtime path)"
+sync:
+  fromHost:
+    runtimeClasses:
+      enabled: true
+      selector:
+        matchLabels:
+          confidential-compute: tdx
+
+privateNodes:
+  enabled: true
+  autoNodes:
+    - provider: bare-metal
+      dynamic:
+        - name: confidential-workers
+          nodeTypeSelector:
+            - property: confidential-compute
+              operator: In
+              values:
+                - tdx
+```
+
+Label the RuntimeClass in the control plane cluster so only approved runtime
+classes are synced:
+
+```yaml title="RuntimeClass — control plane cluster"
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: kata-qemu-tdx
+  labels:
+    confidential-compute: tdx
+handler: kata-qemu-tdx
+```
+
+For the full selector and patches reference, see [Runtime classes](../../../../configure/vcluster-yaml/sync/from-host/runtime-classes.mdx).
+
+For cloud-provider Confidential VMs, omit `runtimeClassName`. Protection
+applies at the VM level and standard containers run inside the TEE without
+modification.
 
 ```yaml title="Pod spec — tenant (pod-level runtime path)"
 apiVersion: v1
@@ -239,9 +298,12 @@ before publishing the node type to tenant teams.
 
 ## Learn more
 
+For cloud-provider Confidential VMs, start with your provider's Confidential VM
+and attestation documentation to understand instance requirements, firmware
+options, and the bootstrap attestation flow.
+
 For the pod-level runtime path, use these resources to plan the confidential
-runtime and attestation parts of the platform. For cloud-provider Confidential
-VMs, refer to your cloud provider's documentation.
+runtime and attestation parts of the platform.
 
 | Resource | Use it for |
 |---|---|
