@@ -1,0 +1,117 @@
+---
+title: GPU and accelerator support
+sidebar_label: GPU and accelerators
+sidebar_position: 4
+sidebar_class_name: host-nodes private-nodes standalone
+description: How vCluster works with NVIDIA, AMD, and other accelerator devices
+---
+
+vCluster supports GPU and accelerator workloads when the node exposes those devices through standard Kubernetes mechanisms.
+vCluster does not configure the physical GPU, install the vendor driver, or choose the device presentation mode.
+The node image, operating system, and vendor [device plugin](https://kubernetes.io/docs/concepts/extend-kubernetes/compute-storage-net/device-plugins/) or [Dynamic Resource Allocation](https://kubernetes.io/docs/concepts/scheduling-eviction/dynamic-resource-allocation/) driver own that layer.
+
+From the tenant cluster's perspective, GPU workloads use the same Kubernetes APIs they would use on a regular cluster:
+
+- Extended resources such as `nvidia.com/gpu` or `amd.com/gpu`.
+- Vendor device plugins, such as the NVIDIA device plugin, AMD GPU device plugin, or an accelerator vendor's equivalent plugin.
+- GPU Operators, when the vendor provides one.
+- Dynamic Resource Allocation (DRA) objects such as `DeviceClass`, `ResourceClaim`, and `ResourceClaimTemplate`.
+- Optional higher-level schedulers or platforms, such as NVIDIA KAI Scheduler, NVIDIA Run:ai, or Slurm integrations.
+
+## vCluster role
+
+vCluster provides the tenant Kubernetes control plane and syncs the Kubernetes objects that workloads need.
+It also lets tenants run isolated clusters on shared or private worker nodes.
+It does not sit in the device path between a pod and the GPU.
+
+This means:
+
+- If a node advertises `nvidia.com/gpu`, a tenant workload can request `nvidia.com/gpu`.
+- If a node advertises `amd.com/gpu`, a tenant workload can request `amd.com/gpu`.
+- If an accelerator vendor exposes a Kubernetes device plugin or DRA driver, vCluster can work with that driver's resources and DRA objects.
+- If the required driver, runtime configuration, device plugin, or DRA driver is missing from the node or tenant cluster, vCluster cannot make the device appear by itself.
+
+For private nodes, each tenant cluster can run its own GPU Operator, device plugin, DRA driver, scheduler, and accelerator CRDs.
+This is the common model for GPU cloud platforms because the tenant owns the full worker-node software stack.
+
+For shared host nodes, the device plugin and drivers usually run on the control plane cluster nodes.
+Tenant workloads can use the resources that the shared nodes advertise, subject to the sync and scheduling configuration.
+
+## Supported vendors and accelerators
+
+### NVIDIA
+
+NVIDIA GPUs commonly use the [NVIDIA GPU Operator](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/index.html) or the NVIDIA device plugin.
+The node advertises resources such as `nvidia.com/gpu`.
+Workloads request that resource in `resources.limits`.
+
+The node's driver and GPU Operator configuration control NVIDIA-specific modes such as [MIG](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/gpu-operator-mig.html) or [NVIDIA vGPU](https://docs.nvidia.com/vgpu/latest/).
+vCluster consumes the resulting Kubernetes resources.
+It does not create MIG partitions or configure vGPU profiles.
+
+### AMD
+
+AMD GPUs use the same Kubernetes mechanism.
+Install and configure the AMD driver stack and [AMD GPU device plugin](https://instinct.docs.amd.com/projects/k8s-device-plugin/en/latest/index.html), [AMD GPU Operator](https://instinct.docs.amd.com/projects/gpu-operator/en/main/device_plugin/device-plugin.html), or DRA driver.
+The node then advertises the AMD resource, commonly `amd.com/gpu`.
+Tenant workloads request that resource like any other Kubernetes extended resource.
+For DRA configuration, see [Dynamic resource allocation and device classes](#dynamic-resource-allocation-and-device-classes).
+
+### Other accelerators
+
+Other accelerators, such as SambaNova devices, FPGAs, DPUs, or custom AI accelerators, follow the same rule.
+If the vendor exposes the device to Kubernetes, vCluster can work with that Kubernetes-facing interface.
+
+Check the vendor documentation for the exact resource name, driver installation steps, and CRDs.
+Also confirm where the operator or controller should run.
+
+## Dynamic resource allocation and device classes
+
+Dynamic Resource Allocation is useful when workloads need more detail than a simple resource count.
+For example, workloads might need device attributes, capacity slices, or administrator-controlled device classes.
+
+DRA sync is disabled by default. To use DRA with shared host nodes, enable the settings your workload needs:
+
+- [`deviceClasses`](../configure/vcluster-yaml/sync/from-host/device-classes.mdx) syncs allowed `DeviceClass` resources from the control plane cluster to the tenant cluster.
+- [`resourceClaims`](../configure/vcluster-yaml/sync/to-host/DRA/resourceclaims.mdx) syncs tenant-created `ResourceClaim` resources to the control plane cluster.
+- [`resourceClaimTemplates`](../configure/vcluster-yaml/sync/to-host/DRA/resourceclaimtemplates.mdx) syncs tenant-created `ResourceClaimTemplate` resources to the control plane cluster.
+
+Once `deviceClasses` sync is enabled, platform administrators create [`DeviceClass`](https://kubernetes.io/docs/reference/kubernetes-api/resource/device-class-v1/) resources on the control plane cluster and choose which classes are visible in each tenant cluster.
+
+For private nodes, tenants can also run the DRA driver and related controllers inside their tenant cluster when they own the worker-node software stack.
+
+## Hardware presentation modes
+
+GPU presentation mode is determined before vCluster schedules a workload:
+
+| Mode | Where it is configured | vCluster role |
+|---|---|---|
+| Bare-metal PCIe passthrough | Physical server, OS image, driver, and device plugin | Workloads request the advertised Kubernetes resource |
+| NVIDIA vGPU | NVIDIA vGPU host and guest driver stack, OS image, and operator or plugin configuration | Workloads request the resource exposed by that stack |
+| NVIDIA MIG | NVIDIA GPU Operator or device plugin configuration | Workloads request the MIG resources advertised by the plugin |
+| DRA device allocation | Vendor DRA driver and `DeviceClass` resources | Syncs allowed DRA objects between the control plane cluster and tenant cluster |
+
+If you provision physical GPU servers with vMetal, vMetal controls the bare metal lifecycle and node OS image.
+The OS image and post-provision configuration determine which GPU drivers, vGPU stack, MIG strategy, or vendor plugins are available.
+For that layer, see [GPU presentation modes in vMetal](https://www.vmetal.ai/docs/plan/gpu-presentation).
+
+## Summary checklist
+
+To make GPU or accelerator workloads work in a tenant cluster:
+
+1. Prepare the worker node with the required firmware, OS image, kernel modules, and vendor driver stack.
+2. Install the vendor device plugin, GPU Operator, or DRA driver in the right cluster.
+3. Confirm the node advertises the expected resource or DRA devices.
+4. Configure vCluster sync for any required CRDs, scheduler objects, or DRA objects.
+5. Run a workload that requests the advertised resource name or references the synced `DeviceClass`.
+
+For GPU bare metal provisioning and OS image guidance, see [vMetal GPU Quickstart](https://www.vmetal.ai/docs/deploy/gpu-quickstart).
+
+## External references
+
+- [Kubernetes device plugins](https://kubernetes.io/docs/concepts/extend-kubernetes/compute-storage-net/device-plugins/)
+- [Kubernetes Dynamic Resource Allocation](https://kubernetes.io/docs/concepts/scheduling-eviction/dynamic-resource-allocation/)
+- [NVIDIA GPU Operator](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/index.html)
+- [NVIDIA GPU Operator with MIG](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/gpu-operator-mig.html)
+- [NVIDIA vGPU documentation](https://docs.nvidia.com/vgpu/latest/)
+- [AMD GPU device plugin for Kubernetes](https://instinct.docs.amd.com/projects/k8s-device-plugin/en/latest/index.html)
