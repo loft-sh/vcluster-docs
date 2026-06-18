@@ -113,8 +113,6 @@ var paths = []string{
 	"exportKubeConfig",
 	"experimental/virtualClusterKubeConfig",
 	"experimental/syncSettings",
-	"experimental/isolatedControlPlane",
-	"experimental/genericSync",
 	"experimental/deploy",
 	"experimental/denyProxyRequests",
 	"experimental/proxy",
