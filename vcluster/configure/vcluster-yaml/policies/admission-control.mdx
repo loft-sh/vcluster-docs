@@ -64,6 +64,16 @@ Missing `caBundle` with `failurePolicy: Fail` can make vCluster unrecoverable. T
 
 ## Kyverno example
 
+:::warning Apply Enforce-mode policies after the tenant is ready
+A Kyverno `ClusterPolicy` running on the control plane cluster in `Enforce` mode validates the resources that vCluster syncs from the tenant. This includes vCluster's own system pods, which don't carry an `app.kubernetes.io/name` label. A label-requiring policy applied before the tenant is provisioned rejects those pods, and the VirtualClusterInstance ends in `Failed`.
+
+To avoid this, do one of the following:
+
+- Apply Enforce-mode policies only after the tenant cluster reaches `Ready`.
+- Start the policy in `Audit` mode.
+- Scope the policy to exclude vCluster system namespaces and service accounts.
+:::
+
 This example ensures that all new ConfigMap resources are sent to a mutating webhook on the control plane cluster.
 
 ```yaml
@@ -105,7 +115,11 @@ centralAdmission:
 
 Any time a ConfigMap is created, the vCluster API server forwards the admission request to a proxy, which in turn calls the actual admission hook running in the control plane cluster in the `kyverno` namespace.
 
-The service providing the webhooks should not rely on the real names of the objects if they are synced on the control plane cluster (for example, pods). The requests that reach the host admission service holds the objects from the tenant cluster, so your policies need to be able to handle those objects (except for the namespace which is rewritten as outlined below).
+The service providing the webhooks should not rely on the real names of the objects if they are synced on the control plane cluster (for example, pods). The requests that reach the host admission service hold the objects from the tenant cluster, so your policies need to be able to handle those objects (except for the namespace which is rewritten as outlined above).
+
+:::warning Policies that key off name or namespace
+When vCluster syncs a tenant pod to the control plane cluster, the admission webhook fires against the translated name (`<pod>-x-<namespace>-x-<tenant>`) and the host namespace. It doesn't see the tenant's view. Policies that use `metadata.name` or the namespace for uniqueness or matching see these translated values and produce wrong results. A uniqueness or collision check (for example, no two Ingresses sharing the same host and path) sees distinct translated names and silently passes resources that actually collide. A naming-convention or length check sees the appended `-x-<namespace>-x-<tenant>` suffix and rejects tenant resources that are valid in the tenant's own view. Namespace-scoped match and exclude rules see the host namespace rather than the tenant namespace, so they apply to the wrong set of objects. Read the original tenant identifiers from the `request.options.vCluster.name` and `request.options.vCluster.namespace.metadata.name` fields documented above.
+:::
 
 The hook services do not require authentication as the proxy does not have access to the `AdmissionConfiguration` object or the files it references. Most policy engines (such as jsPolicy, Kyverno, or Gatekeeper) do not set authentication by default, so it should work with most installations.
 
