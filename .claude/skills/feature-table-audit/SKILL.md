@@ -1,5 +1,5 @@
 ---
-name: feature-label-audit
+name: feature-table-audit
 description: Audit and fix the vCluster docs feature table that the FeatureTable component renders from src/data/features.yaml. Covers three facets - sidebar tier badges (FREE/ENTERPRISE) versus plan assignments in the plans repo, feature docs_url link targets, and which FeatureTable rows each page imports. Use when verifying badges, checking that feature links resolve to the right page, or confirming a page surfaces the correct rows.
 context: fork
 ---
@@ -27,7 +27,9 @@ ha-mode:
   pricing: "add-on"                # optional
 ```
 
-Feature keys are synced from `loft-sh/admin-apis`, and tiers from `loft-sh/plans` (see the header comment in the file), so do not hand-edit keys. The `docs_url` value and which pages import which rows are docs-owned, and are what facets 2 and 3 audit.
+Feature keys are synced from `loft-sh/admin-apis`, and tiers from `loft-sh/plans` (see the header comment in the file), so do not hand-edit keys. The `docs_url` value is the docs-owned lever you audit, and it drives both the link target (facet 2) and the canonical FeatureTable placement (facet 3).
+
+**Critical:** `docs_url` is the source of truth for *where a feature's `<FeatureTable>` lives*. `scripts/sync-feature-tables.js` maps each feature's `docs_url` (anchor stripped) to a file and inserts/updates the `<FeatureTable>` on that page. `npm run validate-feature-tables` runs it with `--dry-run` and the `validate-feature-tables` CI check fails if anything is out of sync. So after editing any `docs_url`, run `npm run sync-feature-tables` and commit the regenerated pages, or CI will fail.
 
 ## Sidebar tier badges
 
@@ -186,18 +188,19 @@ If nothing imports it, the fix is to create the page (mirroring a sibling page t
 
 ## Audit: `<FeatureTable names="...">` row imports
 
-A page's `<FeatureTable>` renders the row(s) named in `names`. The classic bug is a page importing the wrong row (the HA page once imported `platform-external-db` instead of `ha-mode`).
+A page's `<FeatureTable>` renders the row(s) named in `names`. There are two kinds of placement, and they are governed differently:
 
-List every usage:
+**Canonical placements are generated, not hand-audited.** For every feature with a `docs_url`, `sync-feature-tables.js` ensures the page that `docs_url` resolves to contains a `<FeatureTable>` listing that feature (multiple features sharing a `docs_url` are merged into one `names="a,b"` table). You do not place these by hand. To move or fix a canonical table, change the feature's `docs_url` and run `npm run sync-feature-tables`. To preview, run `npm run validate-feature-tables` (the same `--dry-run` the CI runs); it prints `[INSERT]` / `[UPDATE]` for anything stale and exits non-zero.
+
+The script only manages pages that are some feature's `docs_url` target. It does **not** remove `<FeatureTable>` from other pages, and resolves `docs_url` only by literal file path; targets that work via `slug:` or a directory `README.mdx` (e.g. `standalone` → `binary/`, `argo-integration`, `air-gapped-mode`) log `[WARN] No file found` and are skipped, not failed. External URLs (vnode) are skipped too.
+
+**Extra placements are the manual part.** A page may also surface a row it merely discusses, even though it is not that feature's `docs_url` target (e.g. the vcluster sleep page showing `vcp-distro-sleep-mode`). The generator leaves these alone and CI does not check them, so they need human judgment:
+
 ```bash
 grep -rn "<FeatureTable" platform vcluster --include="*.mdx" | grep -v versioned
 ```
-`names="all"` on the comparison pages (`oss-vs-free.mdx`, `what-are-virtual-clusters.mdx`) is intentional and renders the whole table.
+(`names="all"` on `oss-vs-free.mdx` and `what-are-virtual-clusters.mdx` is intentional and renders the whole table.)
 
-**The check** is a loose bidirectional consistency with each row's canonical `docs_url`: for `<FeatureTable names="X">` on page P, look up X's `docs_url`. If it points somewhere other than P, P is surfacing a row that belongs elsewhere. Treat that as a smell, then judge:
+For each, check the named row against the page topic. The classic bug is a wrong row — the HA page once imported `platform-external-db` instead of `ha-mode`, and a deletion page imported the Auto Sleep row. Fix by correcting `names` or dropping the table.
 
-- Row's `docs_url` is a clearly unrelated page (deletion page showing the Auto Sleep row) → wrong row, fix `names` or drop the table.
-- Two pages import the same row → fine if both genuinely discuss the feature; just pick which page owns the canonical `docs_url`.
-- A row's `docs_url` points at page P but no page imports it → the row surfaces nowhere; decide whether P should show it.
-
-**The invariant:** a page may surface any row it genuinely discusses, but every row must still have one sensible canonical `docs_url`.
+**The invariant:** a page may surface any row it genuinely discusses, but every row must have one sensible canonical `docs_url`, and the canonical table placement follows from that `docs_url` automatically.
