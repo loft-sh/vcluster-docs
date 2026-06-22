@@ -642,13 +642,23 @@ func renderField(
 		fieldType = "&#123;key: " + fieldType + "&#125;"
 	}
 
+	// requiredText is the visible badge text. It must be empty for optional
+	// fields, not just hidden via CSS: the heading text feeds the right-hand
+	// table of contents, which ignores CSS, so a hardcoded "required" would
+	// otherwise label every field "required" in the nav regardless of
+	// data-required. See DOC-1526.
+	requiredText := ""
+	if required {
+		requiredText = "required"
+	}
+
 	if ref != "" {
 		refSplit := strings.Split(ref, "/")
 		_, ok = definitions[refSplit[len(refSplit)-1]]
 		if ok {
 			anchorName := anchorPrefix + fieldName
 			proLabel := ""
-			fieldContent = fmt.Sprintf(TemplateConfigField, true, "", headlinePrefix, fieldName, required, fieldType, "", "", proLabel, anchorName, description, fieldContent)
+			fieldContent = fmt.Sprintf(TemplateConfigField, true, "", headlinePrefix, fieldName, required, requiredText, fieldType, "", "", proLabel, anchorName, description, fieldContent)
 		}
 	} else {
 		if defaults != nil {
@@ -665,7 +675,7 @@ func renderField(
 		enumValues := GetEumValues(fieldSchema, required, &fieldDefault)
 		anchorName := anchorPrefix + fieldName
 		proLabel := ""
-		fieldContent = fmt.Sprintf(TemplateConfigField, expandable, " open", headlinePrefix, fieldName, required, fieldType, fieldDefault, enumValues, proLabel, anchorName, description, fieldContent)
+		fieldContent = fmt.Sprintf(TemplateConfigField, expandable, " open", headlinePrefix, fieldName, required, requiredText, fieldType, fieldDefault, enumValues, proLabel, anchorName, description, fieldContent)
 	}
 
 	return fieldContent
