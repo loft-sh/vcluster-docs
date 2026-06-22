@@ -31,6 +31,9 @@ imports it and calls `runtime.mount(...)`. The component self-injects its CSS.
 
 - `index.jsx`: SSR-safe Docusaurus wrapper (`BrowserOnly` + deferred `require`).
   Import this, not `KubeSchemaDoc.tsx` directly.
+- `overrides.css`: site-side positioning override that keeps the side-overlay
+  details card below the Docusaurus navbar. Imported by `index.jsx`. Stopgap
+  only; visual polish is owned by the design team.
 - `payloads/sync-toHost-pods.json`: `KubeSchemaDocument` generated from
   `configsrc/vcluster/main/vcluster.schema.json`.
 

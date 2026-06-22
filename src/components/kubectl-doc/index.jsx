@@ -1,6 +1,10 @@
 import React from 'react';
 import BrowserOnly from '@docusaurus/BrowserOnly';
 
+// Site-side positioning override for the vendored explorer (see overrides.css).
+// Bundled at build time; the import is stripped from the JS, so it stays SSR-safe.
+import './overrides.css';
+
 /**
  * SchemaExplorer: SSR-safe Docusaurus wrapper around the vendored kubectl-doc
  * KubeSchemaDoc component (sttts/kubectl-doc, Apache-2.0, pinned to v0.2.9).
