@@ -176,7 +176,6 @@ func main() {
 			"(positional args still accepted for back-compat)")
 	}
 
-	util.DefaultRequire = false
 	jsonSchemaPath := filepath.Join(versionDir, "vcluster.schema.json")
 	defaultValues := filepath.Join(versionDir, "default_values.yaml")
 	values, err := os.ReadFile(defaultValues)

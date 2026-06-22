@@ -23,7 +23,6 @@ const (
 	anchorSeparator = "-"
 )
 
-var DefaultRequire = true
 
 // BasePath and BaseResourcesPath are package-level vars (not const) so the
 // release-dispatch receiver can redirect generator output to versioned
@@ -77,7 +76,16 @@ func GenerateSchema(configInstance interface{}) *jsonschema.Schema {
 func generateSchema(configInstance interface{}) *jsonschema.Schema {
 	r := new(jsonschema.Reflector)
 	r.AllowAdditionalProperties = true
-	r.RequiredFromJSONSchemaTags = true
+	// RequiredFromJSONSchemaTags=false makes the reflector populate each
+	// object's `required` array from the Kubernetes convention the loft-sh/api
+	// structs actually use (absence of `,omitempty` in the json tag) rather
+	// than from explicit `jsonschema:"required"` tags, which those structs do
+	// not carry. renderField then derives the "required" badge from that array,
+	// so a field is only flagged required when the upstream type genuinely
+	// requires it within its parent object. The `+optional` comment override in
+	// renderField further demotes fields that lack `,omitempty` but are
+	// annotated optional.
+	r.RequiredFromJSONSchemaTags = false
 	r.ExpandedStruct = true
 
 	// add comments
@@ -361,10 +369,12 @@ func RenderFromPath(schema *jsonschema.Schema, schemaPath string, defaults map[s
 	splittedSchemaPath := strings.Split(schemaPath, "/")
 
 	fieldSchema := schema
+	parentSchema := schema
 	lastProperty := schemaPath
 	for i, property := range splittedSchemaPath {
 		var ok bool
 		lastProperty = property
+		parentSchema = fieldSchema
 		fieldSchema, ok = fieldSchema.Properties.Get(property)
 		if !ok {
 			return "", fmt.Errorf("couldn't find schema path '%s' at '%s'", schemaPath, property)
@@ -409,6 +419,7 @@ func RenderFromPath(schema *jsonschema.Schema, schemaPath string, defaults map[s
 		false,
 		1,
 		defaults,
+		requiredSet(parentSchema)[lastProperty],
 	)
 	return content, nil
 }
@@ -443,6 +454,7 @@ func createSections(pageFile string, schema *jsonschema.Schema, definitions json
 func buildContent(prefix string, schema *jsonschema.Schema, definitions jsonschema.Definitions, metadataOnly bool, depth int, defaults interface{}) string {
 	content := ""
 	if schema.Properties != nil {
+		requiredFields := requiredSet(schema)
 		for pair := schema.Properties.Oldest(); pair != nil; pair = pair.Next() {
 			fieldName := pair.Key
 
@@ -475,6 +487,7 @@ func buildContent(prefix string, schema *jsonschema.Schema, definitions jsonsche
 				metadataOnly,
 				depth,
 				defaults,
+				requiredFields[fieldName],
 			)
 			if fieldContent != "" {
 				content += "\n\n" + fieldContent
@@ -485,6 +498,18 @@ func buildContent(prefix string, schema *jsonschema.Schema, definitions jsonsche
 	return content
 }
 
+// requiredSet returns the set of property names that the schema marks as
+// required. For reflected types this comes from the Kubernetes `,omitempty`
+// convention (see generateSchema); for schemas loaded from a values.schema.json
+// file it comes from the `required` arrays already present in the file.
+func requiredSet(schema *jsonschema.Schema) map[string]bool {
+	set := map[string]bool{}
+	for _, name := range schema.Required {
+		set[name] = true
+	}
+	return set
+}
+
 func renderField(
 	prefix,
 	fieldName string,
@@ -493,6 +518,7 @@ func renderField(
 	metadataOnly bool,
 	depth int,
 	defaults interface{},
+	isRequired bool,
 ) string {
 	headlinePrefix := strings.Repeat("#", int(math.Min(5, float64(depth+1)))) + " "
 	anchorPrefix := strings.TrimPrefix(strings.ReplaceAll(prefix, prefixSeparator, anchorSeparator), anchorSeparator)
@@ -534,10 +560,23 @@ func renderField(
 		}
 	}
 
-	required := DefaultRequire
+	required := isRequired
 	fieldDefault := ""
 
 	description := fieldSchema.Description
+	// Nullable fields (`jsonschema:"nullable"`) are reflected as a oneOf of the
+	// real type plus a null type, which leaves the field's own Description empty
+	// and moves the documentation (including any `+optional` marker) onto the
+	// non-null member. Fall back to that member so the description still renders
+	// and the `+optional` demotion below still fires.
+	if description == "" {
+		for _, member := range fieldSchema.OneOf {
+			if member.Type != "null" && member.Description != "" {
+				description = member.Description
+				break
+			}
+		}
+	}
 
 	// replace { & }
 	description = strings.ReplaceAll(description, "{", "&#123;")

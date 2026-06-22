@@ -1126,8 +1126,6 @@ spec:
 		},
 		Create: true,
 	})
-
-	util.DefaultRequire = false
 }
 
 // removeAllExceptPreserved deletes basePath and recreates it, but first backs
