@@ -49,7 +49,9 @@ var pathExtras = map[string]Extras{
 	"sync/toHost/gatewayApi": {
 		Before: "\nSetting `enabled: true` turns on Gateway and HTTPRoute sync, imports control plane " +
 			"cluster GatewayClasses so tenant Gateways can resolve them, and serves tenant ReferenceGrants " +
-			"for validation; TLSRoutes and BackendTLSPolicies must be enabled individually.\n\n",
+			"for validation; TLSRoutes and BackendTLSPolicies must be enabled individually.\n\n" +
+			"In auto mode grants follow route sync and are validated within the tenant cluster; " +
+			"they sync to the control plane cluster only when namespace sync is also enabled.\n\n",
 	},
 }
 
