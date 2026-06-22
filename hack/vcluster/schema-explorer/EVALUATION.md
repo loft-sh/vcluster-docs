@@ -96,29 +96,50 @@ would regress search indexing, per-field deep links, and no-JS readability for
 the entire config reference, in exchange for a UX gain that only matters on the
 largest pages.
 
-## 5. Generation workflow and drift control
+## 5. Source of truth, versioning, and drift control
 
-If this proceeds past the pilot:
+The source of truth is not any file committed to this repo. It is
+`chart/values.schema.json` in `loft-sh/vcluster`, which is itself generated from
+the Go config by `hack/schema/main.go` and shipped with every release (CI there
+sha-guards it against the code). The `configsrc/vcluster/<version>/vcluster.schema.json`
+copies in this repo are per-release snapshots, not the source; they are pulled
+in at release time and must never be hand-edited.
 
-1. Generation: extend the existing `sync-config-schema` pipeline (the same one
-   that runs `hack/vcluster/partials/main.go`). For each target section, run
-   `make-crd.mjs` then `kubectl-doc` and commit the payload JSON next to the
-   partials, version by version.
-2. Drift check: regenerate in CI and `git diff --exit-code` on the payloads,
-   exactly as the partials are guarded today. Pin the `kubectl-doc` version and
-   record it; the `markdown-fern` payload contract can change across releases.
-3. Costs to accept: the injected Kubernetes metadata is carried forever and must
-   be filtered out, and bending a CRD tool to render non-CRD config means
-   tracking upstream `NewStructural` and payload-shape changes.
+The explorer payloads ride the automation that already keeps the accordions
+fresh, so versioning is inherited, not reinvented:
 
-Longer term, the cleaner adapter is to emit the `KubeSchemaDocument` payload
-directly from the JSON Schema (the shape is fully specified in upstream
-`internal/render/webschema/payload.go`). Direct emission keeps unions and refs
-first-class, drops the synthetic-CRD round-trip and the injected metadata, and
-removes the Go binary from the build. The cost is reimplementing the YAML
-token rendering and fold logic that `kubectl-doc` gives for free. Recommended
-path: pilot with the kubectl-doc adapter now; plan a native emitter as the
-replacement once the payload contract is validated against the component.
+1. Trigger and source. `handle-source-release.yml` fires on a vCluster release
+   and calls `hack/release/run-generator.sh` with `EVENT_TYPE=vcluster-released`,
+   `SOURCE_PATH` set to the checked-out released vcluster repo (which carries the
+   authoritative `chart/values.schema.json`), and a per-version `TARGET_FOLDER`
+   from `classify-version.sh` (e.g. `vcluster_versioned_docs/version-0.35.0` or
+   `vcluster` for next).
+2. Generation. Today the `vcluster-released` case runs
+   `hack/vcluster/partials/main.go --source-path … --target-folder …/_partials/config`.
+   The explorer payload generator slots into the same case with the same flag
+   interface, emitting per-version payloads next to the partials. New release in,
+   new accordions and new explorer payloads out, in one PR, per version. The
+   docs version switcher then shows each version's own schema with no special
+   handling.
+3. Drift check. Commit the payloads and add a `git diff --exit-code` gate after
+   regeneration, exactly as the partials are guarded. This is the same model the
+   Dynamo reference uses (`make check-generated`).
+
+Recommended production path: emit the `KubeSchemaDocument` payload directly from
+the schema inside `hack/vcluster/partials/main.go`, reusing the existing walker
+in `hack/platform/util` that already resolves `$ref`, defaults, enums, required,
+and descriptions. Direct emission keeps unions and refs first-class, needs no
+external binary, drops the synthetic-CRD round-trip and the injected Kubernetes
+metadata, and inherits the per-version dispatch and drift gate for free. The
+only new work is the YAML token rendering and fold logic (the payload shape is
+fully specified in upstream `internal/render/webschema/payload.go`).
+
+The `make-crd.mjs` + `kubectl-doc` adapter in this PR is the prototype's payload
+source: it produces a faithful payload today without writing the Go emitter. If
+it were kept for production instead of the native emitter, the costs are pinning
+the `kubectl-doc` version (the payload contract can shift across releases),
+filtering out the injected Kubernetes metadata, and tracking upstream
+`NewStructural` behaviour.
 
 ## Risks for the go/no-go
 
@@ -126,9 +147,14 @@ replacement once the payload contract is validated against the component.
   (`kubectl-doc-runtime.js`) is a maintenance and supply-chain consideration.
   It is pinned to v0.2.9 and Apache-2.0; provenance is recorded in the
   component README. Revisit if upstream stalls.
-- Client-only rendering means no SSR content: a search-indexing and no-JS
-  regression if it ever replaces the accordions. This is the core reason the
-  recommendation is augment, not replace.
+- Client-only rendering means no SSR content. The site uses Algolia DocSearch
+  (index `vcluster`), which crawls rendered HTML, so fields that exist only
+  inside the widget are absent from both site search and Google. The explorer's
+  own in-tree filter is excellent; it is global search that regresses. This is
+  the core reason the recommendation is augment, not replace: the accordions stay
+  the indexed layer. If the explorer page itself must be findable, emit a plain
+  SSR text block (field paths plus descriptions) from the same payload so the
+  crawler indexes it while the interactive widget renders on top.
 - `oneOf`/`anyOf`/`allOf` collapse in the CRD adapter is lossy for polymorphic
   fields. Audit the full schema before extending beyond the pilot sections.
 
