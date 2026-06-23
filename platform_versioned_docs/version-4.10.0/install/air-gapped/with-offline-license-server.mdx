@@ -1,0 +1,195 @@
+---
+title: With Offline License Server
+sidebar_label: With Offline License Server
+sidebar_position: 2
+description: Deploy and run an offline license server in air-gapped environments for vCluster Platform licensing.
+---
+
+import Tabs from "@theme/Tabs";
+import TabItem from "@theme/TabItem";
+import FeatureTable from '@site/src/components/FeatureTable';
+
+<FeatureTable names="air-gapped-mode" />
+
+This guide explains how to deploy the offline license server and expose it through an ingress. It also covers configuring vCluster Platform with `LICENSE_SERVER` and exporting usage data.
+
+## Overview
+
+The offline license server runs inside your cluster and handles license validation locally. Use this approach instead of an [offline license key](./with-offline-license-key.mdx) when you need:
+
+- Usage tracking and data export
+- A dedicated in-cluster service for license validation without external connectivity
+
+The license server stores state in PostgreSQL (embedded or external) and exposes a `/license/v2` API endpoint that vCluster Platform calls for license checks.
+
+## Prerequisites
+
+- Kubernetes 1.28+
+- Helm 3+
+- An offline license key provided by vCluster Labs
+
+## Deploy the license server
+
+<Tabs
+  defaultValue="embedded-postgresql"
+  values={[
+    { label: "Embedded PostgreSQL", value: "embedded-postgresql" },
+    { label: "External PostgreSQL", value: "external-postgresql" },
+  ]}
+>
+<TabItem value="embedded-postgresql">
+
+Use this option to run PostgreSQL as part of the Helm deployment. For production deployments, use an externally managed PostgreSQL.
+
+```bash title="Create namespace and secret"
+kubectl create namespace license-server
+
+kubectl create secret generic license-server-config \
+  --namespace license-server \
+  --from-literal=postgres-password='my-password' \
+  --from-literal=static-api-key='<your-static-api-key>' \
+  --from-literal=offline-license-key='<your-offline-license-key>'
+```
+
+```bash title="Install license server with embedded PostgreSQL"
+helm install license-server license-server \
+  --repo https://charts.loft.sh \
+  --namespace license-server \
+  --set postgresql.enabled=true \
+  --set existingSecret=license-server-config
+```
+
+</TabItem>
+<TabItem value="external-postgresql">
+
+Use this option if your environment already provides PostgreSQL.
+
+```bash title="Create namespace and secret"
+kubectl create namespace license-server
+
+kubectl create secret generic license-server-config \
+  --namespace license-server \
+  --from-literal=postgres-dsn='postgres://<user>:<password>@<host>:5432/license_server?sslmode=require' \
+  --from-literal=static-api-key='<your-static-api-key>' \
+  --from-literal=offline-license-key='<your-offline-license-key>'
+```
+
+```bash title="Install license server with external PostgreSQL"
+helm install license-server license-server \
+  --repo https://charts.loft.sh \
+  --namespace license-server \
+  --set postgresql.enabled=false \
+  --set existingSecret=license-server-config
+```
+
+</TabItem>
+</Tabs>
+
+:::tip
+`<your-static-api-key>` can be any value you choose. It's used to export usage data later.
+:::
+
+## License server endpoint
+
+The license server API base path is `/license/v2`.
+
+Use one of these endpoint styles depending on your network setup:
+
+- In-cluster: `http://license-server.license-server.svc.cluster.local/license/v2`
+- Ingress or load balancer: `https://<license-server-host>/license/v2`
+
+## Expose the license server via ingress
+
+If the platform doesn't run in the same Kubernetes cluster as the license server, or you want a stable DNS endpoint, expose the license server through an ingress.
+
+<Tabs
+  defaultValue="ingress"
+  values={[
+    { label: "Ingress", value: "ingress" },
+    { label: "Ingress with TLS", value: "ingress-tls" },
+  ]}
+>
+<TabItem value="ingress">
+
+```bash title="Install with ingress enabled"
+helm install license-server license-server \
+  --repo https://charts.loft.sh \
+  --namespace license-server \
+  --set postgresql.enabled=true \
+  --set existingSecret=license-server-config \
+  --set ingress.enabled=true \
+  --set ingress.className=nginx \
+  --set ingress.hosts[0].host=license-server.example.com \
+  --set ingress.hosts[0].paths[0].path=/ \
+  --set ingress.hosts[0].paths[0].pathType=Prefix
+```
+
+Your platform should target:
+
+- `http://license-server.example.com/license/v2` or `https://license-server.example.com/license/v2` (based on your ingress setup)
+
+</TabItem>
+<TabItem value="ingress-tls">
+
+```bash title="Install with ingress and TLS"
+helm install license-server license-server \
+  --repo https://charts.loft.sh \
+  --namespace license-server \
+  --set postgresql.enabled=true \
+  --set existingSecret=license-server-config \
+  --set ingress.enabled=true \
+  --set ingress.className=nginx \
+  --set ingress.hosts[0].host=license-server.example.com \
+  --set ingress.hosts[0].paths[0].path=/ \
+  --set ingress.hosts[0].paths[0].pathType=Prefix \
+  --set ingress.tls[0].secretName=license-server-tls \
+  --set ingress.tls[0].hosts[0]=license-server.example.com
+```
+
+Your platform should target:
+
+- `https://license-server.example.com/license/v2`
+
+</TabItem>
+</Tabs>
+
+## Configure vCluster Platform to use the offline license server
+
+Set the platform environment variable `LICENSE_SERVER` to your license server base URL including `/license/v2`.
+
+```yaml title="vcluster-platform.yaml"
+env:
+  LICENSE_SERVER: "https://license-server.example.com/license/v2"
+```
+
+If the platform can reach the service directly in-cluster:
+
+```yaml title="vcluster-platform.yaml (in-cluster service endpoint)"
+env:
+  LICENSE_SERVER: "http://license-server.license-server.svc.cluster.local/license/v2"
+```
+
+If your license server endpoint uses a self-signed certificate, set `insecureSkipVerify: true` in the platform Helm values:
+
+```yaml title="vcluster-platform.yaml (self-signed certificate)"
+env:
+  LICENSE_SERVER: "https://license-server.example.com/license/v2"
+
+insecureSkipVerify: true
+```
+
+Apply the updated values through your normal upgrade flow (for example, `helm upgrade`).
+
+## Export usage data
+
+If you included `static-api-key` in `license-server-config`, you can export usage data from the license server:
+
+```bash
+curl -X GET -H "Authorization: Bearer <KEY>" https://my-license-server.com/license/v2/instance/usage/export -o usage.csv
+```
+
+## Uninstall
+
+```bash
+helm uninstall license-server --namespace license-server
+```

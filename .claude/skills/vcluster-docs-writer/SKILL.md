@@ -155,9 +155,9 @@ Docusaurus sidebar categories can be made clickable (navigating to a page on cli
 
 Remove the `link` field entirely. The `label` and `position` fields are sufficient.
 
-**Anti-pattern 2: `README.mdx` as a folder index**
+**Anti-pattern 2: `README.mdx` as a folder index (general docs)**
 
-Docusaurus automatically converts a `README.mdx` file into the category's landing page and makes the section label clickable — even without a `link` in `_category_.json`. Do not create `README.mdx` files as folder indices.
+Docusaurus automatically converts a `README.mdx` file into the category's landing page and makes the section label clickable — even without a `link` in `_category_.json`. Do not create `README.mdx` files as folder indices in general docs sections.
 
 Instead, use `overview.mdx` with an explicit `slug:` that matches the directory URL:
 
@@ -188,6 +188,10 @@ When converting an existing `README.mdx` to `overview.mdx`:
 ```
 
 Do not add a `link` field.
+
+**Exception: `vcluster/configure/vcluster-yaml/` uses `README.mdx`**
+
+The `vcluster-yaml` section mirrors the structure of the `vcluster.yaml` config file — every folder is a yaml key. Labeling these pages "Overview" is semantically wrong because there is no `overview` key in the yaml. In this section only, use `README.mdx` (not `overview.mdx`) as the folder index. Docusaurus treats it as the category header click target; it does not appear as a named sidebar item. Do NOT set `sidebar_label: Overview` or `sidebar_position: 0` on these files — they are irrelevant once the file becomes the category index.
 
 ### PR Preview URLs
 
@@ -285,7 +289,7 @@ See `references/partials-guide.md` for complete patterns and troubleshooting.
 - ⚠️ **NEVER use URL paths for links** (use file paths with `.mdx`)
 - ⚠️ **NEVER place admonitions inside JSX components** like `<Step>`
 - ⚠️ **NEVER add a `link` field to `_category_.json`** — sidebar section labels must expand/collapse only, not navigate
-- ⚠️ **NEVER create `README.mdx` as a folder index** — use `overview.mdx` with an explicit `slug:` instead (see Sidebar Navigation Conventions)
+- ⚠️ **NEVER create `README.mdx` as a folder index** in general docs sections — use `overview.mdx` with an explicit `slug:` instead. **Exception**: `vcluster/configure/vcluster-yaml/` uses `README.mdx` because every folder is a yaml key and "Overview" is semantically wrong there (see Sidebar Navigation Conventions)
 
 ### Always-Do
 - ✅ **Always run vale** before finalizing documentation

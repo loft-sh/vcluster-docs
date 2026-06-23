@@ -100,6 +100,13 @@ type ProjectSpec struct {
 	// +optional
 	AllowedTemplates []AllowedTemplate `json:"allowedTemplates,omitempty"`
 
+	// AllowedNodeTypes restricts which NodeTypes can be referenced by
+	// NodeClaims in this project. An entry can be an exact name
+	// ("aws.large") or a provider wildcard ("aws.*"). If unset (nil),
+	// all NodeTypes are allowed; an empty list disallows all NodeTypes.
+	// +optional
+	AllowedNodeTypes []AllowedNodeType `json:"allowedNodeTypes" jsonschema:"nullable"`
+
 	// RequireTemplate configures if a template is required for instance creation.
 	// +optional
 	RequireTemplate RequireTemplate `json:"requireTemplate,omitempty"`
@@ -122,7 +129,7 @@ type ProjectSpec struct {
 	// +optional
 	NamespaceTemplate *ProjectNamespaceTemplate `json:"namespaceTemplate,omitempty"`
 
-	// NamespacePattern specifies template patterns to use for creating each space or virtual cluster's namespace
+	// NamespacePattern specifies template patterns to use for creating each space or tenant cluster's namespace
 	// +optional
 	NamespacePattern *NamespacePattern `json:"namespacePattern,omitempty"`
 
@@ -162,7 +169,7 @@ type NamespacePattern struct {
 	// +optional
 	Space string `json:"space,omitempty"`
 
-	// VirtualCluster holds the namespace pattern to use for virtual cluster instances
+	// VirtualCluster holds the namespace pattern to use for tenant cluster instances
 	// +optional
 	VirtualCluster string `json:"virtualCluster,omitempty"`
 }
@@ -224,6 +231,13 @@ type AllowedRunner struct {
 
 type AllowedCluster struct {
 	// Name is the name of the cluster that is allowed to create an environment in.
+	// +optional
+	Name string `json:"name,omitempty"`
+}
+
+type AllowedNodeType struct {
+	// Name of the NodeType, or "<provider>.*" to allow all NodeTypes
+	// of the given provider.
 	// +optional
 	Name string `json:"name,omitempty"`
 }
@@ -326,9 +340,9 @@ type ArgoIntegrationSpec struct {
 	// +optional
 	Cluster string `json:"cluster,omitempty"`
 
-	// VirtualClusterInstance defines the name of *virtual cluster* (instance) that ArgoCD is
+	// VirtualClusterInstance defines the name of *tenant cluster* (instance) that ArgoCD is
 	// deployed into. If provided, Cluster will be ignored and Loft will assume that ArgoCD is
-	// running in the specified virtual cluster.
+	// running in the specified tenant cluster.
 	// +optional
 	VirtualClusterInstance string `json:"virtualClusterInstance,omitempty"`
 

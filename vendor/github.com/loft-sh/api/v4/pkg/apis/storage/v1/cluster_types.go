@@ -35,6 +35,12 @@ const (
 	BuildKitLastAppliedHashAnnotation                              = "loft.sh/buildkit-last-applied-hash"
 	BuildKitDeployed                  agentstoragev1.ConditionType = "BuildKitDeployed"
 	BuildKitAvailable                 agentstoragev1.ConditionType = "BuildKitAvailable"
+
+	// HTTPRouteRequestMirrorSupported is True when at least one GatewayClass in the
+	// managed cluster supports HTTPRoute request mirroring, either by advertising the
+	// HTTPRouteRequestMirror feature in status.supportedFeatures or by matching the
+	// agent's allowlisted spec.controllerName set.
+	HTTPRouteRequestMirrorSupported agentstoragev1.ConditionType = "HTTPRouteRequestMirrorSupported"
 )
 
 // +genclient
@@ -105,7 +111,7 @@ type ClusterSpec struct {
 	// +optional
 	ManagementNamespace string `json:"managementNamespace,omitempty"`
 
-	// If unusable is true, no spaces or virtual clusters can be scheduled on this cluster.
+	// If unusable is true, no spaces or tenant clusters can be scheduled on this cluster.
 	// +optional
 	Unusable bool `json:"unusable,omitempty"`
 
@@ -118,6 +124,20 @@ type ClusterSpec struct {
 
 	// OpenCost holds the cluster's OpenCost backend configuration
 	OpenCost *OpenCost `json:"opencost,omitempty"`
+
+	// ArgoCD holds the cluster's argo cd configuration
+	// +optional
+	ArgoCD *ArgoCD `json:"argoCD,omitempty"`
+}
+
+type ArgoCD struct {
+	// Enabled defines if argo cd is enabled
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
+
+	// Connector specifies the argo cd connector name
+	// +optional
+	Connector string `json:"connector,omitempty"`
 }
 
 type AllowedClusterAccountTemplate struct {

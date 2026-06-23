@@ -27,7 +27,7 @@ The config flip PR changes only the version visibility in `docusaurus.config.js`
 - Moves the new version entry from hidden to visible in the dropdown
 - Updates `lastVersion` to point to the new version
 - Demotes the previous stable version label (removes "Stable" suffix)
-- Updates SEO sitemap priorities, announcement bar, and netlify redirect
+- Updates SEO sitemap priorities, announcement bar, and netlify redirect (adds new version, removes previous)
 
 This separation means all the heavy lifting (version creation, content, link fixes) is done during the rc-1 window, and release day is a low-risk config change.
 
@@ -115,7 +115,21 @@ versions: {
 }
 ```
 
-#### 2. Update `src/config/versionConfig.js` — hide from dropdown
+#### 2. Update `vcluster/_fragments/default-k8s-version.mdx` — default Kubernetes version
+
+Check the default k8s version for this release. The source of truth is `controlPlane.distro.k8s.image.tag` in `config/values.yaml` of the [vcluster OSS repo](https://github.com/loft-sh/vcluster).
+
+If the tag changed from the previous release, update the fragment:
+
+```mdx
+:::note
+vCluster deploys Kubernetes **vX.YY.Z** by default. To use a different version, set `controlPlane.distro.k8s.image.tag` in your `vcluster.yaml`.
+:::
+```
+
+This fragment is used on quick-start and deploy pages. Because it lives in `vcluster/_fragments/`, the versioning command snapshots it into the new versioned docs folder automatically — older docs retain their pinned version.
+
+#### 3. Update `src/config/versionConfig.js` — hide from dropdown
 
 Add the version to the hidden array so it doesn't appear in the version dropdown:
 
@@ -137,8 +151,9 @@ AI performs:
 1. ✅ Verify versioned docs exist: `ls -la vcluster_versioned_docs/version-0.XX.0/`
 2. ✅ Count CLI docs: `ls vcluster_versioned_docs/version-0.XX.0/cli/*.md | wc -l` (expect 90+)
 3. ✅ Check vcluster_versions.json includes new version
-4. ✅ All config changes applied
-5. ✅ Version is hidden from dropdown (in `vclusterHiddenVersions` array in `versionConfig.js`)
+4. ✅ Default k8s version fragment updated if version changed (`vcluster/_fragments/default-k8s-version.mdx`)
+5. ✅ All config changes applied
+6. ✅ Version is hidden from dropdown (in `vclusterHiddenVersions` array in `versionConfig.js`)
 
 User performs:
 1. Build check: `npm run build` (not AI's responsibility)
@@ -212,13 +227,22 @@ announcementBar: {
 
 #### 6. `netlify.toml` — redirect
 
+**CRITICAL:** Add the redirect for the new `lastVersion` AND remove the redirect for the previous `lastVersion` (0.YY.0). The previous version is still in `onlyIncludeVersions` — its versioned URL serves real content and must not redirect.
+
 ```toml
+# ADD this block for the new lastVersion (canonical URL is the unversioned path)
 [[redirects]]
   from = "/docs/vcluster/0.XX.0/*"
   to = "/docs/vcluster/:splat"
   status = 301
   force = true
+
+# REMOVE the block for 0.YY.0 — it is now a live versioned URL, not the lastVersion
 ```
+
+Only two categories of versions belong in this redirect section:
+- The current `lastVersion` (whose canonical URL is the unversioned path)
+- Truly EOL/archived versions that are no longer in `onlyIncludeVersions`
 
 #### 7. `hack/test-vcluster-0.XX.hurl` — create hurl test
 
@@ -231,11 +255,12 @@ This PR is small, reviewable, and safe to merge by anyone with merge rights.
 | File | Changes | Phase |
 |------|---------|-------|
 | `docusaurus.config.js` | Add to `onlyIncludeVersions`, add version with `banner: "unreleased"` + `noIndex: true` | rc-1 |
+| `vcluster/_fragments/default-k8s-version.mdx` | Update default k8s version if it changed (check `config/values.yaml` in vcluster OSS repo) | rc-1 |
 | `src/config/versionConfig.js` | Add version to `vclusterHiddenVersions` array | rc-1 |
 | `docusaurus.config.js` | `lastVersion`, labels, SEO, announcement bar | Release day |
 | `src/config/versionConfig.js` | Remove version from `vclusterHiddenVersions` | Release day |
 | `src/config/docsearch.js` | Update `stableVersion` to new stable version string | Release day |
-| `netlify.toml` | Redirect | Release day |
+| `netlify.toml` | Add redirect for new lastVersion; remove redirect for previous lastVersion | Release day |
 | `hack/test-vcluster-0.XX.hurl` | New file | Release day |
 
 ## Division of Responsibilities
