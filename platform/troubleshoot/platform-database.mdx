@@ -1,0 +1,66 @@
+---
+title: Troubleshoot Platform Database
+sidebar_label: Platform Database
+description: Diagnose and resolve platform database issues in air-gapped installations.
+---
+
+The platform database is a local PostgreSQL instance provisioned only in air-gapped environments. For background on what it is and how it is configured, see [Platform Database](../install/air-gapped/platform-database.mdx).
+
+If the platform UI shows an **Action Required: Usage History Database Down** banner, the postgres pod is unhealthy. Start with the diagnostics below.
+
+### Diagnose a postgres pod that fails to start
+
+If `kubectl describe cluster.storage.loft.sh <cluster-name>` shows `EmbeddedPostgresAvailable=False`, the postgres pod is not healthy. Check the pod status and events in the platform namespace:
+
+```bash
+kubectl get pods -n <platform-namespace> -l loft.sh/system-app=platform-db
+kubectl describe pod -n <platform-namespace> -l loft.sh/system-app=platform-db
+```
+
+Common causes are storage provisioning failures (the PVC cannot bind to a PersistentVolume) and image pull errors. Resolve the underlying pod issue and the condition should clear on the next reconcile.
+
+### Repeated "error sending usage snapshot" in logs
+
+This error appears every 15 minutes when the platform cannot reach the database. It does not affect platform operation, but usage data is not recorded during the outage. Investigate the postgres pod health as described above.
+
+### Recover from a deleted PVC
+
+The PersistentVolumeClaim named `platform-db` backs the platform database and should never be deleted. Deleting it permanently destroys any usage snapshots that have not yet been transmitted to the vCluster license server. Those snapshots cannot be reconstructed, which creates a gap in the billing record for that period. Snapshots already transmitted to the license server are not affected. In the case that the PVC is deleted, follow these steps to return the platform database to a working state:
+
+1. Set $PLATFORM_NS, $PLATFORM_NAME, and $CLUSTER_NAME based on the name and namespace of the vCluster Platform Deployment.
+
+```bash
+export PLATFORM_NS=<platform-namespace>
+export PLATFORM_NAME=<platform-deployment-name>
+export CLUSTER_NAME=<cluster-name>
+```
+
+2. Get current vCluster Platform replicas.
+
+```bash
+export DESIRED_REPLICAS=$(kubectl get deployment -n $PLATFORM_NS $PLATFORM_NAME -o json | jq -r '.spec.replicas')
+```
+
+3. Scale down vCluster Platform Deployment to 0.
+
+```bash
+kubectl scale deployment -n $PLATFORM_NS $PLATFORM_NAME --replicas 0
+```
+
+4. Edit the cluster that vCluster Platform is installed in and change the label `loft.sh/platform-db-applied-hash` to a different value, for example add a random letter to the string. Deleting the label will also work.
+
+```bash
+kubectl edit cluster.storage.loft.sh $CLUSTER_NAME
+```
+
+5. Scale up the platform Deployment to its original replica count.
+
+```bash
+kubectl scale deployment -n $PLATFORM_NS $PLATFORM_NAME --replicas $DESIRED_REPLICAS
+```
+
+6. Confirm that vCluster Platform database becomes available.
+
+```bash
+kubectl rollout status deployment/$PLATFORM_NAME -n $PLATFORM_NS
+```
