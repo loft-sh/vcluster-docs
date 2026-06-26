@@ -28,20 +28,21 @@ Use DataVolumes when you need to:
 - Track the import, clone, or population status of a VM disk across connected KubeVirt clusters.
 - Identify VMs that reference a DataVolume before changing or deleting it.
 
-The [KubeVirt node provider](../node-providers/kubevirt.mdx) can also synthesize a root-disk `DataVolumeTemplate` when a Machine, NodeType, NodeProvider, or [OS image](../../use-platform/machines/os-images.mdx) sets `kubevirt.vcluster.com/image-url` or `kubevirt.vcluster.com/image-datasource`.
-That generated template becomes a DataVolume when KubeVirt creates the VM.
-
 ## Prerequisites
 
 Before creating or using DataVolumes, make sure:
 
-- The target Control Plane Cluster is connected to vCluster Platform.
-- KubeVirt and CDI are installed on the target cluster, or the KubeVirt node provider is configured to deploy them.
+- The target Control Plane Cluster is [connected to vCluster Platform](../clusters/connect-cluster.mdx).
+- KubeVirt and CDI are installed on the target cluster, or the [KubeVirt node provider is configured to deploy them](../node-providers/kubevirt.mdx#infrastructure-deployment).
 - The user has permission to list, create, update, and delete `datavolumes.cdi.kubevirt.io` resources in the target namespace.
 - The StorageClass used by the DataVolume can provision PVCs in the target cluster.
 - Image URLs, registries, PVC sources, secrets, and certificates are reachable from CDI importer pods.
 
-## Create a data volume
+## Create a standalone data volume
+
+:::tip
+Root disk DataVolumes for KubeVirt-backed Machines are usually generated automatically from [image properties](../node-providers/kubevirt.mdx#image-configuration) or an [OS image](../../use-platform/machines/os-images.mdx). Use the steps below to create a standalone DataVolume for reusable, secondary, or manually managed disks.
+:::
 
 Use the platform UI when you want an administrator-managed DataVolume that can be referenced by one or more VMs.
 
@@ -79,11 +80,8 @@ Owner VMs appear when a VM references the volume.
 ## Understand the data volume lifecycle
 
 CDI reports the raw lifecycle in the DataVolume `.status.phase` field.
-vCluster Platform shows a simplified **Status** column in the DataVolumes table.
-The UI status groups related CDI phases and also accounts for error conditions or deletion.
-
-Use the CDI phase when you troubleshoot with `kubectl`.
-Use the platform status when you scan the UI.
+vCluster Platform maps that to a simplified **Status** column that groups related CDI phases.
+Use the CDI phase when you troubleshoot with `kubectl`. Use the platform status when you scan the UI.
 
 | Platform status | Common CDI phases or signals | Meaning |
 |---|---|---|
@@ -98,7 +96,12 @@ Use the platform status when you scan the UI.
 For example, the UI can show `Pending` for a DataVolume whose CDI phase is `WaitForFirstConsumer`.
 That usually means the PVC waits for a VM pod to schedule before the storage provider binds it.
 
-## Import a root disk through a Machine
+## Use data volumes with node providers
+
+The [KubeVirt node provider](../node-providers/kubevirt.mdx) can also synthesize a root-disk `DataVolumeTemplate` automatically when a Machine, NodeType, NodeProvider, or [OS image](../../use-platform/machines/os-images.mdx) sets `kubevirt.vcluster.com/image-url` or `kubevirt.vcluster.com/image-datasource`.
+That generated DataVolume appears in the DataVolumes table alongside any administrator-created volumes.
+
+### Import a root disk through a Machine
 
 For VM-backed Machines and auto nodes, you usually do not need to create the root DataVolume manually.
 Instead, set image properties on the KubeVirt provider, node type, NodeClaim, Machine, or referenced OSImage.
@@ -146,10 +149,12 @@ spec:
 Use `<name>` to reference a DataSource in the VM namespace, or `<namespace>/<name>` to reference one in another namespace.
 Do not set `kubevirt.vcluster.com/image-url` and `kubevirt.vcluster.com/image-datasource` together.
 
-## Attach data volumes to VM templates
+### Attach data volumes to VM templates
 
 You can attach additional DataVolumes by adding a KubeVirt volume and disk to the VM template.
 Use `dataVolumeTemplates` for volumes that should be created with the VM, or reference an existing DataVolume by name.
+
+Use `dataVolumeTemplates` for inline volumes:
 
 ```yaml
 spec:
@@ -184,6 +189,30 @@ spec:
 
 When the KubeVirt node provider creates a VM from a template, it prefixes user-provided `dataVolumeTemplates` so DataVolume names stay unique for each node.
 
+To attach a standalone DataVolume that already exists in the VM namespace, reference it from the VM template's `volumes` list:
+
+```yaml
+spec:
+  kubeVirt:
+    virtualMachineTemplate:
+      spec:
+        template:
+          spec:
+            domain:
+              devices:
+                disks:
+                - name: my-data-disk
+                  disk:
+                    bus: virtio
+            volumes:
+            - name: my-data-disk
+              dataVolume:
+                name: my-existing-datavolume
+```
+
+The referenced DataVolume must exist in the namespace where KubeVirt creates the VM.
+This is the path to use for DataVolumes created through the **Data Volumes** UI.
+
 ## Operational ownership
 
 DataVolumes are cluster resources, not vCluster Platform resources.
@@ -207,7 +236,7 @@ Deleting a DataVolume or its PVC while a VM references it can prevent the VM fro
 
 ### Import is stuck or slow
 
-Check the raw CDI phase and DataVolume conditions:
+Check the raw CDI phase and DataVolume conditions in the namespace where the DataVolume was created:
 
 ```bash
 kubectl get datavolume -n vcluster-platform
