@@ -37,6 +37,17 @@ Tokens in `<Button>`, `<Label>`, `<NavStep>`, `<Input>` that the script did not 
 
 - Multi-part `<NavStep>` paths like `Infrastructure > Control Plane Clusters` — the script checks each segment separately; a match means each word exists *somewhere* in 1779 UI files, not necessarily as a nav label. Spot-check in `loft-enterprise/ui/src/Layout/Sidebar/config/sections.tsx` and the relevant page layout file.
 
+**Known expected unmatched tokens (ignore these):**
+
+Some tokens will never match because their text is generated at runtime or the feature has no dedicated UI component files in the source:
+
+| Token | File | Reason |
+|---|---|---|
+| `<Label>Argo CD Template ID</Label>` | `integrations/argocd/deploy-applications.mdx` | Label built from `entityTypeName` prop in `ArgoCDApplicationTemplates.tsx` — not a literal string |
+| `<Label>Argo CD Application ID</Label>` | `integrations/argocd/deploy-applications.mdx` | Same — built from `entityTypeName` in `ArgoCDApplicationConfigForm.tsx` |
+| `<Button>Create Namespace Constraints</Button>` | `_partials/space-constraints/create-ui.mdx`, `use-platform/namespaces/_partials/space-constraints/create-ui.mdx` | Feature exists (breadcrumb in `breadcumbsTransforms.ts`) but has no dedicated UI component files in source |
+| `<Label>Enforce Namespace Constraints</Label>` | `use-platform/namespaces/_partials/space-constraints/enforce-ui.mdx` | Same — no component file to grep |
+
 **Common false negatives (real drift the script misses):**
 
 - `Admin > Config` — matched because "admin" and "config" appear elsewhere in code, but the real nav path is `Platform > Platform Config`. Always verify `Admin > *` paths manually.
@@ -178,18 +189,9 @@ Common warnings triggered by drift fixes:
 - Title-case headings → sentence case
 - `via` → `using`
 
-## Files with known drift clusters
+## Drift baseline (as of 2026-06-26)
 
-These files contain multiple unmatched tokens or instruction phrases and are good candidates for a batch fix pass:
-
-- `administer/clusters/advanced/ingress-suffix.mdx` — same nav/drawer/dropdown pattern as agent-config
-- `configure/agent-settings/agent-upgrade.mdx` — same pattern
-- `configure/agent-settings/customization.mdx` — same pattern
-- `administer/clusters/cluster-roles.mdx` — fixed 2026-06-26
-- `administer/clusters/advanced/agent-config.mdx` — fixed 2026-06-26
-- `administer/projects/` — Allowed Templates / Allowed Clusters / Configure Project Quotas all stale
-- `administer/templates/` — "left menu" throughout, dropdown references
-- All files with `left sidebar` in `integrations/argocd/` — two occurrences
+After the DOC-1574 sweep, the report stands at 4 unmatched tokens (all in the "known expected" table above) and 0 instruction phrases. Any new findings above this baseline represent genuine drift introduced since that date.
 
 ## Release checklist use
 
