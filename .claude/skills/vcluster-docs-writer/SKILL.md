@@ -281,7 +281,29 @@ import Partial from '@site/docs/_partials/example.mdx';
 
 See `references/partials-guide.md` for complete patterns and troubleshooting.
 
-## Critical Rules
+## Concept and Explanation Pages
+
+Explanation pages (architecture, overview, "what is X") should build the reader's mental model from the outside in. Each section should answer the question a reader would naturally ask next, given what they just learned.
+
+**The progressive disclosure sequence:**
+
+1. What it IS — plain-language definition before any technical framing
+2. What it contains — structural components and their roles
+3. How the parts connect — topology, agents, registrations
+4. How you interact with it — entry points, access patterns
+5. How work flows through it — lifecycle, reconciliation, request paths
+6. Operational detail — network paths, failure behavior, edge cases
+
+**Rules:**
+
+- Do not introduce a term before the concept behind it is established. Glossary links help but do not substitute for a clear conceptual foundation.
+- Add a plain-language "why this matters" sentence before technical component lists. Readers need to know what the list is for before they can absorb its items.
+- Place diagrams immediately after the content they illustrate — not after examples that build on the pattern. A diagram should reinforce what was just described, not summarize what follows.
+- Do not open explanation pages with defensive disclaimers ("X does not replace Y"). Put the relationship between products where it naturally belongs in the flow — usually at the handoff point between sections.
+- Merge sections with confusingly similar names. Adjacent sections covering the same concept from slightly different angles (e.g. "Project lifecycle" and "Project resource lifecycle") signal a structural problem, not a content problem.
+- Separate "what it is" sections from "how it works" sections. A section covering both structure and behavior is usually two sections collapsed into one.
+
+**Check the flow by asking:** can a reader who skims only the section headings reconstruct the mental model? If the heading sequence reads like a component inventory rather than a conceptual arc, restructure.
 
 ### Never-Do
 - ⚠️ **NEVER modify versioned docs** unless explicitly requested
