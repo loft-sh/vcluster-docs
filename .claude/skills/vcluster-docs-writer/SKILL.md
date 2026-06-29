@@ -305,8 +305,6 @@ Explanation pages (architecture, overview, "what is X") should build the reader'
 
 **Check the flow by asking:** can a reader who skims only the section headings reconstruct the mental model? If the heading sequence reads like a component inventory rather than a conceptual arc, restructure.
 
-
-
 ### Never-Do
 - ⚠️ **NEVER modify versioned docs** unless explicitly requested
 - ⚠️ **NEVER run `npm run build`** (user runs when needed)
