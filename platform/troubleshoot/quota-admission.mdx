@@ -1,0 +1,254 @@
+---
+title: Troubleshoot quota and admission denials
+sidebar_label: Troubleshoot quota denials
+sidebar_class_name: pro
+description: Identify which vCluster Platform project quota or admission quota denied a tenant cluster, namespace, Machine, or Kubernetes resource request.
+---
+
+import Flow, { Step } from "@site/src/components/Flow";
+import Tabs from "@theme/Tabs";
+import TabItem from "@theme/TabItem";
+
+# Troubleshoot quota and admission denials
+
+Quota errors can come from two different enforcement paths. A **management denial** comes from the vCluster Platform management API before it accepts a platform-managed resource, such as a tenant cluster, namespace, or Machine. A **Kubernetes admission denial** comes from the connected cluster after Kubernetes admission evaluates a resource, such as a pod, service, persistent volume claim (PVC), CPU, memory, or storage request.
+
+Use this runbook when a request fails with a quota or admission error, or when a tenant reports that a workload cannot be created even though the project looks healthy. First, use the error message to identify the denial type. Then follow the matching diagnostic path.
+
+## Common error messages
+
+Start by finding the part of the error that names the quota scope and resource expression. That tells you whether the request failed against the whole project, a per-user limit, a per-team limit, or a generated ClusterQuota on a connected cluster.
+
+### Management denials
+
+Management denials come from the vCluster Platform management API before the requested management resource is accepted. They apply to platform-owned objects, such as tenant cluster instances, namespace instances, and Machines. These denials answer the question: "Can this project, user, or team create or wake another platform-managed resource?"
+
+Management resource quota denials follow this pattern:
+
+```text
+metadata.name: Forbidden: cannot create virtualclusterinstance, because project virtualclusterinstances limit of 5 would be exceeded
+metadata.name: Forbidden: cannot create spaceinstance, because per-user spaceinstances.active limit of 2 would be exceeded
+metadata.name: Forbidden: cannot create nodeclaim, because per-team nodeclaims.provider=metal limit of 10 would be exceeded
+metadata.name: Forbidden: cannot update virtualclusterinstance, because project virtualclusterinstances.active limit of 3 would be exceeded
+```
+
+Read these messages as follows:
+
+| Message part | Meaning |
+| --- | --- |
+| `cannot create` or `cannot update` | The operation that vCluster Platform evaluated. Wake-up requests appear as updates because the platform changes the sleeping state. |
+| `virtualclusterinstance`, `spaceinstance`, or `nodeclaim` | The management resource that consumes quota. Tenant clusters consume `virtualclusterinstances`, namespaces consume `spaceinstances`, and Machines consume `nodeclaims`. |
+| `project`, `per-user`, or `per-team` | The quota scope that blocked the request. Per-user/team quotas apply to each owner separately. |
+| `virtualclusterinstances.active`, `spaceinstances.active`, or `nodeclaims.provider=<provider-name>` | The specific quota expression that matched the denied resource. Expressions can include filters such as active state, template, or node provider. |
+| `limit of 5 would be exceeded` | The request would put usage above the configured limit. The existing usage might already equal or exceed the limit. |
+
+### Kubernetes admission denials
+
+Kubernetes admission denials come from the connected cluster after a request reaches Kubernetes admission. They apply to Kubernetes resources created in the namespace that hosts a tenant cluster or namespace instance, such as pods, services, PVCs, CPU, memory, and storage. vCluster Platform creates ClusterQuota objects on the connected cluster so Kubernetes can enforce the project's quota there.
+
+Kubernetes admission quota denials usually come from a generated ClusterQuota on the connected cluster:
+
+```text
+Forbidden: exceeded quota: project-quota-my-project, requested: requests.cpu=1, used: requests.cpu=9, limited: requests.cpu=10
+Forbidden: exceeded quota: user-quota-alice-my-project, requested: count/pods=1, used: count/pods=20, limited: count/pods=20
+Forbidden: status unknown for quota: project-quota-my-project, resources: requests.memory
+Forbidden: insufficient quota to consume: requests.cpu
+Forbidden: failed quota: project-quota-my-project: must specify requests.cpu,limits.cpu
+Forbidden: caches not synchronized
+```
+
+Read these messages as follows:
+
+| Message part | Meaning |
+| --- | --- |
+| `project-quota-...` | A project-wide ClusterQuota denied the request. |
+| `user-quota-...` or `team-quota-...` | A per-user or per-team ClusterQuota denied the request. |
+| `requested`, `used`, and `limited` | The denied request, current usage, and hard limit for the resource that exceeded quota. |
+| `requests.cpu`, `limits.memory`, `requests.storage`, or `count/pods` | The Kubernetes resource expression that admission evaluated. |
+| `status unknown for quota` | The quota exists, but admission doesn't have current usage for one or more tracked resources. |
+| `insufficient quota to consume` | The resource requires a covering quota, but no matching quota covers this request. |
+| `must specify requests.*` or `must specify limits.*` | The workload is missing resource requests or limits required by the quota. |
+| `caches not synchronized` | The platform agent admission cache wasn't ready when the request arrived. |
+
+If the response only says `Forbidden`, check Kubernetes events or platform agent logs for the full admission message.
+
+## Identify the actual problem
+
+Select the tab for the type of denial you are seeing, then follow the steps to identify the problem.
+
+Commands that inspect projects and management resources run against the vCluster Platform management API. Commands that inspect namespaces or ClusterQuota objects run against the connected cluster where the denied Kubernetes resource was created. Make sure to run the commands against the correct Kubernetes context.
+
+<Tabs>
+<TabItem value="management" label="Management denial">
+
+<Flow id="identify-management-quota-denial">
+  <Step>
+    **Retrieve the denied management resource**
+
+    Use the resource type from the denial message to retrieve the denied management object. For tenant clusters and namespaces, the namespace where the management object lives is the project namespace.
+
+```bash
+kubectl get virtualclusterinstances.management.loft.sh -A
+kubectl get spaceinstances.management.loft.sh -A
+kubectl get nodeclaims.management.loft.sh -A
+```
+  </Step>
+
+  <Step>
+    **Inspect the resource context**
+
+    Inspect the object that failed. Check the owner, template, active state, provider, and target cluster.
+
+```bash
+kubectl -n loft-p-my-project get virtualclusterinstance my-vcluster -o yaml
+kubectl -n loft-p-my-project get spaceinstance my-space -o yaml
+kubectl -n loft-p-my-project get nodeclaim my-machine -o yaml
+```
+
+    Use these fields to determine which limits can apply:
+
+| Field or state | Why it matters |
+| --- | --- |
+| Project namespace, such as `loft-p-my-project` | Identifies the project that owns the resource. |
+| `spec.owner.user` or `spec.owner.team` | Identifies whether a per-user or per-team quota can apply. Team-owned resources count against the team, not each member. |
+| `spec.templateRef.name` | Matches template-specific quota expressions such as `virtualclusterinstances.template=<template-name>`. |
+| Sleeping state | Matches `.active` quota expressions. A wake-up request can fail when active usage is already at the limit. |
+| `spec.providerRef` on a Machine | Matches provider-specific Machine expressions such as `nodeclaims.provider=<provider-name>`. |
+| Target cluster | Identifies where to inspect generated ClusterQuota objects for Kubernetes resource denials. |
+  </Step>
+
+  <Step>
+    **Match the project or owner quota**
+
+    Inspect the project quota limits and usage:
+
+```bash
+kubectl get projects.management.loft.sh my-project -o yaml
+```
+
+    Look under `spec.quotas` for configured limits. Look under `status.quotas` for current usage. Match the expression from the error message, such as `virtualclusterinstances.active`, `spaceinstances.template=<template-name>`, or `nodeclaims.provider=metal`.
+  </Step>
+</Flow>
+
+</TabItem>
+<TabItem value="admission" label="Kubernetes admission denial">
+
+<Flow id="identify-kubernetes-admission-quota-denial">
+  <Step>
+    **Identify the connected-cluster namespace**
+
+    Start with the namespace where the denied Kubernetes resource was created. If the denial happened from inside a tenant cluster or namespace instance, get the connected-cluster namespace from the instance's `spec.clusterRef.namespace` field.
+
+```bash
+kubectl -n loft-p-my-project get virtualclusterinstance my-vcluster \
+  -o jsonpath='{.spec.clusterRef.namespace}{"\n"}'
+
+kubectl -n loft-p-my-project get spaceinstance my-space \
+  -o jsonpath='{.spec.clusterRef.namespace}{"\n"}'
+```
+
+    Use that value as `<host-namespace>` in the connected-cluster commands:
+
+```bash
+kubectl get namespace <host-namespace> -o yaml
+```
+  </Step>
+
+  <Step>
+    **Check project and owner labels**
+
+    Inspect the namespace labels on the connected cluster.
+
+```bash
+kubectl get namespace <host-namespace> \
+  -o jsonpath='{.metadata.labels.loft\.sh/project}{"\n"}{.metadata.labels.loft\.sh/user}{"\n"}{.metadata.labels.loft\.sh/team}{"\n"}'
+```
+
+    The `loft.sh/project`, `loft.sh/user`, and `loft.sh/team` labels determine which project, per-user, or per-team ClusterQuota objects apply.
+  </Step>
+
+  <Step>
+    **Match the project quota limit and usage**
+
+    Inspect the project quota limits and usage:
+
+```bash
+kubectl get projects.management.loft.sh my-project -o yaml
+```
+
+    Look under `spec.quotas` for configured limits. Look under `status.quotas` for current usage. Match the expression from the error message, such as `requests.cpu`, `limits.memory`, `requests.storage`, or `count/pods`.
+  </Step>
+
+  <Step>
+    **Inspect generated ClusterQuota objects**
+
+    For connected-cluster admission denials, inspect generated ClusterQuota objects on the cluster where the denied resource was created.
+
+```bash
+kubectl get clusterquotas.storage.loft.sh \
+  -l loft.sh/project-cluster-quota=my-project
+
+kubectl get clusterquotas.storage.loft.sh \
+  -l loft.sh/project-user-cluster-quota=my-project
+
+kubectl get clusterquota.storage.loft.sh project-quota-my-project -o yaml
+```
+
+    Project-wide ClusterQuota objects use the `loft.sh/project-cluster-quota` label. Per-user/team ClusterQuota objects use the `loft.sh/project-user-cluster-quota` label. They also include either `loft.sh/user` or `loft.sh/team`.
+  </Step>
+</Flow>
+
+</TabItem>
+</Tabs>
+
+## Resolve the denial
+
+Choose the resolution that matches the problem you found:
+
+| Problem | Resolution |
+| --- | --- |
+| Expected usage reached the project limit | Increase the project quota, or delete unused resources until `used` is below `limited`. |
+| One user or team reached their owner limit | Increase the per-user/team quota, move incorrectly owned resources to the right owner, or delete resources owned by that user or team. |
+| An `.active` quota blocked a wake-up request | Increase the active-resource quota, or put other inactive tenant clusters or namespaces to sleep before retrying the wake-up. |
+| A template-specific quota blocked creation | Use a different allowed template, increase the template-specific quota, or delete unused resources created from that template. |
+| A `nodeclaims.provider=<provider-name>` quota blocked a Machine | Use a different allowed node provider, increase the provider-specific Machine quota, or delete unused Machines from that provider. |
+| A Kubernetes resource quota exceeded `requests.*`, `limits.*`, `count/*`, storage, PVC, or service limits | Increase the relevant project or owner quota, or reduce workloads that consume that resource on the connected cluster. |
+| The error says `must specify requests.*` or `must specify limits.*` | Add the missing resource requests or limits to the workload. Kubernetes quota admission requires those fields when a quota tracks them. |
+| The error says `status unknown for quota` | Wait for quota status to reconcile, then retry. If the error persists, inspect platform agent logs and the generated ClusterQuota status. |
+| The error says `insufficient quota to consume` | Add or adjust the project quota so a matching ClusterQuota covers the requested resource. |
+| The error says `caches not synchronized` | Retry after the platform agent finishes startup. If it persists, check the platform agent pod and logs on the connected cluster. |
+
+After changing a quota, verify both the project status and generated ClusterQuota status:
+
+```bash
+kubectl get project.management.loft.sh my-project -o jsonpath='{.status.quotas}'
+kubectl get clusterquota.storage.loft.sh project-quota-my-project -o jsonpath='{.status.total}'
+```
+
+For persistent `caches not synchronized` errors, find the platform agent namespace and inspect the agent logs on the connected cluster:
+
+```bash
+kubectl get cluster.management.loft.sh <connected-cluster> \
+  -o jsonpath='{.spec.managementNamespace}{"\n"}'
+
+kubectl get pods -A -l app=loft
+kubectl -n <agent-namespace> logs deploy/loft
+```
+
+## Prevent repeat failures
+
+### Set limits above expected peak usage
+
+Set quota limits above normal peak usage when the project is expected to grow. For per-user/team quotas, leave enough headroom for one user's normal burst without allowing one owner to consume the whole project quota.
+
+### Check current usage before lowering limits
+
+Before lowering limits, compare the new value with current `status.quotas` usage. vCluster Platform doesn't delete existing resources when a quota is reduced. The project can remain over quota until usage is cleaned up.
+
+### Leave headroom for multi-cluster projects
+
+For multi-cluster projects, avoid setting generic Kubernetes resource quotas exactly at current usage. vCluster Platform splits these quotas across connected clusters from reported usage on the other clusters. Simultaneous resource creation on multiple clusters can briefly exceed the intended aggregate quota.
+
+### Add tenant-cluster storage guardrails
+
+For storage limits inside tenant clusters, combine project quotas with per-tenant-cluster ResourceQuota objects or policy enforcement. See [Enforce storage quotas per tenant cluster](../how-to/enforce-storage-quotas.mdx).
