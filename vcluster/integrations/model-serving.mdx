@@ -2,7 +2,7 @@
 title: Model serving runtimes
 sidebar_label: Model serving
 sidebar_position: 9
-sidebar_class_name: private-nodes
+sidebar_class_name: pro private-nodes
 description: Deploy a model-serving runtime in a vCluster and expose an inference endpoint.
 ---
 
@@ -157,6 +157,24 @@ curl http://localhost:8000/v1/models
 
 If the pod stays pending, check node capacity, GPU resource names, project quotas, allowed node types, node selectors, and taints. If the pod starts but the model does not load, check model registry credentials, outbound network policy, model cache storage, and runtime logs.
 
+## Plan model storage
+
+Large models make storage and startup behavior part of the endpoint architecture. Decide where model weights live, how they are authorized, how they are cached, and how endpoint readiness behaves while the runtime loads them.
+
+Common patterns include:
+
+| Pattern | Use when | Tradeoff |
+| --- | --- | --- |
+| Object storage, such as S3, GCS, Azure Blob, or MinIO | Models are shared across regions, endpoints, or customers and downloaded at startup. | Simple source of truth, but large models can make cold starts slow unless you add cache warming. |
+| PersistentVolume model cache | A tenant or endpoint repeatedly loads the same model. | Reduces repeated downloads, but requires capacity planning, cleanup, and access controls. |
+| Local NVMe or node image cache | You sell low-latency tiers for a small set of popular models. | Fastest startup after scheduling, but ties models to node images or node-local cache lifecycle. |
+| Shared filesystem, such as NFS or a parallel filesystem | Multiple replicas need a shared model store inside the same environment. | Avoids repeated downloads, but can become a throughput bottleneck for large model loads. |
+| Runtime image with model baked in | Small, fixed models change rarely. | Simple deployment, but large images slow pulls and make model rollout the same as image rollout. |
+
+For production templates, make the model source, model version, credentials secret, cache volume, and cache size explicit parameters. The runtime template should mount registry or object-storage credentials, prepare the cache with an init container or sidecar when needed, and report readiness only after the model is loaded.
+
+For large models, plan warmup separately from pod scheduling. A pod can be `Running` while the endpoint is still downloading weights, building a cache, compiling kernels, or loading the model into GPU memory. Surface that state in your product API.
+
 ## Build a production runtime template
 
 Inference providers usually package the runtime into a Platform template or a provider-owned deployment workflow. A production endpoint template should include:
@@ -164,10 +182,11 @@ Inference providers usually package the runtime into a Platform template or a pr
 - pinned runtime images and a rollout policy
 - model registry, object storage, or artifact repository credentials
 - persistent or pre-warmed model cache storage
+- model source, model version, cache size, and credential parameters
 - resource requests and limits for CPU, memory, GPU, and ephemeral storage
 - node selectors, affinities, tolerations, or runtime classes that match the endpoint tier
 - readiness, startup, and liveness probes tuned to model load time
-- PodDisruptionBudget and graceful termination for draining traffic
+- PodDisruptionBudget and graceful shutdown for draining traffic
 - NetworkPolicies and service account permissions
 - metrics scraping, logs, traces, and runtime-specific dashboards
 - authentication and authorization at the provider traffic layer
@@ -181,10 +200,10 @@ For template guidance, see [Templates](/platform/administer/templates/overview),
 
 For new HTTP endpoint deployments, prefer Gateway API. The most common provider model is:
 
-1. The platform team owns Gateway API CRDs, the Gateway controller, DNS, certificates, and shared `Gateway` resources in the Control Plane Cluster.
+1. The platform team owns Gateway API CRDs, the Gateway controller, DNS, certificates, and shared `Gateway` resources in the control plane cluster.
 2. The tenant cluster imports approved Gateways with `sync.fromHost.gateways`.
 3. The endpoint template creates `HTTPRoute` resources in the tenant cluster.
-4. vCluster syncs the tenant route to the Control Plane Cluster and enforces the Gateway attachment policy.
+4. vCluster syncs the tenant route to the control plane cluster and enforces the Gateway attachment policy.
 
 The tenant cluster template needs Gateway sync enabled. The following example maps a platform-owned Gateway to a tenant-facing Gateway and allows routes from selected tenant namespaces:
 
@@ -262,7 +281,7 @@ After DNS points to the Gateway address, validate the endpoint externally:
 curl -H "Host: customer-a.inference.example.com" http://<gateway-address>/v1/models
 ```
 
-In production, terminate TLS and enforce customer authentication in your provider traffic layer, API gateway, service mesh, or runtime sidecar. Do not expose unauthenticated model endpoints directly to the public internet.
+In production, handle TLS and enforce customer authentication in your provider traffic layer, API gateway, service mesh, or runtime sidecar. Do not expose unauthenticated model endpoints directly to the public internet.
 
 ## Add autoscaling and observability
 

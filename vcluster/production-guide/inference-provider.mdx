@@ -5,31 +5,37 @@ sidebar_position: 2
 description: Build a managed inference platform on GPU infrastructure. Day 0, Day 1, and Day 2 path for inference providers.
 ---
 
-Build managed inference endpoints on your GPU infrastructure. Customers interact with your product API and model endpoints. Platform, vCluster, vMetal, and vNode form the operations layer your team runs behind it.
+import InferenceProviderArchitecture from '@site/static/img/production-paths/inference-provider.svg';
 
-**Typical stack:** Platform as the management plane. Standalone (HA) or Kubernetes-hosted control planes for tenant clusters. Private GPU nodes for dedicated inference customers. vMetal for bare metal GPU lifecycle. vNode for runtime isolation when customers run custom containers, adapters, plugins, or other untrusted code.
+Build managed inference endpoints on your GPU infrastructure. Customers interact with your product API and model endpoints. Platform and vCluster form the operations layer your team runs behind it.
+
+**Typical stack:** Platform as the management plane. If you already operate Kubernetes, run vCluster control planes as pods on that cluster. Use Standalone (HA) when you need vCluster to bootstrap the control plane on bare metal or VMs. Private GPU nodes for dedicated inference customers. vMetal when you own bare metal GPU lifecycle. Cloud GPU instances, manually joined nodes, or Auto Nodes when your capacity comes from a cloud GPU provider. vNode, a separate vCluster Labs product, is optional runtime isolation for custom containers, adapters, plugins, or other untrusted code.
 
 <figure>
-  <img
-    style={{ display: "block", margin: "0 auto", maxWidth: "100%" }}
-    src="/docs/img/production-paths/multi-tenant.png"
-    alt="Inference provider architecture: central control plane that creates isolated tenant clusters backed by dedicated GPU nodes"
-  />
-  <figcaption>Central control plane managing isolated inference environments backed by GPU capacity</figcaption>
+  <InferenceProviderArchitecture style={{ display: "block", margin: "0 auto", maxWidth: "100%", height: "auto" }} role="img" aria-label="Inference provider architecture: customer applications call a product API and inference endpoint while vCluster Platform manages tenant inference environments and GPU capacity behind the provider boundary" />
+  <figcaption>Product API and inference endpoint boundary backed by isolated runtime environments and GPU capacity</figcaption>
 </figure>
 
 **What makes this path different:** Customers don't use Platform directly. They call your product API or inference endpoint. Your product uses Platform and vCluster APIs to create tenant clusters, attach GPU capacity, apply templates, enforce quotas, publish routes, and retire capacity when endpoints are no longer needed.
+
+:::tip Internal inference platform?
+If your users are internal teams that should provision and manage their own environments in Platform, start with [Enterprise AI Factory](./enterprise-ai-factory.mdx). Use this inference provider path when your product hides Platform and exposes an inference endpoint lifecycle instead.
+:::
 
 ## Day 0: Design decisions
 
 | Decision | Read next | Outcome |
 | --- | --- | --- |
-| Choose the customer-facing product boundary | [Platform API](/platform/api/use-api), [Projects](/platform/administer/projects/create) | Decide which actions your product exposes, such as endpoint creation, model selection, GPU tier selection, quota changes, endpoint updates, and deletion. Customers shouldn't need Platform access. |
+| Choose the customer-facing product boundary | [Platform API](/platform/api/use-api), [access keys](/platform/api/resources/ownedaccesskey), [Projects](/platform/administer/projects/create) | Decide which actions your product exposes, such as endpoint creation, model selection, GPU tier selection, quota changes, endpoint updates, and deletion. Customers shouldn't need Platform access. |
 | Choose the inference tenancy model | [Choose an inference tenancy model](#choose-an-inference-tenancy-model), [Architecture](../introduction/architecture.mdx) | Decide whether each customer, model family, or endpoint tier gets a shared serving pool, a tenant cluster, private GPU nodes, or vNode runtime isolation. |
-| Plan GPU capacity classes | [vMetal GPU fleet operations](https://www.vmetal.ai/docs/operate/gpu-fleet), [GPU presentation modes](https://www.vmetal.ai/docs/plan/gpu-presentation), [GPU and accelerators](../introduction/gpu-and-accelerator-support.mdx) | Define node types by GPU model, GPU count, region, rack, and reservation model. Keep MIG, vGPU, and Dynamic Resource Allocation decisions in the vendor stack. |
+| Plan GPU capacity classes | [Node providers](/platform/administer/node-providers/overview), [vMetal GPU fleet operations](https://www.vmetal.ai/docs/operate/gpu-fleet), [GPU and accelerators](../introduction/gpu-and-accelerator-support.mdx) | Define node types by GPU model, GPU count, region, provider, rack, and reservation model. Use vMetal for owned bare metal fleets, or cloud GPU instances and Auto Nodes for cloud capacity. Keep MIG, vGPU, and Dynamic Resource Allocation decisions in the vendor stack. |
 | Define serving runtime templates | [Model serving runtimes](../integrations/model-serving.mdx), [Templates](/platform/administer/templates/overview), [Certified Stacks](/platform/integrations/certified-stacks) | Standardize the components each endpoint receives, such as GPU Operator, scheduler, model server, ingress or Gateway API routes, metrics, and secrets. |
+| Plan model storage and warmup | [Model storage architecture](../integrations/model-serving.mdx#plan-model-storage), [Model serving runtimes](../integrations/model-serving.mdx) | Decide where model weights live, how they reach each endpoint, how caches are warmed, and how readiness is reported while large models load. |
 | Plan endpoint routing | [Model serving runtimes](../integrations/model-serving.mdx#expose-an-inference-endpoint), [Gateway API](../key-features/gateway-api.mdx) | Decide whether tenant clusters attach routes to platform-owned shared Gateways, tenant-owned Gateways, or another ingress layer controlled by your product. |
 | Plan autoscaling signals | [GPU and inference autoscaling](../integrations/gpu-hpa-dcgm.mdx), [Monitoring overview](/platform/maintenance/monitoring/overview) | Combine hardware metrics, such as GPU utilization and memory, with serving metrics, such as request concurrency, queue depth, latency, tokens per second, and time to first token. |
+| Plan billing and metering | [vBilling](https://www.vcluster.com/vbilling), [Fleet monitoring](/platform/maintenance/monitoring/fleet-monitoring-otel) | Decide how you attribute GPU-hours, node-hours, storage, egress, and request or token usage to customers. vBilling is an alpha product for metering tenant clusters and streaming usage events to a billing adapter. |
+| Plan endpoint readiness and SLA | [Endpoint readiness and warm pools](#endpoint-readiness-and-warm-pools), [Model serving runtimes](../integrations/model-serving.mdx) | Decide whether endpoints are cold-provisioned, pre-warmed, or backed by warm pools. Account for node provisioning time, image pulls, model downloads, and model load time. |
+| Confirm product tiers and licensing | [Open Source vs Free tier](../introduction/oss-vs-free.mdx), [vCluster pricing](https://www.vcluster.com/pricing) | Confirm which parts of the stack require Platform activation or a paid tier. Sidebar badges show feature tier requirements, but commercial planning usually happens before implementation. |
 | Plan durability and operations | [Backing store](../configure/vcluster-yaml/control-plane/components/backing-store/README.mdx), [Platform HA](/platform/maintenance/reliability-scaling/high-availability), [Platform backup](/platform/maintenance/backup-restore/backup-restore-platform) | Choose data stores, backup policy, control plane availability, and recovery procedures before customers depend on endpoints. |
 
 ### Choose an inference tenancy model
@@ -43,7 +49,7 @@ Inference providers usually need more than one tenancy model. Use the model that
 | Private GPU nodes | Customers need dedicated worker-node infrastructure, predictable performance, separate CNI/CSI, or compliance isolation. | Stronger isolation and performance predictability, with more capacity planning. |
 | vNode runtime isolation | Customers run untrusted code, custom containers, privileged workloads, adapters, or dynamic execution paths on shared nodes. | Adds a workload sandbox boundary, but doesn't replace private nodes when customers require separate infrastructure. |
 
-Start with tenant clusters for the API and lifecycle boundary. Add private GPU nodes for dedicated endpoint tiers. Add vNode when custom inference workloads need a stronger runtime boundary.
+Tenant clusters are a strong default when each customer or endpoint tier needs its own Kubernetes API boundary, custom resources, secrets, lifecycle, or compliance story. A single tenant cluster can host multiple model-serving Deployments behind separate Services and routes, so "tenant cluster" does not have to mean one model per cluster. Cost-sensitive providers can start with a shared serving tier for trusted provider-owned models, then add tenant clusters and private GPU nodes for dedicated or higher-isolation tiers. Add vNode when custom inference workloads need a stronger runtime boundary without dedicating every node.
 
 ### Define the endpoint contract
 
@@ -55,9 +61,47 @@ Before building automation, define the customer-facing contract separately from 
 | Endpoint tier, such as `h100-dedicated` or `l40s-shared` | Template parameters, node type constraints, and quota policy |
 | Endpoint instance | Tenant cluster, namespace, model-serving Deployment, Service, route, secrets, and metrics resources |
 | Endpoint URL and API key | Gateway API or ingress route, DNS entry, certificate, and provider authentication layer |
+| Usage and billing record | GPU-hour, node-hour, storage, egress, request, or token usage events mapped to customer, endpoint, model, and tier |
 | Endpoint lifecycle event | Platform API call, template update, tenant workload rollout, drain, scale, or delete operation |
 
 Keep this mapping in your product control plane. Customers should see endpoint status, model status, URL, usage, and errors. Your operators should see the backing project, tenant cluster, GPU node claim, template version, route, and runtime rollout state.
+
+### Size the product automation work
+
+The product API is not a thin wrapper around one Platform call. It is the control plane for your commercial inference service. At minimum, it needs to:
+
+- authenticate the customer and check entitlement
+- map the requested model, region, and endpoint tier to approved Platform projects, templates, quotas, and node types
+- call the [Platform API](/platform/api/use-api) using an internal [access key](/platform/api/resources/ownedaccesskey)
+- create or select the tenant cluster and runtime template for the endpoint
+- watch cluster, node, route, and model rollout status
+- return endpoint URL, readiness, error, and usage state to the customer
+- reconcile scale, update, drain, delete, and capacity-reclaim workflows
+
+Build a small internal provisioning path first, then decide which parts become customer-facing product API operations. Treat this as product engineering, not as a one-time installation step.
+
+### Endpoint readiness and warm pools
+
+Endpoint readiness depends on more than Kubernetes pod readiness. A new endpoint might wait for GPU capacity, node bootstrap, GPU Operator reconciliation, image pulls, model download, model load, cache warmup, route attachment, DNS, and certificate issuance.
+
+Plan which endpoint tiers are cold-provisioned and which use warm capacity:
+
+| Strategy | Use when | Tradeoff |
+| --- | --- | --- |
+| Cold provision | Low-cost tiers or infrequent endpoint creation | Lowest idle cost, but customers wait for node provisioning and model load. |
+| Warm GPU nodes | You can keep spare GPU nodes joined to tenant clusters or pools | Faster scheduling, but idle GPU capacity costs money. |
+| Warm model cache | Large models are reused across endpoints | Reduces model download time, but requires cache storage and invalidation policy. |
+| Shared serving pool | Provider-owned models serve many customers | Fastest utilization path, but weaker customer isolation and more careful traffic/auth design. |
+
+Expose readiness stages in your product, not just a single `Pending` state. Customers should know whether an endpoint is waiting for capacity, loading a model, warming cache, publishing a route, or ready for traffic.
+
+### Track metering and billing
+
+Commercial inference providers need a usage model before launch, even if invoicing comes later. At minimum, decide how you attribute GPU capacity, model runtime usage, storage, network egress, and support costs to a customer, endpoint, model, and product tier.
+
+For dedicated private-node tiers, the simplest unit is allocated node or GPU hours by SKU. For shared serving pools, you usually need finer-grained signals such as requests, generated tokens, active runtime time, or pod-level GPU allocation. Keep billing labels stable across tenant clusters, routes, model-serving Deployments, and metrics so usage can be joined back to the product object the customer sees.
+
+[vBilling](https://www.vcluster.com/vbilling) is an alpha vCluster Labs product for this space. It meters tenant clusters, including dedicated-node GPU capacity by SKU, and streams usage events to a billing adapter. Treat it as an option to evaluate for usage-event collection; pricing, plans, invoices, and customer billing logic still belong in your billing system or product backend.
 
 ## Day 1: Stand up the first production inference endpoint
 
@@ -69,14 +113,14 @@ Steps 3 and 4 configure Platform for your platform engineering team and automati
 2. Configure [backing store](../configure/vcluster-yaml/control-plane/components/backing-store/README.mdx), [Platform HA](/platform/maintenance/reliability-scaling/high-availability), and [Platform backup](/platform/maintenance/backup-restore/backup-restore-platform).
 3. Configure [SSO](/platform/configure/platform-configs/single-sign-on), [permissions](/platform/administer/users-permissions/overview), and [access keys](/platform/api/resources/ownedaccesskey) for the internal automation that provisions endpoints.
 4. Create [projects](/platform/administer/projects/create), [templates](/platform/administer/templates/overview), [quotas](/platform/administer/projects/quotas), and [allowed node types](/platform/administer/projects/allowed/node-types) for each customer tier.
-5. Set up [vMetal](https://www.vmetal.ai/docs/) and the [Metal3 node provider](/platform/administer/node-providers/metal3). Register BMC credentials, define OS images, label GPU servers, and create node types for the inference tiers you sell.
+5. Configure GPU capacity for the inference tiers you sell. If you own bare metal, set up [vMetal](https://www.vmetal.ai/docs/) and the [Metal3 node provider](/platform/administer/node-providers/metal3). If you use cloud GPU instances, create node types and automation for those instances through [node providers](/platform/administer/node-providers/overview), Auto Nodes, or your existing provisioning system.
 6. Create a tenant cluster template for the endpoint tier. The template should enable [Private Nodes](../deploy/worker-nodes/private-nodes/overview.mdx), restrict GPU node selection, install the [GPU Operator or device plugin](../introduction/gpu-and-accelerator-support.mdx#install-the-nvidia-gpu-operator-in-a-tenant-cluster), enable any required sync settings, and deploy your scheduler and metrics stack.
 7. Create a runtime template or post-create workflow for the endpoint. It should install the model-serving Deployment, Service, secrets, storage, metrics resources, and Gateway API or ingress resources. See [Model serving runtimes](../integrations/model-serving.mdx) for the tenant-runtime pattern.
 8. Configure endpoint routing with Gateway API, ingress, or your product's traffic layer. Prefer Gateway API for new HTTP endpoint deployments, and decide whether the route attaches to a platform-owned imported Gateway or a tenant-owned Gateway.
 9. Configure autoscaling with hardware metrics, serving metrics, or both. Use [GPU and inference autoscaling](../integrations/gpu-hpa-dcgm.mdx) for the hardware-metric baseline and serving-metric patterns such as queue depth, request concurrency, latency, and tokens per second.
-10. Build the product automation path. For an endpoint create request, your product should choose the project and template version, pass tier parameters, create or reuse the tenant cluster, wait for GPU capacity, deploy the runtime template, publish the route, and return endpoint status and URL.
+10. Build the product automation path. For an endpoint create request, your product should choose the project and template version, pass tier parameters, provision the tenant cluster, wait for GPU capacity, deploy the runtime template, publish the route, and return endpoint status and URL. Start with an internal operator workflow before exposing the API to customers.
 11. Validate the first endpoint from outside the tenant cluster. Confirm the endpoint accepts authorized traffic, rejects unauthorized traffic, reports healthy model status, emits metrics, and can be traced back to the tenant cluster, node type, template version, and route.
-12. Validate isolation and quota enforcement. Confirm the customer can't see Platform internals, other tenant clusters, disallowed templates, disallowed GPU node types, or host cluster resources.
+12. Validate isolation and quota enforcement. Confirm the customer can't see Platform internals, other tenant clusters, disallowed templates, disallowed GPU node types, or control plane cluster resources.
 13. Test the full endpoint lifecycle through your product API: create, warm, scale, update model or adapter, rotate credentials, drain, delete, and reclaim GPU capacity.
 
 ### Endpoint provisioning flow
@@ -88,7 +132,7 @@ Use this flow as the acceptance test for the first provider-managed endpoint:
 3. Product automation calls Platform with an internal access key.
 4. Platform creates or selects the project, tenant cluster template, runtime template, quota, and allowed node types for the customer's tier.
 5. Private Nodes or Auto Nodes attach GPU capacity from the selected node type.
-6. The tenant cluster installs the GPU stack, metrics stack, model-serving runtime, Service, and route.
+6. The tenant cluster installs the GPU stack, metrics stack, model-serving runtime, Service, and route from the tenant cluster template, runtime template, or a post-create Helm/GitOps workflow owned by your product automation.
 7. Gateway API, ingress, or your traffic layer publishes the endpoint hostname.
 8. Product API returns endpoint status, URL, model state, and operational identifiers.
 9. Day 2 automation watches rollout, route, GPU, and serving metrics and reconciles endpoint status back to your product.
@@ -100,7 +144,9 @@ Use this flow as the acceptance test for the first provider-managed endpoint:
 | Manage GPU capacity and machine lifecycle | [vMetal GPU fleet operations](https://www.vmetal.ai/docs/operate/gpu-fleet), [Metal3 node provider](/platform/administer/node-providers/metal3), [Manage private nodes](../deploy/worker-nodes/private-nodes/manage.mdx) |
 | Expose and troubleshoot endpoint routing | [Model serving runtimes](../integrations/model-serving.mdx#expose-an-inference-endpoint), [Gateway API](../key-features/gateway-api.mdx), [Gateway API sync troubleshooting](../troubleshoot/gateway-api-sync.mdx) |
 | Scale model-serving workloads | [GPU and inference autoscaling](../integrations/gpu-hpa-dcgm.mdx), [Fleet monitoring](/platform/maintenance/monitoring/fleet-monitoring-otel) |
-| Roll model runtimes, drivers, and OS images | [Deploy changes](../manage/deploy-changes.mdx), [vMetal GPU fleet operations](https://www.vmetal.ai/docs/operate/gpu-fleet#rotating-os-images), [Upgrade vCluster](../manage/upgrade/upgrade-version.mdx) |
+| Meter customer usage | [vBilling](https://www.vcluster.com/vbilling), [Fleet monitoring](/platform/maintenance/monitoring/fleet-monitoring-otel) |
+| Roll model runtimes and endpoint templates | [Model serving runtimes](../integrations/model-serving.mdx#build-a-production-runtime-template), [Templates](/platform/administer/templates/overview), [GPU and inference autoscaling](../integrations/gpu-hpa-dcgm.mdx) |
+| Roll drivers, vCluster versions, and OS images | [Deploy changes](../manage/deploy-changes.mdx), [vMetal GPU fleet operations](https://www.vmetal.ai/docs/operate/gpu-fleet#rotating-os-images), [Upgrade vCluster](../manage/upgrade/upgrade-version.mdx) |
 | Enforce customer capacity boundaries | [Quotas](/platform/administer/projects/quotas), [Allowed node types](/platform/administer/projects/allowed/node-types), [Projects](/platform/administer/projects/create) |
 | Back up and restore tenant clusters and Platform | [Snapshots](../manage/backup-restore/backup.mdx), [restore](../manage/backup-restore/restore.mdx), [Platform backup](/platform/maintenance/backup-restore/backup-restore-platform) |
 | Manage vNode compatibility during upgrades | [vNode limitations](https://www.vnode.com/docs/limitations/), [vNode configuration](https://www.vnode.com/docs/configuration/) |
