@@ -1,0 +1,290 @@
+---
+title: Data volumes
+sidebar_label: Data volumes
+sidebar_position: 2
+sidebar_class_name: pro
+---
+
+import Flow, {Step} from "@site/src/components/Flow";
+import FeatureTable from '@site/src/components/FeatureTable';
+import NavStep from "@site/src/components/NavStep";
+import Button from "@site/src/components/Button";
+import Label from "@site/src/components/Label";
+
+<FeatureTable names="vm-management" />
+
+KubeVirt `DataVolume` resources define the disk content that Containerized Data Importer (CDI) imports, clones, or creates for virtual machines.
+In vCluster Platform, administrators use DataVolumes to prepare reusable VM disks, inspect import progress, and understand which VMs depend on a disk.
+
+Open the DataVolumes view from **Virtual Machines > Data Volumes**, or go directly to `/virtual-machines/data-volumes`.
+
+## When to use data volumes
+
+Use DataVolumes when you need to:
+
+- Import a VM disk from an HTTP, HTTPS, or registry source.
+- Clone disk content from an existing PVC.
+- Create a blank disk that a VM can format and use.
+- Track the import, clone, or population status of a VM disk across connected KubeVirt clusters.
+- Identify VMs that reference a DataVolume before changing or deleting it.
+
+## Prerequisites
+
+Before creating or using DataVolumes, make sure:
+
+- The target Control Plane Cluster is [connected to vCluster Platform](../clusters/connect-cluster.mdx).
+- KubeVirt and CDI are installed on the target cluster, or the [KubeVirt node provider is configured to deploy them](../node-providers/kubevirt.mdx#infrastructure-deployment).
+- The user has permission to list, create, update, and delete `datavolumes.cdi.kubevirt.io` resources in the target namespace.
+- The StorageClass used by the DataVolume can provision PVCs in the target cluster.
+- Image URLs, registries, PVC sources, secrets, and certificates are reachable from CDI importer pods.
+
+## Create a standalone data volume
+
+:::tip
+Root disk DataVolumes for KubeVirt-backed Machines are usually generated automatically from [image properties](../node-providers/kubevirt.mdx#image-configuration) or an [OS image](../../use-platform/machines/os-images.mdx). Use the steps below to create a standalone DataVolume for reusable, secondary, or manually managed disks.
+:::
+
+Use the platform UI when you want an administrator-managed DataVolume that can be referenced by one or more VMs.
+
+<Flow>
+  <Step>
+    Open <NavStep>Virtual Machines</NavStep> > <NavStep>Data Volumes</NavStep>.
+  </Step>
+
+  <Step>
+    Click <Button>Create Data Volume</Button>.
+  </Step>
+
+  <Step>
+    Choose the target KubeVirt cluster and namespace.
+  </Step>
+
+  <Step>
+    Enter a name and storage size.
+    Select one source type:
+
+    - <Label>HTTP</Label>: import from an HTTP or HTTPS image URL.
+    - <Label>Registry</Label>: import from a container registry URL such as `docker://quay.io/containerdisks/ubuntu:22.04`.
+    - <Label>PVC</Label>: clone from an existing PVC.
+    - <Label>Blank</Label>: create an empty disk.
+  </Step>
+
+  <Step>
+    Click <Button>Save</Button> and watch its lifecycle in the table.
+  </Step>
+</Flow>
+
+The DataVolumes table shows the cluster, namespace, source type, requested storage, platform lifecycle status, and owner VMs.
+Owner VMs appear when a VM references the volume.
+
+## Understand the data volume lifecycle
+
+CDI reports the raw lifecycle in the DataVolume `.status.phase` field.
+vCluster Platform maps that to a simplified **Status** column that groups related CDI phases.
+Use the CDI phase when you troubleshoot with `kubectl`. Use the platform status when you scan the UI.
+
+| Platform status | Common CDI phases or signals | Meaning |
+|---|---|---|
+| `Importing` | `ImportScheduled`, `ImportInProgress` | CDI scheduled or started an image import. |
+| `Pending` | `Pending`, `PVCBound`, clone phases, upload phases, `WaitForFirstConsumer`, `PendingPopulation` | CDI or the storage provider is preparing the PVC or waiting for scheduling. |
+| `Ready` | `Succeeded` | CDI finished preparing the volume. |
+| `Failed` | `Failed` or a `Running` condition with reason `Error` | CDI or the storage provider reported an error. |
+| `Paused` | `Paused` | CDI paused the operation. |
+| `Terminating` | `metadata.deletionTimestamp` is set | Kubernetes is deleting the DataVolume. |
+| `Unknown` | Missing, empty, or unrecognized phase | The platform can't classify the lifecycle state. |
+
+For example, the UI can show `Pending` for a DataVolume whose CDI phase is `WaitForFirstConsumer`.
+That usually means the PVC waits for a VM pod to schedule before the storage provider binds it.
+
+## Use data volumes with node providers
+
+The [KubeVirt node provider](../node-providers/kubevirt.mdx) can also synthesize a root-disk `DataVolumeTemplate` automatically when a Machine, NodeType, NodeProvider, or [OS image](../../use-platform/machines/os-images.mdx) sets `kubevirt.vcluster.com/image-url` or `kubevirt.vcluster.com/image-datasource`.
+That generated DataVolume appears in the DataVolumes table alongside any administrator-created volumes.
+
+### Import a root disk through a Machine
+
+For VM-backed Machines and auto nodes, you usually do not need to create the root DataVolume manually.
+Instead, set image properties on the KubeVirt provider, node type, NodeClaim, Machine, or referenced OSImage.
+
+```yaml
+apiVersion: management.loft.sh/v1
+kind: NodeProvider
+metadata:
+  name: kubevirt-provider
+spec:
+  properties:
+    kubevirt.vcluster.com/image-url: docker://quay.io/containerdisks/ubuntu:22.04
+    kubevirt.vcluster.com/root-disk-size: 20Gi
+  kubeVirt:
+    clusterRef:
+      cluster: kubevirt-host
+      namespace: vcluster-platform
+    virtualMachineTemplate:
+      spec:
+        template:
+          spec:
+            domain:
+              resources:
+                requests:
+                  cpu: "2"
+                  memory: 4Gi
+    nodeTypes:
+    - name: ubuntu
+      maxCapacity: 10
+```
+
+The provider creates a root-disk `DataVolumeTemplate`, a volume, and a disk for the VM.
+HTTP and HTTPS image URLs become CDI `http` sources.
+`docker://` image URLs become CDI `registry` sources.
+
+To use a prepared CDI `DataSource`, set `kubevirt.vcluster.com/image-datasource` instead:
+
+```yaml
+spec:
+  properties:
+    kubevirt.vcluster.com/image-datasource: golden-images/ubuntu-22-04
+    kubevirt.vcluster.com/root-disk-size: 20Gi
+```
+
+Use `<name>` to reference a DataSource in the VM namespace, or `<namespace>/<name>` to reference one in another namespace.
+Do not set `kubevirt.vcluster.com/image-url` and `kubevirt.vcluster.com/image-datasource` together.
+
+### Attach data volumes to VM templates
+
+You can attach additional DataVolumes by adding a KubeVirt volume and disk to the VM template.
+Use `dataVolumeTemplates` for volumes that should be created with the VM, or reference an existing DataVolume by name.
+
+Use `dataVolumeTemplates` for inline volumes:
+
+```yaml
+spec:
+  kubeVirt:
+    virtualMachineTemplate:
+      spec:
+        dataVolumeTemplates:
+        - metadata:
+            name: tools-disk
+          spec:
+            source:
+              blank: {}
+            pvc:
+              accessModes:
+              - ReadWriteOnce
+              resources:
+                requests:
+                  storage: 10Gi
+        template:
+          spec:
+            domain:
+              devices:
+                disks:
+                - name: tools-disk
+                  disk:
+                    bus: virtio
+            volumes:
+            - name: tools-disk
+              dataVolume:
+                name: tools-disk
+```
+
+When the KubeVirt node provider creates a VM from a template, it prefixes user-provided `dataVolumeTemplates` so DataVolume names stay unique for each node.
+
+To attach a standalone DataVolume that already exists in the VM namespace, reference it from the VM template's `volumes` list:
+
+```yaml
+spec:
+  kubeVirt:
+    virtualMachineTemplate:
+      spec:
+        template:
+          spec:
+            domain:
+              devices:
+                disks:
+                - name: my-data-disk
+                  disk:
+                    bus: virtio
+            volumes:
+            - name: my-data-disk
+              dataVolume:
+                name: my-existing-datavolume
+```
+
+The referenced DataVolume must exist in the namespace where KubeVirt creates the VM.
+This is the path to use for DataVolumes created through the **Data Volumes** UI.
+
+## Operational ownership
+
+DataVolumes are cluster resources, not vCluster Platform resources.
+vCluster Platform gives administrators a UI for the connected KubeVirt clusters, but CDI owns the import and PVC population process.
+KubeVirt owns DataVolumes created from a VM's `dataVolumeTemplates`, and those resources usually follow the VM lifecycle.
+
+Use this ownership model:
+
+| Owner | Responsibility |
+|---|---|
+| Platform administrator | Create reusable DataVolumes, choose storage classes, configure image sources, and control RBAC. |
+| vCluster Platform | Lists DataVolumes, creates administrator-requested DataVolumes, shows platform lifecycle status and owner VMs, and generates root-disk templates from KubeVirt image properties. |
+| CDI | Imports, clones, uploads, or populates PVC content and reports DataVolume phase and conditions. |
+| KubeVirt | Creates DataVolumes from VM templates and attaches the resulting PVCs to VMs. |
+| Storage provider | Provisions PVCs and enforces access modes, binding mode, expansion, and quota. |
+
+Before deleting a DataVolume, check the **Owner VMs** column or inspect VM volumes with `kubectl`.
+Deleting a DataVolume or its PVC while a VM references it can prevent the VM from starting or can detach required disk content.
+
+## Troubleshoot data volumes
+
+### Import is stuck or slow
+
+Check the raw CDI phase and DataVolume conditions in the namespace where the DataVolume was created:
+
+```bash
+kubectl get datavolume -n vcluster-platform
+kubectl describe datavolume -n vcluster-platform ubuntu-root-disk
+```
+
+If the phase stays `ImportScheduled`, `ImportInProgress`, `WaitForFirstConsumer`, or `PendingPopulation`, inspect CDI importer pods and PVC events.
+
+```bash
+kubectl get pods -n vcluster-platform -l cdi.kubevirt.io
+kubectl describe pvc -n vcluster-platform ubuntu-root-disk
+```
+
+Common causes are an unreachable image URL, missing registry credentials, an invalid certificate ConfigMap, storage quota, an unavailable StorageClass, or a StorageClass with `WaitForFirstConsumer` binding that needs the VM pod to schedule before the PVC binds.
+
+### Data source can't be resolved
+
+If a VM or Machine uses `kubevirt.vcluster.com/image-datasource`, verify the DataSource exists in the expected namespace:
+
+```bash
+kubectl get datasource -A
+kubectl describe datasource -n golden-images ubuntu-22-04
+```
+
+Use `name` for a DataSource in the VM namespace and `namespace/name` for a DataSource in a different namespace.
+Also confirm the referenced DataSource points to a valid PVC or VolumeSnapshot and that RBAC allows CDI and KubeVirt to read it.
+
+### Virtual machine console opens but the guest doesn't boot
+
+Inspect the VM's disks and DataVolumes:
+
+```bash
+kubectl get vm -n vcluster-platform my-vm -o yaml
+kubectl get datavolume -n vcluster-platform
+```
+
+The root disk must be present in both `spec.template.spec.domain.devices.disks` and `spec.template.spec.volumes`.
+For provider-generated root disks, `kubevirt.vcluster.com/root-disk-size` is required whenever `kubevirt.vcluster.com/image-url` or `kubevirt.vcluster.com/image-datasource` is set.
+If the image boots but does not join a tenant cluster, make sure the guest image supports `cloudInitNoCloud`.
+
+### Data volume fails
+
+Describe the DataVolume and review CDI importer logs:
+
+```bash
+kubectl describe datavolume -n vcluster-platform ubuntu-root-disk
+kubectl logs -n vcluster-platform -l cdi.kubevirt.io
+```
+
+Failures usually point to source access, authentication, checksum mismatch, unsupported image format, insufficient storage, or storage provider errors.
+After correcting the source or storage issue, recreate the DataVolume if CDI cannot retry the failed import.

@@ -1,0 +1,226 @@
+---
+title: Network attachment definitions
+sidebar_label: Network attachment definitions
+sidebar_position: 3
+sidebar_class_name: pro
+---
+
+import Flow, {Step} from "@site/src/components/Flow";
+import FeatureTable from '@site/src/components/FeatureTable';
+import NavStep from "@site/src/components/NavStep";
+import Button from "@site/src/components/Button";
+
+<FeatureTable names="vm-management" />
+
+Multus `NetworkAttachmentDefinition` resources describe additional Kubernetes networks that KubeVirt VMs can attach to.
+Use them when a VM needs a bridge, VLAN, SR-IOV network, or another CNI-backed network in addition to, or instead of, the default pod network.
+
+Open the Network Attachment Definitions view from **Virtual Machines > Network Attachment Definitions**, or go directly to `/virtual-machines/network-attachment-definitions`.
+
+## When to use network attachment definitions
+
+Use network attachment definitions when you need to:
+
+- Attach KubeVirt VMs to an existing Multus network.
+- Make a Multus network the VM's default network.
+- Provide L2 access through a bridge such as `br0` or a Netris-created bridge.
+- Standardize network attachments across KubeVirt node types.
+- Inspect or create NAD resources across connected KubeVirt clusters from the platform UI.
+
+The KubeVirt node provider attaches VMs to a NAD when the effective properties include `kubevirt.vcluster.com/network-attachment-definition`.
+The property can be set on a NodeProvider, NodeType, NodeClaim, Machine, or [NodeEnvironment](../node-providers/overview.mdx#node-environments).
+
+## Prerequisites
+
+Before creating or using a NAD, make sure:
+
+- The target Control Plane Cluster is [connected to vCluster Platform](../clusters/connect-cluster.mdx).
+- [KubeVirt](../node-providers/kubevirt.mdx#infrastructure-deployment), Multus, and the CNI plugins referenced by the NAD are installed on the target cluster.
+- The user has permission to list, create, update, and delete `network-attachment-definitions.k8s.cni.cncf.io` resources in the target namespace.
+- The referenced host bridge, device, VLAN, or network exists on the nodes where VM launcher pods can schedule.
+
+## Create a network attachment definition
+
+Use the platform UI to create an administrator-managed NAD in the namespace the VMs will use. After saving, reference the NAD name from a node type or NodeClaim as described in [Reference a NAD from a node type](#reference-a-nad-from-a-node-type).
+
+<Flow>
+  <Step>
+    Open <NavStep>Virtual Machines</NavStep> > <NavStep>Network Attachment Definitions</NavStep>.
+  </Step>
+
+  <Step>
+    Click <Button>Create Network Attachment Definition</Button>.
+  </Step>
+
+  <Step>
+    Choose the target KubeVirt cluster and namespace.
+  </Step>
+
+  <Step>
+    Configure the network.
+
+    - Enter the NAD name.
+    - Add the Container Network Interface (CNI) configuration as JSON.
+  </Step>
+
+  <Step>
+    Click <Button>Save</Button>.
+  </Step>
+</Flow>
+
+The UI validates that `spec.config` is valid JSON before saving.
+The following bridge example matches the placeholder used by the create form:
+
+```yaml
+apiVersion: k8s.cni.cncf.io/v1
+kind: NetworkAttachmentDefinition
+metadata:
+  name: bridge-network
+  namespace: vcluster-platform
+spec:
+  config: |
+    {
+      "cniVersion": "0.3.1",
+      "name": "bridge-network",
+      "type": "bridge",
+      "bridge": "br0",
+      "ipam": {
+        "type": "host-local",
+        "subnet": "10.10.0.0/24"
+      }
+    }
+```
+
+The exact CNI configuration depends on your network plugin and node setup.
+For example, a bridge NAD requires the named Linux bridge to exist on the relevant cluster nodes.
+
+## Reference a NAD from a node type
+
+Set [`kubevirt.vcluster.com/network-attachment-definition`](../node-providers/kubevirt.mdx#kubevirt-vcluster-com-network-attachment-definition) to the NAD name.
+Use `<name>` for a NAD in the VM namespace or `<namespace>/<name>` for a NAD in another namespace.
+
+```yaml
+apiVersion: management.loft.sh/v1
+kind: NodeProvider
+metadata:
+  name: kubevirt-bridge-provider
+spec:
+  properties:
+    kubevirt.vcluster.com/image-url: docker://quay.io/containerdisks/ubuntu:22.04
+    kubevirt.vcluster.com/root-disk-size: 20Gi
+  kubeVirt:
+    clusterRef:
+      cluster: kubevirt-host
+      namespace: vcluster-platform
+    virtualMachineTemplate:
+      spec:
+        template:
+          spec:
+            domain:
+              resources:
+                requests:
+                  cpu: "2"
+                  memory: 4Gi
+    nodeTypes:
+    - name: bridge-vm
+      properties:
+        kubevirt.vcluster.com/network-attachment-definition: bridge-network
+        kubevirt.vcluster.com/interface-binding: bridge
+      maxCapacity: 5
+```
+
+When this property is set, the provider injects a KubeVirt network named `multus` and a matching interface named `multus`.
+If a network or interface with that name already exists in the VM template, the provider overwrites it.
+Only one NAD can be attached to a VM through this property.
+To attach multiple additional networks, define the extra KubeVirt networks and interfaces directly in `virtualMachineTemplate`.
+
+Use these optional properties to tune the injected interface:
+
+| Property | Description |
+|---|---|
+| `kubevirt.vcluster.com/interface-binding` | Sets the KubeVirt binding method. Supported values are `bridge`, `masquerade`, `sriov`, `passt`, and `slirp`. Defaults to `bridge`. |
+| `kubevirt.vcluster.com/interface-template` | YAML fragment merged into the injected KubeVirt interface. The interface name is always forced to `multus`. |
+| `kubevirt.vcluster.com/multus-default` | When set to `"true"`, makes the Multus network the default network and removes the pod network from the VM template. |
+| `kubevirt.vcluster.com/network-data` | Base64-encoded cloud-init network data. Use this when automatic network configuration is not enough. See [network-data templates](../../use-platform/machines/machine-config-templates.mdx#network-data-templates). |
+| `kubevirt.vcluster.com/network-interface` | Guest interface name to configure, for example `enp1s0` or `eth1`. |
+| `kubevirt.vcluster.com/network-nameservers` | Comma-separated DNS nameservers for generated network data. |
+
+## Use Netris-created network attachment definitions
+
+:::note
+This section only applies if the Netris integration is enabled on your cluster.
+:::
+
+When the Netris integration is enabled and `netris.vcluster.com/server-cluster` is set, vCluster Platform can create or update a Multus NAD automatically.
+The generated name follows the Netris server cluster and node provider configuration, and the provider then attaches the VM through `kubevirt.vcluster.com/network-attachment-definition`.
+
+If you set `kubevirt.vcluster.com/network-attachment-definition` yourself, the Netris flow uses that existing NAD instead of creating another one.
+See the [KubeVirt node provider Netris example](../node-providers/kubevirt.mdx#netris-integration) for the full provider configuration.
+
+## Operational ownership
+
+NetworkAttachmentDefinitions are cluster resources.
+vCluster Platform can create, list, edit, and delete them from the VM networking UI, but Multus and the referenced CNI plugin own the actual network attachment behavior.
+
+Use this ownership model:
+
+| Owner | Responsibility |
+|---|---|
+| Platform administrator | Creates NADs, validates CNI JSON, verifies host networking, and assigns RBAC. |
+| vCluster Platform | Lists and creates NADs, filters them to KubeVirt-enabled clusters, and injects NAD references into KubeVirt VMs through node provider properties. |
+| Multus | Reads the NAD and attaches the requested network to the VM launcher pod. |
+| CNI plugin | Implements the network described by `spec.config`. |
+| KubeVirt | Connects VM interfaces to the pod networks and enforces interface/network name matching. |
+
+Treat NAD changes as infrastructure changes.
+Changing `spec.config` can affect new VM starts immediately and may affect running workloads after restart or migration.
+
+## Troubleshoot network attachment definitions
+
+### Network attachment definition doesn't appear in the UI
+
+The Network Attachment Definitions view lists resources from connected clusters where KubeVirt is installed.
+If a NAD is missing, verify the cluster is connected, KubeVirt is detected, and the resource exists:
+
+```bash
+kubectl get network-attachment-definitions -A
+kubectl get kubevirt -A
+```
+
+Also check RBAC for the user and the platform agent on `network-attachment-definitions.k8s.cni.cncf.io`.
+
+### Virtual machine fails to start after adding a network attachment definition
+
+Describe the VM and VMI:
+
+```bash
+kubectl describe vm -n vcluster-platform my-vm
+kubectl describe vmi -n vcluster-platform my-vm
+```
+
+Common causes are a missing NAD, invalid `spec.config` JSON, a CNI plugin that is not installed on the node, a missing host bridge or device, or an unsupported interface binding.
+If `kubevirt.vcluster.com/multus-default` is `"true"`, the provider removes the pod network because KubeVirt rejects a VM with both a default Multus network and the pod network.
+
+### Virtual machine console works but networking doesn't
+
+Confirm that the Multus interface was injected into the VM template:
+
+```bash
+kubectl get vm -n vcluster-platform my-vm -o yaml
+```
+
+The VM should have a network named `multus` and an interface named `multus`.
+Then check that cloud-init config targets the guest interface name that the OS actually uses.
+The VM template, cloud-init network data, and guest OS interface names must agree on which interface receives the configured IP address.
+For generated network data, set `kubevirt.vcluster.com/network-interface` to the guest interface name and set `kubevirt.vcluster.com/network-nameservers`.
+
+### Network attachment definition configuration is invalid
+
+Validate the JSON in `spec.config` and confirm the CNI plugin accepts the fields:
+
+```bash
+kubectl get network-attachment-definition -n vcluster-platform bridge-network -o yaml
+```
+
+The platform UI catches malformed JSON, but it cannot verify that a referenced bridge, VLAN, SR-IOV device, IPAM range, or plugin-specific option exists on every node.
+Review Multus and CNI plugin logs on the target cluster if the JSON is valid but attachment still fails.
