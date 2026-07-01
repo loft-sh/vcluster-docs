@@ -1,0 +1,322 @@
+---
+title: Model serving runtimes
+sidebar_label: Model serving
+sidebar_position: 9
+sidebar_class_name: pro private-nodes
+description: Deploy a model-serving runtime in a vCluster and expose an inference endpoint.
+---
+
+import TenancySupport from '../_fragments/tenancy-support.mdx';
+
+<TenancySupport privateNodes="true" />
+
+Model-serving runtimes run inside the tenant cluster. vCluster provides the tenant Kubernetes API, GPU access through the selected worker node model, resource sync, and templates for installing supporting components. The serving runtime owns model loading, request handling, batching, tokenizer behavior, and runtime-specific metrics.
+
+Use this page as a tenant-runtime pattern for inference endpoints. The examples show vLLM because it is easy to recognize, but the same structure applies to NVIDIA Triton, KServe, SGLang, Ray Serve, or a provider-owned runtime.
+
+:::note
+This page focuses on the private-node endpoint pattern, where the tenant cluster owns its worker-node software stack. Provider-owned shared serving pools can also run behind a product API, but they need a different tenancy and routing design.
+:::
+
+## Responsibility boundary
+
+| Layer | Responsible component |
+| --- | --- |
+| Tenant Kubernetes API, object lifecycle, and sync | vCluster |
+| GPU node provisioning and reclaim | Private Nodes, Auto Nodes, and optionally vMetal |
+| GPU driver, device plugin, GPU Operator, MIG, vGPU, or Dynamic Resource Allocation | Node image and vendor components |
+| Model server, batching, model loading, and inference API | Runtime such as vLLM, NVIDIA Triton, KServe, SGLang, or Ray Serve |
+| External endpoint routing | Gateway API, ingress, service mesh, or provider traffic layer |
+| Product API and customer lifecycle | Your inference provider platform |
+
+## Prerequisites
+
+- A tenant cluster with [Private Nodes](../deploy/worker-nodes/private-nodes/overview.mdx) enabled.
+- At least one GPU node attached to the tenant cluster.
+- A vendor GPU Operator, device plugin, or Dynamic Resource Allocation driver installed where your GPU stack requires it.
+- A Gateway API controller, ingress controller, or provider traffic layer for external endpoint routing.
+- A model source, registry credential, or object storage path your runtime can reach.
+
+For GPU setup details, see [GPU and accelerator support](../introduction/gpu-and-accelerator-support.mdx). For bare metal GPU node provisioning, see the [vMetal GPU Quickstart](https://www.vmetal.ai/docs/deploy/gpu-quickstart).
+
+## Preflight the tenant cluster
+
+Before installing a runtime, confirm the tenant cluster can see GPU capacity and the routing resources your template expects.
+
+Check the GPU resource advertised by the private node:
+
+```bash
+kubectl get nodes -o 'custom-columns=NAME:.metadata.name,GPU:.status.allocatable.nvidia\.com/gpu'
+kubectl describe node <gpu-node-name> | grep -A5 Allocatable
+```
+
+For AMD or another accelerator vendor, replace `nvidia.com/gpu` with the resource name exposed by that vendor's device plugin or DRA driver.
+
+If your endpoint uses an imported Gateway, confirm the tenant cluster can see it before creating routes:
+
+```bash
+kubectl get gateway -A
+kubectl describe gateway shared-inference -n shared-gateways
+```
+
+If the Gateway is missing, fix the tenant cluster template before deploying the runtime. For imported Gateways, the template must enable `sync.fromHost.gateways` and `sync.toHost.gatewayApi.httpRoutes`. For tenant-owned Gateways, the template must enable the Gateway API sync resources your controller requires.
+
+## Deploy a smoke-test vLLM runtime
+
+The following example shows a small vLLM Deployment and Service for validating GPU scheduling, model loading, and in-cluster serving. It uses a small public model to keep the example concise. Treat it as a smoke test, not as a production endpoint template.
+
+```yaml title="vllm-inference.yaml"
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vllm-inference
+  namespace: inference
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: vllm-inference
+  template:
+    metadata:
+      labels:
+        app: vllm-inference
+    spec:
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: vllm
+          image: vllm/vllm-openai:v0.8.5
+          imagePullPolicy: IfNotPresent
+          args:
+            - --model
+            - facebook/opt-125m
+            - --host
+            - 0.0.0.0
+            - --port
+            - "8000"
+          env:
+            - name: HF_HOME
+              value: /models/cache
+          ports:
+            - name: http
+              containerPort: 8000
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+            failureThreshold: 60
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: "4"
+              memory: 16Gi
+            limits:
+              cpu: "8"
+              memory: 32Gi
+              nvidia.com/gpu: "1"
+          volumeMounts:
+            - name: model-cache
+              mountPath: /models/cache
+      volumes:
+        - name: model-cache
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm-inference
+  namespace: inference
+spec:
+  selector:
+    app: vllm-inference
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+```
+
+Apply the manifest inside the tenant cluster:
+
+```bash
+kubectl create namespace inference
+kubectl apply -f vllm-inference.yaml
+kubectl rollout status deployment/vllm-inference -n inference
+```
+
+Validate the Service from inside the tenant cluster:
+
+```bash
+kubectl port-forward svc/vllm-inference 8000:80 -n inference
+curl http://localhost:8000/v1/models
+```
+
+If the pod stays pending, check node capacity, GPU resource names, project quotas, allowed node types, node selectors, and taints. If the pod starts but the model does not load, check model registry credentials, outbound network policy, model cache storage, and runtime logs.
+
+## Plan model storage
+
+Large models make storage and startup behavior part of the endpoint architecture. Decide where model weights live, how access credentials are managed, how weights are cached, and how endpoint readiness behaves while the runtime loads them.
+
+Common patterns include:
+
+| Pattern | Use when | Tradeoff |
+| --- | --- | --- |
+| Object storage, such as S3, GCS, Azure Blob, or MinIO | Models are shared across regions, endpoints, or customers and downloaded at startup. | Simple source of truth, but large models can make cold starts slow unless you add cache warming. |
+| PersistentVolume model cache | A tenant or endpoint repeatedly loads the same model. | Reduces repeated downloads, but requires capacity planning, cleanup, and access controls. |
+| Local NVMe or node image cache | You sell low-latency tiers for a small set of popular models. | Fastest startup after scheduling, but ties models to node images or node-local cache lifecycle. |
+| Shared filesystem, such as NFS or a parallel filesystem | Multiple replicas need a shared model store inside the same environment. | Avoids repeated downloads, but can become a throughput bottleneck for large model loads. |
+| Runtime image with model baked in | Small, fixed models change rarely. | Simple deployment, but large images slow pulls and make model rollout the same as image rollout. |
+
+For production templates, make the model source, model version, credentials secret, cache volume, and cache size explicit parameters. The runtime template should mount registry or object-storage credentials, prepare the cache with an init container or sidecar when needed, and report readiness only after the model is loaded.
+
+For large models, plan warmup separately from pod scheduling. A pod can be `Running` while the endpoint is still downloading weights, building a cache, compiling kernels, or loading the model into GPU memory. Surface that state in your product API.
+
+## Build a production runtime template
+
+Inference providers usually package the runtime into a Platform template or a provider-owned deployment workflow. A production endpoint template should include:
+
+- pinned runtime images and a rollout policy
+- model registry, object storage, or artifact repository credentials
+- persistent or pre-warmed model cache storage
+- model source, model version, cache size, and credential parameters
+- resource requests and limits for CPU, memory, GPU, and ephemeral storage
+- node selectors, affinities, tolerations, or runtime classes that match the endpoint tier
+- readiness, startup, and liveness probes tuned to model load time
+- PodDisruptionBudget and graceful shutdown for draining traffic
+- NetworkPolicies and service account permissions
+- metrics scraping, logs, traces, and runtime-specific dashboards
+- authentication and authorization at the provider traffic layer
+- route, DNS, and certificate policy
+
+Keep model identity and customer-specific values as template parameters. Keep driver configuration, GPU presentation mode, and node image details in the GPU stack and node type instead of embedding them into every endpoint manifest.
+
+For template guidance, see [Templates](/platform/administer/templates/overview), [Quotas](/platform/administer/projects/quotas), and [Allowed node types](/platform/administer/projects/allowed/node-types).
+
+## Expose an inference endpoint
+
+For new HTTP endpoint deployments, prefer Gateway API. The most common provider model is:
+
+1. The platform team owns Gateway API CRDs, the Gateway controller, DNS, certificates, and shared `Gateway` resources in the control plane cluster.
+2. The tenant cluster imports approved Gateways with `sync.fromHost.gateways`.
+3. The endpoint template creates `HTTPRoute` resources in the tenant cluster.
+4. vCluster syncs the tenant route to the control plane cluster and enforces the Gateway attachment policy.
+
+The tenant cluster template needs Gateway sync enabled. The following example maps a platform-owned Gateway to a tenant-facing Gateway and allows routes from selected tenant namespaces:
+
+```yaml title="vcluster.yaml"
+sync:
+  fromHost:
+    gatewayClasses:
+      enabled: true
+      selector:
+        matchLabels:
+          inference.example.com/sync: "yes"
+    gateways:
+      enabled: true
+      selector:
+        matchLabels:
+          inference.example.com/sync: "yes"
+      mappings:
+        byName:
+          "platform-gateways/public-inference": "shared-gateways/shared-inference"
+      allowedRoutes:
+        overrides:
+          - hostNamespace: platform-gateways
+            name: public-inference
+            allowedHostnames:
+              - "*.inference.example.com"
+            virtualNamespacePolicy:
+              from: Selector
+              selector:
+                matchLabels:
+                  inference.example.com/route-access: "allowed"
+  toHost:
+    gatewayApi:
+      httpRoutes:
+        enabled: true
+```
+
+Label the namespace that may attach routes:
+
+```bash
+kubectl label namespace inference inference.example.com/route-access=allowed
+```
+
+For the full Gateway API model, see [Gateway API](../key-features/gateway-api.mdx), [Gateway API sync](../configure/vcluster-yaml/sync/to-host/networking/gateway-api.mdx), and [imported Gateways and GatewayClasses](../configure/vcluster-yaml/sync/from-host/gateways.mdx).
+
+```yaml title="vllm-route.yaml"
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: vllm-inference
+  namespace: inference
+spec:
+  parentRefs:
+    - name: shared-inference
+      namespace: shared-gateways
+  hostnames:
+    - customer-a.inference.example.com
+  rules:
+    - backendRefs:
+        - name: vllm-inference
+          port: 80
+```
+
+Apply the route inside the tenant cluster:
+
+```bash
+kubectl apply -f vllm-route.yaml
+kubectl describe httproute vllm-inference -n inference
+```
+
+Look for `Accepted=True` and `ResolvedRefs=True` conditions. If the route fails to become ready, check the imported Gateway, the allowed hostname list, listener policy, and Gateway API sync configuration.
+
+After DNS points to the Gateway address, validate the endpoint externally:
+
+```bash
+curl -H "Host: customer-a.inference.example.com" http://<gateway-address>/v1/models
+```
+
+In production, handle TLS and enforce customer authentication in your provider traffic layer, API gateway, service mesh, or runtime sidecar. Do not expose unauthenticated model endpoints directly to the public internet.
+
+## Add autoscaling and observability
+
+Start with runtime metrics and GPU hardware metrics. [GPU and inference autoscaling](./gpu-hpa-dcgm.mdx) shows how to expose NVIDIA DCGM metrics and model-serving metrics to HPA or KEDA.
+
+For inference workloads, GPU utilization alone is rarely enough. Add runtime metrics such as:
+
+- request concurrency
+- queue depth
+- time to first token
+- tokens per second
+- p95 and p99 latency
+- GPU memory usage
+- cache pressure
+
+Use these signals with Horizontal Pod Autoscaler, KEDA, a runtime-specific autoscaler, or your provider control plane.
+
+For the first production endpoint, verify that each signal is visible before enabling autoscaling:
+
+```bash
+kubectl top pods -n inference
+kubectl get --raw /apis/custom.metrics.k8s.io/v1beta1
+kubectl logs deployment/vllm-inference -n inference
+```
+
+## Validate provider readiness
+
+Before exposing the endpoint to customers, validate the full provider path:
+
+- Product automation creates or selects the project, template, quota, and allowed node type.
+- The tenant cluster reaches `Ready` and the private GPU node joins.
+- The GPU device plugin, GPU Operator, or DRA driver exposes the expected resource.
+- The runtime pod schedules on the intended GPU node type.
+- The model loads from the approved source and reaches readiness.
+- The route reports `Accepted=True` and `ResolvedRefs=True`.
+- The endpoint accepts authorized traffic and rejects unauthorized traffic.
+- Logs, metrics, and alerts include endpoint, tenant, model, and node tier labels.
+- Delete or scale-to-zero workflows drain traffic and reclaim GPU capacity.

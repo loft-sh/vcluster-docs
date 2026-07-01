@@ -1,20 +1,20 @@
 ---
-title: GPU autoscaling with DCGM exporter
-sidebar_label: GPU autoscaling (DCGM)
+title: GPU and inference autoscaling
+sidebar_label: GPU autoscaling
 sidebar_position: 8
 sidebar_class_name: pro private-nodes
-description: Configure HPA driven by GPU utilization metrics using NVIDIA DCGM Exporter and Prometheus Adapter inside a vCluster with Private Nodes.
+description: Configure HPA and KEDA scaling from GPU hardware metrics and model-serving metrics inside a vCluster with Private Nodes.
 ---
 
 import TenancySupport from '../_fragments/tenancy-support.mdx';
 
 <TenancySupport privateNodes="true" />
 
-This guide shows how to configure [Horizontal Pod Autoscaler (HPA)](https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/) driven by GPU utilization metrics inside a vCluster with [Private Nodes](../deploy/worker-nodes/private-nodes/overview.mdx). The metrics pipeline uses NVIDIA DCGM Exporter, Prometheus, and Prometheus Adapter to expose real GPU hardware metrics through the Kubernetes custom metrics API.
+This guide shows how to configure [Horizontal Pod Autoscaler (HPA)](https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/) and KEDA scaling inside a vCluster with [Private Nodes](../deploy/worker-nodes/private-nodes/overview.mdx). The metrics pipeline uses NVIDIA DCGM Exporter, Prometheus, and Prometheus Adapter to expose real GPU hardware metrics through the Kubernetes custom metrics API. The same Prometheus pipeline can also expose model-serving metrics such as queue depth, concurrency, and latency.
 
 ## Use cases
 
-GPU autoscaling helps when your workloads have variable GPU demand:
+GPU and inference autoscaling help when your workloads have variable GPU utilization or request load:
 
 - **Inference serving**: Scale model-serving Deployments up during traffic spikes and down during quiet periods to reduce idle GPU cost.
 - **Batch processing**: Run multiple GPU jobs with a shared pool of replicas that grows and shrinks based on actual GPU load.
@@ -28,7 +28,7 @@ With Private Nodes, vCluster workloads run directly on dedicated physical nodes 
 - GPU metrics reflect actual hardware utilization, not virtualized or approximated values.
 - HPA scaling decisions are based on real hardware load, making autoscaling reliable for GPU-intensive workloads.
 
-The metrics pipeline flows through four components:
+For hardware metrics, the pipeline flows through four components:
 
 ```
 GPU Node (Private)
@@ -38,10 +38,19 @@ GPU Node (Private)
                     └── HPA            ← scales pods on GPU utilization
 ```
 
+For model-serving metrics, the runtime exposes Prometheus metrics from the inference pod. Prometheus scrapes those metrics and either:
+
+- Prometheus Adapter exposes them to HPA as custom metrics.
+- KEDA queries Prometheus directly and scales the Deployment from the query result.
+
+Use hardware metrics for capacity signals such as GPU utilization and memory pressure. Use serving metrics for demand signals such as request concurrency, queue depth, time to first token, tokens per second, and p95 or p99 latency. Inference providers usually need both.
+
+If you are building an inference provider platform, see [Inference Provider: Managed Model Serving](../production-guide/inference-provider.mdx) for the full production path including tenancy model, endpoint routing, and Day 2 operations.
+
 ## Prerequisites
 
 - A vCluster with Private Nodes enabled and at least one GPU node attached
-- NVIDIA GPU drivers and the [NVIDIA device plugin](https://github.com/NVIDIA/k8s-device-plugin) installed on the host nodes
+- NVIDIA GPU drivers and the NVIDIA device plugin installed on the private GPU nodes, usually through the [NVIDIA GPU Operator](../introduction/gpu-and-accelerator-support.mdx#install-the-nvidia-gpu-operator-in-a-tenant-cluster)
 - `helm` and `kubectl` connected to the vCluster
 
 ## Step 1: Install DCGM exporter
@@ -192,6 +201,148 @@ The default DCGM Exporter profile exposes several metrics. You can use any of th
 | `DCGM_FI_DEV_MEM_CLOCK` | Memory clock (MHz) |
 
 For memory-bound workloads such as large language model inference, `DCGM_FI_DEV_FB_USED` may be a better scaling signal than GPU core utilization.
+
+## Scale on serving metrics
+
+GPU utilization is useful, but it is often a lagging signal for inference. A model server can have a growing request queue while GPU utilization is still low, or a saturated key-value cache while core utilization looks healthy. Add serving metrics from your runtime and use them alongside DCGM metrics.
+
+Common serving metrics include:
+
+| Signal | Use when |
+| --- | --- |
+| Request concurrency | You want to keep active requests per replica below a service-level target. |
+| Queue depth | You want to scale before queued requests increase latency. |
+| Time to first token | You serve streaming responses and need to maintain low interactive latency. |
+| Tokens per second | You need throughput-based scaling for generated-token workloads. |
+| p95 or p99 latency | You scale based on customer-visible latency, often with smoothing to avoid flapping. |
+| GPU memory or cache pressure | You need to protect model cache, KV cache, or batch admission behavior. |
+
+### Expose runtime metrics to Prometheus
+
+Most serving runtimes expose Prometheus metrics on an HTTP endpoint such as `/metrics`. Add a port and a ServiceMonitor for the runtime. The exact port and metric names depend on the runtime.
+
+```yaml title="servicemonitor-vllm.yaml"
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: vllm-inference
+  namespace: inference
+spec:
+  selector:
+    matchLabels:
+      app: vllm-inference
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 15s
+```
+
+Apply it:
+
+```bash
+kubectl apply -f servicemonitor-vllm.yaml
+```
+
+Confirm Prometheus contains the runtime metric you want to scale on before configuring HPA or KEDA:
+
+```bash
+kubectl port-forward svc/kube-prometheus-kube-prome-prometheus 9090:9090 -n monitoring
+# Query your runtime metric in Prometheus, for example vllm:num_requests_waiting
+```
+
+### HPA with Prometheus adapter
+
+Add Prometheus Adapter rules for the runtime metric. Merge the serving rules into the same adapter values file you use for GPU metrics. This example maps vLLM waiting requests to a custom pod metric named `inference_queue_depth`.
+
+```yaml title="prometheus-adapter-serving-values.yaml"
+prometheus:
+  url: http://kube-prometheus-kube-prome-prometheus.monitoring.svc
+  port: 9090
+
+rules:
+  custom:
+    - seriesQuery: 'vllm:num_requests_waiting{namespace!="",pod!=""}'
+      resources:
+        overrides:
+          namespace:
+            resource: namespace
+          pod:
+            resource: pod
+      name:
+        matches: "vllm:num_requests_waiting"
+        as: "inference_queue_depth"
+      metricsQuery: 'avg(vllm:num_requests_waiting{<<.LabelMatchers>>}) by (<<.GroupBy>>)'
+```
+
+Upgrade the adapter with the merged GPU and serving metric rules:
+
+```bash
+helm upgrade --install prometheus-adapter prometheus-community/prometheus-adapter \
+  --namespace monitoring \
+  -f prometheus-adapter-serving-values.yaml
+```
+
+Create an HPA that scales when average queue depth exceeds five waiting requests per pod:
+
+```yaml title="inference-queue-hpa.yaml"
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: vllm-inference-hpa
+  namespace: inference
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: vllm-inference
+  minReplicas: 1
+  maxReplicas: 8
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+  metrics:
+    - type: Pods
+      pods:
+        metric:
+          name: inference_queue_depth
+        target:
+          type: AverageValue
+          averageValue: "5"
+```
+
+Apply it:
+
+```bash
+kubectl apply -f inference-queue-hpa.yaml
+kubectl get hpa vllm-inference-hpa -n inference -w
+```
+
+### KEDA with Prometheus
+
+KEDA is often a good fit when your serving signal is naturally expressed as a Prometheus query. [Install KEDA](https://keda.sh/docs/latest/deploy/) in the tenant cluster, then create a `ScaledObject` that queries Prometheus.
+
+```yaml title="vllm-keda-scaledobject.yaml"
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: vllm-inference
+  namespace: inference
+spec:
+  scaleTargetRef:
+    name: vllm-inference
+  minReplicaCount: 1
+  maxReplicaCount: 8
+  cooldownPeriod: 300
+  triggers:
+    - type: prometheus
+      metadata:
+        serverAddress: http://kube-prometheus-kube-prome-prometheus.monitoring.svc:9090
+        metricName: inference_queue_depth
+        threshold: "5"
+        query: sum(vllm:num_requests_waiting{namespace="inference",pod=~"vllm-inference-.*"})
+```
+
+Use KEDA for query-driven scaling or scale-to-zero patterns. Use HPA with Prometheus Adapter when you want Kubernetes-native custom metrics and HPA behavior. In both cases, set conservative scale-down windows for model servers because loading large models is slow and repeated cold starts degrade response latency.
 
 ## Step 5: Create an HPA targeting GPU utilization
 

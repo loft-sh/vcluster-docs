@@ -41,6 +41,110 @@ This is the common model for GPU cloud platforms because the tenant owns the ful
 For shared host nodes, the device plugin and drivers usually run on the control plane cluster nodes.
 Tenant workloads can use the resources that the shared nodes advertise, subject to the sync and scheduling configuration.
 
+## Install the NVIDIA GPU Operator in a tenant cluster
+
+With [Private Nodes](../deploy/worker-nodes/private-nodes/overview.mdx), the tenant cluster can install the NVIDIA GPU Operator directly because its workloads run on dedicated worker nodes. This is the common pattern for AI cloud and inference provider platforms: the tenant cluster owns the GPU Operator, device plugin, DCGM Exporter, MIG Manager, and related CRDs for its private node pool.
+
+:::note
+Install the GPU Operator inside the tenant cluster only when that tenant owns the GPU node software stack. On shared host nodes, the platform team usually installs the GPU driver stack and device plugin on the control plane cluster nodes instead.
+:::
+
+### Before you install
+
+Prepare the private GPU nodes before installing the Operator:
+
+1. Provision or join the GPU nodes to the tenant cluster.
+2. Confirm the nodes run a supported Linux distribution, kernel, and container runtime.
+3. Decide whether the Operator should install the NVIDIA driver or use a driver that is already installed in the node image.
+4. Decide whether the tenant cluster needs MIG, NVIDIA vGPU, CDI, GPUDirect, or DCGM metrics.
+5. Confirm `kubectl` and `helm` point at the tenant cluster, not the control plane cluster.
+
+For the full vendor matrix and chart options, see the [NVIDIA GPU Operator installation guide](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/getting-started.html).
+
+### Install with Helm
+
+Create the Operator namespace and label it for privileged workloads if your cluster uses Pod Security Admission:
+
+```bash
+kubectl create namespace gpu-operator
+kubectl label --overwrite namespace gpu-operator pod-security.kubernetes.io/enforce=privileged
+```
+
+Add the NVIDIA Helm repository:
+
+```bash
+helm repo add nvidia https://helm.ngc.nvidia.com/nvidia
+helm repo update
+```
+
+Install the Operator in the tenant cluster:
+
+```bash
+helm install gpu-operator nvidia/gpu-operator \
+  --namespace gpu-operator \
+  --wait
+```
+
+If your private node image already includes the NVIDIA driver, disable driver installation:
+
+```bash
+helm install gpu-operator nvidia/gpu-operator \
+  --namespace gpu-operator \
+  --wait \
+  --set driver.enabled=false
+```
+
+For inference endpoints that use GPU metrics, enable pod labels on DCGM Exporter so Prometheus can associate GPU metrics with the consuming pod:
+
+```bash
+helm upgrade --install gpu-operator nvidia/gpu-operator \
+  --namespace gpu-operator \
+  --wait \
+  --set dcgmExporter.enablePodLabels=true
+```
+
+### Verify GPU availability
+
+Check the Operator pods:
+
+```bash
+kubectl get pods -n gpu-operator
+kubectl get clusterpolicy
+```
+
+Confirm the tenant cluster sees `nvidia.com/gpu` on the private GPU nodes:
+
+```bash
+kubectl get nodes -o 'custom-columns=NAME:.metadata.name,GPU:.status.allocatable.nvidia\.com/gpu'
+```
+
+Run a CUDA smoke test:
+
+```yaml title="cuda-vectoradd.yaml"
+apiVersion: v1
+kind: Pod
+metadata:
+  name: cuda-vectoradd
+spec:
+  restartPolicy: OnFailure
+  containers:
+    - name: cuda-vectoradd
+      image: nvcr.io/nvidia/k8s/cuda-sample:vectoradd-cuda12.5.0-ubuntu22.04
+      resources:
+        limits:
+          nvidia.com/gpu: 1
+```
+
+Apply it and check the logs:
+
+```bash
+kubectl apply -f cuda-vectoradd.yaml
+kubectl logs pod/cuda-vectoradd
+kubectl delete -f cuda-vectoradd.yaml
+```
+
+If the pod stays pending, check node readiness, taints, GPU resource names, project quotas, allowed node types, and whether the private node has joined the tenant cluster. If Operator pods fail, check the node OS, kernel, container runtime, driver installation mode, and the NVIDIA Operator logs.
+
 ## Supported vendors and accelerators
 
 ### NVIDIA
