@@ -2,12 +2,136 @@
 title: What are Users and Teams
 sidebar_label: What Are Users and Teams
 sidebar_position: 10
+description: Users and teams are the identities that own and access resources across vCluster Platform, spanning authentication, RBAC, project membership, quotas, and resource ownership.
 ---
 
-## What are Users and Teams?
+import UsersTeamsMembership from '@site/static/media/platform/diagrams/users-teams-membership.svg';
+import UsersTeamsAccessSources from '@site/static/media/platform/diagrams/users-teams-access-sources.svg';
+import ProjectMembershipOwnership from '@site/static/media/platform/diagrams/project-membership-ownership.svg';
 
-Users and teams are entities that can interact with the vCluster Platform API. A user can
-be a developer that develops applications or an administrator that manages the
-vCluster Platform. Users can be assigned to teams, which set the permissions applied
-to all the team's members. For example, you can give tenant cluster access to a team, which
-gives all members of the team tenant cluster access.
+Users and teams are the core identities in vCluster Platform. A user represents an individual or service identity that can authenticate to the platform. A team represents a group of users that should receive the same access, ownership, and platform-level configuration.
+
+They are used throughout the platform, not just during login. Users and teams can receive management roles, become project members, own resources, consume quota, receive image pull secrets, and appear as Kubernetes subjects in reconciled RBAC.
+
+<figure>
+  <UsersTeamsMembership style={{width: '100%', height: 'auto'}} role="img" aria-label="User authentication flow where team membership is resolved from explicit team users and matching SSO groups" />
+  <figcaption>For a user login or user access key, Platform resolves team membership from explicit assignment and matching SSO groups.</figcaption>
+</figure>
+
+## Users
+
+A user is the platform record for one authenticated identity that can be human or automated. Platform tracks the identifiers needed to recognize that identity at login (a stable platform name plus login-facing username and email), the subject to match against an incoming SSO token (falling back to a platform-generated `loft:user:<user-name>` subject when none is configured), and the groups associated with that identity, including any imported from SSO. Beyond identity, a user record can also grant management roles directly, hand out registry credentials for CLI-based image pulls, and be disabled to block login without deleting the user or its resources.
+
+Platform also computes each user's current effective team membership from team configuration, so admins can always see which teams a user actually belongs to right now, not just which teams were configured to include them.
+
+See the [User resource reference](../api/resources/user.mdx) for the full list of fields.
+
+[Create users →](../administer/users-permissions/managing-users/create.mdx)
+
+## Teams
+
+A team is the platform record for a shared identity boundary. Teams do not log in on their own. Instead, they become part of an authenticated user's effective identity when that user is a member.
+
+Membership comes from two places: users explicitly assigned to the team, and users whose groups match a token or SSO group name configured on the team. This lets you combine manual team assignment with identity-provider-driven membership. For example, you might add a break-glass admin user directly to a team, while the rest of the team's membership comes from an OIDC, SAML, GitHub, GitLab, Google, Microsoft, LDAP, or Dex group.
+
+Like users, teams can be granted management roles and image pull secrets directly. Those apply to whichever users are currently members of the team.
+
+See the [Team resource reference](../api/resources/team.mdx) for the full list of fields.
+
+[Create teams →](../administer/users-permissions/managing-teams/create.mdx)
+
+## How effective identity works
+
+After a user authenticates, Platform builds a Kubernetes-compatible identity for that request. The resulting identity includes:
+
+- the user's subject as the Kubernetes user name;
+- the user's direct groups;
+- `system:authenticated`;
+- platform groups such as `loft:user:<user-name>`;
+- one `loft:team:<team-name>` group for every effective team membership.
+
+This is why teams are useful beyond the UI. Platform permissions, project membership, admission policies, and tenant cluster access can all reason about users and teams as Kubernetes-style subjects and groups.
+
+[Authentication and authorization →](auth-explanation.mdx)
+
+## Permissions and roles
+
+Platform uses Kubernetes RBAC concepts to authorize users and teams. A management role defines allowed actions, and Platform applies that role to one or more users or teams through reconciled role bindings.
+
+Grant roles to teams when many people should share the same access, and grant roles directly to users only for exceptions such as platform administrators, automation users, or temporary troubleshooting access. Direct user roles and team-inherited roles are additive, so a user can receive permissions from several places at once.
+
+[Users and permissions overview →](../administer/users-permissions/overview.mdx)
+
+## Project membership
+
+Projects are where users and teams usually become operational. A project lists its members in `spec.members`, and each member is a user, a team, or all users (`User` with name `*`). Each member receives a project role that defines what they can do inside that project.
+
+When a team is a project member, all current team members receive the team's project access. Platform's project members API resolves both the direct team entry and the users who belong to that team, so project views can show the effective member set.
+
+Project ownership is related but separate. A project can have `spec.owner.user` or `spec.owner.team`, and the owner is included in the resolved project members list. Owners and members are often the same organizational unit, but they answer different questions: ownership says who the project belongs to, while membership says who can access it and with which role.
+
+<figure>
+  <ProjectMembershipOwnership style={{width: '100%', height: 'auto'}} role="img" aria-label="Project membership defines who can access a project while project ownership identifies the user or team the project belongs to" />
+  <figcaption>Project membership grants access with roles; project ownership identifies the user or team the project belongs to.</figcaption>
+</figure>
+
+[Manage project members →](../api/resources/project/members.mdx)
+
+[What are Projects →](what-are-projects.mdx)
+
+## Resource ownership
+
+Many platform resources can be owned by either a user or a team. Platform records that ownership through owner fields on the resource and through labels such as `loft.sh/user` and `loft.sh/team` on owned resources such as namespaces, space instances, tenant cluster instances, and access keys.
+
+Ownership affects how resources are displayed, who can manage them, how project quota is counted, and how sharing workflows behave. Use team ownership for shared environments and long-lived resources that should survive changes in individual staffing. Use user ownership for personal development environments, individual access keys, or short-lived work that should clearly belong to one person.
+
+[Create global secrets →](../administer/secrets/global/create.mdx)
+
+[SSH keys →](../use-platform/machines/ssh-keys.mdx)
+
+[Platform labels and annotations →](../reference/platform-annotations.mdx#user-team-management)
+
+## Quotas
+
+Project quotas can apply to the whole project or to each user or team inside the project. A project-wide quota caps the total resources that all members can consume. A per-user/team quota caps how much a single user-owned or team-owned resource bucket can consume.
+
+Ownership matters for quota accounting. Project-wide usage always counts against the project quota, and per-user/team usage is keyed from the resource's owner field. If a tenant cluster, space, or Machine is owned by a team, it counts against that team's quota bucket. If it is owned by a user, it counts against that user's quota bucket, even if the user belongs to one or more teams.
+
+[Configure project quotas →](../administer/projects/quotas.mdx)
+
+## Automation and service accounts
+
+A user does not have to represent a human. For GitOps, CI/CD, or external automation, create a dedicated user and issue an access key for that user. The access key authenticates as that user, and any access key scope can only narrow what the user is already allowed to do.
+
+Access keys can also authenticate as a team. A team access key acts as the team identity, so it receives the team's roles and project memberships rather than a particular user's direct roles. Use this when automation should belong to a shared operational identity instead of an individual user.
+
+[Access keys →](../administer/authentication/access-keys.mdx)
+
+[GitOps end-to-end guide →](../how-to/gitops-end-to-end.mdx)
+
+## SSO and account provisioning
+
+With SSO, Platform can create or update users from identity provider claims. The important design choice is usually where to manage group membership:
+
+- Manage membership in the identity provider when your organization already has authoritative groups.
+- Manage membership in Platform when teams are platform-specific or short-lived.
+- Use both when you need exceptions, such as manually adding a service user to a team whose human members come from SSO.
+
+SSO configuration can also apply cluster account templates to users when they first sign in, and can keep those templates synchronized when tokens refresh. This is useful when users or teams should automatically receive access to particular connected clusters after authentication.
+
+[SSO configuration →](../configure/platform-configs/single-sign-on.mdx)
+
+## Access troubleshooting
+
+<figure>
+  <UsersTeamsAccessSources style={{width: '100%', height: 'auto'}} role="img" aria-label="Access starts with an authenticated user or team actor, then roles, project membership, and optional access key scope are applied" />
+  <figcaption>When changing someone's access, check which actor is authenticated, then review roles, project membership, ownership, and any access key scope.</figcaption>
+</figure>
+
+When troubleshooting access, check the actor first: is the request using a normal user login, a user access key, or a team access key? Then review the user's teams, direct roles, team roles, project memberships, resource ownership, and any access key scope that might be narrowing the request.
+
+## Access modeling
+
+For most installations, start with teams as the primary unit of access. Create teams that match how work is owned: platform administrators, application teams, customer accounts, environments, or automation roles. Add those teams to projects, grant project roles to teams, and use direct user permissions only where the exception is intentional.
+
+Use user-owned resources for personal workspaces and use team-owned resources for shared services. This keeps access, ownership, and quota behavior predictable as people join, leave, or move between teams.
