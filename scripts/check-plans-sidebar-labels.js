@@ -43,6 +43,8 @@
  * Outputs (when GITHUB_OUTPUT is set):
  *   drift=true|false
  *   issue=<url-or-number>   (--open-issue only, when an issue was opened/updated)
+ *   plans_fetch_failed=true (only when the loft-sh/plans commit read threw, so a
+ *                            failed fetch is not mistaken for a quiet week)
  *
  * Functions are exported for the test suite. Main execution is gated by
  * require.main === module so the file can be required as a library.
@@ -62,7 +64,9 @@ const FEATURES_YAML = path.join(ROOT, 'src/data/features.yaml');
 const DOC_ROOTS = ['vcluster', 'platform'];
 
 const PLANS_REPO = 'loft-sh/plans';
-const PRODUCTS_PATH = 'src/data/products.yaml';
+// Prose display string for the issue body (PRODUCTS_YAML above is the absolute
+// read path). Kept separate so the rendered issue shows a repo-relative path.
+const PRODUCTS_DISPLAY_PATH = 'src/data/products.yaml';
 const PRO_ADMONITION_PARTIAL = 'vcluster/_partials/admonitions/pro-admonition.mdx';
 const SIDEBAR_CSS = 'src/css/sidebar.scss';
 
@@ -281,7 +285,7 @@ function renderIssueBody({ commits, mismatches, inventory, sinceDays, force }) {
   lines.push('');
   lines.push(
     'Computed by comparing each feature tier in `' +
-      PRODUCTS_PATH +
+      PRODUCTS_DISPLAY_PATH +
       '` against the sidebar label on the feature page it maps to. Only whole-page, cleanly-resolved features are listed, so this is a starting point, not the full set. Confirm each before changing it.'
   );
   lines.push('');
@@ -430,11 +434,16 @@ function main() {
   const inventory = buildInventory({});
 
   let commits = [];
+  let fetchFailed = false;
   try {
     commits = fetchPlansCommits({ sinceDays: opts.sinceDays });
   } catch (e) {
     console.error(`Could not read ${PLANS_REPO} commits: ${e.message}`);
+    fetchFailed = true;
   }
+  // Surface a failed fetch to the caller so it can't masquerade as a clean
+  // no-activity week (drift=false with zero commits).
+  const failFlag = fetchFailed ? ['plans_fetch_failed=true'] : [];
 
   const plansChanged = commits.length > 0;
   const shouldAct = force || plansChanged;
@@ -458,7 +467,7 @@ function main() {
 
   if (!shouldAct) {
     console.log(`No ${PLANS_REPO} commits in the last ${opts.sinceDays} day(s); no review needed.`);
-    appendGithubOutput(['drift=false']);
+    appendGithubOutput(['drift=false', ...failFlag]);
     return 0;
   }
 
@@ -466,12 +475,12 @@ function main() {
     const res = openOrUpdateTrackingIssue({ title: ISSUE_TITLE, body, label: ISSUE_LABEL });
     const ref = res.url || `#${res.number}`;
     console.log(`Tracking issue ${res.action}: ${ref}`);
-    appendGithubOutput(['drift=true', `issue=${ref}`]);
+    appendGithubOutput(['drift=true', `issue=${ref}`, ...failFlag]);
   } else {
     console.log(
       `Plans changed or run forced. ${mismatches.length} suspected mismatch(es). Re-run with --open-issue to file the review issue.`
     );
-    appendGithubOutput(['drift=true']);
+    appendGithubOutput(['drift=true', ...failFlag]);
   }
   return 0;
 }
