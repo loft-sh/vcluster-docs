@@ -73,7 +73,7 @@ under `spec`. A production integration would strip to `spec.*` and relabel.
 ## 3. Explorer vs the accordion reference
 
 | Dimension | Generated accordions (current) | kubectl-doc explorer |
-|---|---|---|
+| --- | --- | --- |
 | Shape | Nested prose disclosure (`<details>`) | YAML document users actually write |
 | Rendering | Server-rendered HTML | Client-only; empty until JS mounts |
 | Deep links | Per-field anchors (`#controlPlane-distro-k8s-enabled`) | None per field today |

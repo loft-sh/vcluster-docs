@@ -17,7 +17,7 @@ the findings and recommendation.
 Vendored files (copied verbatim from upstream):
 
 | File | Upstream path |
-|---|---|
+| --- | --- |
 | `KubeSchemaDoc.tsx` | `react/kubectl-doc/KubeSchemaDoc.tsx` |
 | `kubectl-doc-styles.ts` | `react/kubectl-doc/kubectl-doc-styles.ts` |
 | `kubectl-doc-runtime.d.ts` | `react/kubectl-doc/kubectl-doc-runtime.d.ts` |
