@@ -23,8 +23,8 @@ vind makes five distinct network calls during cluster creation and operation. In
 |------|------|--------------------|---------------|
 | 1 | Before `vcluster create` | Pulls `alpine` on the Docker host for pre-creation checks | No — pre-pull required |
 | 2 | Inside the vm-container at bootstrap | Downloads `install-standalone.sh` from GitHub | No — custom image or bridge proxy required |
-| 3 | During vCluster startup | Pulls internal vCluster images (k3s, CoreDNS, syncer) | Yes — `controlPlane.advanced.defaultImageRegistry` |
-| 4 | When workloads run | Pulls workload container images | Yes — containerd registry mirror using a volume mount |
+| 3 | During vCluster startup | Pulls internal vCluster images (Kubernetes control plane, CoreDNS, syncer) | Yes — `controlPlane.advanced.defaultImageRegistry` |
+| 4 | When workloads run | Pulls workload container images | Yes — pre-load images into the host Docker store (served by the registry proxy) |
 | 5 | For StatefulSet pods | Pulls `alpine` for the rewriteHosts init container | Yes — `sync.toHost.pods.rewriteHosts.initContainer.image` |
 
 Steps 1 and 2 have no native config override. The sections below cover each step with its workaround.
@@ -136,7 +136,7 @@ The proxy must listen on the Docker bridge interface, not loopback (`127.0.0.1`)
 
 ## Step 3: Redirect internal vCluster images
 
-`controlPlane.advanced.defaultImageRegistry` prepends a registry prefix to all images vCluster deploys internally, including k3s, CoreDNS, syncer, etcd, and backing store images. It does not affect workload images.
+`controlPlane.advanced.defaultImageRegistry` prepends a registry prefix to all images vCluster deploys internally, including the Kubernetes control plane, CoreDNS, syncer, etcd, and backing store images. It does not affect workload images.
 
 Mirror all images listed in `images.txt` from the [vCluster release assets](https://github.com/loft-sh/vcluster/releases) into your registry at the same repository path, then add the following to your `vcluster.yaml`:
 
@@ -151,52 +151,25 @@ Mirror all images listed in `images.txt` from the [vCluster release assets](http
 Steps 4 and 5 are not required for a basic air-gapped cluster. Complete the remaining steps only if your environment needs them.
 :::
 
-## Step 4: Route workload image pulls through a registry mirror
+## Step 4: Make workload images available through the registry proxy
 
 Complete this step if your workloads pull images from public registries like `docker.io` or `ghcr.io`. Without it, workload containers fail to start in an air-gapped environment.
 
-Workload images are pulled by the k3s containerd runtime inside the cluster. Configure containerd mirrors by mounting a `registries.yaml` file into the vind container.
+vind enables a registry proxy by default. Rather than reaching public registries, the cluster pulls workload images from the host Docker daemon's image store through this proxy. In an air-gapped environment, make each workload image available on the host under the name your manifests reference, and the proxy serves it to the cluster without contacting the network. This is the same pattern used for Alpine in Step 1.
 
-<Flow>
-  <Step>
-    Create a `registries.yaml` file on the host that redirects pulls for `docker.io` and `ghcr.io` to your internal registry:
+:::note Requirement
+The registry proxy serves local images only when the host Docker daemon uses the containerd image store. Verify with `docker info`, which should report `driver-type io.containerd.snapshotter.v1`. See the [Docker containerd image store guide](https://docs.docker.com/engine/storage/containerd/) to enable it.
+:::
 
-    <InterpolatedCodeBlock
-      code={"mirrors:\n" +
-        "  docker.io:\n" +
-        "    endpoint:\n" +
-        '      - "https://[[GLOBAL:REGISTRY]]"\n' +
-        "  ghcr.io:\n" +
-        "    endpoint:\n" +
-        '      - "https://[[GLOBAL:REGISTRY]]"'}
-      language="yaml"
-    />
-  </Step>
-  <Step>
-    If your registry requires authentication, add a `configs` section to the `registries.yaml` file:
+For each image your workloads reference, pull it from your internal registry and tag it to the public name used in your manifests:
 
-    <InterpolatedCodeBlock
-      code={"configs:\n" +
-        '  "[[GLOBAL:REGISTRY]]":\n' +
-        "    auth:\n" +
-        "      username: [[VAR:USERNAME:username]]\n" +
-        "      password: [[VAR:PASSWORD:password]]"}
-      language="yaml"
-    />
-  </Step>
-  <Step>
-    Add a `volumes` entry to the `docker` block in your `vcluster.yaml`. The `image` key was added in Step 2:
+<InterpolatedCodeBlock
+  code={`docker pull [[GLOBAL:REGISTRY]]/library/nginx:1.27
+docker tag [[GLOBAL:REGISTRY]]/library/nginx:1.27 nginx:1.27`}
+  language="bash"
+/>
 
-    <InterpolatedCodeBlock
-      code={"experimental:\n" +
-        "  docker:\n" +
-        "    image: ...  # from Step 2\n" +
-        "    volumes:\n" +
-        '      - "[[VAR:HOST_PATH:/path/to/registries.yaml]]:/etc/rancher/k3s/registries.yaml"'}
-      language="yaml"
-    />
-  </Step>
-</Flow>
+Repeat for every workload image, including any `ghcr.io` images, tagging each to the exact name your manifests request. The registry proxy then serves them from the host store for all pulls inside the cluster.
 
 ## Step 5: Override the rewriteHosts init container image
 
@@ -292,8 +265,6 @@ The following combines all configurable layers. Replace registry, version, and p
     "experimental:\n" +
     "  docker:\n" +
     "    image: [[GLOBAL:REGISTRY]]/vind:v[[GLOBAL:VCLUSTER_VERSION]]-airgapped\n" +
-    "    volumes:\n" +
-    '      - "[[VAR:HOST_PATH:/path/to/registries.yaml]]:/etc/rancher/k3s/registries.yaml"\n' +
     "\n" +
     "sync:\n" +
     "  toHost:\n" +
