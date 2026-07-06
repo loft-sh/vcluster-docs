@@ -46,6 +46,13 @@ var pathExtras = map[string]Extras{
 			"`joinNode.enabled: false` and use separate worker nodes for tenant workloads.\n" +
 			":::\n\n",
 	},
+	"sync/toHost/gatewayApi": {
+		Before: "\nSetting `enabled: true` turns on Gateway and HTTPRoute sync, imports control plane " +
+			"cluster GatewayClasses so tenant Gateways can resolve them, and serves tenant ReferenceGrants " +
+			"for validation; TLSRoutes and BackendTLSPolicies must be enabled individually.\n\n" +
+			"In auto mode grants follow route sync and are validated within the tenant cluster; " +
+			"they sync to the control plane cluster only when namespace sync is also enabled.\n\n",
+	},
 }
 
 // we only generate paths we actually need
@@ -113,8 +120,6 @@ var paths = []string{
 	"exportKubeConfig",
 	"experimental/virtualClusterKubeConfig",
 	"experimental/syncSettings",
-	"experimental/isolatedControlPlane",
-	"experimental/genericSync",
 	"experimental/deploy",
 	"experimental/denyProxyRequests",
 	"experimental/proxy",
@@ -137,8 +142,6 @@ var paths = []string{
 	"controlPlane/proxy",
 	"controlPlane/hostPathMapper",
 	"controlPlane/distro/k8s",
-	"controlPlane/distro/k3s",
-	"controlPlane/distro/k0s",
 	"controlPlane/distro",
 	"controlPlane/coredns",
 	"controlPlane/backingStore/etcd/embedded",
@@ -176,7 +179,6 @@ func main() {
 			"(positional args still accepted for back-compat)")
 	}
 
-	util.DefaultRequire = false
 	jsonSchemaPath := filepath.Join(versionDir, "vcluster.schema.json")
 	defaultValues := filepath.Join(versionDir, "default_values.yaml")
 	values, err := os.ReadFile(defaultValues)
