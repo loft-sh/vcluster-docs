@@ -41,7 +41,7 @@ If your users are internal teams that should provision and manage their own envi
 | Plan autoscaling signals | [GPU and inference autoscaling](../integrations/gpu-hpa-dcgm.mdx), [Monitoring overview](/platform/maintenance/monitoring/overview) | Combine hardware metrics, such as GPU utilization and memory, with serving metrics, such as request concurrency, queue depth, latency, tokens per second, and time to first token. |
 | Plan billing and metering | [vBilling](https://www.vcluster.com/vbilling), [Fleet monitoring](/platform/maintenance/monitoring/fleet-monitoring-otel) | Decide how you attribute GPU-hours, node-hours, storage, egress, and request or token usage to customers. vBilling is an experimental vCluster Labs project for metering tenant clusters and streaming usage events to a billing adapter. |
 | Plan endpoint readiness and SLA | [Endpoint readiness and warm pools](#endpoint-readiness-and-warm-pools), [Model serving runtimes](../integrations/model-serving.mdx) | Decide whether endpoints are cold-provisioned, pre-warmed, or backed by warm pools. Account for node provisioning time, image pulls, model downloads, and model load time. |
-| Confirm product tiers and licensing | [Open Source vs Free tier](../introduction/oss-vs-free.mdx), [vCluster pricing](https://www.vcluster.com/pricing) | Confirm which parts of the stack require Platform activation or a paid tier. Sidebar badges show feature tier requirements, but commercial planning usually happens before implementation. |
+| Confirm product tiers and licensing | [Open Source vs Free tier](../introduction/oss-vs-free.mdx), [vCluster pricing](https://www.vcluster.com/pricing) | Confirm which parts of the stack require Platform activation or a paid tier before you build on top of them. Sidebar badges show feature tier requirements. |
 | Plan durability and operations | [Backing store](../configure/vcluster-yaml/control-plane/components/backing-store/README.mdx), [Platform HA](/platform/maintenance/reliability-scaling/high-availability), [Platform backup](/platform/maintenance/backup-restore/backup-restore-platform) | Choose data stores, backup policy, control plane availability, and recovery procedures before customers depend on endpoints. |
 
 ### Choose an inference tenancy model
@@ -57,9 +57,32 @@ Inference providers usually need more than one tenancy model. Use the model that
 
 Tenant clusters are a strong default when each customer or endpoint tier needs its own Kubernetes API boundary, custom resources, secrets, lifecycle, or compliance requirements. A single tenant cluster can host multiple model-serving Deployments behind separate Services and routes, so "tenant cluster" does not have to mean one model per cluster. Cost-sensitive providers can start with a shared serving tier for trusted provider-owned models, then add tenant clusters and private GPU nodes for dedicated or higher-isolation tiers. Add vNode when custom inference workloads need a stronger runtime boundary without dedicating every node.
 
-### Define the endpoint contract
+### Map the tenancy model to vcluster.yaml
 
-Before building automation, define the customer-facing contract separately from the Platform resources that implement it.
+A tenant cluster per customer with dedicated GPU nodes starts with [Private Nodes](../deploy/worker-nodes/private-nodes/overview.mdx) enabled at creation:
+
+```yaml title="vcluster.yaml"
+privateNodes:
+  enabled: true
+```
+
+Restrict which GPU node types a customer's project can claim with the project's `spec.allowedNodeTypes`, so an `l40s-shared` tier can't claim `h100-dedicated` capacity:
+
+```yaml
+apiVersion: management.loft.sh/v1
+kind: Project
+metadata:
+  name: customer-h100-dedicated
+spec:
+  allowedNodeTypes:
+    - name: metal3.gpu-h100
+```
+
+For the shared serving tier, one tenant cluster hosts multiple model-serving Deployments instead of dedicating nodes per customer; see [Model serving runtimes](../integrations/model-serving.mdx) for the Deployment, Service, and route pattern. For runtime workload isolation on shared nodes, see [vNode configuration](https://www.vnode.com/docs/configuration/).
+
+### Map endpoint concepts to Platform resources
+
+Map customer-facing concepts to the Platform and tenant resources that implement them:
 
 | Product concept | Platform or tenant resource |
 | --- | --- |
@@ -72,19 +95,9 @@ Before building automation, define the customer-facing contract separately from 
 
 Keep this mapping in your product control plane. Customers should see endpoint status, model status, URL, usage, and errors. Your operators should see the backing project, tenant cluster, GPU node claim, template version, route, and runtime rollout state.
 
-### Size the product automation work
+### Automate endpoint provisioning
 
-The product API is not a thin wrapper around one Platform call. It is the control plane for your commercial inference service. At minimum, it needs to:
-
-- authenticate the customer and check entitlement
-- map the requested model, region, and endpoint tier to approved Platform projects, templates, quotas, and node types
-- call the [Platform API](/platform/api/use-api) using an internal [access key](/platform/api/resources/ownedaccesskey)
-- create or select the tenant cluster and runtime template for the endpoint
-- watch cluster, node, route, and model rollout status
-- return endpoint URL, readiness, error, and usage state to the customer
-- reconcile scale, update, drain, delete, and capacity-reclaim workflows
-
-Build a small internal provisioning path first, then decide which parts become customer-facing product API operations. Treat this as product engineering, not as a one-time installation step.
+Your product automation calls the [Platform API](/platform/api/use-api) with an internal [access key](/platform/api/resources/ownedaccesskey) to map a requested model, region, and endpoint tier to an approved project, template, quota, and node type, then create or select the tenant cluster and runtime template for the endpoint. It watches cluster, node, route, and model rollout status, and reconciles scale, update, drain, delete, and capacity-reclaim workflows. Build this as an internal provisioning path first, then decide which operations become customer-facing.
 
 ### Endpoint readiness and warm pools
 
@@ -103,13 +116,11 @@ On bare metal, the wait for capacity is not instant. Provisioning a server inclu
 
 Expose readiness stages in your product, not just a single `Pending` state. Customers should know whether an endpoint is waiting for capacity, loading a model, warming cache, publishing a route, or ready for traffic.
 
-### Track metering and billing
+### Meter usage
 
-Commercial inference providers need a usage model before launch, even if invoicing comes later. At minimum, decide how you attribute GPU capacity, model runtime usage, storage, network egress, and support costs to a customer, endpoint, model, and product tier.
+Keep billing labels, such as customer, endpoint, model, and tier, stable across tenant clusters, routes, model-serving Deployments, and metrics so usage maps back to the product object the customer sees. Node-hours or GPU-hours per SKU work for dedicated private-node tiers; shared serving pools usually need finer-grained signals such as requests, generated tokens, or pod-level GPU allocation.
 
-For dedicated private-node tiers, the simplest unit is node-hours or GPU-hours per SKU. For shared serving pools, you usually need finer-grained signals such as requests, generated tokens, model runtime hours, or pod-level GPU allocation. Keep billing labels stable across tenant clusters, routes, model-serving Deployments, and metrics so usage can be attributed to the product object the customer sees.
-
-[vBilling](https://www.vcluster.com/vbilling) is an experimental vCluster Labs project for this space. It meters tenant clusters, including dedicated-node GPU capacity by SKU, and streams usage events to a billing adapter. Treat it as an option to evaluate for usage-event collection; pricing, plans, invoices, and customer billing logic still belong in your billing system or product backend.
+[vBilling](https://www.vcluster.com/vbilling) is an experimental vCluster Labs project that meters tenant clusters, including dedicated-node GPU capacity by SKU, and streams usage events to a billing adapter. Pricing, invoicing, and customer billing logic belong in your billing system, not vBilling.
 
 ## Day 1: Stand up the first production inference endpoint
 
@@ -135,15 +146,14 @@ Steps 3 and 4 configure Platform for your platform engineering team and automati
 
 Use this flow as the acceptance test for the first provider-managed endpoint:
 
-1. Customer calls your product API with model, region, endpoint tier, and scaling parameters.
-2. Product API authenticates the customer and checks product-level entitlement.
-3. Product automation calls Platform with an internal access key.
-4. Platform creates or selects the project, tenant cluster template, runtime template, quota, and allowed node types for the customer's tier.
-5. Private Nodes or Auto Nodes attach GPU capacity from the selected node type.
-6. The tenant cluster installs the GPU stack, metrics stack, model-serving runtime, Service, and route from the tenant cluster template, runtime template, or a post-create Helm/GitOps workflow managed by your product automation.
-7. Gateway API, ingress, or your traffic layer publishes the endpoint hostname.
-8. Product API returns endpoint status, URL, model state, and operational identifiers.
-9. Day 2 automation watches rollout, route, GPU, and serving metrics and reconciles endpoint status back to your product.
+1. Your product automation receives an endpoint request with model, region, endpoint tier, and scaling parameters.
+2. Product automation calls Platform with an internal access key.
+3. Platform creates or selects the project, tenant cluster template, runtime template, quota, and allowed node types for the requested tier.
+4. Private Nodes or Auto Nodes attach GPU capacity from the selected node type.
+5. The tenant cluster installs the GPU stack, metrics stack, model-serving runtime, Service, and route from the tenant cluster template, runtime template, or a post-create Helm/GitOps workflow.
+6. Gateway API, ingress, or your traffic layer publishes the endpoint hostname.
+7. Product automation returns endpoint status, URL, model state, and operational identifiers.
+8. Day 2 automation watches rollout, route, GPU, and serving metrics and reconciles endpoint status.
 
 ## Day 2: Operate
 
