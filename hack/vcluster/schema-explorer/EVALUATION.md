@@ -66,9 +66,12 @@ is enabled. No Fern-specific assumptions remain, and the production build
 renders the page (the component is client-only, so the server emits a loading
 placeholder and the explorer mounts after hydration).
 
-One artifact of the CRD round-trip: the payload carries Kubernetes machinery
-(`apiVersion`, `kind`, `metadata`, ~21 metadata fields) wrapping the real config
-under `spec`. A production integration would strip to `spec.*` and relabel.
+One artifact of the CRD round-trip: `kubectl-doc` emits the payload wrapped in
+Kubernetes machinery (`apiVersion`, `kind`, `metadata`, `spec`). The page
+generator (`generate-payloads.mjs`) strips that frame and re-roots the tree at
+the section's real path, so the `sync/to-host` explorer renders the nested YAML a
+user writes (`sync:` -> `toHost:` -> `<fields>`) with dotted config paths in the
+details panel. The standalone sandbox payload keeps the raw frame.
 
 ## 3. Explorer vs the accordion reference
 
@@ -161,9 +164,16 @@ filtering out the injected Kubernetes metadata, and tracking upstream
 ## Files
 
 - `hack/vcluster/schema-explorer/make-crd.mjs`: JSON Schema section to
-  structural CRD adapter.
+  structural CRD adapter. Nests the section under its real ancestor path so the
+  rendered YAML keeps its structure (`sync:` -> `toHost:` -> `<fields>`).
+- `hack/vcluster/schema-explorer/generate-payloads.mjs`: section generator. Runs
+  make-crd + kubectl-doc, strips the CRD frame, and writes per-section payloads
+  to `static/schema-explorer/vcluster/` as fetchable assets.
 - `hack/vcluster/schema-explorer/example-synthetic-crd.yaml`: generated CRD for
   `sync.toHost.pods`.
-- `src/components/kubectl-doc/`: vendored component (see its README) plus the
-  generated payload.
-- `src/pages/kubectl-doc-prototype.jsx`: sandbox page, not in any sidebar.
+- `src/components/kubectl-doc/`: vendored component (see its README),
+  `LazySchemaExplorer` (runtime fetch), and `MountWhenVisible` (defer to tab open).
+- `static/schema-explorer/vcluster/sync/toHost.explorer.json`: the `sync/to-host`
+  page payload, fetched at runtime rather than bundled into the route chunk.
+- `src/pages/kubectl-doc-prototype.jsx`: sandbox page, not in any sidebar
+  (excluded from the sitemap via `ignorePatterns`).

@@ -73,17 +73,25 @@ function deref(node) {
 }
 
 // ---------------------------------------------------------------------------
-// Navigate the dotted path from the root to the target subtree.
+// Navigate the dotted path from the root to the target subtree. Also collect
+// the description of each ancestor segment (every segment except the last) so
+// the synthetic wrapper nodes can carry the real `sync:`/`toHost:` docs.
 // ---------------------------------------------------------------------------
 function navigate(startPath) {
+  const segs = startPath.split(".");
   let node = deref(root);
-  for (const seg of startPath.split(".")) {
+  const ancestorDescriptions = [];
+  for (let i = 0; i < segs.length; i++) {
+    const seg = segs[i];
     if (!node.properties || !(seg in node.properties)) {
       throw new Error(`path segment "${seg}" not found while walking ${startPath}`);
     }
     node = deref(node.properties[seg]);
+    if (i < segs.length - 1) {
+      ancestorDescriptions.push(typeof node.description === "string" ? node.description : undefined);
+    }
   }
-  return node;
+  return { node, ancestorDescriptions };
 }
 
 // ---------------------------------------------------------------------------
@@ -269,9 +277,26 @@ function yamlEmit(value, indent) {
 // ---------------------------------------------------------------------------
 // Build it.
 // ---------------------------------------------------------------------------
-const subtree = navigate(dottedPath);
+const { node: subtree, ancestorDescriptions } = navigate(dottedPath);
 const inlined = inline(subtree, new Set());
-const specSchema = sanitize(inlined);
+const sectionSchema = sanitize(inlined);
+
+// Nest the section under its real ancestor path inside spec, so kubectl-doc
+// renders the YAML a user actually writes (sync: -> toHost: -> <fields>) rather
+// than hoisting the section's children to the document root. Wrapping the tree
+// here keeps the rendered lines faithful (kubectl-doc still does all tokenizing;
+// nothing is hand-built) and lets generate-payloads.mjs simply drop the CRD
+// frame and the leading `spec.` path segment. Each wrapper carries its real
+// schema description so the intermediate keys stay clickable.
+const segs = dottedPath.split(".");
+let nested = sectionSchema; // value of the leaf segment (segs[last])
+for (let i = segs.length - 1; i >= 1; i--) {
+  const wrapper = { type: "object", properties: { [segs[i]]: nested } };
+  const desc = ancestorDescriptions[i - 1];
+  if (desc) wrapper.description = desc;
+  nested = wrapper;
+}
+const specSchema = { type: "object", properties: { [segs[0]]: nested } };
 
 const plural = kind.toLowerCase() + "s";
 const singular = kind.toLowerCase();
@@ -304,9 +329,10 @@ const crd = {
 writeFileSync(outPath, yamlEmit(crd, 0));
 
 // Diagnostics to stderr (keeps stdout clean if ever piped).
-const specProps = Object.keys(specSchema.properties ?? {});
+const sectionProps = Object.keys(sectionSchema.properties ?? {});
 process.stderr.write(
   `wrote ${outPath}\n` +
   `  section: ${dottedPath}  kind: ${kind}\n` +
-  `  spec.properties (${specProps.length}): ${specProps.join(", ")}\n`,
+  `  nested under spec as: spec.${dottedPath}\n` +
+  `  ${dottedPath}.properties (${sectionProps.length}): ${sectionProps.join(", ")}\n`,
 );

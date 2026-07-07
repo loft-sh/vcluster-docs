@@ -22,9 +22,14 @@
 // Usage:
 //   node generate-payloads.mjs [--schema <schema.json>] [--out <dir>] [--section <dotted.path>]
 //
+// Payloads are written under static/ so the docs page fetches them at runtime
+// (see src/components/kubectl-doc/LazySchemaExplorer.jsx) instead of importing
+// them into the route JS chunk. A static import would ship the whole payload on
+// first page load, before the reader ever opens the Explorer tab.
+//
 // Defaults target the `next` docs version from the in-repo schema snapshot. The
 // release pipeline overrides --schema (released chart/values.schema.json) and
-// --out (per-version _partials/config), mirroring hack/vcluster/partials/main.go.
+// --out (per-version static dir), mirroring hack/vcluster/partials/main.go.
 
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -36,9 +41,10 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const MAKE_CRD = join(HERE, "make-crd.mjs");
 
 // ---------------------------------------------------------------------------
-// Sections to surface. Each becomes <out>/<path-as-dirs>.explorer.json next to
-// the accordion partial of the same name. Keep to union-free sections until the
-// oneOf/anyOf/allOf collapse in make-crd is replaced (see EVALUATION.md).
+// Sections to surface. Each becomes <out>/<path-as-dirs>.explorer.json, served
+// as a static asset and fetched by the Explorer tab at runtime. Keep to
+// union-free sections until the oneOf/anyOf/allOf collapse in make-crd is
+// replaced (see EVALUATION.md).
 // ---------------------------------------------------------------------------
 const SECTIONS = [
   { path: "sync.toHost", kind: "SyncToHost" },
@@ -53,7 +59,7 @@ function arg(name, fallback) {
 }
 
 const schemaPath = resolve(arg("schema", "configsrc/vcluster/main/vcluster.schema.json"));
-const outDir = resolve(arg("out", "vcluster/_partials/config"));
+const outDir = resolve(arg("out", "static/schema-explorer/vcluster"));
 const onlySection = arg("section", null);
 
 // ---------------------------------------------------------------------------
@@ -79,13 +85,15 @@ function resolveKubectlDoc() {
 }
 
 // ---------------------------------------------------------------------------
-// Strip the Kubernetes resource frame and re-root at the section.
+// Strip the Kubernetes resource frame; keep the real config tree.
 //
-// kubectl-doc renders a CRD as apiVersion / kind / metadata / spec. The real
-// config lives under spec, so we drop every line and field up to and including
-// the `spec` node, lift the remaining subtree up one indent level, and rewrite
-// the leading "spec" path segment to the section's dotted path so the details
-// panel shows copy-paste-ready vcluster.yaml paths (e.g. sync.toHost.pods.enabled).
+// kubectl-doc renders a CRD as apiVersion / kind / metadata / spec. make-crd
+// nests the section under its real ancestor path inside spec (spec.sync.toHost.*),
+// so the config lives one level under spec. We drop every line and field up to
+// and including the `spec` node, lift the remaining subtree up one indent level,
+// and strip the leading "spec." path segment. What remains renders as the YAML a
+// user writes (sync: -> toHost: -> <fields>) with copy-paste-ready vcluster.yaml
+// paths in the details panel (e.g. sync.toHost.pods.enabled).
 //
 // detailId (lines) and id (fields) are opaque and stay untouched, so the
 // line<->field linking the runtime relies on remains consistent.
@@ -108,10 +116,10 @@ function dedentCommentPrefix(prefix) {
   return prefix.startsWith("  ") ? prefix.slice(2) : prefix;
 }
 
-function rewritePath(p, sectionPath) {
+function rewritePath(p) {
   if (typeof p !== "string") return p;
-  if (p === "spec") return sectionPath;
-  if (p.startsWith("spec.")) return sectionPath + p.slice("spec".length);
+  if (p === "spec") return "";
+  if (p.startsWith("spec.")) return p.slice("spec.".length);
   return p;
 }
 
@@ -139,7 +147,7 @@ function stripFrame(payload, sectionPath) {
         wrapPrefix: dedentCommentPrefix(ln.comment.wrapPrefix),
       };
     }
-    ln.path = rewritePath(ln.path, sectionPath);
+    ln.path = rewritePath(ln.path);
     ln.index = lines.length; // re-number sequentially
     lines.push(ln);
   }
@@ -151,7 +159,7 @@ function stripFrame(payload, sectionPath) {
       if (p === "metadata" || (typeof p === "string" && p.startsWith("metadata."))) return false;
       return typeof p === "string" && p.startsWith("spec.");
     })
-    .map((f) => ({ ...f, path: rewritePath(f.path, sectionPath) }));
+    .map((f) => ({ ...f, path: rewritePath(f.path) }));
 
   return {
     apiVersion: "",
