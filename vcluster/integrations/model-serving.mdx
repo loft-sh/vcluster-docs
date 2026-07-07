@@ -10,17 +10,19 @@ import TenancySupport from '../_fragments/tenancy-support.mdx';
 
 <TenancySupport privateNodes="true" />
 
-Model-serving runtimes run inside the tenant cluster. vCluster provides the tenant Kubernetes API, GPU access through the selected worker node model, resource sync, and templates for installing supporting components. The serving runtime owns model loading, request handling, batching, tokenizer behavior, and runtime-specific metrics.
+Model-serving runtimes deploy inside the tenant cluster. vCluster provides the tenant Kubernetes API, GPU access through the selected worker node model, resource sync, and templates for installing supporting components. The serving runtime owns model loading, request handling, batching, tokenizer behavior, and runtime-specific metrics.
 
 Use this page as a tenant-runtime pattern for inference endpoints. The examples show vLLM because it is easy to recognize, but the same structure applies to NVIDIA Triton, KServe, SGLang, Ray Serve, or a provider-owned runtime.
+
+Deliver the runtime declaratively with the [Argo CD integration](/platform/integrations/argocd). Platform syncs the manifests below as an `ArgoCDApplication` from your Git repository, so a template update rolls out consistently across every tenant cluster running it.
 
 :::note
 This page focuses on the private-node endpoint pattern, where the tenant cluster owns its worker-node software stack. Provider-owned shared serving pools can also run behind a product API, but they need a different tenancy and routing design.
 :::
 
-## Responsibility boundary
+## Integration map
 
-| Layer | Responsible component |
+| Layer | Component |
 | --- | --- |
 | Tenant Kubernetes API, object lifecycle, and sync | vCluster |
 | GPU node provisioning and reclaim | Private Nodes, Auto Nodes, and optionally vMetal |
@@ -36,6 +38,7 @@ This page focuses on the private-node endpoint pattern, where the tenant cluster
 - A vendor GPU Operator, device plugin, or Dynamic Resource Allocation driver installed where your GPU stack requires it.
 - A Gateway API controller, ingress controller, or provider traffic layer for external endpoint routing.
 - A model source, registry credential, or object storage path your runtime can reach.
+- For production delivery, an [Argo CD connector](/platform/integrations/argocd/connect-argocd) enabled on the tenant cluster and a Git repository holding your runtime manifests.
 
 For GPU setup details, see [GPU and accelerator support](../introduction/gpu-and-accelerator-support.mdx). For bare metal GPU node provisioning, see the [vMetal GPU Quickstart](https://www.vmetal.ai/docs/deploy/gpu-quickstart).
 
@@ -63,7 +66,7 @@ If the Gateway is missing, fix the tenant cluster template before deploying the 
 
 ## Deploy a smoke-test vLLM runtime
 
-The following example shows a small vLLM Deployment and Service for validating GPU scheduling, model loading, and in-cluster serving. It uses a small public model to keep the example concise. Treat it as a smoke test, not as a production endpoint template.
+The following example shows a small vLLM Deployment and Service for validating GPU scheduling, model loading, and in-cluster serving. It uses a small public model to keep the example concise. Treat it as a smoke test, not as a production endpoint template. For production delivery, see [Build a production runtime template](#build-a-production-runtime-template) below, which packages this same pattern as an Argo CD Application.
 
 ```yaml title="vllm-inference.yaml"
 apiVersion: apps/v1
@@ -177,7 +180,46 @@ For large models, plan warmup separately from pod scheduling. A pod can be `Runn
 
 ## Build a production runtime template
 
-Inference providers usually package the runtime into a Platform template or a provider-owned deployment workflow. A production endpoint template should include:
+Package the runtime as an Argo CD Application so a template update or Git commit rolls out consistently across every tenant cluster running that endpoint tier. Store the Deployment, Service, and route from the smoke test above at a path in your Git repository, then declare an `ArgoCDApplicationTemplate` that points at it:
+
+```yaml
+apiVersion: management.loft.sh/v1
+kind: ArgoCDApplicationTemplate
+metadata:
+  name: vllm-runtime
+spec:
+  template:
+    spec:
+      source:
+        repoURL: "https://github.com/acme/inference-runtimes"
+        targetRevision: main
+        path: "runtimes/vllm"
+      project: default
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+```
+
+Reference the template from the tenant cluster's `vcluster.yaml`, alongside the [Argo CD connector](/platform/integrations/argocd/connect-argocd):
+
+```yaml title="vcluster.yaml"
+integrations:
+  argoCD:
+    enabled: true
+    connector: argocd-main
+deploy:
+  argoCD:
+    applications:
+      - name: vllm-runtime
+        target: vcluster
+        template:
+          name: vllm-runtime
+```
+
+Argo CD syncs the Application into the tenant cluster once the connector registers it. `selfHeal: true` reverts manual drift, and a Git commit to the template path rolls out on the next reconcile.
+
+A production runtime Application should package:
 
 - pinned runtime images and a rollout policy
 - model registry, object storage, or artifact repository credentials
@@ -192,9 +234,19 @@ Inference providers usually package the runtime into a Platform template or a pr
 - authentication and authorization at the provider traffic layer
 - route, DNS, and certificate policy
 
-Keep model identity and customer-specific values as template parameters. Keep driver configuration, GPU presentation mode, and node image details in the GPU stack and node type instead of embedding them into every endpoint manifest.
+Keep model identity and customer-specific values as `ArgoCDApplicationTemplate` parameters so the same template serves every endpoint tier. Keep driver configuration, GPU presentation mode, and node image details in the GPU stack and node type instead of embedding them into the runtime Application.
 
-For template guidance, see [Templates](/platform/administer/templates/overview), [Quotas](/platform/administer/projects/quotas), and [Allowed node types](/platform/administer/projects/allowed/node-types).
+### Sequence the GPU stack and the runtime
+
+Argo CD has no native way to make one Application wait for another. If the GPU Operator or device plugin is a separate Application from the runtime, Argo CD syncs both without ordering them.
+
+For this specific pair, that is usually safe to leave unordered. A runtime pod requesting `nvidia.com/gpu` before the device plugin advertises it just stays `Pending`. Argo CD's `selfHeal` and Kubernetes' own scheduler retry converge once the GPU stack is ready, so the pod waits rather than fails.
+
+Treat it differently when the dependency is hard rather than soft, such as a custom resource that needs its CRD already `Established`. Put those two pieces in the same Application instead of splitting them, and use `argocd.argoproj.io/sync-wave` annotations to order resources within it. Sync waves only order resources inside one Application. They do not order one Application relative to another.
+
+Platform is building explicit cross-Application sequencing for a future release. Until then, default to bundling hard dependencies into one Application and letting Kubernetes absorb the soft ones.
+
+For template guidance, see [Deploy applications](/platform/integrations/argocd/deploy-applications), [Templates](/platform/administer/templates/overview), [Quotas](/platform/administer/projects/quotas), and [Allowed node types](/platform/administer/projects/allowed/node-types).
 
 ## Expose an inference endpoint
 
@@ -202,7 +254,7 @@ For new HTTP endpoint deployments, prefer Gateway API. The most common provider 
 
 1. The platform team owns Gateway API CRDs, the Gateway controller, DNS, certificates, and shared `Gateway` resources in the control plane cluster.
 2. The tenant cluster imports approved Gateways with `sync.fromHost.gateways`.
-3. The endpoint template creates `HTTPRoute` resources in the tenant cluster.
+3. The runtime's Argo CD Application creates `HTTPRoute` resources in the tenant cluster alongside the Deployment and Service.
 4. vCluster syncs the tenant route to the control plane cluster and enforces the Gateway attachment policy.
 
 The tenant cluster template needs Gateway sync enabled. The following example maps a platform-owned Gateway to a tenant-facing Gateway and allows routes from selected tenant namespaces:
@@ -266,10 +318,11 @@ spec:
           port: 80
 ```
 
-Apply the route inside the tenant cluster:
+Add the route to the same Git path as the Deployment and Service so the runtime Application delivers all three together. Bundling them in one Application avoids relying on Argo CD to sequence a separate route Application after the backend exists.
+
+Once Argo CD syncs the Application, confirm the route from inside the tenant cluster:
 
 ```bash
-kubectl apply -f vllm-route.yaml
 kubectl describe httproute vllm-inference -n inference
 ```
 
@@ -313,6 +366,7 @@ Before exposing the endpoint to customers, validate the full provider path:
 
 - Product automation creates or selects the project, template, quota, and allowed node type.
 - The tenant cluster reaches `Ready` and the private GPU node joins.
+- The runtime's `ArgoCDApplication` reports `Synced` and `Healthy`.
 - The GPU device plugin, GPU Operator, or DRA driver exposes the expected resource.
 - The runtime pod schedules on the intended GPU node type.
 - The model loads from the approved source and reaches readiness.
