@@ -16,6 +16,8 @@ on:
   schedule:
     # Weekly on Mondays at 09:27 UTC. Off-hour offset to avoid the top-of-hour
     # stampede with the feature-table sync (09:00) and EOS/EOL sync (09:13).
+    # The script looks back ~2 weeks (DEFAULT_SINCE_DAYS), so a skipped or
+    # delayed weekly run does not drop plans commits that landed in the gap.
     - cron: '27 9 * * 1'
   workflow_dispatch:
   repository_dispatch:
@@ -47,8 +49,20 @@ jobs:
         run: npm ci
 
       - name: Check plans sidebar labels
+        id: check
         # GH_ACCESS_TOKEN reads the private loft-sh/plans repo and files the
         # review issue in this repo (mirrors sync-upstream-features.yml).
         env:
           GH_TOKEN: ${{ secrets.GH_ACCESS_TOKEN }}
         run: node scripts/check-plans-sidebar-labels.js --open-issue
+
+      - name: Fail if the plans fetch failed
+        # A failed read of loft-sh/plans reports drift=false, which on a
+        # scheduled run is indistinguishable from a genuinely quiet week. The
+        # script emits plans_fetch_failed=true on that path; turn the job red so
+        # a revoked GH_ACCESS_TOKEN or lost repo access is visible instead of
+        # silently skipping the sidebar-label review. See DOC-1523.
+        if: steps.check.outputs.plans_fetch_failed == 'true'
+        run: |
+          echo "::error::Could not read loft-sh/plans commits; the sidebar-label review was skipped. Check that GH_ACCESS_TOKEN still has read access to loft-sh/plans."
+          exit 1

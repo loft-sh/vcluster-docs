@@ -70,6 +70,13 @@ const PRODUCTS_DISPLAY_PATH = 'src/data/products.yaml';
 const PRO_ADMONITION_PARTIAL = 'vcluster/_partials/admonitions/pro-admonition.mdx';
 const SIDEBAR_CSS = 'src/css/sidebar.scss';
 
+// Default lookback window for loft-sh/plans commits. Deliberately ~2x the weekly
+// cron cadence so a skipped, delayed, or briefly-disabled scheduled run does not
+// drop commits that landed in the gap (a 7-day window ending after a missed run
+// leaves those days unreviewed forever). Overlap is safe: the tracker is a single
+// label-deduped issue, so re-seeing a commit updates it rather than spamming.
+const DEFAULT_SINCE_DAYS = 14;
+
 const ISSUE_TITLE = 'Review sidebar Enterprise/Free labels after loft-sh/plans change';
 const ISSUE_LABEL = 'plans-sidebar-review';
 
@@ -238,7 +245,7 @@ function buildInventory({ root, listFiles, readFile } = {}) {
  * Recent commits on the loft-sh/plans default branch. Returns [] (and logs)
  * when the repo cannot be read, so a forced run still produces a review issue.
  */
-function fetchPlansCommits({ sinceDays = 7, now = new Date(), repo = PLANS_REPO, exec = defaultExec } = {}) {
+function fetchPlansCommits({ sinceDays = DEFAULT_SINCE_DAYS, now = new Date(), repo = PLANS_REPO, exec = defaultExec } = {}) {
   const since = new Date(now.getTime() - sinceDays * 86400 * 1000).toISOString();
   const raw = exec('gh', [
     'api',
@@ -407,7 +414,7 @@ function appendGithubOutput(entries) {
 }
 
 function parseArgs(argv) {
-  const opts = { openIssue: false, dryRun: false, force: false, sinceDays: 7 };
+  const opts = { openIssue: false, dryRun: false, force: false, sinceDays: DEFAULT_SINCE_DAYS };
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--open-issue') opts.openIssue = true;
     else if (argv[i] === '--dry-run') opts.dryRun = true;

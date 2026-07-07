@@ -286,5 +286,7 @@ test('parseArgs defaults', () => {
   assert.equal(o.openIssue, false);
   assert.equal(o.dryRun, false);
   assert.equal(o.force, false);
-  assert.equal(o.sinceDays, 7);
+  // 14, not 7: the lookback deliberately overlaps ~2x the weekly cron so a
+  // skipped or delayed run does not drop commits in the gap.
+  assert.equal(o.sinceDays, 14);
 });
