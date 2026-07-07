@@ -28,21 +28,24 @@ Build managed inference endpoints on your GPU infrastructure. Customers interact
 If your users are internal teams that should provision and manage their own environments in Platform, start with [Enterprise AI Factory](./enterprise-ai-factory.mdx). Use this inference provider path when your product hides Platform and exposes an inference endpoint lifecycle instead.
 :::
 
-## Day 0: Design decisions
+## How vCluster enables inference
 
-| Decision | Read next | Outcome |
+An inference provider architecture is a stack of layers: a customer-facing boundary, a tenant API, GPU capacity, a serving runtime, a route, and autoscaling. vCluster and Platform implement most of these layers directly.
+
+### Architecture map
+
+| Inference requirement | vCluster/Platform capability | Example resource |
 | --- | --- | --- |
-| Choose the customer-facing product boundary | [Platform API](/platform/api/use-api), [access keys](/platform/api/resources/ownedaccesskey), [Projects](/platform/administer/projects/create) | Decide which actions your product exposes, such as endpoint creation, model selection, GPU tier selection, quota changes, endpoint updates, and deletion. Customers shouldn't need Platform access. |
-| Choose the inference tenancy model | [Choose an inference tenancy model](#choose-an-inference-tenancy-model), [Architecture](../introduction/architecture.mdx) | Decide whether each customer, model family, or endpoint tier gets a shared serving pool, a tenant cluster, private GPU nodes, or vNode runtime isolation. |
-| Plan GPU capacity classes | [Node providers](/platform/administer/node-providers/overview), [vMetal inference fleet capacity](https://www.vmetal.ai/docs/operate/gpu-fleet#inference-provider-capacity), [GPU and accelerators](../introduction/gpu-and-accelerator-support.mdx) | Define node types by GPU model, GPU count, region, provider, rack, and reservation model. Use vMetal for owned bare metal fleets, or cloud GPU instances and Auto Nodes for cloud capacity. Keep MIG, vGPU, and Dynamic Resource Allocation decisions in the vendor stack. |
-| Define serving runtime templates | [Model serving runtimes](../integrations/model-serving.mdx), [Templates](/platform/administer/templates/overview), [Certified Stacks](/platform/integrations/certified-stacks) | Standardize the components each endpoint receives, such as GPU Operator, scheduler, model server, ingress or Gateway API routes, metrics, and secrets. |
-| Plan model storage and warmup | [Model storage architecture](../integrations/model-serving.mdx#plan-model-storage), [Model serving runtimes](../integrations/model-serving.mdx) | Decide where model weights live, how they reach each endpoint, how caches are warmed, and how readiness is reported while large models load. |
-| Plan endpoint routing | [Model serving runtimes](../integrations/model-serving.mdx#expose-an-inference-endpoint), [Gateway API](../key-features/gateway-api.mdx) | Decide whether tenant clusters attach routes to platform-owned shared Gateways, tenant-owned Gateways, or another ingress layer controlled by your product. |
-| Plan autoscaling signals | [GPU and inference autoscaling](../integrations/gpu-hpa-dcgm.mdx), [Monitoring overview](/platform/maintenance/monitoring/overview) | Combine hardware metrics, such as GPU utilization and memory, with serving metrics, such as request concurrency, queue depth, latency, tokens per second, and time to first token. |
-| Plan billing and metering | [vBilling](https://www.vcluster.com/vbilling), [Fleet monitoring](/platform/maintenance/monitoring/fleet-monitoring-otel) | Decide how you attribute GPU-hours, node-hours, storage, egress, and request or token usage to customers. vBilling is an experimental vCluster Labs project for metering tenant clusters and streaming usage events to a billing adapter. |
-| Plan endpoint readiness and SLA | [Endpoint readiness and warm pools](#endpoint-readiness-and-warm-pools), [Model serving runtimes](../integrations/model-serving.mdx) | Decide whether endpoints are cold-provisioned, pre-warmed, or backed by warm pools. Account for node provisioning time, image pulls, model downloads, and model load time. |
-| Confirm product tiers and licensing | [Open Source vs Free tier](../introduction/oss-vs-free.mdx), [vCluster pricing](https://www.vcluster.com/pricing) | Confirm which parts of the stack require Platform activation or a paid tier before you build on top of them. Sidebar badges show feature tier requirements. |
-| Plan durability and operations | [Backing store](../configure/vcluster-yaml/control-plane/components/backing-store/README.mdx), [Platform HA](/platform/maintenance/reliability-scaling/high-availability), [Platform backup](/platform/maintenance/backup-restore/backup-restore-platform) | Choose data stores, backup policy, control plane availability, and recovery procedures before customers depend on endpoints. |
+| Product/API boundary | An external system you own that calls the [Platform API](/platform/api/use-api) | Platform API call with an internal [access key](/platform/api/resources/ownedaccesskey) |
+| Tenant API boundary | vCluster tenant cluster | `vcluster.yaml` |
+| Dedicated GPU capacity | [Private Nodes](../deploy/worker-nodes/private-nodes/overview.mdx), Auto Nodes, or vMetal-provisioned bare metal | `Project.spec.allowedNodeTypes` |
+| Runtime installation | Platform [template](/platform/administer/templates/overview), Helm chart, or GitOps workflow | Deployment, Service, Secret |
+| Endpoint route | [Gateway API](../key-features/gateway-api.mdx) sync | `HTTPRoute` |
+| Runtime isolation for untrusted workloads | [vNode](https://www.vnode.com/docs/) | `runtimeClassName: vnode` |
+| Hardware metrics | NVIDIA DCGM Exporter and Prometheus Adapter | HorizontalPodAutoscaler |
+| Serving metrics | Prometheus and KEDA | `ScaledObject` |
+
+[Model serving runtimes](../integrations/model-serving.mdx) covers the Deployment, Service, and route pattern end to end. [GPU and inference autoscaling](../integrations/gpu-hpa-dcgm.mdx) covers the HPA and KEDA examples. [vMetal inference fleet capacity](https://www.vmetal.ai/docs/operate/gpu-fleet#inference-provider-capacity) covers the bare metal layer behind Private Nodes.
 
 ### Choose an inference tenancy model
 
@@ -80,24 +83,19 @@ spec:
 
 For the shared serving tier, one tenant cluster hosts multiple model-serving Deployments instead of dedicating nodes per customer; see [Model serving runtimes](../integrations/model-serving.mdx) for the Deployment, Service, and route pattern. For runtime workload isolation on shared nodes, see [vNode configuration](https://www.vnode.com/docs/configuration/).
 
-### Map endpoint concepts to Platform resources
+## Day 0: Design decisions
 
-Map customer-facing concepts to the Platform and tenant resources that implement them:
-
-| Product concept | Platform or tenant resource |
-| --- | --- |
-| Customer account, organization, or workspace | Platform project, quotas, allowed templates, and allowed node types |
-| Endpoint tier, such as `h100-dedicated` or `l40s-shared` | Template parameters, node type constraints, and quota policy |
-| Endpoint instance | Tenant cluster, namespace, model-serving Deployment, Service, route, secrets, and metrics resources |
-| Endpoint URL and API key | Gateway API or ingress route, DNS entry, certificate, and provider authentication layer |
-| Usage and billing record | GPU-hour, node-hour, storage, egress, request, or token usage events mapped to customer, endpoint, model, and tier |
-| Endpoint lifecycle event | Platform API call, template update, tenant workload rollout, drain, scale, or delete operation |
-
-Keep this mapping in your product control plane. Customers should see endpoint status, model status, URL, usage, and errors. Your operators should see the backing project, tenant cluster, GPU node claim, template version, route, and runtime rollout state.
-
-### Automate endpoint provisioning
-
-Your product automation calls the [Platform API](/platform/api/use-api) with an internal [access key](/platform/api/resources/ownedaccesskey) to map a requested model, region, and endpoint tier to an approved project, template, quota, and node type, then create or select the tenant cluster and runtime template for the endpoint. It watches cluster, node, route, and model rollout status, and reconciles scale, update, drain, delete, and capacity-reclaim workflows. Build this as an internal provisioning path first, then decide which operations become customer-facing.
+| Decision | Read next | Outcome |
+| --- | --- | --- |
+| Choose the inference tenancy model | [Choose an inference tenancy model](#choose-an-inference-tenancy-model), [Architecture](../introduction/architecture.mdx) | Decide whether each customer, model family, or endpoint tier gets a shared serving pool, a tenant cluster, private GPU nodes, or vNode runtime isolation. |
+| Plan GPU capacity classes | [Node providers](/platform/administer/node-providers/overview), [vMetal inference fleet capacity](https://www.vmetal.ai/docs/operate/gpu-fleet#inference-provider-capacity), [GPU and accelerators](../introduction/gpu-and-accelerator-support.mdx) | Define node types by GPU model, GPU count, region, provider, rack, and reservation model. Use vMetal for owned bare metal fleets, or cloud GPU instances and Auto Nodes for cloud capacity. Keep MIG, vGPU, and Dynamic Resource Allocation decisions in the vendor stack. |
+| Define serving runtime templates | [Model serving runtimes](../integrations/model-serving.mdx), [Templates](/platform/administer/templates/overview), [Certified Stacks](/platform/integrations/certified-stacks) | Standardize the components each endpoint receives, such as GPU Operator, scheduler, model server, ingress or Gateway API routes, metrics, and secrets. |
+| Plan model storage and warmup | [Model storage architecture](../integrations/model-serving.mdx#plan-model-storage), [Model serving runtimes](../integrations/model-serving.mdx) | Decide where model weights live, how they reach each endpoint, how caches are warmed, and how readiness is reported while large models load. |
+| Plan endpoint routing | [Model serving runtimes](../integrations/model-serving.mdx#expose-an-inference-endpoint), [Gateway API](../key-features/gateway-api.mdx) | Decide whether tenant clusters attach routes to platform-owned shared Gateways, tenant-owned Gateways, or another ingress layer controlled by your product. |
+| Plan autoscaling signals | [GPU and inference autoscaling](../integrations/gpu-hpa-dcgm.mdx), [Monitoring overview](/platform/maintenance/monitoring/overview) | Combine hardware metrics, such as GPU utilization and memory, with serving metrics, such as request concurrency, queue depth, latency, tokens per second, and time to first token. |
+| Plan endpoint readiness and capacity strategy | [Endpoint readiness and warm pools](#endpoint-readiness-and-warm-pools), [Model serving runtimes](../integrations/model-serving.mdx) | Decide whether endpoints are cold-provisioned, pre-warmed, or backed by warm pools. Account for node provisioning time, image pulls, model downloads, and model load time. |
+| Plan durability and operations | [Backing store](../configure/vcluster-yaml/control-plane/components/backing-store/README.mdx), [Platform HA](/platform/maintenance/reliability-scaling/high-availability), [Platform backup](/platform/maintenance/backup-restore/backup-restore-platform) | Choose data stores, backup policy, control plane availability, and recovery procedures before customers depend on endpoints. |
+| Integrate with your product control plane | [Integrate with your product control plane](#integrate-with-your-product-control-plane) | Decide the customer-facing product boundary, the mapping from product concepts to Platform resources, the metering approach, and the license tier you need before building automation. |
 
 ### Endpoint readiness and warm pools
 
@@ -114,13 +112,26 @@ Plan which endpoint tiers are cold-provisioned and which use warm capacity:
 
 On bare metal, the wait for capacity is not instant. Provisioning a server includes BMC verification, hardware inspection, PXE boot, and OS install before the node joins. See [vMetal inference fleet capacity](https://www.vmetal.ai/docs/operate/gpu-fleet#inference-provider-capacity) for warm pool against on-demand provisioning at the hardware layer.
 
-Expose readiness stages in your product, not just a single `Pending` state. Customers should know whether an endpoint is waiting for capacity, loading a model, warming cache, publishing a route, or ready for traffic.
+### Integrate with your product control plane
 
-### Meter usage
+Customers interact with your product, not Platform. Decide which actions your product exposes, such as endpoint creation, model selection, GPU tier selection, quota changes, endpoint updates, and deletion, then map those customer-facing concepts to the Platform and tenant resources that implement them:
 
-Keep billing labels, such as customer, endpoint, model, and tier, stable across tenant clusters, routes, model-serving Deployments, and metrics so usage maps back to the product object the customer sees. Node-hours or GPU-hours per SKU work for dedicated private-node tiers; shared serving pools usually need finer-grained signals such as requests, generated tokens, or pod-level GPU allocation.
+| Product concept | Platform or tenant resource |
+| --- | --- |
+| Customer account, organization, or workspace | Platform project, quotas, allowed templates, and allowed node types |
+| Endpoint tier, such as `h100-dedicated` or `l40s-shared` | Template parameters, node type constraints, and quota policy |
+| Endpoint instance | Tenant cluster, namespace, model-serving Deployment, Service, route, secrets, and metrics resources |
+| Endpoint URL and API key | Gateway API or ingress route, DNS entry, certificate, and provider authentication layer |
+| Usage and billing record | GPU-hour, node-hour, storage, egress, request, or token usage events mapped to customer, endpoint, model, and tier |
+| Endpoint lifecycle event | Platform API call, template update, tenant workload rollout, drain, scale, or delete operation |
 
-[vBilling](https://www.vcluster.com/vbilling) is an experimental vCluster Labs project that meters tenant clusters, including dedicated-node GPU capacity by SKU, and streams usage events to a billing adapter. Pricing, invoicing, and customer billing logic belong in your billing system, not vBilling.
+Keep this mapping in your product control plane. Customers should see endpoint status, model status, URL, usage, errors, and which readiness stage an endpoint is in, such as waiting for capacity, loading a model, warming cache, or publishing a route. Your operators should see the backing project, tenant cluster, GPU node claim, template version, route, and runtime rollout state.
+
+Your product automation calls the [Platform API](/platform/api/use-api) with an internal [access key](/platform/api/resources/ownedaccesskey) to create or select the tenant cluster and runtime template for an endpoint, then watches cluster, node, route, and model rollout status. Build this as an internal provisioning path first, then decide which operations become customer-facing.
+
+Keep billing labels, such as customer, endpoint, model, and tier, stable across tenant clusters, routes, model-serving Deployments, and metrics so usage maps back to the product object the customer sees. Node-hours or GPU-hours per SKU work for dedicated private-node tiers; shared serving pools usually need finer-grained signals such as requests, generated tokens, or pod-level GPU allocation. [vBilling](https://www.vcluster.com/vbilling) is an experimental vCluster Labs project that meters tenant clusters, including dedicated-node GPU capacity by SKU, and streams usage events to a billing adapter. Pricing, invoicing, and customer billing logic belong in your billing system, not vBilling.
+
+Confirm which parts of the stack require Platform activation or a paid tier before you build on top of them. Sidebar badges show feature tier requirements; see [Open Source vs Free tier](../introduction/oss-vs-free.mdx) and [vCluster pricing](https://www.vcluster.com/pricing).
 
 ## Day 1: Stand up the first production inference endpoint
 
