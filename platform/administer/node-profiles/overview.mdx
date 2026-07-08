@@ -7,17 +7,19 @@ description: Learn how NodeProfile applies reusable labels, taints, and annotati
 
 import NodeProfileRelationships from '@site/static/media/diagrams/node-profile-relationships.svg';
 
-A NodeProfile is a reusable, cluster-scoped collection of node runtime settings (labels, taints, and annotations) that the platform continuously applies to every private node assigned to it. Reference the same profile from a manual join or a static or dynamic auto-node pool, and the platform reconciles identical configuration onto every node, regardless of how it joined.
+Node labels, taints, and annotations drift over time. A compliance label gets added, a taint changes for a firmware update, and someone has to hand-edit every affected node and hope none get missed. A NodeProfile resolves this by enforcing a defined set of labels, taints, and annotations at join and continuously afterward, for every node that references it.
 
-Without a shared profile, there is no way to mark a set of nodes as, for example, "this is a GPU training node" across every provisioning path. Manual joins have no provider, auto-node pools live in the <GlossaryTerm term="vcluster">vCluster</GlossaryTerm> config, and the resulting Kubernetes Node objects carry no shared identity. A named NodeProfile fixes this. Every node that references it reflects the same set of labels, no matter how it was provisioned.
-
-Profiles are also continuously reconciled, not just applied once at join. Editing a profile converges the change onto every node that already references it, without requiring the node to be re-provisioned.
+Define a NodeProfile, reference it from a [manual join](/docs/vcluster/next/deploy/worker-nodes/private-nodes/join) or a static or dynamic [auto-node pool](/docs/vcluster/next/configure/vcluster-yaml/private-nodes/auto-nodes), and edit it whenever requirements change. Every node stays in sync automatically, without being re-provisioned.
 
 :::info Private nodes only
 NodeProfile applies to private nodes only. It cannot be used by tenant clusters whose control plane runs on a shared or standalone <GlossaryTerm term="control-plane-cluster">control plane cluster</GlossaryTerm>, or by cloud-hosted tenant clusters.
 :::
 
-## Example
+## Use a NodeProfile
+
+### Define a NodeProfile
+
+Say every GPU training node needs the same label, ownership annotation, and taint, no matter how it joins the cluster. Define a NodeProfile:
 
 ```yaml
 apiVersion: management.loft.sh/v1
@@ -42,7 +44,11 @@ spec:
       effect: NoSchedule
 ```
 
-Reference this profile from a manual join, or from an auto-node pool in `vcluster.yaml`:
+`nodeLabels` and `nodeAnnotations` are reconciled onto the Node object continuously, so they can change later without someone having to edit each node directly. The `taints` entry keeps non-GPU pods from scheduling on the node permanently. The `startupTaints` entry holds the node out of scheduling only until it reaches `Ready`, then is removed automatically.
+
+### Reference the profile from a node
+
+Reference `gpu-training` from a manual join, or from an auto-node pool in `vcluster.yaml`:
 
 ```yaml
 # Inside your vcluster.yaml
@@ -56,7 +62,37 @@ privateNodes:
           profile: gpu-training
 ```
 
-Every node the `gpu-burst` pool provisions joins with the `gpu-training` profile's labels and taints already applied, and stays in sync with the profile from then on.
+Every node the `gpu-burst` pool provisions joins already carrying the `workload.vcluster.com/class=gpu` label, the `ops.vcluster.com/owner=ml-platform` annotation, and the `nvidia.com/gpu=true:NoSchedule` taint. The startup taint is removed once the node reaches `Ready`. From then on, the platform keeps the node's labels, annotations, and taints in sync with the profile automatically.
+
+### Update the profile
+
+Suppose compliance now requires every GPU node to carry an audit label. Add it to the profile instead of hand-editing every node:
+
+```yaml
+apiVersion: management.loft.sh/v1
+kind: NodeProfile
+metadata:
+  name: gpu-training
+spec:
+  displayName: GPU Training
+  description: |
+    GPU worker defaults for training workloads.
+  nodeLabels:
+    workload.vcluster.com/class: gpu
+    compliance.vcluster.com/audited: "true" # added
+  nodeAnnotations:
+    ops.vcluster.com/owner: ml-platform
+  taints:
+    - key: nvidia.com/gpu
+      value: "true"
+      effect: NoSchedule
+  startupTaints:
+    - key: node.vcluster.com/bootstrap
+      value: "true"
+      effect: NoSchedule
+```
+
+Every node that references `gpu-training` picks up the new label automatically. No node needs to be re-provisioned, and no one has to hand-edit individual nodes.
 
 ## Spec fields
 
@@ -79,6 +115,10 @@ Each <GlossaryTerm term="tenant-cluster">tenant cluster</GlossaryTerm> runs a re
 - Removing a key from a profile removes it from those nodes.
 - Labels, annotations, and taints that a profile never set are left untouched, even if they were added by other means.
 
+The reconciler tracks which keys it owns using bookkeeping annotations on the node itself, kept separately for labels, annotations, and taints. On each reconcile, it checks that record to know what to prune if a key disappears from the profile, rather than guessing from the node's current state.
+
+A key can still collide with something the reconciler doesn't track. For example, an auto-node pool might set a taint directly, using the same key as a taint the profile also defines. When that happens, the profile's value wins. The reconciler overwrites the conflicting value on every reconcile, silently, with no error or warning.
+
 `startupTaints` are the exception. They're applied once, at join, and removed once the node becomes `Ready`. They aren't part of the steady-state reconciliation loop, so editing `startupTaints` on a profile has no effect on nodes that already joined.
 
 Convergence is prompt, not tied to a fixed interval. The reconciler watches for profile changes and re-converges affected nodes as soon as they occur. If the tenant cluster's connection to the platform is temporarily unavailable, convergence resumes once the connection is restored.
@@ -93,7 +133,7 @@ A node resolves to exactly one profile. A profile is reusable across many nodes,
 
 If none of these resolve, the node joins without a profile, which is a valid state.
 
-All three sources are validated against the project's [allowed node profiles](../projects/allowed/node-profiles.mdx). A profile that isn't allowed in the project is rejected, even if explicitly requested.
+A NodeProfile is a cluster-scoped object, like NodeProvider and NodeType, so nothing inherently stops a project from referencing a profile created for a different team or purpose. That's what the allowlist enforces. All three sources are validated against the project's [allowed node profiles](../projects/allowed/node-profiles.mdx), and a profile that isn't allowed is rejected, even if explicitly requested.
 
 ### Tamper-proof assignment
 
@@ -103,7 +143,7 @@ A profile resolved through the default-profile fallback chain, rather than an ex
 
 ## How NodeProfile relates to other node objects
 
-[Node providers](../node-providers/overview.mdx) and [node types](../node-providers/overview.mdx#node-types) describe how a node is provisioned, which infrastructure it comes from and what hardware it has. NodeProfile is orthogonal to that. It describes what the node looks like once it's part of the tenant cluster, independent of where it came from.
+[Node providers](../node-providers/overview.mdx) and [node types](../node-providers/overview.mdx#node-types) describe how a node is provisioned, which infrastructure it comes from and what hardware it has. NodeProfile describes what the node looks like once it's part of the tenant cluster, independent of where it came from.
 
 <figure>
   <NodeProfileRelationships style={{width: '100%', height: 'auto'}} role="img" aria-label="NodeProfile relationship to node providers, node types, and joined private nodes" />
