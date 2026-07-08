@@ -38,6 +38,7 @@ vcluster snapshot get my-vcluster container:///data/my-local-snapshot.tar.gz
   -h, --help                                  help for get
       --kms-key-id string                     AWS KMS key ID that is configured for given S3 bucket. If set, aws-kms SSE will be used
       --server-side-encryption string         AWS Server-Side encryption algorithm
+      --snapshot-temp-dir string              Temporary directory for snapshot operations. If set to empty string, the OS default directory for temporary files will be used
       --standalone                            Target the local standalone vCluster on this host
 ```
 

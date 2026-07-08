@@ -133,32 +133,21 @@ jobs:
 
       # loft-enterprise's release pipeline cuts its own tag + release first
       # (which triggers our dispatch), then creates matching upstream tags
-      # in loft-sh/{agentapi,api} in subsequent steps. Without a wait, the
-      # bump step's `go mod tidy` below races the upstream tag creation
-      # and fails with `unknown revision <version>`. Empirically the gap
-      # was ~30s-2min on v4.7.3-rc.1 (2026-05-27). Polling on the GitHub
-      # API directly (not `go list`) sidesteps Go's module proxy cache,
-      # which can lag tag creation. 10s × 60 = 10 min ceiling.
-      - name: Wait for agentapi + api tags to be published
+      # in loft-sh/{agentapi,api} and lets them propagate to the Go module
+      # proxy. The bump step's `go mod tidy` below resolves both modules
+      # through GOPROXY, so it must not run until the proxy can serve the
+      # released version, not merely until the GitHub tag exists. The wait
+      # checks tag presence first (a clear "upstream never published"
+      # signal) then module-proxy resolution (the propagation race that
+      # broke platform v4.10.1 under DEVOPS-1008, where the tag existed but
+      # `go mod tidy` still reported `unknown revision`). Logic + bats
+      # coverage live in the script. 10s x 60 = 10 min ceiling per check.
+      - name: Wait for agentapi + api to resolve through the module proxy
         if: steps.classify.outputs.skip != 'true' && steps.inputs.outputs.event == 'platform-released'
         env:
           VERSION: ${{ steps.inputs.outputs.version }}
           GH_TOKEN: ${{ secrets.GH_ACCESS_TOKEN }}
-        run: |
-          set -eo pipefail
-          for repo in loft-sh/agentapi loft-sh/api; do
-            attempt=0
-            until gh api "repos/${repo}/git/refs/tags/${VERSION}" >/dev/null 2>&1; do
-              attempt=$((attempt + 1))
-              if [ "$attempt" -ge 60 ]; then
-                echo "::error::${repo}: tag ${VERSION} not present after 10 minutes; upstream pipeline never published it" >&2
-                exit 1
-              fi
-              echo "${repo}: waiting for tag ${VERSION} (attempt ${attempt}/60)"
-              sleep 10
-            done
-            echo "::notice::${repo}: tag ${VERSION} present (attempt ${attempt:-0})"
-          done
+        run: bash hack/release/wait-for-platform-modules.sh
 
       # The platform partials generator reflects against the loft-sh/api +
       # loft-sh/agentapi types pinned in this repo's go.mod. Without bumping
@@ -275,7 +264,7 @@ jobs:
       # logs a warning and no-ops, so this step never breaks the workflow.
       - name: Notify Slack on receiver failure
         if: failure() && steps.classify.outputs.skip != 'true'
-        uses: loft-sh/github-actions/.github/actions/ci-test-notify@85d7023c5749421d369f59430c7849f2d00ad694 # ci-test-notify/v1
+        uses: loft-sh/github-actions/.github/actions/ci-test-notify@b5a50da8a53ca1021b783290630061078bdb12cf # ci-test-notify/v1
         with:
           test-name: "docs-sync receiver — ${{ steps.inputs.outputs.event }} ${{ steps.inputs.outputs.version }}"
           status: failure

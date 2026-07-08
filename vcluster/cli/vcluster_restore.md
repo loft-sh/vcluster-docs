@@ -45,6 +45,7 @@ vcluster restore my-new-name ./my-snapshot.tar.gz --driver docker
       --pod-image-pull-secret stringArray   Additional pull secrets for the created pod
       --pod-mount stringArray               Additional mounts for the created pod. Use form <type>:<name>/<key>:<mount>. Supported types are: pvc, secret, configmap. E.g.: pvc:my-pvc:/path-in-pod or secret:my-secret/my-key:/path-in-pod
       --pod-service-account string          Service account to use for the created pod
+      --snapshot-temp-dir string            Temporary directory for snapshot operations. If set to empty string, the OS default directory for temporary files will be used
       --standalone                          Target the local standalone vCluster on this host
 ```
 

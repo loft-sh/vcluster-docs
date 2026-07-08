@@ -1,0 +1,1184 @@
+---
+title: Gateway API
+sidebar_label: gatewayApi
+sidebar_position: 6
+sidebar_class_name: host-nodes
+description: Configuration for syncing Gateway API resources from the tenant cluster to the control plane cluster.
+---
+
+import GatewayApi from '../../../../../_partials/config/sync/toHost/gatewayApi.mdx'
+import TenancySupport from '../../../../../_fragments/tenancy-support.mdx';
+import InterpolatedCodeBlock from '@site/src/components/InterpolatedCodeBlock';
+
+<TenancySupport hostNodes="true" />
+
+By default, Gateway API sync is disabled.
+
+vCluster can sync the following [Kubernetes Gateway API](https://gateway-api.sigs.k8s.io/) resources from the tenant cluster to the control plane cluster:
+
+- `HTTPRoute` resources with `sync.toHost.gatewayApi.httpRoutes`
+- `TLSRoute` resources with `sync.toHost.gatewayApi.tlsRoutes`
+- `ReferenceGrant` resources with `sync.toHost.gatewayApi.referenceGrants`
+- `BackendTLSPolicy` resources with `sync.toHost.gatewayApi.backendTLSPolicies`
+
+vCluster can also import selected control plane `Gateway` resources into the tenant cluster with `sync.fromHost.gateways`, so tenants can attach routes to platform-managed infrastructure without creating Gateways directly. `sync.toHost.gatewayApi.gateways` exists for tenant-created Gateway sync, but the examples on this page use imported, control plane-owned Gateways. `GRPCRoute`, `TCPRoute`, and `UDPRoute` are not synced.
+
+vCluster also enforces Gateway API reference authorization before sync. Cross-namespace `allowedRoutes`, `ReferenceGrant`, and unsupported `parentRef`/`backendRef` group+kind combinations are validated in the tenant cluster, and rejected resources surface a `RefNotPermitted` or `SyncError` event on the tenant object.
+
+:::info Prerequisites
+Before enabling Gateway API sync, review the [Gateway API prerequisites](../../../../../key-features/gateway-api.mdx#prerequisites). To import a control plane `GatewayClass` into the tenant cluster, also enable [`sync.fromHost.gatewayClasses`](../../from-host/gateway-classes.mdx).
+:::
+
+:::note Version requirement
+Gateway API sync requires a vCluster chart version that includes the resource-specific `sync.toHost.gatewayApi` fields and the `sync.fromHost.gatewayClasses` or `sync.fromHost.gateways` configuration fields. If Helm rejects any field as an additional property, upgrade vCluster before using these examples.
+:::
+
+:::tip Replaces the custom-resource workaround
+For native Gateway API sync, use this configuration instead of [custom-resource syncing](../advanced/custom-resources.mdx). The custom-resource path is now only needed for Gateway API extensions outside the supported set (for example, Istio waypoint Gateways using the `HBONE` listener).
+:::
+
+## Enable Gateway API sync
+
+Enable sync for tenant-created route and policy resources. Do not enable `sync.toHost.gatewayApi.gateways` for these examples: the platform-owned `Gateway` resources are created in the control plane cluster and imported into the tenant cluster with `sync.fromHost.gateways`.
+
+```yaml title="vcluster.yaml"
+sync:
+  toHost:
+    gatewayApi:
+      httpRoutes:
+        enabled: true
+      tlsRoutes:
+        enabled: true
+      backendTLSPolicies:
+        enabled: true
+      referenceGrants:
+        enabled: auto
+  fromHost:
+    gatewayClasses:
+      enabled: true
+      selector:
+        matchLabels:
+          gateway-demo.loft.sh/sync: "yes"
+    gateways:
+      enabled: true
+      selector:
+        matchLabels:
+          gateway-demo.loft.sh/sync: "yes"
+      mappings:
+        byName:
+          "gw-demo-01/edge": "gw-demo-01/edge"
+          "gw-demo-02/edge": "gw-demo-02/edge"
+          "gw-demo-03-edge/shared": "gw-demo-03-edge/shared"
+          "gw-demo-05-routes/edge": "gw-demo-05-routes/edge"
+          "gw-demo-07-edge/edge": "gw-demo-07-edge/edge"
+          "gw-demo-09/edge": "gw-demo-09/edge"
+      allowedRoutes:
+        overrides:
+          - hostNamespace: gw-demo-01
+            name: edge
+            virtualNamespacePolicy:
+              from: Same
+          - hostNamespace: gw-demo-02
+            name: edge
+            virtualNamespacePolicy:
+              from: Same
+          - hostNamespace: gw-demo-03-edge
+            name: shared
+            virtualNamespacePolicy:
+              from: Selector
+              selector:
+                matchLabels:
+                  gateway-demo.loft.sh/route-access: demo-03
+          - hostNamespace: gw-demo-05-routes
+            name: edge
+            virtualNamespacePolicy:
+              from: Same
+          - hostNamespace: gw-demo-07-edge
+            name: edge
+            virtualNamespacePolicy:
+              from: Same
+          - hostNamespace: gw-demo-09
+            name: edge
+            virtualNamespacePolicy:
+              from: Same
+```
+
+The examples on this page use `GatewayClass` names such as `gw-demo-01` and `gw-demo-02`, and create platform-managed Gateways in matching namespaces in the control plane cluster. Create those control plane namespaces and `GatewayClass` resources before applying the example Gateways, or change each `gatewayClassName` to an existing imported `GatewayClass`. Replace `GATEWAY_CONTROLLER_NAME` with the `controllerName` for your Gateway API controller.
+
+<InterpolatedCodeBlock
+  title="Create the example GatewayClasses and namespaces in the control plane cluster"
+  language="bash"
+  code={
+    'export HOST_CONTEXT="[[VAR:HOST_CONTEXT:$(kubectl config current-context)]]"\n' +
+    'export GATEWAY_CONTROLLER_NAME="[[VAR:GATEWAY_CONTROLLER_NAME:gateway.envoyproxy.io/gatewayclass-controller]]"\n' +
+    '\n' +
+    'for GATEWAY_NAMESPACE in [[VAR:GATEWAY_NAMESPACES:gw-demo-01 gw-demo-02 gw-demo-03-edge gw-demo-05-routes gw-demo-07-edge gw-demo-07-certs gw-demo-09]]; do\n' +
+    '  kubectl --context "$HOST_CONTEXT" create namespace "$GATEWAY_NAMESPACE" --dry-run=client -o yaml | kubectl --context "$HOST_CONTEXT" apply -f -\n' +
+    'done\n' +
+    '\n' +
+    'for GATEWAY_CLASS in [[VAR:GATEWAY_CLASSES:gw-demo-01 gw-demo-02 gw-demo-03 gw-demo-05 gw-demo-07 gw-demo-09]]; do\n' +
+    '  kubectl --context "$HOST_CONTEXT" apply -f - <<EOF\n' +
+    'apiVersion: gateway.networking.k8s.io/v1\n' +
+    'kind: GatewayClass\n' +
+    'metadata:\n' +
+    '  name: ${GATEWAY_CLASS}\n' +
+    '  labels:\n' +
+    '    gateway-demo.loft.sh/sync: "yes"\n' +
+    'spec:\n' +
+    '  controllerName: ${GATEWAY_CONTROLLER_NAME}\n' +
+    'EOF\n' +
+    'done'
+  }
+/>
+
+:::note LoadBalancer behavior on single-node clusters
+Most examples create a `Gateway` with listener ports `80` or `443`. On single-node clusters, only one LoadBalancer service can usually bind each host port at a time. Run the examples one at a time, or use controller-specific settings such as NodePort or custom listener ports.
+:::
+
+## Import platform-managed Gateways
+
+Use `sync.fromHost.gateways` when the platform team owns the control plane `Gateway` and tenants should only attach routes to a tenant-facing mirror. `mappings.byName` maps the control plane `namespace/name` to the tenant-facing `namespace/name`. `allowedRoutes` controls the route policy shown on the imported `Gateway` and enforced during route sync.
+
+```yaml title="vcluster.yaml"
+sync:
+  fromHost:
+    gateways:
+      enabled: true
+      mappings:
+        byName:
+          "platform-gateways/public-web": "shared-gateways/shared-web"
+      allowedRoutes:
+        overrides:
+          - hostNamespace: platform-gateways
+            name: public-web
+            allowedHostnames:
+              - "*.team.example.com"
+            virtualNamespacePolicy:
+              from: All
+  toHost:
+    gatewayApi:
+      httpRoutes:
+        enabled: true
+```
+
+With this configuration, tenants reference the imported `Gateway` from routes instead of creating a `Gateway` themselves:
+
+```yaml title="HTTPRoute attached to an imported Gateway"
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: web
+  namespace: app
+spec:
+  hostnames:
+    - api.team.example.com
+  parentRefs:
+    - namespace: shared-gateways
+      name: shared-web
+  rules:
+    - backendRefs:
+        - name: web-svc
+          port: 8080
+```
+
+By default, imported Gateway mirrors hide sensitive control plane fields such as `infrastructure` and listener `certificateRefs`. Set `sync.fromHost.gateways.status.exposeAddresses` or `sync.fromHost.gateways.metadata.exposeSourceGateway` only when tenants need that information.
+
+## Example: HTTP route
+
+The platform team creates the `Gateway` with an HTTP listener in the control plane cluster. vCluster imports that `Gateway` into the tenant cluster, and the tenant creates an `HTTPRoute` that attaches to the imported Gateway and points at a same-namespace Service backend.
+
+Apply the namespace and backend resources first:
+
+```yaml title="HTTP backend in the tenant cluster"
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gw-demo-01
+  labels:
+    gateway-demo.loft.sh/case: "01-http-route-basic"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: basic-echo-html
+  namespace: gw-demo-01
+data:
+  index.html: |
+    gateway demo 01 basic http route
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: basic-echo
+  namespace: gw-demo-01
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: basic-echo
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: basic-echo
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.27-alpine
+          ports:
+            - name: http
+              containerPort: 80
+          volumeMounts:
+            - name: html
+              mountPath: /usr/share/nginx/html/index.html
+              subPath: index.html
+              readOnly: true
+      volumes:
+        - name: html
+          configMap:
+            name: basic-echo-html
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: basic-echo
+  namespace: gw-demo-01
+spec:
+  selector:
+    app.kubernetes.io/name: basic-echo
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+```
+
+Create the platform-managed Gateway in the control plane cluster. vCluster imports this Gateway into the tenant cluster as `gw-demo-01/edge`; tenants attach routes to the imported copy but do not create the Gateway directly.
+
+```yaml title="HTTP Gateway in the control plane cluster"
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: edge
+  namespace: gw-demo-01
+  labels:
+    gateway-demo.loft.sh/sync: "yes"
+spec:
+  gatewayClassName: gw-demo-01
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 80
+      allowedRoutes:
+        kinds:
+          - group: gateway.networking.k8s.io
+            kind: HTTPRoute
+        namespaces:
+          from: Same
+```
+
+Then create only the route in the tenant cluster:
+
+```yaml title="HTTPRoute in the tenant cluster"
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: basic
+  namespace: gw-demo-01
+spec:
+  parentRefs:
+    - name: edge
+      sectionName: http
+  hostnames:
+    - basic.gw-demo.test
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: basic-echo
+          port: 80
+```
+
+Inspect the synced status from the tenant context:
+
+```bash title="Check Gateway and HTTPRoute status"
+kubectl get gateway edge -n gw-demo-01 -o yaml
+kubectl get httproute basic -n gw-demo-01 -o yaml
+```
+
+The `Gateway` should report `Accepted=True` and usually `Programmed=True`. The `HTTPRoute` should report a parent for `edge` with `Accepted=True` and `ResolvedRefs=True`. The control plane-assigned address mirrors back to `status.addresses` on the tenant Gateway.
+
+```bash title="Send traffic through the control plane data plane"
+ADDR=$(kubectl get gateway edge -n gw-demo-01 -o jsonpath='{.status.addresses[0].value}')
+curl -H 'Host: basic.gw-demo.test' "http://${ADDR}:80/"
+```
+
+## Example: TLS passthrough route
+
+`TLSRoute` is supported when the Gateway controller implements it. The platform team defines a `Gateway` with a TLS listener in passthrough mode in the control plane cluster, and the tenant creates a `TLSRoute` that selects the backend by SNI. Because the listener is passthrough, the backend itself terminates TLS. It must present a certificate for the route's hostname.
+
+Apply the namespace first:
+
+```yaml title="TLS passthrough namespace"
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gw-demo-02
+  labels:
+    gateway-demo.loft.sh/case: "02-tls-route-passthrough"
+```
+
+Create a self-signed certificate for the backend hostname and a synced TLS Secret:
+
+```bash title="Create the backend TLS Secret"
+openssl req -x509 -newkey rsa:2048 -nodes -days 365 \
+  -subj "/CN=tls.gw-demo.test" \
+  -addext "subjectAltName=DNS:tls.gw-demo.test" \
+  -keyout tls-echo.key \
+  -out tls-echo.crt
+
+kubectl -n gw-demo-02 create secret tls tls-echo-cert \
+  --cert=tls-echo.crt \
+  --key=tls-echo.key
+kubectl -n gw-demo-02 annotate secret tls-echo-cert vcluster.loft.sh/force-sync=true
+```
+
+Then create the TLS-terminating backend Service:
+
+```yaml title="TLS backend in the tenant cluster"
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: tls-echo-config
+  namespace: gw-demo-02
+data:
+  Caddyfile: |
+    {
+      auto_https off
+    }
+
+    :8443 {
+      tls /etc/certs/tls.crt /etc/certs/tls.key
+      respond "gateway demo 02 tls passthrough\n"
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tls-echo
+  namespace: gw-demo-02
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: tls-echo
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: tls-echo
+    spec:
+      containers:
+        - name: caddy
+          image: caddy:2.8-alpine
+          ports:
+            - name: https
+              containerPort: 8443
+          volumeMounts:
+            - name: caddy-config
+              mountPath: /etc/caddy
+              readOnly: true
+            - name: tls-echo-cert
+              mountPath: /etc/certs
+              readOnly: true
+      volumes:
+        - name: caddy-config
+          configMap:
+            name: tls-echo-config
+        - name: tls-echo-cert
+          secret:
+            secretName: tls-echo-cert
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tls-echo
+  namespace: gw-demo-02
+spec:
+  selector:
+    app.kubernetes.io/name: tls-echo
+  ports:
+    - name: https
+      port: 443
+      targetPort: https
+```
+
+Create the platform-managed TLS Gateway in the control plane cluster. vCluster imports it into the tenant cluster as `gw-demo-02/edge`.
+
+```yaml title="TLS passthrough Gateway in the control plane cluster"
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: edge
+  namespace: gw-demo-02
+  labels:
+    gateway-demo.loft.sh/sync: "yes"
+spec:
+  gatewayClassName: gw-demo-02
+  listeners:
+    - name: tls
+      protocol: TLS
+      port: 443
+      hostname: tls.gw-demo.test
+      tls:
+        mode: Passthrough
+      allowedRoutes:
+        kinds:
+          - group: gateway.networking.k8s.io
+            kind: TLSRoute
+        namespaces:
+          from: Same
+```
+
+Then create only the route in the tenant cluster:
+
+```yaml title="TLSRoute in the tenant cluster"
+apiVersion: gateway.networking.k8s.io/v1
+kind: TLSRoute
+metadata:
+  name: passthrough
+  namespace: gw-demo-02
+spec:
+  parentRefs:
+    - name: edge
+      sectionName: tls
+  hostnames:
+    - tls.gw-demo.test
+  rules:
+    - name: tls-echo
+      backendRefs:
+        - name: tls-echo
+          port: 443
+```
+
+```bash title="Verify TLSRoute end-to-end"
+ADDR=$(kubectl get gateway edge -n gw-demo-02 -o jsonpath='{.status.addresses[0].value}')
+curl -k --connect-to "tls.gw-demo.test:443:${ADDR}:443" "https://tls.gw-demo.test:443/"
+```
+
+:::note Controller support varies
+TLSRoute is not part of the Gateway API standard channel. Confirm support in the Gateway controller before relying on this example.
+:::
+
+## Cross-namespace routing
+
+Gateway API distinguishes three cross-namespace references: route attachment to a Gateway, backend references from a route, and TLS certificate references on a Gateway listener. vCluster mirrors the upstream rules: routes must be allowed by the Gateway's `allowedRoutes`, and cross-namespace backend or certificate references must be granted by a `ReferenceGrant` in the target namespace.
+
+### Route attachment by namespace selector
+
+The platform-managed Gateway lives in one namespace in the control plane cluster and is imported into the tenant cluster. Its tenant-facing route policy accepts routes from tenant namespaces whose label matches the selector.
+
+Apply the edge namespace, route namespace, and backend resources first:
+
+```yaml title="Selected namespace and backend resources"
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gw-demo-03-edge
+  labels:
+    gateway-demo.loft.sh/case: "03-cross-namespace-route-selector"
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gw-demo-03-apps
+  labels:
+    gateway-demo.loft.sh/case: "03-cross-namespace-route-selector"
+    gateway-demo.loft.sh/route-access: demo-03
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: selected-echo-html
+  namespace: gw-demo-03-apps
+data:
+  index.html: |
+    gateway demo 03 selected namespace route
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: selected-echo
+  namespace: gw-demo-03-apps
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: selected-echo
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: selected-echo
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.27-alpine
+          ports:
+            - name: http
+              containerPort: 80
+          volumeMounts:
+            - name: html
+              mountPath: /usr/share/nginx/html/index.html
+              subPath: index.html
+              readOnly: true
+      volumes:
+        - name: html
+          configMap:
+            name: selected-echo-html
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: selected-echo
+  namespace: gw-demo-03-apps
+spec:
+  selector:
+    app.kubernetes.io/name: selected-echo
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+```
+
+Create the platform-managed Gateway in the control plane cluster. vCluster imports it into the tenant cluster as `gw-demo-03-edge/shared`; the `sync.fromHost.gateways.allowedRoutes` override exposes the tenant-facing namespace selector.
+
+```yaml title="Gateway accepting selected tenant namespaces in the control plane cluster"
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: shared
+  namespace: gw-demo-03-edge
+  labels:
+    gateway-demo.loft.sh/sync: "yes"
+spec:
+  gatewayClassName: gw-demo-03
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 80
+      allowedRoutes:
+        kinds:
+          - group: gateway.networking.k8s.io
+            kind: HTTPRoute
+        namespaces:
+          from: Selector
+          selector:
+            matchLabels:
+              gateway-demo.loft.sh/route-access: demo-03
+```
+
+The tenant route then targets the imported Gateway by name and namespace:
+
+```yaml title="HTTPRoute in an allowed namespace"
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: selected
+  namespace: gw-demo-03-apps
+spec:
+  parentRefs:
+    - name: shared
+      namespace: gw-demo-03-edge
+      sectionName: http
+  hostnames:
+    - selector.gw-demo.test
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: selected-echo
+          port: 80
+```
+
+If the route's namespace does not match the selector, vCluster does not sync the route and emits a `RefNotPermitted` event on the tenant object. See [Reference authorization](#reference-authorization).
+
+### Backend reference via `ReferenceGrant`
+
+When an `HTTPRoute` or `TLSRoute` points at a Service in a different namespace, that target namespace must contain a `ReferenceGrant` permitting the route's namespace.
+
+Apply the route namespace, backend namespace, and backend resources first:
+
+```yaml title="Cross-namespace backend resources"
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gw-demo-05-routes
+  labels:
+    gateway-demo.loft.sh/case: "05-cross-namespace-backend-referencegrant"
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gw-demo-05-backends
+  labels:
+    gateway-demo.loft.sh/case: "05-cross-namespace-backend-referencegrant"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backend-echo-html
+  namespace: gw-demo-05-backends
+data:
+  index.html: |
+    gateway demo 05 cross namespace backend allowed
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend-echo
+  namespace: gw-demo-05-backends
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: backend-echo
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: backend-echo
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.27-alpine
+          ports:
+            - name: http
+              containerPort: 80
+          volumeMounts:
+            - name: html
+              mountPath: /usr/share/nginx/html/index.html
+              subPath: index.html
+              readOnly: true
+      volumes:
+        - name: html
+          configMap:
+            name: backend-echo-html
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-echo
+  namespace: gw-demo-05-backends
+spec:
+  selector:
+    app.kubernetes.io/name: backend-echo
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+```
+
+Create the platform-managed Gateway in the control plane cluster. vCluster imports it into the tenant cluster as `gw-demo-05-routes/edge`.
+
+```yaml title="HTTP Gateway in the control plane cluster"
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: edge
+  namespace: gw-demo-05-routes
+  labels:
+    gateway-demo.loft.sh/sync: "yes"
+spec:
+  gatewayClassName: gw-demo-05
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 80
+      allowedRoutes:
+        kinds:
+          - group: gateway.networking.k8s.io
+            kind: HTTPRoute
+        namespaces:
+          from: Same
+```
+
+Then create the tenant `ReferenceGrant` and `HTTPRoute`:
+
+```yaml title="HTTPRoute referencing a backend in another tenant namespace"
+apiVersion: gateway.networking.k8s.io/v1
+kind: ReferenceGrant
+metadata:
+  name: allow-routes-to-echo
+  namespace: gw-demo-05-backends
+spec:
+  from:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      namespace: gw-demo-05-routes
+  to:
+    - group: ""
+      kind: Service
+      name: backend-echo
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: backend-grant
+  namespace: gw-demo-05-routes
+spec:
+  parentRefs:
+    - name: edge
+      sectionName: http
+  hostnames:
+    - backend-grant.gw-demo.test
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: backend-echo
+          namespace: gw-demo-05-backends
+          port: 80
+```
+
+:::note How `ReferenceGrant` is enforced
+vCluster validates `ReferenceGrant` differently depending on the tenancy mode:
+
+- **Single-namespace target mode (default)**: vCluster evaluates the tenant `ReferenceGrant` itself. If the grant authorizes the reference, vCluster syncs the route; if not, it emits `RefNotPermitted` on the tenant object and does not sync. The `ReferenceGrant` is not synced to the control plane cluster: every tenant namespace collapses into the configured target namespace, so the cross-namespace backend reference becomes a same-namespace request that the Gateway controller does not need a grant for.
+- **Multi-namespace target mode** (`sync.toHost.namespaces.enabled: true` with `mappings.byName`): vCluster syncs the `ReferenceGrant` to the control plane cluster alongside the route, and the Gateway controller performs the authorization check.
+
+Either mode supports cross-namespace `ReferenceGrant`. Choose multi-namespace mode if you want the Gateway controller to enforce the check itself, or to keep per-namespace status visibility in the control plane cluster.
+:::
+
+### TLS certificate via `ReferenceGrant`
+
+An HTTPS `Gateway` listener can reference a TLS Secret in a separate namespace if that namespace contains a `ReferenceGrant` for the Gateway. Because the Gateway is platform-managed in these examples, create the certificate Secret and certificate `ReferenceGrant` in the control plane cluster, not in the tenant cluster.
+
+Create the Gateway and certificate namespaces in the control plane cluster first:
+
+```yaml title="HTTPS Gateway namespaces in the control plane cluster"
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gw-demo-07-edge
+  labels:
+    gateway-demo.loft.sh/case: "07-cross-namespace-certificate-referencegrant"
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gw-demo-07-certs
+  labels:
+    gateway-demo.loft.sh/case: "07-cross-namespace-certificate-referencegrant"
+```
+
+Create the TLS Secret for the HTTPS listener in the control plane cluster:
+
+<InterpolatedCodeBlock
+  title="Create the cross-namespace certificate Secret in the control plane cluster"
+  language="bash"
+  code={
+    'openssl req -x509 -newkey rsa:2048 -nodes -days 365 \\\n' +
+    '  -subj "/CN=cert-grant.gw-demo.test" \\\n' +
+    '  -addext "subjectAltName=DNS:cert-grant.gw-demo.test" \\\n' +
+    '  -keyout edge.key \\\n' +
+    '  -out edge.crt\n' +
+    '\n' +
+    'kubectl --context "[[VAR:HOST_CONTEXT:$(kubectl config current-context)]]" -n gw-demo-07-certs create secret tls edge-cert \\\n' +
+    '  --cert=edge.crt \\\n' +
+    '  --key=edge.key'
+  }
+/>
+
+
+Then create the tenant namespace and backend resources for the HTTPS route:
+
+```yaml title="HTTPS route backend resources in the tenant cluster"
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gw-demo-07-edge
+  labels:
+    gateway-demo.loft.sh/case: "07-cross-namespace-certificate-referencegrant"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: https-echo-html
+  namespace: gw-demo-07-edge
+data:
+  index.html: |
+    gateway demo 07 cross namespace certificate allowed
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: https-echo
+  namespace: gw-demo-07-edge
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: https-echo
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: https-echo
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.27-alpine
+          ports:
+            - name: http
+              containerPort: 80
+          volumeMounts:
+            - name: html
+              mountPath: /usr/share/nginx/html/index.html
+              subPath: index.html
+              readOnly: true
+      volumes:
+        - name: html
+          configMap:
+            name: https-echo-html
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: https-echo
+  namespace: gw-demo-07-edge
+spec:
+  selector:
+    app.kubernetes.io/name: https-echo
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+```
+
+Create the certificate `ReferenceGrant` and platform-managed Gateway in the control plane cluster. vCluster imports the Gateway into the tenant cluster as `gw-demo-07-edge/edge`.
+
+```yaml title="HTTPS Gateway with cross-namespace certificate in the control plane cluster"
+apiVersion: gateway.networking.k8s.io/v1
+kind: ReferenceGrant
+metadata:
+  name: allow-edge-cert
+  namespace: gw-demo-07-certs
+spec:
+  from:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      namespace: gw-demo-07-edge
+  to:
+    - group: ""
+      kind: Secret
+      name: edge-cert
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: edge
+  namespace: gw-demo-07-edge
+  labels:
+    gateway-demo.loft.sh/sync: "yes"
+spec:
+  gatewayClassName: gw-demo-07
+  listeners:
+    - name: https
+      protocol: HTTPS
+      port: 443
+      hostname: cert-grant.gw-demo.test
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            name: edge-cert
+            namespace: gw-demo-07-certs
+      allowedRoutes:
+        kinds:
+          - group: gateway.networking.k8s.io
+            kind: HTTPRoute
+        namespaces:
+          from: Same
+```
+
+Then create only the route in the tenant cluster:
+
+```yaml title="HTTPRoute through the HTTPS listener in the tenant cluster"
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: https-app
+  namespace: gw-demo-07-edge
+spec:
+  parentRefs:
+    - name: edge
+      sectionName: https
+  hostnames:
+    - cert-grant.gw-demo.test
+  rules:
+    - backendRefs:
+        - name: https-echo
+          port: 80
+```
+
+## Reference authorization
+
+vCluster validates tenant-owned Gateway API references before syncing them to the control plane cluster. Resources with missing grants, unresolved references, or unsupported groups and kinds are not synced. Instead, vCluster records a Warning event on the tenant object so the reason stays close to the user.
+
+| Misconfiguration                                                                       | Tenant event reason   | Inspect                                                                              |
+| -------------------------------------------------------------------------------------- | --------------------- | ------------------------------------------------------------------------------------ |
+| Route attaches to a Gateway whose `allowedRoutes` does not permit its namespace        | `RefNotPermitted`     | `kubectl describe httproute <name> -n <route-ns>`                                    |
+| Route references a Service in another namespace without a matching `ReferenceGrant`    | `RefNotPermitted`     | `kubectl describe httproute <name> -n <route-ns>`                                    |
+| A tenant-owned route or policy references another namespace without a matching `ReferenceGrant` | `RefNotPermitted` | `kubectl describe httproute <name> -n <route-ns>`                                    |
+| `BackendTLSPolicy` references a CA ConfigMap that has no synced control plane object   | `SyncError`           | `kubectl describe backendtlspolicy <name> -n <policy-ns>`                            |
+| Route uses an unsupported `parentRef` or `backendRef` group+kind                       | `SyncError`           | `kubectl describe httproute <name> -n <route-ns>`                                    |
+
+For deeper recipes (including how to recover from each event), see [Gateway API sync troubleshooting](../../../../../troubleshoot/gateway-api-sync.mdx).
+
+## Example: `BackendTLSPolicy`
+
+`BackendTLSPolicy` tells the Gateway controller to originate TLS to a backend and validate it against a CA bundle. vCluster syncs the policy and translates the CA ConfigMap reference for the control plane cluster. The policy is only effective if the Gateway controller implements `BackendTLSPolicy`.
+
+Apply the namespace first:
+
+```yaml title="BackendTLSPolicy namespace"
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gw-demo-09
+  labels:
+    gateway-demo.loft.sh/case: "09-backend-tls-policy"
+```
+
+Create a backend certificate and synced CA bundle:
+
+```bash title="Create backend TLS material"
+openssl req -x509 -newkey rsa:2048 -nodes -days 365 \
+  -subj "/CN=backend.gw-demo.test" \
+  -addext "subjectAltName=DNS:backend.gw-demo.test" \
+  -keyout backend.key \
+  -out backend.crt
+
+kubectl -n gw-demo-09 create secret tls backend-cert \
+  --cert=backend.crt \
+  --key=backend.key
+kubectl -n gw-demo-09 annotate secret backend-cert vcluster.loft.sh/force-sync=true
+
+kubectl -n gw-demo-09 create configmap backend-ca --from-file=ca.crt=backend.crt
+kubectl -n gw-demo-09 annotate configmap backend-ca vcluster.loft.sh/force-sync=true
+```
+
+Then create the TLS-speaking backend Service:
+
+```yaml title="TLS backend resources"
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backend-caddy-config
+  namespace: gw-demo-09
+data:
+  Caddyfile: |
+    {
+      auto_https off
+    }
+
+    :8443 {
+      tls /etc/certs/tls.crt /etc/certs/tls.key
+      respond "gateway demo 09 backend tls policy\n"
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: secure-backend
+  namespace: gw-demo-09
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: secure-backend
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: secure-backend
+    spec:
+      containers:
+        - name: caddy
+          image: caddy:2.8-alpine
+          ports:
+            - name: https
+              containerPort: 8443
+          volumeMounts:
+            - name: caddy-config
+              mountPath: /etc/caddy
+              readOnly: true
+            - name: backend-cert
+              mountPath: /etc/certs
+              readOnly: true
+      volumes:
+        - name: caddy-config
+          configMap:
+            name: backend-caddy-config
+        - name: backend-cert
+          secret:
+            secretName: backend-cert
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: secure-backend
+  namespace: gw-demo-09
+spec:
+  selector:
+    app.kubernetes.io/name: secure-backend
+  ports:
+    - name: https
+      port: 443
+      targetPort: https
+      appProtocol: https
+```
+
+Create the platform-managed Gateway in the control plane cluster. vCluster imports it into the tenant cluster as `gw-demo-09/edge`.
+
+```yaml title="HTTP Gateway in the control plane cluster"
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: edge
+  namespace: gw-demo-09
+  labels:
+    gateway-demo.loft.sh/sync: "yes"
+spec:
+  gatewayClassName: gw-demo-09
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 80
+      hostname: backend-tls.gw-demo.test
+      allowedRoutes:
+        kinds:
+          - group: gateway.networking.k8s.io
+            kind: HTTPRoute
+        namespaces:
+          from: Same
+```
+
+Then create the route and `BackendTLSPolicy` in the tenant cluster:
+
+```yaml title="HTTPRoute with BackendTLSPolicy in the tenant cluster"
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: backend-tls
+  namespace: gw-demo-09
+spec:
+  parentRefs:
+    - name: edge
+      sectionName: http
+  hostnames:
+    - backend-tls.gw-demo.test
+  rules:
+    - backendRefs:
+        - name: secure-backend
+          port: 443
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: BackendTLSPolicy
+metadata:
+  name: secure-backend
+  namespace: gw-demo-09
+spec:
+  targetRefs:
+    - group: ""
+      kind: Service
+      name: secure-backend
+  validation:
+    hostname: backend.gw-demo.test
+    caCertificateRefs:
+      - group: ""
+        kind: ConfigMap
+        name: backend-ca
+```
+
+A successful policy reports an `ancestor` condition with `Accepted=True` against the route's parent `Gateway`. If the referenced CA ConfigMap is not synced to the control plane cluster, vCluster emits a `SyncError` event instead. See [`SyncError: referenced ConfigMap has no synced control plane object`](../../../../../troubleshoot/gateway-api-sync.mdx#syncerror-missing-ca-configmap).
+
+## CLI guidance
+
+### Connect to the tenant cluster
+
+Tenant-owned Gateway API resources such as routes and policies live in the tenant cluster. Imported `Gateway` resources also appear in the tenant cluster, but their source of truth is the control plane cluster. Connect to the tenant with the vCluster CLI before issuing tenant-side `kubectl` commands:
+
+<InterpolatedCodeBlock
+  title="Open a tenant kubeconfig context"
+  language="bash"
+  code="vcluster connect [[VAR:VCLUSTER_NAME:my-vcluster]] --namespace [[VAR:VCLUSTER_NAMESPACE:my-vcluster-host-ns]]"
+/>
+
+`vcluster connect` writes a context entry to your kubeconfig and switches the current context. To run side-by-side checks against the control plane cluster, export both contexts explicitly:
+
+<InterpolatedCodeBlock
+  title="Use both control plane and tenant contexts"
+  language="bash"
+  code={
+    'export TENANT_CONTEXT="[[VAR:TENANT_CONTEXT:$(kubectl config current-context)]]"\n' +
+    'export HOST_CONTEXT="[[VAR:HOST_CONTEXT:your-control-plane-kube-context]]"'
+  }
+/>
+
+There is no separate `vcluster` verb for Gateway API resources. Inspect imported Gateways and tenant-created routes with `kubectl` against the tenant context; the control plane data plane is reached using the address from `status.addresses` on the imported tenant `Gateway`.
+
+### Inspect Gateway API resources
+
+```bash title="List Gateway API resources across all tenant namespaces"
+kubectl --context "$TENANT_CONTEXT" get gateway,httproute,tlsroute,backendtlspolicy -A
+```
+
+<InterpolatedCodeBlock
+  title="Show Gateway and route status"
+  language="bash"
+  code={
+    'kubectl --context "$TENANT_CONTEXT" -n [[VAR:NAMESPACE:gw-demo-01]] get gateway [[VAR:GATEWAY_NAME:edge]] -o yaml\n' +
+    'kubectl --context "$TENANT_CONTEXT" -n [[VAR:NAMESPACE:gw-demo-01]] describe httproute [[VAR:HTTPROUTE_NAME:basic]]'
+  }
+/>
+
+<InterpolatedCodeBlock
+  title="See vCluster-emitted sync warnings"
+  language="bash"
+  code={'kubectl --context "$TENANT_CONTEXT" -n [[VAR:NAMESPACE:gw-demo-01]] get events --field-selector type=Warning'}
+/>
+
+`ReferenceGrant` has no status, so confirm it by checking that the dependent route, Gateway, or `BackendTLSPolicy` reaches `Accepted=True` and `ResolvedRefs=True`.
+
+### Discover the control plane-assigned address
+
+<InterpolatedCodeBlock
+  title="Get the control plane address mirrored to the tenant Gateway"
+  language="bash"
+  code={
+    'kubectl --context "$TENANT_CONTEXT" -n [[VAR:NAMESPACE:gw-demo-01]] get gateway [[VAR:GATEWAY_NAME:edge]] \\\n' +
+    "  -o jsonpath='{.status.addresses[0].value}'"
+  }
+/>
+
+The address is whatever the Gateway controller assigned (LoadBalancer IP, NodePort, or controller-published hostname). Tenant clients curl that address directly; vCluster does not proxy data-plane traffic.
+
+## Patches
+
+Patch lists are resource-specific. For these examples, use `sync.fromHost.gateways.patches` for imported control plane `Gateway` resources and `sync.toHost.gatewayApi.httpRoutes.patches`, `tlsRoutes.patches`, `backendTLSPolicies.patches`, or `referenceGrants.patches` for tenant-created resources. Each list accepts the same expression and reference patch shapes.
+
+```yaml title="Patch imported Gateway hostnames during sync"
+sync:
+  fromHost:
+    gateways:
+      enabled: true
+      patches:
+        - path: spec.listeners[*].hostname
+          expression: '"tenant-" + value'
+          reverseExpression: 'value.replace(/^tenant-/, "")'
+```
+
+## Config reference
+
+<GatewayApi/>

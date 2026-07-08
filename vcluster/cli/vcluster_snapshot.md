@@ -44,6 +44,7 @@ vcluster snapshot my-vcluster container:///data/my-local-snapshot.tar.gz
       --pod-mount stringArray                 Additional mounts for the created pod. Use form <type>:<name>/<key>:<mount>. Supported types are: pvc, secret, configmap. E.g.: pvc:my-pvc:/path-in-pod or secret:my-secret/my-key:/path-in-pod
       --pod-service-account string            Service account to use for the created pod
       --server-side-encryption string         AWS Server-Side encryption algorithm
+      --snapshot-temp-dir string              Temporary directory for snapshot operations. If set to empty string, the OS default directory for temporary files will be used
       --standalone                            Target the local standalone vCluster on this host
 ```
 
