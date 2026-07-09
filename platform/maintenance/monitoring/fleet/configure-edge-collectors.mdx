@@ -1,0 +1,143 @@
+---
+title: Configure edge collectors
+sidebar_label: Configure collectors
+sidebar_position: 4
+description: Configure OpenTelemetry Collectors to send fleet metrics to the vCluster observability Write Gateway.
+---
+
+Edge collectors scrape or receive metrics near the workloads, then send OTLP metrics to
+the Write Gateway. Each collector request must include a bearer token and scope headers
+that match a `metrics-writer` access key.
+
+## Gateway endpoints
+
+Inside the Platform cluster, the fleet gateway Service is:
+
+```text
+gateway-fleet-observability.vcluster-platform.svc.cluster.local
+```
+
+Use one of these OTLP endpoints:
+
+| Protocol | Endpoint |
+|---|---|
+| OTLP HTTP | `http://gateway-fleet-observability.vcluster-platform.svc.cluster.local:4318` |
+| OTLP gRPC | `gateway-fleet-observability.vcluster-platform.svc.cluster.local:4317` |
+
+If you enabled gateway serving TLS, use `https` for OTLP HTTP and TLS for OTLP gRPC.
+The OpenTelemetry Collector `otlphttp` exporter accepts the base URL shown above.
+Direct OTLP HTTP clients send metrics to the `/v1/metrics` path on that host.
+
+Collectors outside the Platform cluster need a network path to this Service. Expose the
+gateway through your normal cluster networking or ingress path, then use that reachable
+host in the collector exporter endpoint.
+
+## Store the writer key
+
+Create a Secret for the collector:
+
+```yaml title="metrics-writer-token.yaml"
+apiVersion: v1
+kind: Secret
+metadata:
+  name: metrics-writer-token
+  namespace: observability
+type: Opaque
+stringData:
+  token: REPLACE_WITH_METRICS_WRITER_KEY
+```
+
+Mount or project this Secret into your collector pod and expose it as an environment
+variable or file.
+
+## Tenant cluster collector
+
+Use tenant scope headers when a collector writes metrics for a specific tenant cluster.
+
+```yaml title="otel-collector-tenant-exporter.yaml"
+exporters:
+  otlphttp/fleet:
+    endpoint: http://gateway-fleet-observability.vcluster-platform.svc.cluster.local:4318
+    headers:
+      Authorization: Bearer ${env:METRICS_WRITER_TOKEN}
+      X-Vcluster-Platform-Project: my-project
+      X-Vcluster-Platform-Instance: my-vcluster
+
+service:
+  pipelines:
+    metrics:
+      receivers: [prometheus]
+      processors: [batch]
+      exporters: [otlphttp/fleet]
+```
+
+The `metrics-writer` key must include a matching `spec.scope.virtualClusters` entry.
+
+## Control Plane Cluster collector
+
+Use cluster scope headers when a collector writes metrics for a Control Plane Cluster.
+
+```yaml title="otel-collector-cluster-exporter.yaml"
+exporters:
+  otlphttp/fleet:
+    endpoint: http://gateway-fleet-observability.vcluster-platform.svc.cluster.local:4318
+    headers:
+      Authorization: Bearer ${env:METRICS_WRITER_TOKEN}
+      X-Vcluster-Platform-Cluster: local-cluster
+
+service:
+  pipelines:
+    metrics:
+      receivers: [prometheus]
+      processors: [batch]
+      exporters: [otlphttp/fleet]
+```
+
+The `metrics-writer` key must include a matching `spec.scope.clusters` entry.
+
+## Scrape custom targets
+
+Use the collector's `prometheus` receiver to scrape exporters such as kubelet,
+cAdvisor, DCGM exporter, or application endpoints. The gateway does not require a
+specific scrape receiver; it only requires OTLP metrics with valid authentication and
+scope.
+
+Example DCGM scrape job:
+
+```yaml title="dcgm-prometheus-receiver.yaml"
+receivers:
+  prometheus:
+    config:
+      scrape_configs:
+        - job_name: dcgm-exporter
+          kubernetes_sd_configs:
+            - role: pod
+          relabel_configs:
+            - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name]
+              action: keep
+              regex: dcgm-exporter
+            - source_labels: [__meta_kubernetes_pod_ip]
+              target_label: __address__
+              replacement: ${1}:9400
+```
+
+## Protect platform labels
+
+Do not set labels with the `vcluster_platform_*` prefix in edge collectors. The Write
+Gateway strips this namespace from incoming resource, scope, and datapoint attributes
+before stamping authenticated labels.
+
+Use your own label prefix for application or infrastructure dimensions.
+
+## Verify writes
+
+Check the Write Gateway metrics endpoint:
+
+```bash
+GATEWAY_POD=$(kubectl get pod -n vcluster-platform -l app.kubernetes.io/name=gateway,app.kubernetes.io/instance=fleet-observability -o jsonpath='{.items[0].metadata.name}')
+kubectl port-forward -n vcluster-platform pod/$GATEWAY_POD 8889:8889
+curl http://127.0.0.1:8889/metrics
+```
+
+Then query through the Query Proxy as described in
+[Query fleet metrics](./query-fleet-metrics.mdx).

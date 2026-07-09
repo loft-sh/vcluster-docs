@@ -1,0 +1,141 @@
+---
+title: Query fleet metrics
+sidebar_label: Query metrics
+sidebar_position: 5
+description: Query fleet monitoring data through the Query Proxy with scoped headers and platform-owned labels.
+---
+
+The Query Proxy exposes a Prometheus-compatible HTTP API on the gateway Service. It
+authorizes each request with Platform, injects the requested scope into PromQL, and
+forwards the rewritten query to the metrics backend.
+
+## Endpoint
+
+Inside the Platform cluster:
+
+```text
+http://gateway-fleet-observability.vcluster-platform.svc.cluster.local:8081/api/v1/query
+```
+
+If gateway TLS is enabled, use `https`.
+
+## Query a tenant cluster
+
+Send a reader token and tenant scope headers:
+
+```bash
+curl -G \
+  -H "Authorization: Bearer $METRICS_READER_TOKEN" \
+  -H "X-Vcluster-Platform-Project: my-project" \
+  -H "X-Vcluster-Platform-Instance: my-vcluster" \
+  --data-urlencode 'query=sum(rate(container_cpu_usage_seconds_total[5m]))' \
+  http://gateway-fleet-observability.vcluster-platform.svc.cluster.local:8081/api/v1/query
+```
+
+The Query Proxy injects tenant scope into vector selectors before forwarding the query.
+The backend receives an equivalent query constrained by:
+
+```promql
+vcluster_platform_project="my-project",
+vcluster_platform_instance="my-vcluster"
+```
+
+## Query a Control Plane Cluster
+
+```bash
+curl -G \
+  -H "Authorization: Bearer $METRICS_READER_TOKEN" \
+  -H "X-Vcluster-Platform-Cluster: local-cluster" \
+  --data-urlencode 'query=sum(rate(apiserver_request_total[5m]))' \
+  http://gateway-fleet-observability.vcluster-platform.svc.cluster.local:8081/api/v1/query
+```
+
+The backend query is constrained by:
+
+```promql
+vcluster_platform_cluster="local-cluster"
+```
+
+## Use labels in PromQL
+
+You can also include scope labels directly in PromQL. Equality matchers and literal
+alternation regex matchers are allowed on scope-controlling labels.
+
+```promql
+sum by (vcluster_platform_project, vcluster_platform_instance) (
+  rate(container_cpu_usage_seconds_total{
+    vcluster_platform_project="my-project",
+    vcluster_platform_instance=~"api|worker"
+  }[5m])
+)
+```
+
+The Query Proxy rejects unsafe scope matchers such as `!=`, `!~`, `.*`, or regexes
+that are not top-level literal alternations. Descriptive labels can use normal PromQL
+matchers because they do not drive authorization.
+
+## Grafana datasources
+
+When Platform reconciles Grafana datasources, it creates Prometheus datasource
+ConfigMaps that point to the Query Proxy. Tenant cluster datasources set:
+
+```yaml
+jsonData:
+  httpHeaderName1: X-Vcluster-Platform-Project
+  httpHeaderName2: X-Vcluster-Platform-Instance
+  keepCookies:
+    - loft_access_key
+secureJsonData:
+  httpHeaderValue1: my-project
+  httpHeaderValue2: my-vcluster
+```
+
+Control Plane Cluster datasources set `X-Vcluster-Platform-Cluster`. The fleet-wide
+platform admin datasource omits scope headers and relies on the signed-in Platform
+user. Only Platform admins can use the unscoped admin path.
+
+## Example queries
+
+CPU by tenant cluster:
+
+```promql
+sum by (vcluster_platform_project, vcluster_platform_instance) (
+  rate(container_cpu_usage_seconds_total[5m])
+)
+```
+
+Memory by tenant cluster:
+
+```promql
+sum by (vcluster_platform_project, vcluster_platform_instance) (
+  container_memory_working_set_bytes
+)
+```
+
+API request rate by cluster:
+
+```promql
+sum by (vcluster_platform_cluster, verb) (
+  rate(apiserver_request_total[5m])
+)
+```
+
+GPU utilization by tenant cluster, when DCGM metrics are collected:
+
+```promql
+avg by (vcluster_platform_project, vcluster_platform_instance, gpu) (
+  DCGM_FI_DEV_GPU_UTIL
+)
+```
+
+## Query failures
+
+If a query is rejected, check:
+
+- The bearer token has `metrics-reader` scope or the signed-in user can read metrics
+  for the requested resource.
+- The scope headers match the key scope.
+- Scope-controlling label matchers use `=` or a literal `=~` alternation.
+- The Platform API is reachable from the Query Proxy.
+
+For more details, see [Troubleshooting](./troubleshooting.mdx).

@@ -1,0 +1,105 @@
+---
+title: Fleet monitoring
+sidebar_label: Overview
+sidebar_position: 1
+description: Monitor tenant clusters across your vCluster Platform fleet with an observability gateway, scoped access keys, and platform-owned metric labels.
+---
+
+Fleet monitoring gives platform operators a central metrics path for tenant clusters and
+Control Plane Clusters. Metrics flow through a vCluster Platform observability gateway
+before they reach your metrics backend. The gateway authenticates writes, stamps
+platform-owned labels, and exposes a scoped Prometheus query API for Grafana and other
+read clients.
+
+Use this guide when you need fleet-wide visibility across projects, tenant clusters,
+shared nodes, private nodes, or connected clusters.
+
+:::info Phase 1 scope
+Phase 1 provides the gateway, query proxy, metrics access-key roles, label contract,
+and manual configuration path for collectors and backends. Platform automation for
+per-tenant connector selection, key generation, and fully managed dashboards is planned
+as follow-up work.
+:::
+
+## Architecture
+
+```mermaid
+flowchart LR
+    subgraph Edge["Edge collectors"]
+      CP["Control Plane Cluster collector"]
+      VC["Tenant cluster collector"]
+      GPU["Optional GPU or custom exporters"]
+    end
+
+    subgraph Platform["vCluster Platform namespace"]
+      WG["Write Gateway"]
+      QP["Query Proxy"]
+      API["Platform API"]
+    end
+
+    Backend["Metrics backend"]
+    Grafana["Grafana or PromQL client"]
+
+    CP -->|OTLP + metrics-writer key| WG
+    VC -->|OTLP + metrics-writer key| WG
+    GPU -->|scraped by collector| CP
+    WG -->|OTLP metrics| Backend
+    WG -->|SSAR metricswrite| API
+    QP -->|PromQL| Backend
+    QP -->|SSAR metricsread| API
+    Grafana -->|Prometheus API + scope| QP
+```
+
+The architecture has three main parts:
+
+- **Edge collectors** collect metrics from Control Plane Clusters, tenant clusters, and
+  optional exporters. They send OTLP metrics to the Write Gateway.
+- **Write Gateway** authenticates each metrics write with a `metrics-writer` access
+  key, authorizes the requested scope with the Platform API, strips caller-supplied
+  platform labels, and stamps the authenticated `vcluster_platform_*` labels.
+- **Query Proxy** exposes a Prometheus-compatible read API. It authenticates each read,
+  authorizes the requested scope with a `metrics-reader` key or user session, rewrites
+  PromQL so reads stay scope-bound, and forwards the query to your metrics backend.
+
+## What Platform manages
+
+An observability connector Secret tells Platform how to reach your metrics backend.
+When the connector is present, Platform reconciles the gateway Deployment, Service,
+ServiceAccount, RBAC, collector ConfigMap, and Grafana datasource ConfigMaps.
+
+Platform does not create the metrics backend in Phase 1. You must provide a backend
+that can ingest OTLP metrics and serve the Prometheus HTTP API. You must also configure
+the edge collectors that send metrics to the gateway.
+
+## Security model
+
+Fleet monitoring does not rely on backend tenant isolation. The gateway and query proxy
+are the enforcement layer.
+
+- Metrics writers must authenticate with an access key that has the `metrics-writer`
+  role and a matching cluster or tenant cluster scope.
+- Metrics readers must authenticate with a `metrics-reader` key, a user access key, or
+  a Grafana session passed through to Platform.
+- Platform authorizes both read and write requests with SelfSubjectAccessReview.
+- The Write Gateway owns the full `vcluster_platform_*` label namespace. Caller-supplied
+  labels with that prefix, or dotted variants that would sanitize to that prefix, are
+  removed before authenticated labels are added.
+- Positive authorization results are cached for a short TTL. On Platform outage, cached
+  decisions expire and the system fails closed.
+
+## Page guide
+
+| Task | Page |
+|---|---|
+| Deploy the gateway and connect a metrics backend | [Install the observability gateway](./install-observability-gateway.mdx) |
+| Create scoped metrics access keys | [Configure metrics access](./configure-metrics-access.mdx) |
+| Send metrics from collectors to the gateway | [Configure edge collectors](./configure-edge-collectors.mdx) |
+| Query metrics through Grafana or PromQL | [Query fleet metrics](./query-fleet-metrics.mdx) |
+| Understand the platform label contract | [Labels reference](./labels-reference.mdx) |
+| Diagnose common failures | [Troubleshooting](./troubleshooting.mdx) |
+
+## Related monitoring guides
+
+For a simpler OpenTelemetry setup without the observability gateway, see
+[Aggregating metrics](../aggregating-metrics.mdx). For Shared Nodes kubelet scraping
+background, see [Prometheus node metrics on shared nodes](../prometheus-shared-nodes.mdx).
