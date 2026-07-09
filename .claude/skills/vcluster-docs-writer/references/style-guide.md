@@ -17,7 +17,12 @@ Here are some core principles to keep in mind when writing documentation:
 
 - Using **sentence case in headings** makes content more approachable - write "Getting started with providers" instead of "Getting Started with Providers".
 
-- Keep **sentences under 25 words** to improve readability and SEO performance - break down complex ideas into digestible chunks.
+- Keep **sentences under 25 words** to improve readability and SEO performance - break down complex ideas into digestible chunks. When a sentence is over 25 words, split it into two sentences rather than adding more punctuation.
+
+- **Prefer periods over complex punctuation.** Use a period to end a thought rather than connecting clauses with em dashes, semicolons, or colons. Specific exceptions are fine:
+  - **Em dashes** are acceptable in next-steps lists (`- [Link](url) — short description`) and code comments.
+  - **Colons** are acceptable to introduce a list or a code block.
+  - **Semicolons** should almost never appear in prose — split into two sentences instead.
 
 - Write in **present tense** - say "this command installs" rather than "this command will install". Docs refer to actions that happen in the present as users read them.
 

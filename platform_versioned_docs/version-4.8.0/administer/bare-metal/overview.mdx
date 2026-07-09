@@ -1,0 +1,165 @@
+---
+title: Overview
+sidebar_label: Overview
+sidebar_position: 1
+---
+
+import FeatureTable from '@site/src/components/FeatureTable';
+
+<FeatureTable names="metal3" />
+
+vCluster Platform integrates [Metal3](https://metal3.io/) and [Ironic](https://ironicbaremetal.org/) for bare metal server lifecycle management. Physical servers are represented as `BareMetalHost` resources on a host cluster. The platform manages their detection, provisioning, configuration, and decommissioning for reuse.
+
+## When to use bare metal
+
+Bare metal servers are a good fit when workloads need direct hardware access or predictable performance that virtualization cannot provide. Common use cases include:
+
+- **GPU and accelerator workloads**: Machine learning training, inference, or video processing that requires direct GPU passthrough without a hypervisor layer.
+- **Performance-sensitive applications**: Latency-critical databases, real-time analytics, or high-frequency trading systems that benefit from eliminating virtualization overhead.
+- **Hardware passthrough**: Workloads that need access to specific hardware such as FPGAs, NICs with SR-IOV, or storage controllers.
+- **Compliance requirements**: Environments where dedicated physical isolation is mandated by regulatory or security policies.
+
+## Prerequisites
+
+Before managing bare metal servers, you need a [Metal3 node provider](../node-providers/metal3.mdx) configured on a host cluster.
+The node provider can deploy Metal3, Ironic, and a DHCP server automatically, or you can install them yourself.
+
+## Add servers
+
+Bare metal servers are added by creating `BareMetalHost` resources on the host cluster, either through the platform UI or by applying them directly with kubectl. Each BareMetalHost represents a physical server and requires BMC (Baseboard Management Controller) configuration for out-of-band management.
+
+### BMC configuration
+
+Each BareMetalHost needs a BMC address and credentials. The address scheme determines which driver Metal3 uses to communicate with the server's BMC.
+
+Common address formats:
+
+- **Redfish**: `redfish://192.168.1.100`
+- **IPMI**: `ipmi://192.168.1.100:623`
+
+For the full list of supported BMC drivers and address formats, see the [Metal3 Bare Metal Operator documentation](https://book.metal3.io/bmo/introduction.html).
+
+BMC credentials are stored in a Kubernetes Secret:
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: server-01-bmc
+  namespace: metal3-system
+type: Opaque
+stringData:
+  username: admin
+  password: <BMC-PASSWORD>
+```
+
+### Add a single server
+
+You can add servers through the platform UI under **Bare Metal Servers**, or by creating the resources directly:
+
+```yaml
+apiVersion: metal3.io/v1alpha1
+kind: BareMetalHost
+metadata:
+  name: server-01
+  namespace: metal3-system
+  labels:
+    role: compute
+spec:
+  bmc:
+    address: redfish://192.168.1.100
+    credentialsName: server-01-bmc
+    disableCertificateVerification: true
+  bootMACAddress: "aa:bb:cc:dd:ee:01"
+```
+
+Key fields:
+
+| Field | Description |
+|---|---|
+| `spec.bmc.address` | BMC endpoint URL. The scheme (`redfish://`, `ipmi://`, etc.) selects the driver. |
+| `spec.bmc.credentialsName` | Name of the Secret containing `username` and `password` keys. Must be in the same namespace. |
+| `spec.bmc.disableCertificateVerification` | Set to `true` for BMCs with self-signed certificates. |
+| `spec.bootMACAddress` | MAC address of the NIC used for PXE boot. |
+| `metadata.labels` | Used by node type selectors to match servers to node types. |
+
+### Bulk registration
+
+Add multiple servers at once by applying BareMetalHost and Secret resources together:
+
+```yaml
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: server-01-bmc
+  namespace: metal3-system
+type: Opaque
+stringData:
+  username: admin
+  password: <BMC-PASSWORD>
+---
+apiVersion: metal3.io/v1alpha1
+kind: BareMetalHost
+metadata:
+  name: server-01
+  namespace: metal3-system
+  labels:
+    role: compute
+    rack: rack-a
+spec:
+  bmc:
+    address: redfish://192.168.1.100
+    credentialsName: server-01-bmc
+  bootMACAddress: "aa:bb:cc:dd:ee:01"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: server-02-bmc
+  namespace: metal3-system
+type: Opaque
+stringData:
+  username: admin
+  password: <BMC-PASSWORD>
+---
+apiVersion: metal3.io/v1alpha1
+kind: BareMetalHost
+metadata:
+  name: server-02
+  namespace: metal3-system
+  labels:
+    role: compute
+    rack: rack-b
+spec:
+  bmc:
+    address: ipmi://192.168.1.101:623
+    credentialsName: server-02-bmc
+  bootMACAddress: "aa:bb:cc:dd:ee:02"
+```
+
+```bash
+kubectl apply -f servers.yaml
+```
+
+## Server lifecycle
+
+BareMetalHost resources go through the following states:
+
+| State | Description |
+|---|---|
+| `registering` | The server is being registered in the Ironic database and BMC credentials are verified. |
+| `inspecting` | Hardware inventory is actively being collected — CPU, RAM, NICs, disks, firmware, and PCIe devices (such as GPUs). |
+| `available` | Server is ready to be provisioned. |
+| `provisioning` | OS image is being written and cloud-init is being configured. |
+| `provisioned` | Server is running with the configured OS. |
+| `deprovisioning` | Server is being cleaned and returned to available state. |
+| `error` | An error occurred. Check the BareMetalHost status for details. |
+
+When a Machine claims a server, it moves from `available` through `provisioning` to `provisioned`. When the claim is removed, the server is deprovisioned and returned to `available`.
+
+## DHCP and PXE boot
+
+When the Metal3 node provider deploys a DHCP server, it automatically handles the PXE boot flow. The DHCP server acts as a proxy between the bare metal servers and Ironic, which may reside in a different network. It forwards the API communication needed for PXE boot and OS installation.
+
+No manual DHCP or PXE configuration is required when using the provider-managed DHCP server.

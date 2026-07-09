@@ -155,22 +155,45 @@ navbar: {
 
 ### Vale Warnings (e.g., "Disabled" vs "disabled")
 
-**Problem**: Build shows Vale linting warnings.
+Problem: Build shows Vale linting warnings.
 
-**Solution**: These are non-blocking but good to fix for consistency.
+Solution: These are non-blocking but good to fix for consistency.
 
-**Common Vale warnings**:
+Common Vale warnings:
 - Capitalization: "Disabled" vs "disabled"
 - Contractions: "don't" vs "do not"
 - Passive voice
 - Long sentences
 
-**Fix**: Follow the suggestions or disable Vale for specific content using:
+Fix by following the suggestions or disabling Vale for specific content:
 ```markdown
 <!-- vale off -->
 Content that ignores Vale rules
 <!-- vale on -->
 ```
+
+### Vale Ignores Backticks When Markdown Link Has # Fragment
+
+Problem: Vale flags inline code (e.g., `vcluster-platform`) even inside `<!-- vale off -->` blocks or backticks. The directive appears to have no effect.
+
+Root cause: A markdown link URL containing a `#` fragment on the same line confuses vale's `TokenIgnores` regex for backtick detection. The `#` in the URL breaks the regex pattern that identifies inline code spans.
+
+Example of broken line:
+```markdown
+As described in [installation modes](../installation-options/overview#installation-modes), the `vcluster-platform` chart...
+```
+Vale cannot detect the backticks around `vcluster-platform` because the `#installation-modes` fragment in the URL broke the token parser.
+
+Solution: Convert the inline link to a reference-style link. Move the URL to a separate line:
+```markdown
+As described in [installation modes][install-modes], the `vcluster-platform` chart...
+
+[install-modes]: ../installation-options/overview#installation-modes
+```
+
+This separates the `#` fragment from the line where backtick detection matters.
+
+Detection: If vale flags a backtick-wrapped term that should be ignored, check if there's a markdown link with a `#` fragment on the same line.
 
 ## Deployment Issues
 

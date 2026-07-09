@@ -1,13 +1,16 @@
 package main
 
 import (
-	"encoding/json"
+	"bufio"
+	"flag"
 	"fmt"
+	"io"
+	"io/fs"
 	"os"
 	"path"
+	"path/filepath"
 	"strings"
 
-	"github.com/invopop/jsonschema"
 	"github.com/loft-sh/vcluster-docs/hack/platform/util"
 
 	clusterv1 "github.com/loft-sh/agentapi/v4/pkg/apis/loft/cluster/v1"
@@ -19,21 +22,35 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-var paths []string
-
 func main() {
-	if len(os.Args) != 2 {
-		panic("expected to be called with vcluster jsonschema path as first argument, e.g.\n" +
-			"go run hack/vcluster/partials/main.go configsrc/v0.21/vcluster.schema.json")
-	}
-	jsonSchemaPath := os.Args[1]
+	// Flags let the release-dispatch receiver redirect output into a
+	// versioned folder without modifying util.BasePath in source. Both
+	// default to empty, in which case the legacy util.BasePath /
+	// util.BaseResourcesPath defaults stand and unmodified scripted
+	// callers keep writing to the same locations.
+	var partialsBase, resourcesBase string
+	flag.StringVar(&partialsBase, "partials-base", "", "Override util.BasePath; receiver passes ${target_folder}/api/_partials/resources/")
+	flag.StringVar(&resourcesBase, "resources-base", "", "Override util.BaseResourcesPath; receiver passes ${target_folder}/api/resources")
+	flag.Parse()
 
-	_ = os.RemoveAll(util.BasePath)
+	if partialsBase != "" {
+		util.BasePath = partialsBase
+	}
+	if resourcesBase != "" {
+		util.BaseResourcesPath = resourcesBase
+	}
+
+	removeAllExceptPreserved(util.BasePath)
 
 	util.GenerateSection(&managementv1.ConfigStatus{}, true, path.Join(util.BasePath, "config/status_reference.mdx"))
 	util.GenerateSection(&managementv1.AuditPolicy{}, true, path.Join(util.BasePath, "config/status/audit/policy.mdx"))
 	util.GenerateSection(&managementv1.Audit{}, true, path.Join(util.BasePath, "config/status/audit.mdx"))
-	util.GenerateSection(&storagev1.RancherIntegrationSpec{}, true, path.Join(util.BasePath, "projects/spec/rancher.mdx"))
+	// RancherIntegrationSpec was removed from loft-sh/api/v4 in v4.9.0 — the
+	// legacy in-tree Rancher integration is replaced by the standalone
+	// vCluster Rancher operator (see /docs/platform/integrations/rancher and
+	// the migration guide). The previously-generated rancher.mdx is only
+	// imported by frozen versioned docs (4.5/4.6/4.7), which ship their own
+	// partial copies; current platform docs do not import it.
 	util.GenerateSection(&storagev1.VaultIntegrationSpec{}, true, path.Join(util.BasePath, "projects/spec/vault.mdx"))
 
 	util.GenerateMetadata(&util.ObjectInformation{
@@ -383,7 +400,7 @@ spec:
 
 	// ProjectMigrateSpaceInstnace
 	util.GenerateObjectOverview(&util.ObjectInformation{
-		Title:       "Move VCluster To Other Project",
+		Title:       "Move vCluster To Other Project",
 		Description: "This API can be used to move a virtual cluster from one project to another.",
 		File:        path.Join(util.BaseResourcesPath, "project/migratevirtualclusterinstance.mdx"),
 		Name:        "Move Virtual Cluster To Other Project",
@@ -562,6 +579,33 @@ spec:
 		Resource:    "clusters",
 		Description: "Connected Kubernetes clusters that can be managed through the platform. You can allow users and teams to access those clusters and they can create new spaces and virtual clusters inside them.",
 		File:        path.Join(util.BaseResourcesPath, "clusters/clusters.mdx"),
+		ExtraContentBeforeExample: "## Platform-specific verbs\n" +
+			"\n" +
+			"In addition to standard Kubernetes RBAC verbs (`get`, `list`, `create`, `update`, `patch`, `delete`), the Cluster resource supports these platform-specific verbs for access control:\n" +
+			"\n" +
+			"| Verb | Description |\n" +
+			"|------|-------------|\n" +
+			"| `bind` | Required when adding a cluster to ClusterAccess rules. Allows granting users or teams permission to create spaces and tenant clusters on the cluster. |\n" +
+			"| `connectlocal` | Required when setting `spec.local: true` on a cluster. Allows connecting the local cluster (where the platform is installed) to the platform for management. |\n" +
+			"\n" +
+			"### Example access rule with bind verb\n" +
+			"\n" +
+			"```yaml\n" +
+			"apiVersion: management.loft.sh/v1\n" +
+			"kind: Team\n" +
+			"metadata:\n" +
+			"  name: my-team\n" +
+			"spec:\n" +
+			"  access:\n" +
+			"    - name: cluster-access\n" +
+			"      verbs:\n" +
+			"        - get\n" +
+			"        - bind\n" +
+			"      subresources:\n" +
+			"        - clusters\n" +
+			"      teams:\n" +
+			"        - my-team\n" +
+			"```",
 		Object: &storagev1.Cluster{
 			TypeMeta: metav1.TypeMeta{
 				Kind:       "Cluster",
@@ -633,6 +677,32 @@ spec:
 		Resource:    "users",
 		Description: "Users that can access the platform.",
 		File:        path.Join(util.BaseResourcesPath, "user.mdx"),
+		ExtraContentBeforeExample: "## Platform-specific verbs\n" +
+			"\n" +
+			"In addition to standard Kubernetes RBAC verbs (`get`, `list`, `create`, `update`, `patch`, `delete`), the User resource supports these platform-specific verbs for access control:\n" +
+			"\n" +
+			"| Verb | Description |\n" +
+			"|------|-------------|\n" +
+			"| `bind` | Required when adding a user to ClusterAccess rules or other access rules. Allows granting the user permissions on platform resources. |\n" +
+			"| `makeowner` | Required when changing the owner of a resource to a user. Allows transferring ownership of projects, tenant clusters, spaces, or other platform resources. |\n" +
+			"\n" +
+			"### Example access rule with makeowner verb\n" +
+			"\n" +
+			"```yaml\n" +
+			"apiVersion: management.loft.sh/v1\n" +
+			"kind: User\n" +
+			"metadata:\n" +
+			"  name: admin-user\n" +
+			"spec:\n" +
+			"  access:\n" +
+			"    - name: user-management\n" +
+			"      verbs:\n" +
+			"        - get\n" +
+			"        - update\n" +
+			"        - makeowner\n" +
+			"      users:\n" +
+			"        - admin-user\n" +
+			"```",
 		Object: &storagev1.User{
 			TypeMeta: metav1.TypeMeta{
 				Kind:       "User",
@@ -665,6 +735,32 @@ spec:
 		Resource:    "teams",
 		Description: "Teams are composed of multiple users and define a way to manage cluster access or other objects for multiple users at once. You can assign users automatically to teams by their groups, which can be synced from an authentication provider. Teams can also access the platform through their own access keys and own spaces or other objects.",
 		File:        path.Join(util.BaseResourcesPath, "team.mdx"),
+		ExtraContentBeforeExample: "## Platform-specific verbs\n" +
+			"\n" +
+			"In addition to standard Kubernetes RBAC verbs (`get`, `list`, `create`, `update`, `patch`, `delete`), the Team resource supports these platform-specific verbs for access control:\n" +
+			"\n" +
+			"| Verb | Description |\n" +
+			"|------|-------------|\n" +
+			"| `bind` | Allows binding permissions to a team, enabling assignment of access rules and roles to that team. Required when adding a team to ClusterAccess rules. |\n" +
+			"| `makeowner` | Allows transferring ownership of platform resources to a team. Used when changing the owner of projects, clusters, or other resources to a team. |\n" +
+			"\n" +
+			"### Example access rule with bind verb\n" +
+			"\n" +
+			"```yaml\n" +
+			"apiVersion: management.loft.sh/v1\n" +
+			"kind: Team\n" +
+			"metadata:\n" +
+			"  name: platform-admins\n" +
+			"spec:\n" +
+			"  access:\n" +
+			"    - name: team-management\n" +
+			"      verbs:\n" +
+			"        - get\n" +
+			"        - update\n" +
+			"        - bind\n" +
+			"      users:\n" +
+			"        - admin\n" +
+			"```",
 		Object: &storagev1.Team{
 			TypeMeta: metav1.TypeMeta{
 				Kind:       "Team",
@@ -839,6 +935,83 @@ spec:
 		Resource:    "clusterroletemplates",
 		Description: "ClusterRoleTemplate holds the clusterRoleTemplate information",
 		File:        path.Join(util.BaseResourcesPath, "clusterroletemplate.mdx"),
+		ExtraContentAfterExample: "## Policy rules\n" +
+			"\n" +
+			"The `rules` field under `clusterRoleTemplate` defines RBAC permissions using standard Kubernetes PolicyRule objects. Each rule specifies which actions (verbs) are allowed on which resources.\n" +
+			"\n" +
+			"### Verbs\n" +
+			"\n" +
+			"Verbs define the actions allowed on resources. Standard Kubernetes RBAC verbs include:\n" +
+			"\n" +
+			"| Verb | Description |\n" +
+			"|------|-------------|\n" +
+			"| `get` | Retrieve a single resource |\n" +
+			"| `list` | Retrieve a collection of resources |\n" +
+			"| `watch` | Watch for changes to resources |\n" +
+			"| `create` | Create a new resource |\n" +
+			"| `update` | Update an existing resource (replaces the entire object) |\n" +
+			"| `patch` | Partially modify an existing resource |\n" +
+			"| `delete` | Delete a single resource |\n" +
+			"| `deletecollection` | Delete a collection of resources |\n" +
+			"| `*` | Wildcard representing all verbs |\n" +
+			"\n" +
+			"### API groups\n" +
+			"\n" +
+			"API groups define which API the resources belong to. Common API groups include:\n" +
+			"\n" +
+			"| API Group | Description |\n" +
+			"|-----------|-------------|\n" +
+			"| `\"\"` | Core API group (pods, services, configmaps, secrets, namespaces) |\n" +
+			"| `apps` | Deployments, DaemonSets, ReplicaSets, StatefulSets |\n" +
+			"| `batch` | Jobs, CronJobs |\n" +
+			"| `networking.k8s.io` | NetworkPolicies, Ingresses |\n" +
+			"| `rbac.authorization.k8s.io` | Roles, RoleBindings, ClusterRoles, ClusterRoleBindings |\n" +
+			"| `management.loft.sh` | vCluster Platform resources |\n" +
+			"| `storage.loft.sh` | vCluster Platform storage resources |\n" +
+			"| `*` | Wildcard matching all API groups |\n" +
+			"\n" +
+			"### Platform resources\n" +
+			"\n" +
+			"vCluster Platform resources in the `management.loft.sh` API group:\n" +
+			"\n" +
+			"| Resource | Description |\n" +
+			"|----------|-------------|\n" +
+			"| `announcements` | Platform announcements |\n" +
+			"| `apps` | Application configurations |\n" +
+			"| `backups` | Platform backups |\n" +
+			"| `clusteraccesses` | Cluster access permissions |\n" +
+			"| `clusterroletemplates` | Cluster role templates |\n" +
+			"| `clusters` | Connected clusters |\n" +
+			"| `configs` | Platform configuration |\n" +
+			"| `events` | Platform events |\n" +
+			"| `features` | Platform features |\n" +
+			"| `licenses` | Platform licenses |\n" +
+			"| `nodeclaims` | Node claims for auto-provisioning |\n" +
+			"| `nodeenvironments` | Node environment configurations |\n" +
+			"| `nodeproviders` | Node provider configurations |\n" +
+			"| `nodetypes` | Node type definitions |\n" +
+			"| `ownedaccesskeys` | User-owned access keys |\n" +
+			"| `projects` | Projects |\n" +
+			"| `projectsecrets` | Project-scoped secrets |\n" +
+			"| `selves` | Current user information |\n" +
+			"| `sharedsecrets` | Shared secrets |\n" +
+			"| `spaceinstances` | Space instances |\n" +
+			"| `spacetemplates` | Space templates |\n" +
+			"| `tasks` | Platform tasks |\n" +
+			"| `teams` | Teams |\n" +
+			"| `users` | Users |\n" +
+			"| `virtualclusterinstances` | Tenant cluster instances |\n" +
+			"| `virtualclustertemplates` | Tenant cluster templates |\n" +
+			"\n" +
+			"Common subresources include `projects/members`, `projects/templates`, `clusters/members`, `virtualclusterinstances/kubeconfig`, and `virtualclusterinstances/log`.\n" +
+			"\n" +
+			"### Resource names\n" +
+			"\n" +
+			"The `resourceNames` field optionally restricts a rule to specific named resources. When empty, the rule applies to all resources of the specified type.\n" +
+			"\n" +
+			"### Non-resource URLs\n" +
+			"\n" +
+			"The `nonResourceURLs` field specifies access to non-resource endpoints like `/healthz`, `/api`, `/apis`, and `/version`. Use `*` as a suffix to match paths (for example, `/healthz/*`).",
 		Object: &managementv1.ClusterRoleTemplate{
 			TypeMeta: metav1.TypeMeta{
 				Kind:       "ClusterRoleTemplate",
@@ -861,12 +1034,12 @@ spec:
 						Rules: []rbacv1.PolicyRule{
 							{
 								Verbs:     []string{"get", "list", "update"},
-								APIGroups: []string{managementv1.SchemeGroupVersion.String()},
+								APIGroups: []string{managementv1.SchemeGroupVersion.Group},
 								Resources: []string{"spaceinstances", "virtualclusterinstances"},
 							},
 							{
 								Verbs:     []string{"get", "list"},
-								APIGroups: []string{managementv1.SchemeGroupVersion.String()},
+								APIGroups: []string{managementv1.SchemeGroupVersion.Group},
 								Resources: []string{"projectsecrets"},
 							},
 						},
@@ -880,11 +1053,13 @@ spec:
 
 	// NodeProvider
 	util.GenerateObjectOverview(&util.ObjectInformation{
-		Title:       "Node Provider",
-		Name:        "NodeProvider",
-		Resource:    "nodeproviders",
-		Description: "NodeProvider holds the node provider information",
-		File:        path.Join(util.BaseResourcesPath, "nodeprovider.mdx"),
+		Title:                         "Node Provider",
+		Name:                          "NodeProvider",
+		Resource:                      "nodeproviders",
+		ExtraImports:                  "import FeatureTable from '@site/src/components/FeatureTable';",
+		ExtraContentBeforeDescription: "<FeatureTable names=\"auto-nodes-clusterapi\" />",
+		Description:                   "NodeProvider holds the node provider information",
+		File:                          path.Join(util.BaseResourcesPath, "nodeprovider.mdx"),
 		Object: &managementv1.NodeProvider{
 			TypeMeta: metav1.TypeMeta{
 				Kind:       "NodeProvider",
@@ -951,29 +1126,95 @@ spec:
 		},
 		Create: true,
 	})
+}
 
-	util.DefaultRequire = false
-	schema := &jsonschema.Schema{}
-	schemaBytes, err := os.ReadFile(jsonSchemaPath)
-	if err != nil {
-		panic(fmt.Errorf("failed to read schema file %q: %w", jsonSchemaPath, err))
-	}
-	err = json.Unmarshal(schemaBytes, schema)
-	if err != nil {
-		panic(fmt.Errorf("failed to parse JSON schema from %q: %w", jsonSchemaPath, err))
+// removeAllExceptPreserved deletes basePath and recreates it, but first backs
+// up any paths listed in basePath/.generator-preserve and restores them
+// afterward. This prevents the generator from destroying partials that are no
+// longer produced from the current API types but are still imported by frozen
+// versioned docs.
+func removeAllExceptPreserved(basePath string) {
+	preserveFile := filepath.Join(basePath, ".generator-preserve")
+
+	// Read the list of paths to preserve (one per line, blank/# lines ignored).
+	var preservePaths []string
+	if f, err := os.Open(preserveFile); err == nil {
+		scanner := bufio.NewScanner(f)
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			preservePaths = append(preservePaths, line)
+		}
+		f.Close()
 	}
 
-	// fmt.Println("properties:")
-	// for childNode := schema.Properties.Oldest(); childNode != nil; childNode = childNode.Next() {
-	// 	fmt.Printf("%v : %v\n", childNode.Key, childNode.Value)
-	// }
-	// fmt.Println(paths)
-	for _, p := range paths {
-		p := strings.TrimPrefix(p, "/")
-		err := util.GenerateFromPathWithError(schema, util.BasePath+"/config", p, nil)
-		if err != nil {
-			fmt.Printf("Warning: Skipping path %q: %v\n", p, err)
-			continue
+	// Always preserve the manifest file itself so it survives RemoveAll.
+	preservePaths = append(preservePaths, ".generator-preserve")
+
+	// Back up preserved paths into a temp directory.
+	var backups []struct{ src, dst string }
+	tmpDir, err := os.MkdirTemp("", "generator-preserve-*")
+	if err != nil {
+		fmt.Printf("Warning: could not create temp dir for preserved files: %v\n", err)
+	} else {
+		for _, rel := range preservePaths {
+			src := filepath.Join(basePath, rel)
+			dst := filepath.Join(tmpDir, rel)
+			if err := copyAll(src, dst); err == nil {
+				backups = append(backups, struct{ src, dst string }{src: src, dst: dst})
+			}
 		}
 	}
+
+	_ = os.RemoveAll(basePath)
+
+	// Restore preserved files.
+	for _, b := range backups {
+		if err := copyAll(b.dst, b.src); err != nil {
+			fmt.Printf("Warning: could not restore preserved path %q: %v\n", b.src, err)
+		}
+	}
+}
+
+// copyAll copies src to dst, preserving directory structure.
+func copyAll(src, dst string) error {
+	info, err := os.Stat(src)
+	if err != nil {
+		return err
+	}
+	if info.IsDir() {
+		return filepath.WalkDir(src, func(p string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			rel, _ := filepath.Rel(src, p)
+			target := filepath.Join(dst, rel)
+			if d.IsDir() {
+				return os.MkdirAll(target, 0755)
+			}
+			return copyFile(p, target)
+		})
+	}
+	return copyFile(src, dst)
+}
+
+// copyFile copies a single file from src to dst, creating parent dirs as needed.
+func copyFile(src, dst string) error {
+	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+		return err
+	}
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+	_, err = io.Copy(out, in)
+	return err
 }

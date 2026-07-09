@@ -8,6 +8,10 @@ context: fork
 
 Specialized knowledge and workflows for writing vCluster documentation in Docusaurus.
 
+## Dependencies
+
+When this skill is loaded, also invoke: `vcluster-brand:vcluster-brand`
+
 ## When to Use
 
 Trigger when:
@@ -132,6 +136,63 @@ find vcluster vcluster_versioned_docs -name "*.mdx" \
   -exec sed -i 's|/platform/old/path|/platform/new/path|g' {} \;
 ```
 
+### Sidebar Navigation Conventions
+
+Docusaurus sidebar categories can be made clickable (navigating to a page on click) in two ways. Both are banned — sidebar section labels must expand/collapse only.
+
+**Anti-pattern 1: `link` field in `_category_.json`**
+
+```json
+// WRONG — do not add a link field
+{
+  "label": "Deploy",
+  "position": 2,
+  "link": {
+    "type": "generated-index"
+  }
+}
+```
+
+Remove the `link` field entirely. The `label` and `position` fields are sufficient.
+
+**Anti-pattern 2: `README.mdx` as a folder index (general docs)**
+
+Docusaurus automatically converts a `README.mdx` file into the category's landing page and makes the section label clickable — even without a `link` in `_category_.json`. Do not create `README.mdx` files as folder indices in general docs sections.
+
+Instead, use `overview.mdx` with an explicit `slug:` that matches the directory URL:
+
+```mdx
+---
+title: Networking
+sidebar_label: Overview
+sidebar_position: 0
+slug: /configure/vcluster-yaml/networking
+---
+```
+
+When converting an existing `README.mdx` to `overview.mdx`:
+
+1. Add `slug:` matching the directory's URL (plugin-relative, no `/vcluster/` prefix).
+2. Set `sidebar_label: Overview` — not the section name, to avoid duplication.
+3. Migrate `sidebar_position` and `sidebar_class_name` out of the MDX frontmatter and into `_category_.json` as `position` and `className` respectively. The `_category_.json` controls the section label in the sidebar; the `overview.mdx` frontmatter controls only the child item.
+4. Update any relative links inside the file that previously resolved from a directory URL — they now resolve from the slug URL.
+
+**`_category_.json` structure for a folder that has an `overview.mdx`:**
+
+```json
+{
+  "label": "Networking",
+  "position": 3,
+  "className": "host-nodes private-nodes"
+}
+```
+
+Do not add a `link` field.
+
+**Exception: `vcluster/configure/vcluster-yaml/` uses `README.mdx`**
+
+The `vcluster-yaml` section mirrors the structure of the `vcluster.yaml` config file — every folder is a yaml key. Labeling these pages "Overview" is semantically wrong because there is no `overview` key in the yaml. In this section only, use `README.mdx` (not `overview.mdx`) as the folder index. Docusaurus treats it as the category header click target; it does not appear as a named sidebar item. Do NOT set `sidebar_label: Overview` or `sidebar_position: 0` on these files — they are irrelevant once the file becomes the category index.
+
 ### PR Preview URLs
 
 Preview links MUST point to actual changed pages, NOT the docs root.
@@ -220,13 +281,37 @@ import Partial from '@site/docs/_partials/example.mdx';
 
 See `references/partials-guide.md` for complete patterns and troubleshooting.
 
-## Critical Rules
+## Concept and Explanation Pages
+
+Explanation pages (architecture, overview, "what is X") should build the reader's mental model from the outside in. Each section should answer the question a reader would naturally ask next, given what they just learned.
+
+**The progressive disclosure sequence:**
+
+1. What it IS — plain-language definition before any technical framing
+2. What it contains — structural components and their roles
+3. How the parts connect — topology, agents, registrations
+4. How you interact with it — entry points, access patterns
+5. How work flows through it — lifecycle, reconciliation, request paths
+6. Operational detail — network paths, failure behavior, edge cases
+
+**Rules:**
+
+- Do not introduce a term before the concept behind it is established. Glossary links help but do not substitute for a clear conceptual foundation.
+- Add a plain-language "why this matters" sentence before technical component lists. Readers need to know what the list is for before they can absorb its items.
+- Place diagrams immediately after the content they illustrate — not after examples that build on the pattern. A diagram should reinforce what was just described, not summarize what follows.
+- Do not open explanation pages with defensive disclaimers ("X does not replace Y"). Put the relationship between products where it naturally belongs in the flow — usually at the handoff point between sections.
+- Merge sections with confusingly similar names. Adjacent sections covering the same concept from slightly different angles (e.g. "Project lifecycle" and "Project resource lifecycle") signal a structural problem, not a content problem.
+- Separate "what it is" sections from "how it works" sections. A section covering both structure and behavior is usually two sections collapsed into one.
+
+**Check the flow by asking:** can a reader who skims only the section headings reconstruct the mental model? If the heading sequence reads like a component inventory rather than a conceptual arc, restructure.
 
 ### Never-Do
 - ⚠️ **NEVER modify versioned docs** unless explicitly requested
 - ⚠️ **NEVER run `npm run build`** (user runs when needed)
 - ⚠️ **NEVER use URL paths for links** (use file paths with `.mdx`)
 - ⚠️ **NEVER place admonitions inside JSX components** like `<Step>`
+- ⚠️ **NEVER add a `link` field to `_category_.json`** — sidebar section labels must expand/collapse only, not navigate
+- ⚠️ **NEVER create `README.mdx` as a folder index** in general docs sections — use `overview.mdx` with an explicit `slug:` instead. **Exception**: `vcluster/configure/vcluster-yaml/` uses `README.mdx` because every folder is a yaml key and "Overview" is semantically wrong there (see Sidebar Navigation Conventions)
 
 ### Always-Do
 - ✅ **Always run vale** before finalizing documentation
@@ -239,9 +324,10 @@ See `references/partials-guide.md` for complete patterns and troubleshooting.
 
 Key terms (see `references/vcluster-terms.md` for complete guide):
 - **vCluster**: The trademark (never "vClusters" - legally incorrect)
-- **virtual clusters**: The clusters that vCluster creates
-- **vCluster Pro**: Enhanced/paid virtual cluster with Pro functionality
-- **vCluster Platform**: Management platform and UI
+- **tenant clusters**: The clusters that vCluster creates ("virtual clusters" is retired); lowercase in prose
+- **control plane cluster**: The cluster that hosts tenant cluster control planes ("host cluster" is retired); lowercase in prose
+- **vCluster Pro**: Enhanced/paid tenant cluster with Pro functionality
+- **vCluster Platform**: Management platform and UI for tenant clusters
 - **vcluster**: The CLI command name
 
 ## Resources

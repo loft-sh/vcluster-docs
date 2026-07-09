@@ -1,0 +1,134 @@
+---
+title: Migrate to the vCluster Rancher operator
+sidebar_label: Migration Guide
+sidebar_position: 3
+---
+
+import InterpolatedCodeBlock from '@site/src/components/InterpolatedCodeBlock'
+import Flow, { Step } from '@site/src/components/Flow'
+
+:::warning Built-in Rancher integration removed
+
+The built-in Rancher integration was removed in vCluster Platform v4.9.0. This migration guide walks you through migrating before you upgrade. If you've already upgraded to v4.9.0 or later, use the [migration guide for v4.9.0](/docs/platform/integrations/rancher/migration-guide) instead.
+
+:::
+
+## Before you begin
+
+This migration requires `kubectl` access to the control plane cluster with vCluster Platform installed. Step 5 connects to individual tenant clusters using `vcluster connect`. You don't need a direct kubeconfig for each tenant cluster.
+
+Work through the steps in order. Steps 1–4 run against the control plane cluster. Step 5 runs against each tenant cluster individually. Step 6 runs against Rancher. Step 7 installs the replacement operator on the control plane cluster.
+
+## Step 1: Remove the import label from tenant clusters
+
+The `loft.sh/import-rancher: "true"` label on a VirtualClusterInstance tells vCluster Platform to import it into Rancher. Run the following on the control plane cluster to remove the label from every tenant cluster that has it:
+
+```bash
+kubectl get virtualclusterinstances -A \
+  -o json | jq -r '
+    .items[]
+    | select(.metadata.labels["loft.sh/import-rancher"] == "true")
+    | "\(.metadata.namespace) \(.metadata.name)"
+  ' | while read ns name; do
+    kubectl label virtualclusterinstance "$name" -n "$ns" loft.sh/import-rancher-
+  done
+```
+
+## Step 2: Disable Rancher integration on all projects
+
+For each Platform project that has the Rancher integration enabled, patch the project to disable it:
+
+```bash
+kubectl get projects.management.loft.sh -o json | jq -r '
+  .items[]
+  | select(.spec.rancher.enabled == true)
+  | .metadata.name
+' | while read project; do
+  kubectl patch project.management.loft.sh "$project" \
+    --type=merge \
+    -p '{"spec":{"rancher":{"enabled":false}}}'
+done
+```
+
+## Step 3: Wait for sync to complete
+
+After disabling the integration, the Platform controller cleans up the Rancher-related state. Wait for the `RancherIntegrationSynced` condition to clear from all projects:
+
+```bash
+kubectl get projects.management.loft.sh -o json | jq '
+  .items[]
+  | select(
+      .status.conditions[]?
+      | select(.type == "RancherIntegrationSynced")
+    )
+  | {name: .metadata.name, conditions: .status.conditions}
+'
+```
+
+Continue once this returns no results.
+
+## Step 4: Remove the Rancher auth config
+
+Remove the `auth.rancher` block from the Platform configuration. The field is stored in the `loft-manager-config` secret in the Platform namespace:
+
+```bash
+kubectl get secret loft-manager-config -n loft -o jsonpath='{.data.config}' \
+  | base64 -d | yq 'del(.auth.rancher)'
+```
+
+If the output looks correct, apply the change and restart the deployment:
+
+```bash
+PATCHED=$(kubectl get secret loft-manager-config -n loft \
+  -o jsonpath='{.data.config}' \
+  | base64 -d | yq -o=json 'del(.auth.rancher)' | base64 -w0)
+
+kubectl patch secret loft-manager-config -n loft \
+  --type=merge \
+  -p "{\"data\":{\"config\":\"${PATCHED}\"}}"
+
+kubectl rollout restart deployment/loft -n loft
+```
+
+## Step 5: Clean up each tenant cluster
+
+Complete both sub-steps on one tenant cluster before moving to the next. Repeat for every tenant cluster that had the integration enabled.
+
+<Flow id="clean-up-tenant-cluster">
+
+<Step>
+Connect to the tenant cluster and delete the `cattle-system` namespace. This removes the Rancher cluster agent and all Rancher-related workloads that were injected into the tenant cluster.
+
+<InterpolatedCodeBlock
+  language="bash"
+  code={"vcluster connect [[VAR:NAME:my-tenant-cluster]] -n [[VAR:NAMESPACE:p-my-project]]\nkubectl delete namespace cattle-system --ignore-not-found"}
+/>
+</Step>
+
+<Step>
+Remove the cluster-level RBAC resources that Rancher created:
+
+```bash
+# List what will be removed — verify before deleting
+kubectl get clusterrole,clusterrolebinding | grep cattle
+
+# Remove them
+kubectl delete clusterrole,clusterrolebinding \
+  $(kubectl get clusterrole,clusterrolebinding \
+    --no-headers -o custom-columns=":metadata.name" \
+    | grep cattle) \
+  --ignore-not-found
+```
+</Step>
+
+</Flow>
+
+## Step 6: Delete the Rancher cluster entries
+
+Each tenant cluster imported into Rancher has a corresponding cluster entry. Before deleting, verify that the cluster shows as **Unavailable** or **Disconnected** in the Rancher UI. This confirms the agent has been removed and Rancher has lost contact with the cluster. Don't delete the entry if it still shows as **Active**. This may indicate the `cattle-system` namespace wasn't fully removed in the previous step.
+
+Once the cluster shows as **Disconnected**, go to **Cluster Management** in the Rancher UI, find each tenant cluster entry, and delete it. If a deletion hangs, Rancher force-removes the entry once it confirms the agent is gone.
+
+## Step 7: Install the vCluster Rancher operator
+
+With the old integration fully removed, install the new vCluster Rancher operator on the control plane cluster. The operator runs independently of vCluster Platform and manages tenant cluster registration with Rancher directly. Follow the [installation guide](/docs/vcluster/third-party-integrations/rancher/install-rancher-integration) for full setup instructions.

@@ -162,14 +162,42 @@ When archiving a new version that's not documented here:
 5. **Note Platform pairing**: Record which Platform version is used
 6. **List common fixes**: Document any bulk replacements needed
 
+## Platform v4.5 (Archived March 2026)
+
+### Archive Details
+- Branch: `platform-v4-5`
+- Paired with: vCluster 0.32.0
+- Netlify URL: `https://platform-v4-5--vcluster-docs-site.netlify.app/docs/platform/`
+- Redirect: `/docs/v4.5` → archive site (in vcluster.com `_redirects`)
+
+### Key Learnings
+- 70 internal links had version prefix `/docs/platform/4.5.0/` that needed stripping to `/docs/platform/`
+- Cross-section mismatches between vCluster 0.32 and Platform 4.5 required `onBrokenLinks: "warn"`
+- `noIndex: true` set at top level to prevent search engine indexing
+- Archive announcement bar (yellow, not closeable) with link to latest docs
+- Vale bug discovered: markdown links with `#` fragments break backtick detection (see common-issues.md)
+- `docs/_partials/platform_supported_versions.mdx` had a cross-version link to v4.5 migration guide that broke because v4.5 was excluded from the main build — fixed by pointing to archive URL
+
+### Fixes Required
+```bash
+# Strip version prefix (70 occurrences)
+find platform_versioned_docs/version-4.5.0 -name "*.mdx" \
+  -exec sed -i 's|/docs/platform/4.5.0/|/docs/platform/|g' {} +
+
+# Set onBrokenLinks to warn (cross-section mismatches expected)
+# Set noIndex: true (archive should not be indexed)
+# Empty versionConfig.js hidden arrays
+```
+
 ## Version Archive History
 
 | vCluster Version | Platform Version | Air-gapped Docs | Sleep Mode Path | Notes |
 |------------------|------------------|-----------------|-----------------|-------|
-| 0.20.0 | 4.3.0 | ❌ No | `configure/vcluster-yaml/sleep-mode` | Older path structure |
-| 0.21.0 | 4.3.0 | ❌ No | `manage/sleep-wakeup` | Sleep moved to new path |
-| 0.22.0 | 4.3.0 | ⚠️ Verify | `manage/sleep-wakeup` | Check for structure changes |
-| 0.23.0+ | TBD | ⚠️ Verify | ⚠️ Verify | Document when archived |
+| 0.20.0 | 4.3.0 | No | `configure/vcluster-yaml/sleep-mode` | Older path structure |
+| 0.21.0 | 4.3.0 | No | `manage/sleep-wakeup` | Sleep moved to new path |
+| 0.22.0 | 4.3.0 | Verify | `manage/sleep-wakeup` | Check for structure changes |
+| 0.23.0+ | TBD | Verify | Verify | Document when archived |
+| - | 4.5.0 + vCluster 0.32.0 | N/A | N/A | 70 version prefix links stripped, onBrokenLinks: warn |
 
 **Legend**:
 - ✅ = Feature exists

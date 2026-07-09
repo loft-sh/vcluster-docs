@@ -1,0 +1,253 @@
+---
+title: GPU autoscaling with DCGM exporter
+sidebar_label: GPU autoscaling (DCGM)
+sidebar_position: 8
+sidebar_class_name: pro private-nodes
+description: Configure HPA driven by GPU utilization metrics using NVIDIA DCGM Exporter and Prometheus Adapter inside a vCluster with Private Nodes.
+---
+
+import TenancySupport from '../_fragments/tenancy-support.mdx';
+
+<TenancySupport privateNodes="true" />
+
+This guide shows how to configure [Horizontal Pod Autoscaler (HPA)](https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/) driven by GPU utilization metrics inside a vCluster with [Private Nodes](../deploy/worker-nodes/private-nodes/README.mdx). The metrics pipeline uses NVIDIA DCGM Exporter, Prometheus, and Prometheus Adapter to expose real GPU hardware metrics through the Kubernetes custom metrics API.
+
+## Use cases
+
+GPU autoscaling helps when your workloads have variable GPU demand:
+
+- **Inference serving**: Scale model-serving Deployments up during traffic spikes and down during quiet periods to reduce idle GPU cost.
+- **Batch processing**: Run multiple GPU jobs with a shared pool of replicas that grows and shrinks based on actual GPU load.
+- **Development clusters**: Give data-science teams a vCluster with autoscaling GPU workloads while maintaining hard limits through `maxReplicas`.
+
+## How it works
+
+With Private Nodes, vCluster workloads run directly on dedicated physical nodes rather than inside host cluster pods. This means:
+
+- DCGM Exporter DaemonSet pods are scheduled directly on the private GPU nodes and have access to real GPU hardware through the NVIDIA Management Library (NVML).
+- GPU metrics reflect actual hardware utilization, not virtualized or approximated values.
+- HPA scaling decisions are based on real hardware load, making autoscaling reliable for GPU-intensive workloads.
+
+The metrics pipeline flows through four components:
+
+```
+GPU Node (Private)
+  └── DCGM Exporter DaemonSet    ← scrapes GPU hardware metrics
+        └── Prometheus             ← collects via ServiceMonitor
+              └── Prometheus Adapter  ← exposes as custom metrics API
+                    └── HPA            ← scales pods on GPU utilization
+```
+
+## Prerequisites
+
+- A vCluster with Private Nodes enabled and at least one GPU node attached
+- NVIDIA GPU drivers and the [NVIDIA device plugin](https://github.com/NVIDIA/k8s-device-plugin) installed on the host nodes
+- `helm` and `kubectl` connected to the vCluster
+
+## Step 1: Install DCGM exporter
+
+Install the [NVIDIA DCGM Exporter](https://github.com/NVIDIA/dcgm-exporter) inside the vCluster. It runs as a DaemonSet on the private GPU nodes and exposes per-GPU metrics in Prometheus format at port `9400/metrics`.
+
+```bash
+helm repo add gpu-helm-charts https://nvidia.github.io/dcgm-exporter/helm-charts
+helm repo update
+
+helm install dcgm-exporter gpu-helm-charts/dcgm-exporter \
+  --namespace monitoring \
+  --create-namespace \
+  --set kubernetes.enablePodLabels=true
+```
+
+:::info Why enablePodLabels matters
+The `kubernetes.enablePodLabels=true` flag instructs DCGM Exporter to attach `pod`, `namespace`, and `container` labels to each metric by mapping GPU usage to the consuming pod. Without this flag, Prometheus Adapter cannot expose per-pod custom metrics, and HPA cannot query them.
+:::
+
+Verify the DaemonSet is running on your GPU node:
+
+```bash
+kubectl get daemonset dcgm-exporter -n monitoring
+```
+
+Confirm the metrics endpoint is reachable and returning GPU data:
+
+```bash
+DCGM_POD=$(kubectl get pods -l app.kubernetes.io/name=dcgm-exporter -n monitoring -o jsonpath='{.items[0].metadata.name}')
+kubectl port-forward $DCGM_POD 9400:9400 -n monitoring &
+curl -s http://localhost:9400/metrics | grep DCGM_FI_DEV_GPU_UTIL
+# Expected: DCGM_FI_DEV_GPU_UTIL{gpu="0",...,pod="<your-pod>",namespace="<your-ns>",...} 42
+```
+
+## Step 2: Install Prometheus
+
+Install the `kube-prometheus-stack` Helm chart inside the vCluster. This deploys Prometheus, the Prometheus Operator, and Alertmanager.
+
+```bash
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+helm repo update
+
+helm install kube-prometheus prometheus-community/kube-prometheus-stack \
+  --namespace monitoring \
+  --create-namespace \
+  --set prometheus.prometheusSpec.serviceMonitorSelectorNilUsesHelmValues=false
+```
+
+:::info serviceMonitorSelectorNilUsesHelmValues
+Setting this to `false` tells Prometheus to discover all ServiceMonitor resources in the cluster, not only those created by the Helm release. This is required for Prometheus to find the DCGM Exporter ServiceMonitor created in the next step.
+:::
+
+Verify that Prometheus pods are running:
+
+```bash
+kubectl get pods -n monitoring -l app.kubernetes.io/name=prometheus
+```
+
+## Step 3: Configure a ServiceMonitor for DCGM exporter
+
+Create a ServiceMonitor so Prometheus automatically discovers and scrapes the DCGM Exporter:
+
+```yaml title="servicemonitor-dcgm.yaml"
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: dcgm-exporter
+  namespace: monitoring
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: dcgm-exporter
+  endpoints:
+    - port: metrics
+      interval: 15s
+      path: /metrics
+```
+
+Apply it:
+
+```bash
+kubectl apply -f servicemonitor-dcgm.yaml
+```
+
+Confirm Prometheus is scraping DCGM by checking the Prometheus targets UI:
+
+```bash
+kubectl port-forward svc/kube-prometheus-kube-prome-prometheus 9090:9090 -n monitoring
+# Open http://localhost:9090/targets and verify dcgm-exporter shows State: UP
+```
+
+:::info Service name
+The Prometheus service name `kube-prometheus-kube-prome-prometheus` is generated from the Helm release name `kube-prometheus`. If you used a different release name, run `kubectl get svc -n monitoring` to find the correct service name.
+:::
+
+## Step 4: Install Prometheus adapter
+
+The Prometheus Adapter translates Prometheus metrics into the Kubernetes [custom metrics API](https://github.com/kubernetes/metrics), which HPA can query.
+
+Create a values file for the adapter that maps `DCGM_FI_DEV_GPU_UTIL` to a custom metric named `gpu_utilization`:
+
+```yaml title="prometheus-adapter-values.yaml"
+prometheus:
+  url: http://kube-prometheus-kube-prome-prometheus.monitoring.svc
+  port: 9090
+
+rules:
+  custom:
+    - seriesQuery: 'DCGM_FI_DEV_GPU_UTIL{namespace!="",pod!=""}'
+      resources:
+        overrides:
+          namespace:
+            resource: namespace
+          pod:
+            resource: pod
+      name:
+        matches: "DCGM_FI_DEV_GPU_UTIL"
+        as: "gpu_utilization"
+      metricsQuery: 'avg(DCGM_FI_DEV_GPU_UTIL{<<.LabelMatchers>>}) by (<<.GroupBy>>)'
+```
+
+Install the adapter:
+
+```bash
+helm install prometheus-adapter prometheus-community/prometheus-adapter \
+  --namespace monitoring \
+  -f prometheus-adapter-values.yaml
+```
+
+Verify the custom metric is available:
+
+```bash
+kubectl get --raw "/apis/custom.metrics.k8s.io/v1beta1" | jq '.resources[].name' | grep gpu
+# Expected: "pods/gpu_utilization"
+```
+
+## Available GPU metrics
+
+The default DCGM Exporter profile exposes several metrics. You can use any of these as HPA targets by adding entries under `rules.custom` in the Prometheus Adapter config:
+
+| Metric | Description |
+|--------|-------------|
+| `DCGM_FI_DEV_GPU_UTIL` | GPU core utilization (%) |
+| `DCGM_FI_DEV_FB_USED` | GPU framebuffer memory used (MiB) |
+| `DCGM_FI_DEV_POWER_USAGE` | GPU power draw (W) |
+| `DCGM_FI_DEV_SM_CLOCK` | Streaming multiprocessor clock (MHz) |
+| `DCGM_FI_DEV_MEM_CLOCK` | Memory clock (MHz) |
+
+For memory-bound workloads such as large language model inference, `DCGM_FI_DEV_FB_USED` may be a better scaling signal than GPU core utilization.
+
+## Step 5: Create an HPA targeting GPU utilization
+
+Create an HPA that scales your GPU workload when average GPU utilization exceeds 50%. Replace `gpu-workload` with the name of your Deployment:
+
+```yaml title="gpu-hpa.yaml"
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: gpu-workload-hpa
+  namespace: default
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: gpu-workload
+  minReplicas: 1
+  maxReplicas: 4
+  metrics:
+    - type: Pods
+      pods:
+        metric:
+          name: gpu_utilization
+        target:
+          type: AverageValue
+          averageValue: "50"   # DCGM_FI_DEV_GPU_UTIL is 0–100; this targets 50% utilization
+```
+
+Apply the HPA:
+
+```bash
+kubectl apply -f gpu-hpa.yaml
+```
+
+Monitor scaling behavior:
+
+```bash
+kubectl get hpa gpu-workload-hpa -w
+# NAME               REFERENCE                  TARGETS        MINPODS   MAXPODS   REPLICAS
+# gpu-workload-hpa   Deployment/gpu-workload    42/50 (avg)    1         4         1
+```
+
+## Troubleshoot common issues
+
+### Custom metric not found
+
+If `kubectl get --raw "/apis/custom.metrics.k8s.io/v1beta1"` returns an error or doesn't list `gpu_utilization`:
+
+1. Verify the Prometheus Adapter pod is running: `kubectl get pods -n monitoring -l app.kubernetes.io/name=prometheus-adapter`
+2. Check Prometheus Adapter logs for configuration errors: `kubectl logs -n monitoring -l app.kubernetes.io/name=prometheus-adapter`
+3. Confirm Prometheus contains DCGM data by port-forwarding to Prometheus and querying `DCGM_FI_DEV_GPU_UTIL` directly.
+
+### HPA shows unknown targets
+
+This usually means the metric is registered but no data is available for the target pods:
+
+1. Verify your GPU workload pods are running and consuming GPU resources.
+2. Check that DCGM Exporter metrics include `pod` and `namespace` labels. If these labels are missing, confirm `kubernetes.enablePodLabels=true` is set.
+3. Wait 1–2 minutes for the metrics pipeline to propagate data from DCGM through Prometheus to the adapter.

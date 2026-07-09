@@ -226,18 +226,35 @@ function main() {
       }
 
       const localTierFeatures = localProducts.products[tier].features || [];
-      const sortedLocal = [...localTierFeatures].sort();
-      const sortedUpstream = [...activeFeatures].sort();
 
-      if (JSON.stringify(sortedLocal) !== JSON.stringify(sortedUpstream)) {
+      // Preserve local plan assignments for features not in any upstream plan.
+      // Some features exist in upstream definitions but have no plan assignment
+      // upstream (e.g. platform-external-db). The docs repo manages their
+      // plan assignments locally — don't remove them during sync.
+      const allUpstreamPlanIds = new Set();
+      for (const t of tiers) {
+        for (const id of (upstreamPlans[t] || [])) {
+          allUpstreamPlanIds.add(id);
+        }
+      }
+      const localOnlyFeatures = localTierFeatures.filter(f => !allUpstreamPlanIds.has(f));
+      if (localOnlyFeatures.length > 0 && isVerbose) {
+        console.log(`  [${tier}] Preserving local-only: ${localOnlyFeatures.join(', ')}`);
+      }
+
+      const mergedFeatures = [...activeFeatures, ...localOnlyFeatures];
+      const sortedLocal = [...localTierFeatures].sort();
+      const sortedMerged = [...mergedFeatures].sort();
+
+      if (JSON.stringify(sortedLocal) !== JSON.stringify(sortedMerged)) {
         changes.tiersUpdated.push(tier);
         if (isVerbose) {
-          const added = activeFeatures.filter(f => !localTierFeatures.includes(f));
-          const removed = localTierFeatures.filter(f => !activeFeatures.includes(f));
+          const added = mergedFeatures.filter(f => !localTierFeatures.includes(f));
+          const removed = localTierFeatures.filter(f => !mergedFeatures.includes(f));
           if (added.length) console.log(`  [${tier}] Added: ${added.join(', ')}`);
           if (removed.length) console.log(`  [${tier}] Removed: ${removed.join(', ')}`);
         }
-        localProducts.products[tier].features = activeFeatures;
+        localProducts.products[tier].features = mergedFeatures;
       }
     }
 

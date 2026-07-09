@@ -72,7 +72,7 @@ export default class Flow extends React.Component {
       <div className={styles.flow}>
         { currentImage.child && <div className={styles.imageWrapper}>
           <div className={styles.image}>
-            <Image {...currentImage.props} 
+            <Image {...currentImage.props}
               onMouseEnter={() => {
                 this.setState({
                   imageStyle: currentImage.props?.hoverStyle || currentImage.props?.imageStyle
@@ -185,7 +185,7 @@ export class Step extends React.Component {
 
   render() {
     return (
-      <li className={ `${styles.step} ${this.props.current ? styles.current : ""} `} onClick={this.props.onClick} style={this.props.style} >
+      <li className={ `${styles.step} flow-step ${this.props.current ? styles.current : ""} `} onClick={this.props.onClick} style={this.props.style} >
         {this.props.children}
       </li>
     )

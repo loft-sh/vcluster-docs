@@ -1,0 +1,98 @@
+---
+title: How Platform works
+sidebar_label: How Platform works
+sidebar_position: 4
+description: How vCluster Platform reconciles resources, routes traffic, and behaves when components are unavailable.
+---
+
+import GlossaryTerm from '@site/src/components/GlossaryTerm';
+import PlatformEntryPoints from '@site/static/media/platform/diagrams/platform-entry-points.svg';
+import PlatformTenantLifecycle from '@site/static/media/platform/diagrams/platform-tenant-lifecycle.svg';
+import PlatformNetworkPaths from '@site/static/media/platform/diagrams/platform-network-paths.svg';
+
+Platform follows the Kubernetes controller model. Users and automation create or update API resources expressing desired state. Controllers in the management plane compare that state against connected clusters and reconcile the difference. The connected cluster agent applies changes locally and reports status back to Platform. vCluster then runs the <GlossaryTerm term="tenant-cluster">tenant cluster</GlossaryTerm> control plane within the connected cluster.
+
+For the structural components, see [Platform architecture](./architecture.mdx).
+
+## Entry points
+
+All requests enter through the API gateway, which authenticates each request, checks access, applies impersonation, and forwards to the appropriate backend. Users do not receive credentials for connected clusters directly.
+
+| Entry point | Used by | Purpose |
+|---|---|---|
+| Web UI | Browser users | Manage projects, tenant clusters, users, templates, connected clusters, and settings. |
+| Platform API | UI, CLI, integrations, automation | Manage Platform resources such as projects, clusters, templates, users, and tenant cluster instances. |
+| CLI | Operators and automation | Calls the Platform API for login, create, connect, inspect, and lifecycle commands. |
+| Management Kubernetes API | CLI and Kubernetes clients | Proxies authenticated requests to Platform management resources under `/kubernetes/management`. |
+| Connected cluster proxy | CLI and UI workflows | Proxies authenticated requests to a connected cluster under `/kubernetes/cluster/<cluster>`. |
+| Project resource proxy | Tenant cluster and space access | Proxies project-scoped requests under `/kubernetes/project/<project>/virtualcluster/<name>` or `/kubernetes/project/<project>/space/<name>`. |
+
+<figure>
+  <PlatformEntryPoints style={{width: '100%', height: 'auto'}} role="img" aria-label="Platform API gateway routing requests to management, connected cluster, and tenant cluster APIs" />
+  <figcaption>Platform API gateway request paths</figcaption>
+</figure>
+
+## Resource lifecycle
+
+When a user or automation creates or updates a Platform resource, it moves through a consistent path from request to deployed state:
+
+1. A user, CLI command, integration, or GitOps workflow submits a request. Platform creates or updates the API resource expressing desired state.
+2. Platform validates the resource against project policy, allowed clusters, allowed templates, and quotas.
+3. Platform controllers reconcile the desired state. The connected cluster agent applies changes locally, including namespaces, RBAC, and Helm releases.
+4. The connected cluster reports status back to Platform. The resource status is updated and reflected in the UI and API.
+
+<figure>
+  <PlatformTenantLifecycle style={{width: '100%', height: 'auto'}} role="img" aria-label="Tenant resource lifecycle from request through policy, reconciliation, vCluster runtime, and status" />
+  <figcaption>Tenant resource lifecycle</figcaption>
+</figure>
+
+For tenant clusters, the central resource is VirtualClusterInstance. A Platform-managed tenant cluster uses this resource as its desired state. It covers provisioning, configuration updates, upgrades, access, sleep behavior, wake behavior, Argo CD registration, and cleanup. An [externally deployed tenant cluster](../understand/externally-vs-platform-deployed.mdx) can be registered with Platform without transferring lifecycle ownership to Platform.
+
+Platform manages supporting resources within a project. NodeProvider and NodeClaim resources handle private node provisioning and lifecycle. These resources follow the same lifecycle pattern as other project resources.
+
+## Tenant cluster runtime
+
+Platform decides where and how a tenant cluster should be deployed, but vCluster runs the tenant cluster itself. During creation, Platform combines project policy, the selected VirtualClusterTemplate, user-provided parameters, and the selected connected cluster. It then installs or updates the vCluster Helm release in the target namespace. After that point, the vCluster runtime owns the Kubernetes control plane behavior.
+
+For the API server, syncer, data store, CoreDNS, networking, and worker node models, see the [vCluster architecture](/docs/vcluster/introduction/architecture).
+
+## Network paths
+
+Platform supports multiple network paths depending on what is being accessed and how your environment is connected.
+
+<figure>
+  <PlatformNetworkPaths style={{width: '100%', height: 'auto'}} role="img" aria-label="Network paths for regional and direct access endpoints, Platform proxy, and Tailscale connectivity" />
+  <figcaption>Network paths to connected cluster and tenant cluster APIs</figcaption>
+</figure>
+
+### Regional and direct access endpoints
+
+Platform supports two approaches for bypassing the central API gateway. **Regional cluster endpoints** route requests through the agent installed on the connected cluster, avoiding the central Platform gateway while still applying authentication, authorization, and audit locally. **Direct access points** expose the tenant cluster API server endpoint directly in the user's kubeconfig. Platform still controls identity, access, and lifecycle in both cases.
+
+Use these paths when round-trip latency through the central gateway is a concern, or when users need a kubeconfig that points directly to their tenant cluster. See [regional cluster endpoints](../administer/clusters/advanced/regional-cluster-endpoints.mdx) for setup.
+
+### Platform proxy
+
+Platform can proxy Kubernetes API requests through its API gateway. Users authenticate to Platform. Platform checks project and tenant cluster access. The gateway forwards the request to the connected cluster or tenant cluster API server.
+
+Use the proxy path when users should not receive connected cluster credentials or when the target cluster is only reachable from Platform or the agent. It centralizes access checks and audit records.
+
+### Tailscale network path
+
+Platform uses a Tailscale network path for environments where direct connectivity is unavailable or unreliable. Platform coordinates network peers and can relay traffic through DERP when peers cannot connect directly.
+
+This path is useful when connected clusters, tenant clusters, or users are behind NAT, firewall rules, or private networks. The agent and Platform establish the network relationship. DERP provides a relay path when peer-to-peer traffic cannot be established.
+
+For troubleshooting this path, see [tsnet connectivity](../troubleshoot/tsnet-connectivity.mdx).
+
+## Failure behavior
+
+Platform, connected cluster agents, and tenant cluster control planes fail independently of each other. Existing workloads continue running in connected clusters even when management connectivity is lost. For the full breakdown by layer, see [What happens during control plane outages?](../understand/control-plane-outages.mdx).
+
+## Further reading
+
+- [Platform architecture](./architecture.mdx)
+- [Connected clusters](../understand/what-are-clusters.mdx)
+- [Projects](../understand/what-are-projects.mdx)
+- [vCluster architecture](/docs/vcluster/introduction/architecture)
+- [What happens during control plane outages?](../understand/control-plane-outages.mdx)

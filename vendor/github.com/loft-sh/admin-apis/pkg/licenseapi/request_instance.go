@@ -2,7 +2,13 @@ package licenseapi
 
 import "net/http"
 
-const InstanceCreateRoute = "/instance"
+// InstanceRouteBase is the base path for all instance-related endpoints.
+const InstanceRouteBase = "/instance"
+
+// InstanceCreateRoute is the path for instance registration.
+const InstanceCreateRoute = InstanceRouteBase
+
+// InstanceCreateMethod is the HTTP method for instance registration.
 const InstanceCreateMethod = http.MethodPost
 
 // InstanceCreateInput is the required input data for "instance create" operations, that is, the
@@ -10,7 +16,7 @@ const InstanceCreateMethod = http.MethodPost
 // information about the instance's current license.
 // +k8s:deepcopy-gen=true
 type InstanceCreateInput struct {
-	*InstanceTokenAuth `hash:"-"`
+	*InstanceTokenAuth `json:",inline" hash:"-"`
 
 	// Product is the product that is being used. Can be empty, loft, devpod-pro or vcluster-pro.
 	// This should NOT be a ProductName but a string to allow for downward compatibility

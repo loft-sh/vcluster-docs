@@ -69,6 +69,52 @@ The review checks documentation style, validates vCluster YAML configurations,
 and identifies broken links. The AI review is meant to assist, not replace,
 human review.
 
+## SEO and crawler policy
+
+The docs site exposes multiple versions (current stable, prior supported,
+EOS/EOL, and the `next` preview). Only the current stable version should
+compete for search engine and AI crawler attention; older versions remain
+reachable for users who need them, but must not outrank or dilute the
+current docs. See DOC-1325 for background.
+
+### What the current setup does
+
+- **`lastVersion`** in `docusaurus.config.js` makes unversioned URLs (for
+  example `/docs/vcluster/deploy/...`) serve the current stable release.
+  Those unversioned URLs are the canonical, indexable entry points.
+- **noindex on non-current versions** is emitted by
+  `src/theme/DocItem/Layout/index.js`. The swizzle reads
+  `useActivePluginAndVersion()` and injects
+  `<meta name="robots" content="noindex,follow">` whenever `isLast` is
+  false. That covers EOS, EOL, any prior stable version still in
+  `onlyIncludeVersions`, and the `current` (next/main) preview.
+- **Sitemap** (`docusaurus.config.js`, sitemap plugin) lists only
+  unversioned URLs. Any path matching `/vcluster/<X.Y.Z>/` or
+  `/platform/<X.Y.Z>/` — plus the `next` previews — is stripped by both
+  `ignorePatterns` and a post-filter in `createSitemapItems`.
+- **`llms.txt`** already excludes versioned docs via
+  `includeVersionedDocs: false` on the `docusaurus-plugin-llms-txt` plugin.
+  That stays as-is.
+- **`static/robots.txt`** is intentionally permissive. `Disallow` would
+  block crawlers from fetching the page and therefore from ever seeing the
+  `noindex` meta tag, which is the opposite of what we want. Note that the
+  production host `vcluster.com/robots.txt` is served by the main site
+  repo, not this one; this file applies to the Netlify preview domain.
+- **Canonical tags** are not emitted automatically. Only add a `<link
+  rel="canonical">` when the content at a versioned URL is effectively
+  identical to the current version. Do not point version-specific content
+  (release notes, deprecated APIs, migration guides) at the current docs.
+
+### When adding or removing a version
+
+1. Update `onlyIncludeVersions` in `docusaurus.config.js` for the affected
+   docs plugin (vcluster or platform). No SEO code changes are required —
+   the swizzle derives `isLast` from the plugin config.
+2. When bumping `lastVersion`, the previous stable version automatically
+   starts emitting `noindex,follow`. No per-version list to edit.
+3. Regenerate the lifecycle JSON (`npm run generate-lifecycle-json`) so
+   the supported-versions partial stays in sync with the config.
+
 ## Style guide
 
 Most of the style guide rules is enforced by `vale` linter. See the
@@ -345,16 +391,16 @@ vCluster products.
 "vCluster" is a trademark. There are strict legal frameworks around how to use a
 trademark, for example, it cannot be used in plural. **Do not use "vClusters"**.
 
-Never use vCluster or vClusters when talking about a virtual cluster or clusters
-that vCluster creates. Use **virtual clusters**.
+Never use vCluster or vClusters when talking about a cluster that vCluster
+creates. Use **tenant clusters**.
 
 ### Products
 
-- vCluster: open source project that helps you create virtual clusters
-- vCluster Pro: a single enhanced/paid/upgraded virtual cluster that uses Pro
+- vCluster: open source project that provisions and manages tenant clusters
+- vCluster Pro: a single enhanced/paid/upgraded tenant cluster that uses Pro
   functionality (as labeled "Pro")
-- vCluster Platform: the management platform and UI for managing open source and
-  commercial vCluster instances
+- vCluster Platform: the management platform and UI for managing tenant clusters
+  across one or more Control Plane Clusters
 
 ### CLI
 
@@ -445,20 +491,71 @@ write them.
 
 ### Controlling Vale rules
 
-Use these HTML-style comments to control Vale checking:
+The syntax for suppressing Vale depends on file type:
 
-```text
-<!-- vale off -->  // Stops all Vale checks
-<!-- vale on -->   // Resumes Vale checks
-```
-
-Example usage:
+**In `.md` files** — use HTML comments:
 
 ```text
 <!-- vale off -->
-<!-- this section ignores all Vale rules -->
 This content won't be checked by Vale.
 <!-- vale on -->
 ```
 
+**In `.mdx` files** — use JSX comments (HTML comments do not suppress Vale in MDX):
+
+```text
+{/* vale off */}
+This content won't be checked by Vale.
+{/* vale on */}
+```
+
 <!-- vale on -->
+
+## Adding prose to generated partials
+
+The vCluster config partials under `vcluster/_partials/config/` are
+overwritten on every release by `hack/vcluster/partials/main.go`. Editing
+those files in place was the original workflow and the original failure
+mode: the next regeneration silently dropped the edit. Two routes exist
+now, both designed to survive regeneration.
+
+### Use the Extras map when prose belongs with a schema field
+
+If the prose is intrinsically tied to one schema path — a security
+warning that only makes sense alongside `controlPlane.standalone.joinNode`,
+a migration tip that belongs at the bottom of `controlPlane.distro` —
+add a `pathExtras` entry in `hack/vcluster/partials/main.go`:
+
+```go
+var pathExtras = map[string]Extras{
+    "controlPlane/standalone/joinNode": {
+        Before: "\n:::warning Security consideration\n...\n:::\n\n",
+    },
+}
+```
+
+`Before` lands above the rendered schema content, `After` below.
+The map keys are validated against the live schema before any output
+is written; a rename or removal upstream panics the generator with the
+full list of dangling keys, so the prose can be migrated explicitly
+instead of silently orphaned.
+
+### Use a separate, non-generated partial when prose stands alone
+
+If the prose is conceptual (an overview page, a how-to, a comparison)
+and only happens to live near generated content, write it as a
+hand-authored `.mdx` outside `vcluster/_partials/config/` and import it
+where needed. The generator will not touch it. This is the right choice
+when:
+
+- The prose can be read on its own without a specific schema field next
+  to it.
+- The prose references multiple schema paths.
+- The prose has its own headings, examples, and lifecycle (changes for
+  reasons unrelated to schema bumps).
+
+### Quick rule of thumb
+
+- One schema path, one or two paragraphs of prose → `pathExtras`.
+- Multi-paragraph prose, multiple references, own structure → separate
+  partial, imported manually.

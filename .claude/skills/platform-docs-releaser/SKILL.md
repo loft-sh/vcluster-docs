@@ -1,18 +1,47 @@
+---
+name: platform-docs-releaser
+description: Platform Documentation Release Skill
+---
+
 # Platform Documentation Release Skill
 
 ## Overview
 
 This skill automates the vCluster Platform documentation release process, handling API generation, version updates, configuration changes, and SEO setup for new Platform releases.
 
+## Versioning Timing: rc-1 Process
+
+Starting with Platform v4.8, docs versioning happens at rc-1, NOT on release day.
+
+### How it works
+
+1. At rc-1: Create the new docs version the same day rc-1 is cut
+2. Deploy hidden: The version is deployed but HIDDEN from the public version dropdown — users cannot discover it via the UI
+3. Validation window: The hidden version can be accessed via Netlify preview URL or by manually changing the version in the URL, allowing the platform team and contributors to validate against real deployed docs
+4. On release day: A single "config flip" PR exposes the version in the dropdown. This PR is small, reviewable, and safe to merge by anyone with merge rights
+5. Backport flow: Contributors continue targeting `platform/` on `main` as usual. If a change needs to land in the upcoming release, add the `backport-v4.8.0` label to the PR
+
+### Config flip PR (release day)
+
+The config flip PR changes only the version visibility in `docusaurus.config.js`:
+- Updates `lastVersion` to point to the new version
+- Adds the new version to the dropdown with "Stable" label
+- Demotes the previous stable version label (removes "Stable" suffix)
+- Updates SEO sitemap priorities, announcement bar, and netlify redirect (adds new version, removes previous)
+
+This separation means all the heavy lifting (version creation, API partials, content, link fixes) is done during the rc-1 window, and release day is a low-risk config change.
+
 ## When to Use This Skill
 
 Trigger this skill when:
 - User mentions "Platform release", "new Platform version", or "prepare Platform docs"
+- User mentions "rc-1" or "release candidate" for Platform docs
 - Working on Linear issue with title matching "docs updates for Platform vX.Y release"
-- User asks to prepare docs for a new Platform version (e.g., 4.5.0)
+- User asks to prepare docs for a new Platform version (e.g., 4.8.0)
 - User references the platform release checklist
+- User asks to create the "config flip" PR for release day
 
-**Note:** This skill is for Platform releases only. vCluster releases have a separate skill (`vcluster-docs-releaser`).
+Note: This skill is for Platform releases only. vCluster releases have a separate skill (`vcluster-docs-releaser`).
 
 ## Prerequisites
 
@@ -25,25 +54,54 @@ Before starting:
 
 ### Part 1: Generate Platform API Partials
 
-**CRITICAL FIRST STEP**: Platform releases require generating API documentation partials before any other changes.
+**CRITICAL FIRST STEP**: Platform releases require updating the Go API dependency and regenerating API documentation partials before any other changes.
+
+The generator at `hack/platform/partials/main.go` produces docs from two sources:
+- **Go types** in `github.com/loft-sh/api/v4` — platform config fields, resource references (must match the new platform version)
+- **vCluster JSON schema** — vCluster config reference sections embedded in the platform docs
 
 **Process:**
-1. Locate the vCluster schema file:
+
+1. Bump `github.com/loft-sh/api/v4` to the version matching the new platform release:
+   ```bash
+   go get github.com/loft-sh/api/v4@vX.Y.Z   # e.g. v4.9.0
+   go mod tidy
+   go mod vendor
+   ```
+   The api module version tracks the platform version (platform v4.9.x → api v4.9.x). Check available tags with:
+   ```bash
+   cd ~/git/vcluster/api && git tag | sort -V | grep "^vX\.Y" | tail -5
+   ```
+   Use the highest stable tag for the target minor version (e.g. `v4.9.1` over `v4.9.0-rc.1`).
+
+2. Locate the vCluster schema file:
    ```bash
    ls configsrc/vcluster/main/vcluster.schema.json
    ```
 
-2. Run the Go generation script:
+3. Run the Go generation script:
    ```bash
    go run hack/platform/partials/main.go configsrc/vcluster/main/vcluster.schema.json
    ```
 
-3. This generates API documentation in:
+4. This generates/updates API documentation in:
    - `platform/api/_partials/resources/` - API resource documentation
-   - Configuration reference files
-   - Status reference files
+   - Configuration reference files (`config/reference.mdx`, `config/status_reference.mdx`)
+   - Any fields added or removed in the new platform version are automatically reflected
 
-**Why this matters**: Platform API docs are auto-generated from the schema. Without this step, the build will fail or have outdated API references.
+5. **Audit deleted files for cross-plugin consumers.** The generator removes the entire `platform/api/_partials/resources/` directory before regenerating. When an API field is removed, its partial files disappear. Frozen versioned vCluster docs (0.28–0.33, etc.) may still import those files via `@site/platform/api/_partials/...`. Check for any such orphaned imports:
+   ```bash
+   # List files the generator just deleted (compared to git HEAD)
+   git diff --name-status platform/api/_partials/resources/ | grep "^D"
+
+   # For each deleted path, check if any versioned vCluster docs import it
+   git diff --name-status platform/api/_partials/resources/ | grep "^D" | awk '{print $2}' | \
+     xargs -I{} basename {} | \
+     xargs -I{} grep -rl "{}" vcluster_versioned_docs/ --include="*.mdx"
+   ```
+   If any versioned doc still imports a deleted partial, add the path to `.generator-preserve` (see API Partials Generation section below).
+
+**Why this matters**: The Go types in `api/v4` define the platform config schema. If the dependency is stale, new config fields (like `database`) will be missing from the docs and removed fields will remain as dead content.
 
 ### Part 2: Import Path Strategy - Same-Plugin vs Cross-Plugin
 
@@ -91,141 +149,158 @@ Before starting:
 grep -r "import.*\.\./\.\./\.\./vcluster\|import.*\.\./\.\./\.\./docs" platform/ --include="*.mdx" -l
 ```
 
-## Part 3: Configuration Updates
+## Part 3: Configuration Updates (rc-1 — hidden deploy)
 
-These are the AI's responsibility (automated):
+At rc-1, the version is added to the build but hidden from the dropdown. Do NOT change `lastVersion`, SEO, netlify redirect, or announcement bar — those are Part 5 (release day).
 
-#### 1. Update `docusaurus.config.js`
+#### 1. Update `docusaurus.config.js` — Platform plugin config
 
-**Location 1: SEO sitemap priorities (~line 108)**
+Add the new version to `onlyIncludeVersions` and `versions` with hidden/unreleased flags:
+
 ```js
-// Latest stable versions get highest priority (0.XX.0 for vCluster, X.Y.0 for platform)
-if (item.url.match(/\/vcluster\/0\.XX\.0\//) ||
-    item.url.match(/\/platform\/X\.Y\.0\//)) {
-```
-
-**Location 2: SEO comment (~line 120)**
-```js
-// ALL other versioned docs get very low priority (older platform versions)
-```
-
-**Location 3: Platform plugin config (~line 170-190)**
-```js
-{
-  id: "platform",
-  path: "platform",
-  routeBasePath: "platform",
-  sidebarPath: require.resolve("./sidebarsPlatform.js"),
-  editUrl: ({ versionDocsDirPath, docPath }) =>
-    `https://github.com/loft-sh/vcluster-docs/edit/main/${versionDocsDirPath}/${docPath}`,
-  editCurrentVersion: true,
-  lastVersion: "X.Y.0",  // UPDATE THIS
-  versions: {
-    current: {
-      label: "main 🚧",
-    },
-    "X.Y.0": {  // NEW ENTRY
-      label: "vX.Y Stable",
-      banner: "none",
-      badge: true,
-    },
-    "X.Z.0": {  // DEMOTE previous stable
-      label: "vX.Z",  // Remove "Stable" suffix
-      banner: "none",
-      badge: true,
-    },
-    // Older versions...
+lastVersion: "X.Z.0",  // DO NOT CHANGE — stays on current stable
+onlyIncludeVersions: ["current", "X.Y.0", "X.Z.0", ...],  // Add new version
+versions: {
+  current: {
+    label: "main 🚧",
   },
-},
+  "X.Y.0": {  // NEW ENTRY — hidden pre-release
+    label: "vX.Y",
+    banner: "unreleased",  // Shows warning banner on every page
+    badge: true,
+    noIndex: true,          // Prevents search engine indexing
+  },
+  "X.Z.0": {  // KEEP as-is — still current stable
+    label: "vX.Z Stable",
+    banner: "none",
+    badge: true,
+  },
+  // ... rest unchanged
+}
 ```
 
-**Pattern:**
-- Keep 2-3 versions (current + 2 stable)
-- New version gets "Stable" label
-- Previous stable loses "Stable" suffix
-- Oldest version may get "EOL" or "unmaintained" banner
+#### 2. Update `src/config/versionConfig.js` — hide from dropdown
 
-**Location 4: Announcement bar (~line 400)**
+Add the version to the hidden array so it doesn't appear in the version dropdown:
+
 ```js
-announcementBar: {
-  id: "platform-X-Y-release",
-  content:
-    '🚀 <strong>New releases: <a href="https://www.vcluster.com/releases/en/changelog?hideLogo=true&hideMenu=true&theme=dark&embed=true&c=vCluster" target="_blank">vCluster Platform X.Y and vCluster 0.ZZ</a></strong>',
-  backgroundColor: "#4a90e2",
-  textColor: "#ffffff",
-  isCloseable: true,
-},
+export const vclusterHiddenVersions = [];
+export const platformHiddenVersions = ["X.Y.0"];
 ```
 
-#### 2. Update `netlify.toml`
+This is the single source of truth for hiding versions. Two custom components consume it:
 
-**Location: Redirect section (~line 520)**
-```toml
-[[redirects]]
-  from = "/docs/platform/X.Y.0/*"  # Update to new version
-  to = "/docs/platform/:splat"
-  status = 301
-  force = true
-```
+- Desktop sidebar (`src/theme/DocSidebar/Desktop/Content/index.js`): filters `useVersions()` and passes visible names to `DocsVersionDropdownNavbarItem` `versions` prop
+- Mobile TOC (`src/theme/TOCCollapsible/index.js`): filters `useVersions()` before rendering
 
-#### 3. Create Hurl Test File
+Result: the version is built, accessible via direct URL (e.g., `/docs/platform/X.Y.0/`), shows the "unreleased" banner, but does not appear in the dropdown.
 
-**File:** `hack/test-platform-X.Y.hurl`
+### Part 4: Verification (rc-1)
 
-**Process:**
-1. Copy previous version: `cp hack/test-platform-X.Z.hurl hack/test-platform-X.Y.hurl`
-2. Update header:
-   ```
-   # Platform X.Y Documentation Release Tests
-   # Usage: hurl --test --variable BASE_URL=https://deploy-preview-XXXX--vcluster-docs-site.netlify.app hack/test-platform-X.Y.hurl
-   ```
-3. Update redirect tests:
-   ```
-   # Test: Platform X.Y.0 redirects to main platform docs
-   GET {{BASE_URL}}/docs/platform/X.Y.0
-   ```
-4. Update version verification tests:
-   ```
-   body contains "Platform X.Y"
-   body contains "vX.Y Stable"
-   ```
-5. **Add cross-version reference tests**: Verify vCluster→Platform links work
-6. **Remove all line number references**: Do NOT include `(lines X-Y)` in section headers
+AI performs:
 
-**IMPORTANT:** Hurl tests run AFTER PR is deployed to Netlify preview.
-
-**Cross-Version Testing**: Platform hurl tests should verify that:
-- Latest vCluster version links to current Platform docs
-- Older vCluster versions link to appropriate Platform versions
-- Example: vCluster 0.27 → Platform 4.4, vCluster 0.26 → Platform 4.3
-
-### Part 3: Verification
-
-**AI performs:**
 1. ✅ Verify versioned docs exist: `ls -la platform_versioned_docs/version-X.Y.0/`
 2. ✅ Check platform_versions.json includes new version
 3. ✅ Verify API partials generated: `ls platform/api/_partials/resources/`
 4. ✅ All config changes applied
+5. ✅ Version is hidden from dropdown (in `platformHiddenVersions` array in `versionConfig.js`)
 
-**User performs:**
-1. Build check: `npm run build` (**IMPORTANT**: Per CLAUDE.md, AI never runs build - user only)
+User performs:
+
+1. Build check: `npm run build` (per CLAUDE.md, AI never runs build — user only)
 2. Review enterprise/pro tags (manual)
 3. Update support dates in platform-specific supported versions file
 4. Update compatibility matrix
 5. Run hurl tests after PR deployed
 
-**If build errors occur**: Reference CLAUDE.md for:
-- Link resolution rules (use relative file paths with `.mdx` extensions)
-- Broken link debugging method (cd into versioned folder, grep for file)
+If build errors occur: Reference CLAUDE.md for link resolution rules and broken link debugging.
+
+### Part 5: Config Flip PR (Release Day)
+
+This is the release-day action. All heavy work was done at rc-1. This PR only flips visibility.
+
+PR title: `docs: expose Platform X.Y docs in version dropdown`
+PR body: "Config flip to make the pre-deployed vX.Y docs visible in the version dropdown. All content was deployed at rc-1."
+
+#### 1. `src/config/versionConfig.js` — unhide from dropdown
+
+```js
+export const platformHiddenVersions = [];  // Remove the version string
+```
+
+#### 2. `docusaurus.config.js` — promote to stable
+
+```js
+lastVersion: "X.Y.0",  // Was X.Z.0 — now points to new version
+versions: {
+  "X.Y.0": {
+    label: "vX.Y Stable",  // Was "vX.Y" — add "Stable"
+    banner: "none",          // Was "unreleased" — remove banner
+    badge: true,
+    // noIndex removed — allow search engine indexing
+  },
+  "X.Z.0": {
+    label: "vX.Z",  // Was "vX.Z Stable" — demote
+    banner: "none",
+    badge: true,
+  },
+}
+```
+
+#### 3. `docusaurus.config.js` — SEO sitemap priorities
+
+```js
+if (item.url.match(/\/vcluster\/0\.XX\.0\//) ||
+    item.url.match(/\/platform\/X\.Y\.0\//)) {
+  return { ...item, priority: 1.0, changefreq: 'daily' };
+}
+```
+
+#### 4. `docusaurus.config.js` — announcement bar
+
+```js
+announcementBar: {
+  id: "platform-X-Y-release",
+  content: '... vCluster Platform X.Y ...',
+},
+```
+
+#### 5. `netlify.toml` — redirect
+
+**CRITICAL:** Add the redirect for the new `lastVersion` AND remove the redirect for the previous `lastVersion` (X.Z.0). The previous version is still in `onlyIncludeVersions` — its versioned URL serves real content and must not redirect.
+
+```toml
+# ADD this block for the new lastVersion (canonical URL is the unversioned path)
+[[redirects]]
+  from = "/docs/platform/X.Y.0/*"
+  to = "/docs/platform/:splat"
+  status = 301
+  force = true
+
+# REMOVE the block for X.Z.0 — it is now a live versioned URL, not the lastVersion
+```
+
+Only two categories of versions belong in this redirect section:
+- The current `lastVersion` (whose canonical URL is the unversioned path)
+- Truly EOL/archived versions that are no longer in `onlyIncludeVersions`
+
+#### 6. `hack/test-platform-X.Y.hurl` — create hurl test
+
+Copy from previous version, update version numbers. Include cross-version tests (vCluster→Platform links). Hurl tests run AFTER PR is deployed to Netlify preview.
+
+This PR is small, reviewable, and safe to merge by anyone with merge rights.
 
 ## Files Modified Summary
 
-| File | Changes | AI/User |
-|------|---------|---------|
-| `platform/api/_partials/resources/**` | Generated API docs | AI (via Go script) |
-| `docusaurus.config.js` | SEO, lastVersion, versions, banner | AI |
-| `netlify.toml` | Redirect | AI |
-| `hack/test-platform-X.Y.hurl` | New test file | AI |
+| File | Changes | Phase |
+|------|---------|-------|
+| `platform/api/_partials/resources/**` | Generated API docs | rc-1 |
+| `docusaurus.config.js` | Add to `onlyIncludeVersions`, add version with `banner: "unreleased"` + `noIndex: true` | rc-1 |
+| `src/config/versionConfig.js` | Add version to `platformHiddenVersions` array | rc-1 |
+| `docusaurus.config.js` | `lastVersion`, labels, SEO, announcement bar | Release day |
+| `src/config/versionConfig.js` | Remove version from `platformHiddenVersions` | Release day |
+| `netlify.toml` | Add redirect for new lastVersion; remove redirect for previous lastVersion | Release day |
+| `hack/test-platform-X.Y.hurl` | New test file | Release day |
 | Platform support dates file | Release/EOL dates | User |
 
 ## Division of Responsibilities
@@ -292,10 +367,27 @@ versions: {
 ### API Partials Generation
 
 The Go script at `hack/platform/partials/main.go`:
-- Reads vCluster JSON schema
+- Reads Go types from `github.com/loft-sh/api/v4` (vendored) to generate platform config and resource reference docs
+- Reads the vCluster JSON schema for vCluster config reference sections embedded in platform docs
 - Generates MDX partials for API resources
-- Creates reference documentation
-- Updates status references
+- Creates/updates `config/reference.mdx` and `config/status_reference.mdx`
+- Deletes partials for fields removed from the API, adds partials for new fields
+
+**The Go dependency must be bumped to match the new platform release before running the generator.** See Part 1 above.
+
+#### `.generator-preserve` — protecting legacy partials
+
+The generator does `os.RemoveAll` on all of `platform/api/_partials/resources/` before regenerating. When an API field is removed, its partial files are deleted permanently. This breaks frozen versioned vCluster docs that still import those files via `@site/platform/api/_partials/...`.
+
+`platform/api/_partials/resources/.generator-preserve` lists paths (relative to that directory) that are backed up before `RemoveAll` and restored afterward:
+
+```
+# Example entry
+config/external.mdx
+config/external/
+```
+
+The manifest file itself is always preserved. To protect a new path, add it to the file — no code change required. Current entries and their reason are documented with comments in the file.
 
 If the schema path changes, check:
 - `configsrc/vcluster/main/vcluster.schema.json` (typical location)
@@ -305,16 +397,24 @@ If the schema path changes, check:
 
 ### Before PR:
 ```bash
-# 1. Generate API partials
+# 1. Bump api/v4 dependency to match new platform version
+go get github.com/loft-sh/api/v4@vX.Y.Z
+go mod tidy
+go mod vendor
+
+# 2. Generate API partials
 go run hack/platform/partials/main.go configsrc/vcluster/main/vcluster.schema.json
 
-# 2. Verify partials generated
+# 3. Verify partials generated
 ls platform/api/_partials/resources/ | wc -l  # Should have multiple files
 
-# 3. Verify changes
+# 4. Review what changed in the generated partials
+git diff --stat platform/api/
+
+# 5. Verify other changes
 git diff docusaurus.config.js netlify.toml
 
-# 4. Check versions
+# 6. Check versions
 cat platform_versions.json
 ```
 
@@ -351,6 +451,25 @@ hurl --test --variable BASE_URL=https://deploy-preview-XXXX--vcluster-docs-site.
 1. Check vCluster versioned docs point to correct Platform version
 2. Verify Platform version exists and is accessible
 3. Update links in older vCluster versions if needed
+
+### Issue: Build fails with "Cannot find module @site/platform/api/_partials/resources/..."
+**Cause:** The generator deleted a partial that frozen versioned vCluster docs still import via `@site/platform/api/_partials/...`.
+
+**Solution:**
+1. Identify the deleted file(s) from the error messages
+2. Add them to `platform/api/_partials/resources/.generator-preserve` (one relative path per line)
+3. Restore the files from git history:
+   ```bash
+   git show <last-good-commit>:"platform/api/_partials/resources/config/external.mdx" > \
+     platform/api/_partials/resources/config/external.mdx
+   # Repeat for each deleted file
+   ```
+4. Re-run the generator to confirm they survive:
+   ```bash
+   go run hack/platform/partials/main.go configsrc/vcluster/main/vcluster.schema.json
+   ls platform/api/_partials/resources/config/external.mdx  # should still exist
+   ```
+5. Add a comment in `.generator-preserve` explaining which versioned docs depend on the file and why it can't be removed yet.
 
 ## CRITICAL: lastVersion Routing and Link Breakage
 
@@ -470,10 +589,13 @@ Ready to commit and push!
 
 ## Notes
 
-- This skill is for **Platform only** - vCluster has separate release process
+- This skill is for Platform only — vCluster has separate release process
+- Starting with v4.8, versioning happens at rc-1, not on release day
+- The version is deployed hidden at rc-1, then exposed via config flip PR on release day
+- Contributors use `backport-v4.8.0` label for changes that must land in the upcoming release
 - Always generate API partials FIRST before any other changes
 - Platform maintains fewer versions than vCluster
 - Cross-version testing with vCluster links is important
-- **Per CLAUDE.md**: User runs build - AI NEVER runs `npm run build`
-- **⚠️ CRITICAL**: Never modify versioned docs unless explicitly requested by user (CLAUDE.md warning)
+- Per CLAUDE.md: User runs build — AI NEVER runs `npm run build`
+- CRITICAL: Never modify versioned docs unless explicitly requested by user (CLAUDE.md warning)
 - For detailed Docusaurus guidelines, always reference CLAUDE.md

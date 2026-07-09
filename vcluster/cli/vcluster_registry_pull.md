@@ -14,7 +14,7 @@ vcluster registry pull [flags]
 ### Options
 
 ```
-      --architecture string   Architecture of the image to pull. If not specified, the architecture will be detected automatically. Use 'all' to pull all architectures. (default "amd64")
+      --architecture string   Architecture of the image to pull. If not specified, the architecture will be detected automatically. Use 'all' to pull all architectures. (default "arm64")
       --destination string    Path to the destination directory. If not specified, the images will be pulled to the current directory.
   -h, --help                  help for pull
 ```

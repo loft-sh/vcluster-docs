@@ -7,15 +7,18 @@ import {
   useActiveDocContext,
 } from '@docusaurus/plugin-content-docs/client';
 import TOCCollapsible from '@theme-original/TOCCollapsible';
-import {vclusterEOLVersions, platformEOLVersions} from '@site/src/config/versionConfig';
+import {vclusterEOLVersions, platformEOLVersions, vclusterHiddenVersions, platformHiddenVersions} from '@site/src/config/versionConfig';
 import styles from './styles.module.css';
 
-function VersionSelectorCollapsible({pluginId, eolVersions}) {
+function VersionSelectorCollapsible({pluginId, eolVersions, hiddenVersions = []}) {
   const {collapsed, toggleCollapsed} = useCollapsible({
     initialState: true,
   });
 
-  const versions = useVersions(pluginId);
+  const allVersions = useVersions(pluginId);
+  const versions = hiddenVersions.length > 0
+    ? allVersions.filter(v => !hiddenVersions.includes(v.name))
+    : allVersions;
   const {activeVersion} = useActiveDocContext(pluginId);
   const activeLabel = activeVersion?.label ?? 'Version';
 
@@ -78,6 +81,7 @@ export default function TOCCollapsibleWrapper(props) {
         <VersionSelectorCollapsible
           pluginId={pluginId}
           eolVersions={eolVersions}
+          hiddenVersions={isVClusterDocs ? vclusterHiddenVersions : platformHiddenVersions}
         />
       )}
       <TOCCollapsible {...props} />

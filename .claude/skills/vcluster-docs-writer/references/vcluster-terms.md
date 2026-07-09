@@ -20,36 +20,37 @@
 - ❌ DON'T: "vClusters" (legally incorrect)
 - ❌ DON'T: "Deploy multiple vClusters"
 
-### Virtual Clusters
+### Tenant Clusters
 
-When talking about the **actual clusters that vCluster creates**, use the term **"virtual clusters"** (plural allowed because it's a descriptive term, not a trademark).
+When talking about the **actual clusters that vCluster creates**, use the term **"tenant clusters"** (plural allowed because it's a descriptive term, not a trademark). "Virtual clusters" is the legacy term and should not be used in new or edited prose.
 
-- ✅ DO: "Create three virtual clusters"
-- ✅ DO: "Each virtual cluster runs in isolation"
-- ✅ DO: "List all virtual clusters in the namespace"
+- ✅ DO: "Create three tenant clusters"
+- ✅ DO: "Each tenant cluster runs in isolation"
+- ✅ DO: "List all tenant clusters in the namespace"
 - ❌ DON'T: "Create three vClusters"
 - ❌ DON'T: "Each vCluster runs in isolation"
+- ❌ DON'T: "virtual clusters" (legacy term, retired)
 
 ## Products
 
 ### vCluster
-The open source project that helps you create virtual clusters.
+The open source project that provisions and manages tenant clusters.
 
 - Use when referring to the project or software itself
-- Example: "vCluster is an open source tool for creating virtual clusters"
+- Example: "vCluster is an open source tool for creating tenant clusters"
 
 ### vCluster Pro
-A single enhanced/paid/upgraded virtual cluster that uses Pro functionality (as labeled "Pro" in the docs).
+A single enhanced/paid/upgraded tenant cluster that uses Pro functionality (as labeled "Pro" in the docs).
 
 - Use when referring to paid/commercial features
 - Example: "This feature is available in vCluster Pro"
 - Example: "Deploy a vCluster Pro instance with advanced security features"
 
 ### vCluster Platform
-The management platform and UI for managing open source and commercial vCluster instances.
+The management platform and UI for managing tenant clusters across one or more Control Plane Clusters.
 
 - Use when referring to the management/control plane software
-- Example: "Access the vCluster Platform UI to manage your virtual clusters"
+- Example: "Access the vCluster Platform UI to manage your tenant clusters"
 - Example: "Install vCluster Platform in your Kubernetes cluster"
 
 ## CLI
@@ -99,13 +100,15 @@ Use these product names with correct capitalization:
 Deploy multiple vClusters to your K8S cluster.
 Each vCluster can run different workloads.
 Use the vCluster CLI to manage your vClusters.
+Deploy virtual clusters on the host cluster.
 ```
 
 ### ✅ CORRECT:
 ```markdown
-Deploy multiple virtual clusters to your K8s cluster using vCluster.
-Each virtual cluster can run different workloads.
-Use the vcluster CLI to manage your virtual clusters.
+Deploy multiple tenant clusters to your K8s cluster using vCluster.
+Each tenant cluster can run different workloads.
+Use the vcluster CLI to manage your tenant clusters.
+Deploy tenant clusters on a Control Plane Cluster.
 ```
 
 ## Quick Reference Table
@@ -113,7 +116,8 @@ Use the vcluster CLI to manage your virtual clusters.
 | Term | Correct Usage | Incorrect Usage |
 |------|---------------|-----------------|
 | vCluster | "Use vCluster to..." | "vClusters", "VCluster" |
-| virtual clusters | "Create virtual clusters" | "Create vClusters" |
+| tenant clusters | "Create tenant clusters" | "Create vClusters", "virtual clusters" |
+| Control Plane Cluster | "Deploy on a Control Plane Cluster" | "host cluster", "Host Cluster" |
 | vCluster Pro | "Upgrade to vCluster Pro" | "vCluster pro", "vcluster Pro" |
 | vCluster Platform | "Install vCluster Platform" | "vCluster platform", "Loft Platform" |
 | vcluster (CLI) | "`vcluster create`" | "`vCluster create`" |
@@ -129,13 +133,14 @@ Use the vcluster CLI to manage your virtual clusters.
 ❌ "Deploy vClusters on AWS EKS"
 
 ### Feature Description
-✅ "vCluster allows you to create multiple virtual clusters within a single host cluster"
+✅ "vCluster allows you to create multiple tenant clusters on a Control Plane Cluster"
 ❌ "vCluster allows you to create multiple vClusters within a single host cluster"
+❌ "vCluster allows you to create multiple virtual clusters within a single host cluster"
 
 ### CLI Reference
-✅ "The `vcluster` CLI provides commands to create and manage virtual clusters"
+✅ "The `vcluster` CLI provides commands to create and manage tenant clusters"
 ❌ "The `vCluster` CLI provides commands to create and manage vClusters"
 
 ### Product Comparison
-✅ "vCluster Pro offers enhanced security features for virtual clusters"
+✅ "vCluster Pro offers enhanced security features for tenant clusters"
 ❌ "vCluster pro offers enhanced security features for vClusters"

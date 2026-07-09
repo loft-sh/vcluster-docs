@@ -12,6 +12,15 @@ type ObjectOverviewValues struct {
 	Description string
 	YAMLObject  string
 
+	// ExtraImports is rendered with the import block at the top of the file.
+	ExtraImports string
+	// ExtraContentBeforeDescription is rendered between the imports and the description.
+	ExtraContentBeforeDescription string
+	// ExtraContentBeforeExample is rendered between the description and the example section.
+	ExtraContentBeforeExample string
+	// ExtraContentAfterExample is rendered between the YAML example and the reference section.
+	ExtraContentAfterExample string
+
 	Project bool
 
 	Create   bool
@@ -50,8 +59,19 @@ import Update from "{{ .RelativePath }}/_partials/resources/{{ .Resource }}/upda
 import Delete from "{{ .RelativePath }}/_partials/resources/{{ .Resource }}/delete.mdx"
 {{- end }}
 {{- end }}
+{{- if .ExtraImports }}
+{{ .ExtraImports }}
+{{- end }}
+{{- if .ExtraContentBeforeDescription }}
+
+{{ .ExtraContentBeforeDescription }}
+{{- end }}
 
 {{ .Description }}
+{{- if .ExtraContentBeforeExample }}
+
+{{ .ExtraContentBeforeExample }}
+{{- end }}
 
 ## {{ .Name }} example
 
@@ -59,6 +79,10 @@ An example {{ .Name }}:
 ` + "```yaml" + `
 {{ .YAMLObject }}
 ` + "```" + `
+{{- if .ExtraContentAfterExample }}
+
+{{ .ExtraContentAfterExample }}
+{{- end }}
 
 ## {{ .Name }} reference
 

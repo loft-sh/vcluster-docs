@@ -47,6 +47,11 @@
   - Replace `/platform/next/` with `/platform/`
   - Causes broken links in archived versions
 
+### Cross-Version Links
+- Versions should not reference other versions. If a partial or doc links to a specific version (e.g., `/docs/platform/4.5.0/...`) and that version is excluded from the build, the link will 404.
+- Fix by pointing to the archive URL instead: `https://platform-v4-5--vcluster-docs-site.netlify.app/docs/platform/...`
+- Or use unversioned paths if the content exists in the current build.
+
 ## Always-Do Rules
 
 ### Before Starting

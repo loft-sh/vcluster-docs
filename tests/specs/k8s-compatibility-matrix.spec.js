@@ -9,7 +9,7 @@ const { test, expect } = require('@playwright/test');
 const path = require('path');
 
 const BASE_URL = process.env.TEST_BASE_URL || 'https://www.vcluster.com';
-const MATRIX_PATH = '/docs/vcluster/next/deploy/upgrade/supported_versions#kubernetes-compatibility-matrix';
+const MATRIX_PATH = '/docs/vcluster/next/manage/upgrade/supported_versions#kubernetes-compatibility-matrix';
 const SCREENSHOTS_DIR = path.join(__dirname, '..', 'screenshots');
 
 const DESKTOP_VIEWPORT = { width: 1280, height: 800 };

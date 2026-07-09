@@ -4,12 +4,13 @@
 // There are various equivalent ways to declare your Docusaurus config.
 // See: https://docusaurus.io/docs/api/docusaurus-config
 
-import { themes as prismThemes } from "prism-react-renderer";
+import vClusterTheme from "./src/prism-theme.js";
 
 const __webpack_public_path__ = "/docs/";
 
 import resolveGlob from "resolve-glob";
 import remarkVersionTokens from "./plugins/remark-version-tokens.js";
+import rehypeStripComments from "./plugins/rehype-strip-comments.js";
 
 const newDocTemplate = `---
 title: Your Document Title
@@ -20,10 +21,12 @@ description: Brief description of the document
 Write your content here...
 `;
 
+const isNetlifyProduction = process.env.CONTEXT === 'production';
+
 /** @type {import('@docusaurus/types').Config} */
 const config = {
-  title: "vCluster docs | Virtual Clusters for Kubernetes",
-  tagline: "Virtual Clusters for Kubernetes",
+  title: "Tenant cluster management",
+  tagline: "Manage tenant clusters like a hyperscaler",
   url: "https://vcluster.com",
   baseUrl: __webpack_public_path__,
   organizationName: "loft-sh", // Usually your GitHub org/user name.
@@ -47,10 +50,16 @@ const config = {
         media: '(prefers-color-scheme: dark)',
       },
     },
+    {
+      tagName: 'link',
+      attributes: {
+        rel: 'stylesheet',
+        href: 'https://fonts.googleapis.com/icon?family=Material+Icons+Outlined',
+      },
+    },
   ],
 
   onBrokenLinks: "throw",
-  onBrokenMarkdownLinks: "warn",
 
   // Even if you don't use internationalization, you can use this field to set
   // useful metadata like html lang. For example, if your site is Chinese, you
@@ -63,6 +72,9 @@ const config = {
   themes: ["@saucelabs/theme-github-codeblock", "@docusaurus/theme-mermaid"],
   markdown: {
     mermaid: true,
+    hooks: {
+      onBrokenMarkdownLinks: "warn",
+    },
   },
 
   presets: [
@@ -91,44 +103,46 @@ const config = {
         sitemap: {
           changefreq: 'weekly',
           priority: 0.5,
-          ignorePatterns: ['/tags/**', '/search/**', '*/page/*'],
+          ignorePatterns: [
+            '/tags/**',
+            '/search',
+            '/search/**',
+            '*/page/*',
+            // Exclude versioned URLs from the sitemap. Unversioned paths (served
+            // by lastVersion) are the canonical entry points for search engines.
+            // The matching `noindex,follow` meta tag is emitted by the DocItem
+            // swizzle at src/theme/DocItem/Layout/index.js. See DOC-1325.
+            '/vcluster/[0-9]*.[0-9]*.[0-9]*/**',
+            '/platform/[0-9]*.[0-9]*.[0-9]*/**',
+            '/vcluster/next/**',
+            '/platform/next/**',
+          ],
           filename: 'sitemap.xml',
           createSitemapItems: async (params) => {
             const { defaultCreateSitemapItems, ...rest } = params;
             const items = await defaultCreateSitemapItems(rest);
 
-            // Filter out pagination and unwanted pages
-            const filteredItems = items.filter((item) => !item.url.includes('/page/'));
+            // Filter out pagination and any remaining versioned URLs that
+            // slipped past ignorePatterns. Belt-and-braces: the version regex
+            // here catches any X.Y.Z path segment under /vcluster/ or /platform/.
+            const filteredItems = items.filter((item) => {
+              if (item.url.includes('/page/')) return false;
+              if (item.url.match(/\/vcluster\/\d+\.\d+\.\d+\//)) return false;
+              if (item.url.match(/\/platform\/\d+\.\d+\.\d+\//)) return false;
+              if (item.url.match(/\/vcluster\/next(\/|$)/)) return false;
+              if (item.url.match(/\/platform\/next(\/|$)/)) return false;
+              return true;
+            });
 
-            // Enhance items with custom priorities and change frequencies
+            // Landing pages get highest priority; everything else stays
+            // on the default sitemap priority.
             return filteredItems.map((item) => {
-              // Main landing pages get highest priority
               if (item.url === 'https://vcluster.com/docs/' ||
                   item.url === 'https://vcluster.com/docs/vcluster/' ||
                   item.url === 'https://vcluster.com/docs/platform/') {
                 return { ...item, priority: 1.0, changefreq: 'daily' };
               }
-
-              // Latest stable versions get highest priority (0.32.0 for vCluster, 4.7.0 for platform)
-              if (item.url.match(/\/vcluster\/0\.32\.0\//) ||
-                  item.url.match(/\/platform\/4\.7\.0\//)) {
-                return { ...item, priority: 1.0, changefreq: 'daily' };
-              }
-
-              // Current/next versions (non-versioned URLs) get high priority
-              if ((item.url.includes('/vcluster/') && !item.url.match(/\/vcluster\/\d+\.\d+\.\d+\//)) ||
-                  (item.url.includes('/platform/') && !item.url.match(/\/platform\/\d+\.\d+\.\d+\//))) {
-                return { ...item, priority: 0.8, changefreq: 'weekly' };
-              }
-
-              // ALL other versioned docs get very low priority (0.19-0.31 for vCluster, older platform versions)
-              if (item.url.match(/\/vcluster\/\d+\.\d+\.\d+\//) ||
-                  item.url.match(/\/platform\/\d+\.\d+\.\d+\//)) {
-                return { ...item, priority: 0.1, changefreq: 'yearly' };
-              }
-
-              // Default priority for other pages
-              return item;
+              return { ...item, priority: 0.8, changefreq: 'weekly' };
             });
           },
         },
@@ -146,7 +160,7 @@ const config = {
           },
         ],
         theme: {
-          primaryColor: "#00bdff",
+          primaryColor: "#ff6600",
           redocOptions: {
             hideDownloadButton: false,
             disableSearch: true,
@@ -165,6 +179,52 @@ const config = {
   plugins: [
     "docusaurus-plugin-sass",
     "plugin-image-zoom",
+    [
+      "@signalwire/docusaurus-plugin-llms-txt",
+      {
+        content: {
+          enableLlmsFullTxt: true,
+          includeDocs: true,
+          includeBlog: false,
+          includePages: false,
+          includeVersionedDocs: false,
+          excludeRoutes: [
+            '/search/**',
+            '/tags/**',
+            // CLI reference pages are auto-generated --help output; exclude
+            // individual entries to keep llms.txt under 50K. The pattern
+            // includes the site baseUrl (`/docs/`) because the signalwire
+            // plugin matches against the full route path.
+            '/docs/vcluster/cli/**',
+            // Aggregate config reference renders to ~380K — well above the
+            // 100K agent truncation limit. Sub-pages are indexed individually.
+            '/docs/vcluster/configure/vcluster-yaml$',
+            // Aggregate sync reference renders to ~161K; sub-pages are indexed.
+            '/docs/vcluster/configure/vcluster-yaml/sync$',
+            // Platform API reference renders to ~116K; no sub-pages exist.
+            // Silent truncation on a dense API reference causes incorrect answers.
+            '/docs/platform/api/resources/project/templates$',
+          ],
+          // Emit absolute URLs (https://www.vcluster.com/docs/...) instead of
+          // site-relative paths. Downstream consumers (R2R RAG, LLM agents)
+          // surface these links to users in CLI contexts where relative paths
+          // are not clickable or resolvable. See ENGAI-58.
+          relativePaths: false,
+          // Strip React-emitted `<!-- -->` JSX expression markers before the
+          // HTML→Markdown conversion. Runs at the hast stage, ahead of
+          // rehype-remark, so comment nodes are gone before mdast is built.
+          // See DOC-1322.
+          beforeDefaultRehypePlugins: [rehypeStripComments],
+        },
+        siteTitle: 'vCluster Documentation',
+        siteDescription: 'Documentation for vCluster (virtual Kubernetes clusters) and vCluster Platform (multi-cluster management)',
+        // Descriptions are disabled to keep llms.txt under the 50K agent
+        // truncation threshold (~43K savings). Titles carry sufficient signal
+        // for discovery; full content is available at the linked .md URLs.
+        enableDescriptions: false,
+        depth: 2,
+      },
+    ],
     function(context, options) {
       return {
         name: 'yaml-loader',
@@ -196,34 +256,24 @@ const config = {
         beforeDefaultRemarkPlugins: [
           [remarkVersionTokens, { siteDir: __dirname }],
         ],
-        lastVersion: "0.32.0",
-        onlyIncludeVersions: ["current", "0.32.0", "0.31.0", "0.30.0", "0.29.0", "0.28.0"],
+        lastVersion: "0.35.0",
+        onlyIncludeVersions: ["current", "0.35.0", "0.34.0", "0.33.0"],
         versions: {
           current: {
             label: "main 🚧",
           },
-          "0.32.0": {
-            label: "v0.32 Stable",
+          "0.35.0": {
+            label: "v0.35 Stable",
             banner: "none",
             badge: true,
           },
-          "0.31.0": {
-            label: "v0.31",
+          "0.34.0": {
+            label: "v0.34",
             banner: "none",
             badge: true,
           },
-          "0.30.0": {
-            label: "v0.30",
-            banner: "none",
-            badge: true,
-          },
-          "0.29.0": {
-            label: "v0.29",
-            banner: "none",
-            badge: true,
-          },
-          "0.28.0": {
-            label: "v0.28",
+          "0.33.0": {
+            label: "v0.33",
             banner: "none",
             badge: true,
           },
@@ -243,24 +293,29 @@ const config = {
         beforeDefaultRemarkPlugins: [
           [remarkVersionTokens, { siteDir: __dirname }],
         ],
-        lastVersion: "4.7.0",
-        onlyIncludeVersions: ["current", "4.7.0", "4.6.0", "4.5.0"],
+        lastVersion: "4.10.0",
+        onlyIncludeVersions: ["current", "4.10.0", "4.9.0", "4.8.0", "4.7.0"],
         versions: {
           current: {
             label: "main 🚧",
           },
+          "4.10.0": {
+            label: "v4.10 Stable",
+            banner: "none",
+            badge: true,
+          },
+          "4.9.0": {
+            label: "v4.9",
+            banner: "none",
+            badge: true,
+          },
+          "4.8.0": {
+            label: "v4.8",
+            banner: "none",
+            badge: true,
+          },
           "4.7.0": {
-            label: "v4.7 Stable",
-            banner: "none",
-            badge: true,
-          },
-          "4.6.0": {
-            label: "v4.6",
-            banner: "none",
-            badge: true,
-          },
-          "4.5.0": {
-            label: "v4.5",
+            label: "v4.7",
             banner: "none",
             badge: true,
           },
@@ -271,10 +326,17 @@ const config = {
 
   scripts: [
     {
-      src:
-        "https://cdnjs.cloudflare.com/ajax/libs/clipboard.js/2.0.0/clipboard.min.js",
+      src: "https://cdnjs.cloudflare.com/ajax/libs/clipboard.js/2.0.0/clipboard.min.js",
       async: true,
     },
+    ...(isNetlifyProduction
+      ? [
+          {
+            src: "https://www.googletagmanager.com/gtm.js?id=GTM-KGZ3TLD",
+            async: true,
+          },
+        ]
+      : []),
   ],
   clientModules: [
     './src/client/MermaidPolyfillsClient.js',
@@ -317,7 +379,8 @@ const config = {
         title: "",
         logo: {
           alt: "vCluster",
-          src: "/media/rebranding/vCluster_favicon_docs_orange.svg",
+          src: "/media/rebranding/vCluster_horizontal-orange.svg",
+          height: 36,
         },
         items: [
           // Product tabs
@@ -337,9 +400,15 @@ const config = {
             position: "left",
             target: "_blank",
           },
+          {
+            href: "https://www.vmetal.ai/docs",
+            label: "vMetal",
+            position: "left",
+            target: "_blank",
+          },
           // Right-side items
           {
-            href: "https://loft.sh/blog",
+            href: "https://www.vcluster.com/blog",
             label: "Blog",
             position: "right",
             target: "_blank",
@@ -357,7 +426,7 @@ const config = {
             position: "right",
           },
           {
-            href: "https://github.com/loft-sh/vcluster",
+            href: "https://github.com/loft-sh/vcluster-docs",
             className: "github-link",
             "aria-label": "GitHub",
             position: "right",
@@ -366,11 +435,13 @@ const config = {
       },
       algolia: {
         appId: "K85RIQNFGF",
-        apiKey: "057a9f939df7215d92c8171d47352c54",
+        apiKey: "7c88fbdab6aea75d67f1f52e41b5d456",
         indexName: "vcluster",
         placeholder: "Search...",
-        externalUrlRegex: "vcluster\\.com\/docs\/v0\\.19",
-        algoliaOptions: {},
+        contextualSearch: true,
+        searchPagePath: "search",
+        externalUrlRegex:
+          "(?:loft\\.sh|platform-v4-[0-9]--vcluster-docs-site\\.netlify\\.app|vnode\\.com|vmetal\\.ai)",
       },
       footer: {
         style: "light",
@@ -389,26 +460,26 @@ const config = {
             ]
           },
         ],
-        copyright: `Copyright © ${new Date().getFullYear()}<span class="footer-space-before"><a href="https://loft.sh/">LoftLabs</a></span><span class="footer-separator">|</span>Documentation released under<span class="footer-space-before"><a href="https://creativecommons.org/publicdomain/zero/1.0/">CC0 1.0 Universal</a></span>.`,
+        copyright: `Copyright © ${new Date().getFullYear()}<span class="footer-space-before"><a href="https://www.vcluster.com/">vCluster Labs</a></span><span class="footer-separator">|</span>Documentation released under<span class="footer-space-before"><a href="https://creativecommons.org/publicdomain/zero/1.0/">CC0 1.0 Universal</a></span>.`,
       },
       prism: {
-        theme: prismThemes.dracula,
+        theme: vClusterTheme,
         additionalLanguages: ["bash", "hcl"],
       },
       announcementBar: {
-        id: "vcluster-0-32-release",
+        id: "vcluster-0-35-platform-4-10-release",
         content:
-          '🚀 <strong>New releases: <a href="https://www.vcluster.com/releases/en/changelog?hideLogo=true&hideMenu=true&theme=dark&embed=true&c=vCluster" target="_blank">vCluster Platform 4.7 and vCluster 0.32</a></strong>',
-        backgroundColor: "#4a90e2",
+          '🚀 <strong>New releases: <a href="https://www.vcluster.com/releases/en/changelog?hideLogo=true&hideMenu=true&theme=dark&embed=true&c=vCluster" target="_blank">vCluster Platform 4.10 and vCluster 0.35</a></strong>',
+        backgroundColor: "#050b24",
         textColor: "#ffffff",
         isCloseable: true,
       },
     }
   ),
 
-  // Enable experimental faster features with required v4 flags
+  // Enable faster features with required v4 flags
   future: {
-    experimental_faster: true,
+    faster: true,
     v4: {
       removeLegacyPostBuildHeadAttribute: true,
     },

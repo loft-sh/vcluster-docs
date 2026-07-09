@@ -1,3 +1,8 @@
+---
+name: k8s-compat-matrix
+description: Manages the Kubernetes compatibility matrix data and React component. Use when adding/removing K8s versions, updating conformance test results, or documenting known issues.
+---
+
 # Kubernetes Compatibility Matrix Skill
 
 ## Overview
@@ -23,7 +28,7 @@ Trigger this skill when:
 | `scripts/generate-compatibility-matrix.js` | CLI: add/prune/validate |
 | `.github/workflows/update-compatibility-matrix.yml` | CI validation on PR |
 | `tests/specs/k8s-compatibility-matrix.spec.js` | Playwright/BrowserStack browser tests |
-| `vcluster/deploy/upgrade/supported_versions.mdx` | Page that imports the component |
+| `vcluster/manage/upgrade/supported_versions.mdx` | Page that imports the component |
 
 ## Statuses
 
@@ -59,11 +64,17 @@ Trigger this skill when:
 
 ## Workflow: Prune EOL Version
 
+The matrix should only contain Kubernetes versions that are actively supported upstream. Check the official release calendar at https://kubernetes.io/releases/ for current EOL dates.
+
+When adding a new version, always check at the same time whether any existing versions have passed their EOL date. If so, prune them in the same PR.
+
+For each EOL version:
+
 ```bash
 node scripts/generate-compatibility-matrix.js --prune <version>
 ```
 
-Removes row, column, and all references. Validate and commit.
+Removes row, column, and all references. Repeat for each EOL version, then validate and commit.
 
 ## Workflow: Document Known Issue
 
