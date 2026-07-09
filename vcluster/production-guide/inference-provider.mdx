@@ -12,7 +12,7 @@ Build managed inference endpoints on your GPU infrastructure. Customers interact
 **Minimum stack:**
 
 - Platform as the management plane.
-- If you already operate Kubernetes, run vCluster control planes as pods on that cluster. Use Standalone (HA) when you need vCluster to bootstrap the control plane on bare metal or VMs.
+- If you already operate Kubernetes, each tenant cluster's [control plane](../introduction/architecture.mdx) runs as pods on your existing cluster. If you don't have Kubernetes to host it on, use [vCluster Standalone](../deploy/control-plane/binary/basics.mdx) to bootstrap the tenant cluster control plane directly on bare metal or VMs, then move to [Standalone HA](../deploy/control-plane/binary/high-availability.mdx) before production traffic.
 - Private GPU nodes for dedicated inference customers.
 - Argo CD or Akuity to deliver the GPU stack and runtime declaratively into each tenant cluster.
 
@@ -22,11 +22,11 @@ Build managed inference endpoints on your GPU infrastructure. Customers interact
 - vNode, a separate vCluster Labs product, for runtime isolation of custom containers, adapters, plugins, or other untrusted code.
 
 <figure>
-  <InferenceProviderArchitecture style={{ display: "block", margin: "0 auto", maxWidth: "100%", height: "auto" }} role="img" aria-label="Inference provider architecture: customer applications call a product API and inference endpoint while vCluster Platform manages tenant inference environments and GPU capacity behind the provider boundary" />
-  <figcaption>Product API and inference endpoint boundary backed by isolated runtime environments and GPU capacity</figcaption>
+  <InferenceProviderArchitecture style={{ display: "block", margin: "0 auto", maxWidth: "100%", height: "auto" }} role="img" aria-label="Inference provider architecture: customers call a product API and inference endpoints through a traffic layer, while the provider runs dedicated, isolated tenant environments on private GPU nodes, orchestrated by vCluster Platform on a control plane cluster" />
+  <figcaption>Product API and traffic layer boundary backed by dedicated, isolated tenant clusters on private GPU nodes</figcaption>
 </figure>
 
-**What makes this path different:** Customers don't use Platform directly. They call your product API or inference endpoint. Your product uses Platform and vCluster APIs to create tenant clusters, attach GPU capacity, apply templates, enforce quotas, publish routes, and reclaim capacity when endpoints are deleted.
+**What makes this path different:** Customers don't use Platform directly. They call your product API or inference endpoint. Templates are the core payoff for your product. Applying a template creates a tenant cluster, attaches GPU capacity, enforces quotas, publishes routes, and reclaims capacity when endpoints are deleted.
 
 Confirm licensing before you invest further. Several pieces of this stack require Platform activation or a paid tier. See [Integrate with your product control plane](#integrate-with-your-product-control-plane) for the tier check.
 
@@ -36,20 +36,7 @@ If your users are internal teams that should provision and manage their own envi
 
 ## How vCluster enables inference
 
-An inference provider architecture stacks several layers, including a customer-facing boundary, a tenant API, GPU capacity, a serving runtime, a route, and autoscaling. vCluster and Platform implement the tenant API (a dedicated Kubernetes API per customer or tier) and GPU capacity orchestration (claiming and attaching GPU nodes) directly. They also enable runtime delivery through the Argo CD integration. The map below shows where each layer lives.
-
-### Architecture map
-
-| Inference requirement | vCluster/Platform capability | Example resource |
-| --- | --- | --- |
-| Product/API boundary | [Platform API](/platform/api/use-api) called by your product automation | Platform API call with an internal [access key](/platform/api/resources/ownedaccesskey) |
-| Tenant API boundary | vCluster tenant cluster | `vcluster.yaml` |
-| Dedicated GPU capacity | [Private Nodes](../deploy/worker-nodes/private-nodes/overview.mdx), Auto Nodes, or vMetal-provisioned bare metal | `Project.spec.allowedNodeTypes` |
-| Runtime installation | [Argo CD](/platform/integrations/argocd) Application synced from your Git repo | `ArgoCDApplication`, Deployment, Service, Secret |
-| Endpoint route | [Gateway API](../key-features/gateway-api.mdx) sync | `HTTPRoute` |
-| Runtime isolation for untrusted workloads | [vNode](https://www.vnode.com/docs/) | `sync.toHost.pods.runtimeClassName` |
-| Hardware metrics | NVIDIA DCGM Exporter and Prometheus Adapter | HorizontalPodAutoscaler |
-| Serving metrics | Prometheus and KEDA | `ScaledObject` |
+An inference provider needs an isolated tenant boundary for storage and networking, dedicated GPU capacity, and a serving runtime reachable over a public URL. vCluster and Platform implement the tenant boundary (a dedicated Kubernetes API per customer or tier) and GPU capacity orchestration (claiming and attaching GPU nodes) directly, and enable runtime delivery through the Argo CD integration.
 
 [Model serving runtimes](../integrations/model-serving.mdx) covers the Deployment, Service, and route pattern end to end. [GPU and inference autoscaling](../integrations/gpu-hpa-dcgm.mdx) covers the HPA and KEDA examples. [vMetal inference fleet capacity](https://www.vmetal.ai/docs/operate/gpu-fleet#inference-provider-capacity) covers the bare metal layer behind Private Nodes.
 
@@ -59,14 +46,14 @@ Inference providers usually need more than one tenancy model. Use the model that
 
 | Model | Use when | Tradeoff |
 | --- | --- | --- |
-| Shared serving tier | Customers use provider-owned models and don't run custom containers or plugins. | Highest utilization, but weaker customer isolation. Use this for trusted workloads and low-risk endpoint tiers. |
 | Tenant cluster per customer | Customers need their own Kubernetes API boundary, custom resources, secrets, and lifecycle. | Strong control plane isolation without automatically dedicating every GPU node. |
 | Private GPU nodes | Customers need dedicated worker-node infrastructure, predictable performance, separate CNI/CSI, or compliance isolation. | Stronger isolation and performance predictability, with more capacity planning. |
 | vNode runtime isolation | Customers run untrusted code, custom containers, privileged workloads, adapters, or dynamic execution paths on shared nodes. | Adds a workload sandbox boundary, but doesn't replace private nodes when customers require separate infrastructure. |
+| Shared serving tier | Customers use provider-owned models and don't run custom containers or plugins. | Highest utilization, but weaker customer isolation. Use this for trusted workloads and low-risk endpoint tiers. |
 
 Tenant clusters are a strong default when each customer or endpoint tier needs its own Kubernetes API boundary, custom resources, secrets, lifecycle, or compliance requirements. Without that boundary, two customers can collide over competing CRDs in a shared control plane. For example, one tenant running KServe and another running a different serving framework's CRDs can conflict and affect other tenants.
 
-A single tenant cluster can host multiple model-serving Deployments behind separate Services and routes, so "tenant cluster" does not have to mean one model per cluster. Cost-sensitive providers can start with a shared serving tier for trusted provider-owned models, then add tenant clusters and private GPU nodes for dedicated or higher-isolation tiers. Add vNode when custom inference workloads need a stronger runtime boundary without dedicating every node.
+A single tenant cluster can host multiple model-serving Deployments behind separate Services and routes, so "tenant cluster" does not have to mean one model per cluster. Most inference providers default to tenant clusters with private GPU nodes for dedicated performance and isolation. A shared serving tier is available for trusted, provider-owned models where utilization matters more than isolation. Add vNode when custom inference workloads need a stronger runtime boundary without dedicating every node.
 
 ### Map the tenancy model to vcluster.yaml
 
@@ -111,14 +98,14 @@ For the shared serving tier, one tenant cluster hosts multiple model-serving Dep
 
 | Decision | Read next | Outcome |
 | --- | --- | --- |
-| Choose the inference tenancy model | [Choose an inference tenancy model](#choose-an-inference-tenancy-model), [Architecture](../introduction/architecture.mdx) | Decide whether each customer, model family, or endpoint tier gets a shared serving pool, a tenant cluster, private GPU nodes, or vNode runtime isolation. |
+| Choose the inference tenancy model | [Choose an inference tenancy model](#choose-an-inference-tenancy-model), [Architecture](../introduction/architecture.mdx) | Decide whether each customer, model family, or endpoint tier gets a tenant cluster, private GPU nodes, vNode runtime isolation, or a shared serving pool. |
 | Plan GPU capacity classes | [Size GPU capacity classes](#size-gpu-capacity-classes), [Node providers](/platform/administer/node-providers/overview), [GPU and accelerators](../introduction/gpu-and-accelerator-support.mdx) | Define node types by GPU model, count, region, and reservation model, and choose an isolation strategy per tenant tier. |
 | Define serving runtime templates | [Model serving runtimes](../integrations/model-serving.mdx), [Deploy applications](/platform/integrations/argocd/deploy-applications), [Certified Stacks](/platform/integrations/certified-stacks) | Standardize the components each endpoint receives as an Argo CD `ArgoCDApplicationTemplate`, such as GPU Operator, scheduler, model server, ingress or Gateway API routes, metrics, and secrets. |
 | Plan Application boundaries and sequencing | [Sequence the GPU stack and the runtime](../integrations/model-serving.mdx#sequence-the-gpu-stack-and-the-runtime), [Deploy applications](/platform/integrations/argocd/deploy-applications) | Decide which components share one Argo CD Application and which get their own. Argo CD doesn't sequence separate Applications, so bundle hard dependencies together and let Kubernetes absorb soft ones. |
 | Plan model storage and warmup | [Model storage architecture](../integrations/model-serving.mdx#plan-model-storage), [Model serving runtimes](../integrations/model-serving.mdx) | Decide where model weights live, how they reach each endpoint, how caches are warmed, and how readiness is reported while large models load. |
 | Plan endpoint routing | [Model serving runtimes](../integrations/model-serving.mdx#expose-an-inference-endpoint), [Gateway API](../key-features/gateway-api.mdx) | Decide whether tenant clusters attach routes to platform-owned shared Gateways, tenant-owned Gateways, or another ingress layer controlled by your product. |
 | Plan autoscaling signals | [GPU and inference autoscaling](../integrations/gpu-hpa-dcgm.mdx), [Monitoring overview](/platform/maintenance/monitoring/overview) | Combine hardware metrics, such as GPU utilization and memory, with serving metrics, such as request concurrency, queue depth, latency, tokens per second, and time to first token. |
-| Plan endpoint readiness and capacity strategy | [Endpoint readiness and warm pools](#endpoint-readiness-and-warm-pools), [Model serving runtimes](../integrations/model-serving.mdx) | Decide whether endpoints are cold-provisioned, pre-warmed, or backed by warm pools. Account for node provisioning time, image pulls, model downloads, and model load time. |
+| Plan endpoint readiness | [Endpoint readiness](#endpoint-readiness), [Model serving runtimes](../integrations/model-serving.mdx) | Account for Argo CD sync time, node provisioning, image pulls, model downloads, and model load time before customers expect an endpoint to be ready. |
 | Plan durability and operations | [Backing store](../configure/vcluster-yaml/control-plane/components/backing-store/README.mdx), [Platform HA](/platform/maintenance/reliability-scaling/high-availability), [Platform backup](/platform/maintenance/backup-restore/backup-restore-platform) | Choose data stores, backup policy, control plane availability, and recovery procedures before customers depend on endpoints. |
 | Integrate with your product control plane | [Integrate with your product control plane](#integrate-with-your-product-control-plane), [Platform API](/platform/api/use-api) | Decide the customer-facing product boundary, the mapping from product concepts to Platform resources, the metering approach, and the license tier you need before building automation. |
 
@@ -128,22 +115,13 @@ Define node types by GPU model, GPU count, region, provider, rack, and reservati
 
 For NVIDIA fleets that support MIG, prefer MIG over time-slicing for external or SLA-backed tenants. MIG partitions memory and compute at the hardware level, where time-slicing does not. Offer a small set of standard MIG profiles per GPU model instead of fully custom sizes. Keep training and inference on separate node pools, since co-locating them causes latency spikes for inference. Keep the underlying driver, vGPU, and Dynamic Resource Allocation configuration in the vendor stack.
 
-### Endpoint readiness and warm pools
+### Endpoint readiness
 
 Endpoint readiness depends on more than Kubernetes pod readiness. A new endpoint might wait for Argo CD to sync the Application, GPU capacity, node bootstrap, GPU Operator reconciliation, image pulls, model download, model load, cache warmup, route attachment, DNS, and certificate issuance.
 
 Plan for minutes, not seconds, for the Argo CD sync itself. The reconcile interval defaults to a few minutes and is configurable. A freshly created tenant cluster can take a while to reach fully `Healthy` across its Applications. See [Sequence the GPU stack and the runtime](../integrations/model-serving.mdx#sequence-the-gpu-stack-and-the-runtime) for why. The first image pull on a new GPU node is also slow for multi-gigabyte runtime images. Later endpoints scheduled on that same node start fast from the cached image.
 
-Plan which endpoint tiers are cold-provisioned and which use warm capacity:
-
-| Strategy | Use when | Tradeoff |
-| --- | --- | --- |
-| Cold provision | Low-cost tiers or infrequent endpoint creation | Lowest idle cost, but customers wait for node provisioning and model load. |
-| Warm GPU nodes | You can keep spare GPU nodes joined to tenant clusters or pools | Faster scheduling, but idle GPU capacity costs money. |
-| Warm model cache | Large models are reused across endpoints | Reduces model download time, but requires cache storage and invalidation policy. |
-| Shared serving pool | Provider-owned models serve many customers | Fastest utilization path, but weaker customer isolation and more careful traffic/auth design. |
-
-On bare metal, the wait for capacity is not instant. Provisioning a server includes BMC verification, hardware inspection, PXE boot, and OS install (the bare-metal provisioning steps) before the node joins. See [vMetal inference fleet capacity](https://www.vmetal.ai/docs/operate/gpu-fleet#inference-provider-capacity) for warm pool against on-demand provisioning at the hardware layer.
+On bare metal, the wait for capacity is not instant. Provisioning a server includes BMC verification, hardware inspection, PXE boot, and OS install (the bare-metal provisioning steps) before the node joins. See [vMetal inference fleet capacity](https://www.vmetal.ai/docs/operate/gpu-fleet#inference-provider-capacity) for capacity planning at the hardware layer.
 
 ### Integrate with your product control plane
 
