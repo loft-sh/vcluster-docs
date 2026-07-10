@@ -70,6 +70,8 @@ The platform provides audit levels, which are preconfigured audit policies for t
 - **Level 3**: Like Level 2 but instead of only logging the request metadata also logs the complete request payload sent to the platform
 - **Level 4**: Like Level 3 but instead of only logging metadata and request payload, also logs the response the platform has sent to the requester
 
+Captured payloads are normalized before they are stored: payloads that are already plain JSON are stored unchanged, all others, such as compressed or protobuf-encoded ones, are converted to plain JSON. A size limit also applies. See [Request and response payload storage](#request-and-response-payload-storage).
+
 For all of these levels, certain internal read-only APIs are not logged since those might pollute the log and drastically increase log size. To log these, create a custom audit policy as described below.
 
 Configure the audit level through the platform config, which can be modified either through the platform UI or Helm:
@@ -116,6 +118,47 @@ config:
 ```
 
 See the [complete policy reference](../../api/resources/config.mdx#audit-policy).
+
+## Request and response payload storage
+
+The audit level of the policy rule that matches a request decides which payloads the platform stores inside the audit event. Rules with the `Request` level store the request payload. Rules with the `RequestResponse` level store the request and the response payload.
+
+With the preconfigured audit levels this means:
+
+- Levels 1 and 2 store request payloads for create requests.
+- Level 3 stores request payloads for all requests.
+- Level 4 stores request and response payloads for all requests.
+
+Payloads are stored for resource requests only. Long-running requests, such as log streaming, and creates of sensitive resources, such as shared secrets and access keys, keep metadata-only events on every level.
+
+The platform always stores payloads as JSON:
+
+- Payloads that arrive as plain JSON are stored unchanged.
+- The platform stores compressed response bodies in their decompressed form.
+- The platform converts payloads sent in the Kubernetes Protobuf format to their JSON equivalent. The stored payload matches what a JSON client would have sent.
+
+### Payload size limit
+
+The platform captures at most 2 MB per request or response payload. Payloads above this limit are not stored.
+
+### Omitted payloads
+
+When a payload cannot be stored, the platform keeps the audit event with all of its metadata. Only the payload is left out. The event then carries an annotation that names the omission reason:
+
+| Annotation | Description |
+|------------|-------------|
+| `audit.platform.vcluster.com/request-object-omitted` | The request payload was omitted. The value names the reason. |
+| `audit.platform.vcluster.com/response-object-omitted` | The response payload was omitted. The value names the reason. |
+
+The following reasons can appear as annotation values:
+
+| Reason | Description |
+|--------|-------------|
+| `truncated` | The payload exceeded the capture limit and only a partial copy was captured. |
+| `too-large` | The payload exceeded the capture limit after decompression or conversion to JSON. |
+| `decode-failed` | The payload could not be decompressed or decoded. |
+| `unsupported-encoding` | The payload used a content encoding or content type that the platform cannot convert to JSON. |
+| `invalid-json` | The payload was not valid JSON and not in any recognized format. |
 
 ## Persist audit logs
 
