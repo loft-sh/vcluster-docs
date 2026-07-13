@@ -333,6 +333,9 @@ When writing or editing any page that recommends or positions a worker node mode
 - ❌ DON'T recommend shared nodes for externally facing or resold tenant offerings, AI-cloud/GPU customer tenancy, or any multi-tenant SaaS with untrusted tenants.
 - ❌ DON'T lead with density or low-operational-overhead framing for shared nodes. Lead with isolation (consistent with the repositioning guidance in the project `CLAUDE.md`).
 - ❌ DON'T claim shared-node tenants get isolated nodes, networks, or infrastructure. That is only true for private nodes.
+- ✅ DO remind readers that shared-node isolation depends on controls that must be actively enforced. The real-world failure mode is a silently ineffective control, most often a CNI that accepts NetworkPolicy resources without enforcing them. Point to the security baseline (`/docs/vcluster/security`) for verification.
+
+**Keep it principle-based**: Frame shared-node risk as an architectural property (shared kernel and nodes) and a configuration responsibility, not as a vCluster defect. Never reference specific customers, their CNI or infrastructure choices, security incidents, conference reports, or found vulnerabilities in published docs. These positioning rules exist to prevent misconfiguration, not to document any single deployment.
 
 **Reuse the admonition**: Import the shared suitability warning rather than rewriting it per page:
 
