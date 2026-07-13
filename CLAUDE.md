@@ -202,15 +202,25 @@ conventions.
 
 ## Shared nodes positioning (DOC-1616)
 
-Shared nodes are for internal, trusted tenants only (development, testing,
-CI/CD, internal teams). Never recommend shared nodes for externally facing or
-resold tenant offerings; route untrusted, external, or paying tenants to
-private nodes. Shared nodes give API and namespace isolation, but tenants share
-the kernel and physical nodes, so this is an architectural property, not a
+Shared nodes are a supported tenancy boundary for trusted tenants, not a
+security boundary for untrusted tenants with Kubernetes access or arbitrary
+workload execution. Frame the boundary by trust and tenant access, not by
+internal versus external. Recommend shared nodes for trusted tenants such as
+development, testing, CI/CD, and internal teams. Route external, resale,
+regulated, or otherwise untrusted tenant offerings to private nodes, optionally
+with vNode for runtime isolation.
+
+Shared nodes give control-plane, API, and namespace isolation, but tenants
+share the kernel and physical nodes, so this is an architectural property, not a
 vCluster defect. Isolation also depends on controls that must be actively
-enforced (a CNI can accept NetworkPolicy without enforcing it). Keep this
-guidance principle-based. Never reference specific customers, their CNI or infra
-choices, or security incidents in published docs.
+enforced (a CNI can accept NetworkPolicy without enforcing it). Don't soften
+this to "strongly not recommended". Keep the guidance principle-based. Never
+reference specific customers, their CNI or infra choices, or security incidents
+in published docs.
+
+There is one exception. A provider serving its own trusted models behind an API,
+with no tenant Kubernetes access, is application-level multitenancy and can serve
+external customers. Don't blanket-apply the caveat to those pages.
 
 Reuse `@site/vcluster/_partials/admonitions/shared-nodes-suitability.mdx` rather
 than rewriting the caveat. See the "Tenancy Model Positioning" section of
