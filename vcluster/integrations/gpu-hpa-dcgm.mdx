@@ -56,7 +56,7 @@ If you are building an inference provider platform, see [Inference Provider: Man
 ## Step 1: Install DCGM exporter
 
 :::info Already running the NVIDIA GPU Operator?
-The GPU Operator deploys DCGM Exporter by default. Installing the standalone chart below alongside it creates two competing DaemonSets on the same GPU nodes. If the Operator manages your GPU stack, skip this step and instead enable pod labels on its exporter with `--set dcgmExporter.enablePodLabels=true`, as shown in [GPU and accelerator support](../introduction/gpu-and-accelerator-support.mdx#install-the-nvidia-gpu-operator-in-a-tenant-cluster). Then continue with Step 2.
+The GPU Operator deploys DCGM Exporter by default. Installing the standalone chart below alongside it creates two competing DaemonSets on the same GPU nodes. If the Operator manages your GPU stack, skip this step and instead enable pod labels on its exporter with `--set dcgmExporter.enablePodLabels=true`, as shown in [GPU and accelerator support](../introduction/gpu-and-accelerator-support.mdx#install-the-nvidia-gpu-operator-in-a-tenant-cluster). Then continue with Step 2, and follow the GPU Operator path in Step 3 for the ServiceMonitor.
 
 Only follow the steps below if you manage GPU drivers and device plugins outside the GPU Operator.
 :::
@@ -118,7 +118,47 @@ kubectl get pods -n monitoring -l app.kubernetes.io/name=prometheus
 
 ## Step 3: Configure a ServiceMonitor for DCGM exporter
 
-Create a ServiceMonitor so Prometheus automatically discovers and scrapes the DCGM Exporter:
+Prometheus needs a ServiceMonitor that matches the DCGM Exporter Service you're running. The standalone chart and the GPU Operator use different Service labels, namespaces, and port names, so follow the path that matches your Step 1 choice.
+
+<!-- vale off -->
+### GPU Operator path
+<!-- vale on -->
+
+The Operator can create and manage the ServiceMonitor for you. Now that Step 2 installed the Prometheus Operator CRDs, enable it on the Operator, reusing the values you already set:
+
+```bash
+helm upgrade gpu-operator nvidia/gpu-operator \
+  --namespace gpu-operator \
+  --reuse-values \
+  --set dcgmExporter.serviceMonitor.enabled=true
+```
+
+Because Step 2 set `serviceMonitorSelectorNilUsesHelmValues=false`, Prometheus discovers this ServiceMonitor automatically. It selects the Operator's `nvidia-dcgm-exporter` Service in the `gpu-operator` namespace on the `gpu-metrics` port.
+
+If you'd rather define the ServiceMonitor yourself, apply this instead of enabling the Operator flag:
+
+```yaml title="servicemonitor-dcgm-operator.yaml"
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: nvidia-dcgm-exporter
+  namespace: monitoring
+spec:
+  namespaceSelector:
+    matchNames:
+      - gpu-operator
+  selector:
+    matchLabels:
+      app: nvidia-dcgm-exporter
+  endpoints:
+    - port: gpu-metrics
+      interval: 15s
+      path: /metrics
+```
+
+### Standalone chart path
+
+If you installed the standalone DCGM Exporter in Step 1, create this ServiceMonitor instead:
 
 ```yaml title="servicemonitor-dcgm.yaml"
 apiVersion: monitoring.coreos.com/v1
@@ -142,11 +182,13 @@ Apply it:
 kubectl apply -f servicemonitor-dcgm.yaml
 ```
 
+### Confirm the target
+
 Confirm Prometheus is scraping DCGM by checking the Prometheus targets UI:
 
 ```bash
 kubectl port-forward svc/kube-prometheus-kube-prome-prometheus 9090:9090 -n monitoring
-# Open http://localhost:9090/targets and verify dcgm-exporter shows State: UP
+# Open http://localhost:9090/targets and verify the dcgm-exporter target shows State: UP
 ```
 
 :::info Service name
@@ -406,5 +448,5 @@ If `kubectl get --raw "/apis/custom.metrics.k8s.io/v1beta1"` returns an error or
 This usually means the metric is registered but no data is available for the target pods:
 
 1. Verify your GPU workload pods are running and consuming GPU resources.
-2. Check that DCGM Exporter metrics include `pod` and `namespace` labels. If these labels are missing, confirm `kubernetes.enablePodLabels=true` is set.
+2. Check that DCGM Exporter metrics include `pod` and `namespace` labels. If these labels are missing, confirm pod labels are enabled: `kubernetes.enablePodLabels=true` for the standalone chart, or `dcgmExporter.enablePodLabels=true` for the GPU Operator.
 3. Wait 1–2 minutes for the metrics pipeline to propagate data from DCGM through Prometheus to the adapter.
