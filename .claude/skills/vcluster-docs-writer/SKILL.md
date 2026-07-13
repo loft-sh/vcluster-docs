@@ -312,7 +312,7 @@ Explanation pages (architecture, overview, "what is X") should build the reader'
 - ⚠️ **NEVER place admonitions inside JSX components** like `<Step>`
 - ⚠️ **NEVER add a `link` field to `_category_.json`** — sidebar section labels must expand/collapse only, not navigate
 - ⚠️ **NEVER create `README.mdx` as a folder index** in general docs sections — use `overview.mdx` with an explicit `slug:` instead. **Exception**: `vcluster/configure/vcluster-yaml/` uses `README.mdx` because every folder is a yaml key and "Overview" is semantically wrong there (see Sidebar Navigation Conventions)
-- ⚠️ **NEVER recommend shared nodes for externally facing or resold tenants** — shared nodes are for internal, trusted tenants only; route external/untrusted/paying tenants to private nodes (see Tenancy Model Positioning)
+- ⚠️ **NEVER recommend shared nodes for untrusted tenants with Kubernetes access or arbitrary workload execution** (external, resale, regulated) — route those to private nodes (see Tenancy Model Positioning)
 
 ### Always-Do
 - ✅ **Always run vale** before finalizing documentation
@@ -325,7 +325,7 @@ Explanation pages (architecture, overview, "what is X") should build the reader'
 
 When writing or editing any page that recommends or positions a worker node model, apply the shared-nodes rule (DOC-1616).
 
-**Core rule**: Shared nodes provide API and namespace isolation, but tenant workloads share the same kernel and physical nodes. They are **not** a hard security boundary for untrusted parties.
+**Core rule**: Shared nodes provide control-plane, API, and namespace isolation, but tenant workloads share the same kernel and physical nodes. They are **not** a security boundary for untrusted tenants with Kubernetes access or arbitrary workload execution. The real axis is trust plus tenant access, not internal versus external.
 
 - ✅ DO recommend shared nodes for internal, trusted tenants: development, testing, CI/CD, internal engineering teams, an enterprise sharing its own data center across its own teams.
 - ✅ DO keep the internal production paths (Internal Kubernetes Platform, CI/CD Platform, Enterprise AI Factory shared tier) but pair every shared-node recommendation with the suitability caveat.
