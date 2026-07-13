@@ -312,6 +312,7 @@ Explanation pages (architecture, overview, "what is X") should build the reader'
 - ⚠️ **NEVER place admonitions inside JSX components** like `<Step>`
 - ⚠️ **NEVER add a `link` field to `_category_.json`** — sidebar section labels must expand/collapse only, not navigate
 - ⚠️ **NEVER create `README.mdx` as a folder index** in general docs sections — use `overview.mdx` with an explicit `slug:` instead. **Exception**: `vcluster/configure/vcluster-yaml/` uses `README.mdx` because every folder is a yaml key and "Overview" is semantically wrong there (see Sidebar Navigation Conventions)
+- ⚠️ **NEVER recommend shared nodes for externally facing or resold tenants** — shared nodes are for internal, trusted tenants only; route external/untrusted/paying tenants to private nodes (see Tenancy Model Positioning)
 
 ### Always-Do
 - ✅ **Always run vale** before finalizing documentation
@@ -319,6 +320,29 @@ Explanation pages (architecture, overview, "what is X") should build the reader'
 - ✅ **Always check vCluster terminology** in `references/vcluster-terms.md`
 - ✅ **Always use relative paths** for versioned content
 - ✅ **Always add descriptive comments** in YAML code blocks
+
+## Tenancy Model Positioning
+
+When writing or editing any page that recommends or positions a worker node model, apply the shared-nodes rule (DOC-1616).
+
+**Core rule**: Shared nodes provide API and namespace isolation, but tenant workloads share the same kernel and physical nodes. They are **not** a hard security boundary for untrusted parties.
+
+- ✅ DO recommend shared nodes for internal, trusted tenants: development, testing, CI/CD, internal engineering teams, an enterprise sharing its own data center across its own teams.
+- ✅ DO keep the internal production paths (Internal Kubernetes Platform, CI/CD Platform, Enterprise AI Factory shared tier) but pair every shared-node recommendation with the suitability caveat.
+- ✅ DO route untrusted, external, or paying customers to private nodes (optionally vNode for runtime isolation).
+- ❌ DON'T recommend shared nodes for externally facing or resold tenant offerings, AI-cloud/GPU customer tenancy, or any multi-tenant SaaS with untrusted tenants.
+- ❌ DON'T lead with density or low-operational-overhead framing for shared nodes. Lead with isolation (consistent with the repositioning guidance in the project `CLAUDE.md`).
+- ❌ DON'T claim shared-node tenants get isolated nodes, networks, or infrastructure. That is only true for private nodes.
+
+**Reuse the admonition**: Import the shared suitability warning rather than rewriting it per page:
+
+```jsx
+import SharedNodesSuitability from '@site/vcluster/_partials/admonitions/shared-nodes-suitability.mdx';
+
+<SharedNodesSuitability />
+```
+
+**Audit tip**: When searching for shared-node positioning, grep more than the literal `shared node`. Also search `shared infrastructure`, `dedicated node pools`, `shared tier`, and `shared node pool` — different pages use different phrasings.
 
 ## vCluster Terminology Quick Reference
 
