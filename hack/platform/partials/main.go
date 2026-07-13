@@ -880,11 +880,15 @@ spec:
 			},
 			ObjectMeta: metav1.ObjectMeta{},
 			Status: managementv1.ConfigStatus{
-				Authentication: managementv1.Authentication{
+				// Authentication + its Connector/AuthenticationGithub types moved from
+				// management/v1 to storage/v1 in loft-sh/api v4.11.0 (storage/v1 owns the
+				// canonical definition so the storage/v1.Tenant CRD can reference it without
+				// an import cycle). ConfigStatus.Authentication is now storagev1.Authentication.
+				Authentication: storagev1.Authentication{
 					AccessKeyMaxTTLSeconds:   10 * 60 * 60,
 					LoginAccessKeyTTLSeconds: &sixty,
-					Connector: managementv1.Connector{
-						Github: &managementv1.AuthenticationGithub{
+					Connector: storagev1.Connector{
+						Github: &storagev1.AuthenticationGithub{
 							ClientID:     "my-client-id",
 							ClientSecret: "my-client-secret",
 							RedirectURI:  "https://my-redirect-uri",
