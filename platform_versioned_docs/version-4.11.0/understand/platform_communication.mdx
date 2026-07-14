@@ -1,0 +1,92 @@
+---
+title: Platform communication and connectivity
+sidebar_label: Platform Communication
+description: How vCluster Platform agents, proxy paths, and Tailscale-based network peers communicate.
+---
+
+import PlatformCommunicationConnectivity from '@site/static/media/platform/diagrams/platform-communication-connectivity.svg';
+
+vCluster Platform communicates with connected clusters through the vCluster Platform agent. The agent runs in each connected cluster, authenticates to Platform with cluster-specific credentials, and maintains an outbound connection back to the Platform endpoint. This egress-only model lets Platform reconcile resources and proxy requests without requiring inbound access to the connected cluster by default.
+
+For the full management plane, connected cluster, lifecycle, and network path overview, see [Platform architecture](../introduction/architecture.mdx) and [How Platform works](../introduction/how-platform-works.mdx).
+
+## Communication model
+
+When you connect a cluster, Platform creates a `Cluster` resource and issues connection credentials for the agent. The agent uses those credentials to register with Platform, then participates in Platform's Tailscale-based network so that Platform can reach cluster-side APIs and services through the agent.
+
+Platform uses this communication model for:
+
+- Deploying, upgrading, and reconciling Platform-managed tenant clusters
+- Applying cluster-side resources such as namespaces, RBAC, Helm releases, secrets, quotas, and sleep mode components
+- Reporting connected cluster and tenant cluster status back to Platform
+- Proxying Kubernetes API requests when users connect through Platform instead of a direct or regional endpoint
+- Supporting operational workflows such as logs, shell access, status checks, and agent upgrades
+
+If the agent disconnects, existing workloads and tenant cluster control planes keep running in the connected cluster. Platform can't reconcile changes or serve proxied access until it reconnects. See [What happens during control plane outages?](./control-plane-outages.mdx) for the full breakdown of what stays available at each layer.
+
+<figure>
+  <PlatformCommunicationConnectivity style={{width: '100%', height: 'auto'}} role="img" aria-label="Platform agent outbound connectivity, proxy requests, DERP fallback, and DNS lookup" />
+  <figcaption>Platform communication paths for connected clusters</figcaption>
+</figure>
+
+## Agent path and proxy path
+
+Two related paths are involved in Platform communication:
+
+| Path | Used for | Connectivity required |
+| --- | --- | --- |
+| Agent path | Platform lifecycle and reconciliation work, including tenant cluster creation, updates, upgrades, status reporting, and cluster-side resource sync. | The agent must make outbound HTTPS connections to the Platform endpoint. The connected cluster doesn't need inbound access from Platform. |
+| Platform proxy path | User and automation requests that go through Platform, such as kubeconfigs that use `/kubernetes/cluster/<cluster>` or `/kubernetes/project/<project>/virtualcluster/<name>`. | The user or automation must reach the Platform endpoint. Platform then forwards the request through the appropriate backend, often through the connected cluster agent. |
+
+Regional cluster endpoints and tenant cluster access points can shorten the request path for `kubectl` traffic. Those features are optional and don't replace the agent path Platform uses for lifecycle management. See [Regional Cluster Endpoints](../administer/clusters/advanced/regional-cluster-endpoints.mdx) and [ingress suffix configuration](../administer/clusters/advanced/ingress-suffix.mdx).
+
+## Tailscale-based network path
+
+Platform uses Tailscale networking components internally for the agent connection. Platform acts as the coordination point for its network peers. Agents don't need to contact Tailscale's hosted coordination service.
+
+By default, the connected cluster agent uses this Platform-coordinated network path after it is installed. The agent attempts a direct WireGuard peer-to-peer connection when possible. If direct connectivity is blocked by NAT, firewall rules, or network policy, traffic falls back to DERP.
+
+DERP is a relay protocol for encrypted WireGuard packets. Platform includes a central DERP relay by default. You can add connected clusters as self-hosted DERP relays to reduce latency or improve redundancy. See [DERP relay configuration](../administer/clusters/advanced/derp-relay.mdx).
+
+:::note
+Tenant cluster control plane pods establish their own TSNet connections to Platform for license validation and feature activation, independent of the agent. Each pod registers with the Platform coordinator and probes `/derp/probe` to confirm DERP reachability before reporting ready. This applies to any tenant cluster using the Pro image, which is the chart default. If this connection fails, see [Resolve TSNet connection failures](../troubleshoot/tsnet-connectivity.mdx).
+:::
+
+## Required outbound access
+
+For the default egress-only agent model, allow the Platform agent to make the following outbound connections from each connected cluster's agent namespace:
+
+| Destination | Protocol and port | Purpose |
+| --- | --- | --- |
+| Platform public URL or load balancer | HTTPS, usually TCP `443` | Agent registration, coordination, API calls, and DERP fallback traffic. |
+| Platform pods, when Platform and the agent share a cluster | HTTPS TCP `10443` | In-cluster path that avoids the external Platform URL. |
+| DNS resolver | UDP/TCP `53`, or your environment's DNS path | Resolves the Platform endpoint and any configured DERP relay endpoints. |
+
+When Platform and the agent share a cluster, the Platform Kubernetes service routes to port `10443` on the Platform pods. If you use Kubernetes NetworkPolicy, allow egress from the agent namespace to Platform pods on port `10443`. See [Networking](../administer/clusters/advanced/networking.mdx).
+
+If Platform is exposed through an ingress controller, gateway, proxy, or service mesh, the route must support long-lived requests and protocol upgrades used by the agent network path. For Istio, see [Expose vCluster Platform with Istio](../how-to/exposing-vCluster-platform-with-Istio.mdx#enable-tailscale-connectivity).
+
+You don't need to allow inbound traffic from Platform to connected clusters for the default agent connection. Inbound access is only required when you expose optional regional cluster endpoints, tenant cluster access points, or self-hosted DERP relay endpoints.
+
+## Air-gapped and restricted networks
+
+Platform's Tailscale-based communication can run without internet access to Tailscale services because Platform provides the coordination endpoint and default DERP relay. In air-gapped or restricted environments, make sure:
+
+- Agents can resolve and reach the Platform URL configured for the installation.
+- Firewalls, network policies, ingress controllers, and service meshes allow HTTPS and WebSocket-style upgrade traffic to the Platform endpoint.
+- The Platform endpoint exposes the DERP and coordinator paths used by agents, including `/derp/probe`.
+- Any additional DERP relay endpoints are reachable by the peers that need to use them.
+
+If you intentionally enable public Tailscale DERP regions with `LOFT_USE_TAILSCALE_DERP=true`, agents also need egress to those public DERP endpoints. Leave that option disabled for fully air-gapped environments.
+
+## Troubleshoot connectivity
+
+If a connected cluster or tenant cluster cannot communicate with Platform:
+
+1. Confirm the agent pod is running in the connected cluster.
+2. Confirm the agent can resolve and reach the Platform URL over HTTPS.
+3. Check whether your ingress, gateway, proxy, or service mesh supports the required upgrade traffic.
+4. Check Platform and agent logs for DERP or TSNet errors.
+5. If direct peer-to-peer connectivity is unreliable, rely on the Platform DERP relay or configure additional DERP relays.
+
+For detailed debugging steps, see [Resolve TSNet connection failures](../troubleshoot/tsnet-connectivity.mdx) and [cluster troubleshooting](../administer/clusters/advanced/cluster-troubleshooting.mdx).

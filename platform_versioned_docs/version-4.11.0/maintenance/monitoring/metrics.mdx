@@ -1,0 +1,88 @@
+---
+title: Metrics
+sidebar_label: Metrics
+sidebar_position: 5
+description: Prometheus-conformant metrics exposed by vCluster Platform, including how to configure scraping with a ServiceMonitor.
+---
+
+:::note Platform process logging
+To configure log level or output format for the platform pod, see [Platform Process Logging](../logging/platform-logging.mdx).
+:::
+
+## Metrics
+
+vCluster Platform exposes several [Prometheus-conformant](https://prometheus.io/docs/practices/naming/) metrics that can be scraped.
+
+<!-- vale off -->
+### Create the Prometheus servicemonitor
+<!-- vale on -->
+
+The metrics can be scraped with the included `ServiceMonitor` in the vCluster Platform chart, which can be deployed with Helm. In order for this to work, make sure you have installed a [Prometheus Operator](https://github.com/prometheus-operator/prometheus-operator) into your cluster. You'll also need to upgrade your vCluster Platform release with the following command to create the `ServiceMonitor`:
+
+```bash
+# Make sure you change serviceMonitor.namespace if your Prometheus installation requires this.
+helm upgrade loft vcluster-platform --repo https://charts.loft.sh/ \
+  --namespace vcluster-platform \
+  --reuse-values \
+  --set serviceMonitor.enabled=true \
+  --set serviceMonitor.namespace=loft
+```
+
+:::note
+When `serviceMonitor.enabled=true`, the platform exposes metrics on port `8080`. If your environment has firewall rules or network policies, make sure that port `8080` is open for your Prometheus server to scrape metrics.
+:::
+
+### Access the metrics endpoint directly without a ServiceMonitor
+
+When collecting metrics directly without a ServiceMonitor, it's important to understand that vCluster Platform typically runs with multiple replicas for high availability. To get complete metrics coverage, you need to collect metrics from all platform pods rather than through a single endpoint.
+
+#### Collect metrics from all platform pods
+
+Each vCluster Platform pod exposes metrics on port `8080` at the `/metrics` endpoint. Your metrics collection tool should scrape metrics from all replicas to ensure complete coverage.
+
+The platform pods can be identified using the following Kubernetes labels:
+- `app=loft` - Identifies vCluster Platform pods
+- `component=loft` - Component label for the platform
+- `release=loft` - Helm release name (may vary based on your installation)
+
+By default, vCluster Platform requires an `Authorization` HTTP header field with a Kubernetes bearer token that has access to the non-resource 
+<!-- vale off -->
+URL `/metrics`
+<!-- vale on -->
+ in the Kubernetes cluster where vCluster Platform is installed.
+If the header is not provided, vCluster Platform denies the request.
+
+:::info Turn off metrics authentication
+To scrape metrics without authentication, turn it off using the environment variable `INSECURE_METRICS=true` in the vCluster Platform Helm chart.
+:::
+
+Example of accessing metrics from a specific pod using port-forward:
+
+```bash
+# Port-forward to a specific platform pod
+kubectl port-forward -n vcluster-platform loft-xxxx 8080:8080
+
+# Access metrics with authentication token
+curl http://localhost:8080/metrics -H "Authorization: Bearer eyJhbGci..."
+
+# HELP apiserver_audit_event_total [ALPHA] Counter of audit events generated and sent to the audit backend.
+# TYPE apiserver_audit_event_total counter
+apiserver_audit_event_total 0
+# HELP apiserver_audit_requests_rejected_total [ALPHA] Counter of apiserver requests rejected due to an error in audit logging backend.
+# TYPE apiserver_audit_requests_rejected_total counter
+apiserver_audit_requests_rejected_total 0
+...
+```
+
+### Which metrics are exposed?
+
+vCluster Platform collects metrics from its internal components and merges them together into a single metrics endpoint at `/metrics`. The following component metrics are merged together:
+
+- **API gateway metrics**: vCluster Platform exposes metrics for its internal api gateway such as the total amount of requests (`apigateway_ENDPOINT_request_total`), request latency (`apigateway_ENDPOINT_request_duration_seconds`) and request sizes (`apigateway_ENDPOINT_response_sizes`) for the different endpoints. The metrics have different labels depending on the endpoint. The following endpoints and metrics are available:
+  - **ui**: all requests that target vCluster Platform UI assets (metrics are `apigateway_ui_request_total`, `apigateway_ui_request_duration_seconds`, `apigateway_ui_response_sizes`)
+  - **auth**: all requests that target vCluster Platform authentication endpoints (such as login and token refresh)
+  - **kubernetes**: all forwarded requests that target a kubernetes cluster. The targeted backend is provided by a label and can be either `management` (the integrated vCluster Platform kubernetes api server), `cluster` (a request forwarded to a connected cluster) or `vcluster` (a virtual kubernetes cluster deployed by vCluster Platform). Further labels are provided as well such as kubernetes resource, api version, api group, and subresource.
+  - **oidc**: all requests that target the internal OIDC server
+- **Integrated Kubernetes API server metrics**: all internal kubernetes api server metrics are exposed. An incomplete list can be found in the [kubernetes repository](https://github.com/kubernetes/apiserver/blob/master/pkg/endpoints/metrics/metrics.go)
+- **Integrated Controller manager metrics**: all vCluster Platform management cluster controller metrics are exposed.
+- **Go runtime metrics**: some general metrics about the golang runtime and resource usage are exposed.
