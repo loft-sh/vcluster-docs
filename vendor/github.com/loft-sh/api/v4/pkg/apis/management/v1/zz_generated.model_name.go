@@ -486,6 +486,41 @@ func (in EventStatus) OpenAPIModelName() string {
 }
 
 // OpenAPIModelName returns the OpenAPI model name for this type.
+func (in ExternalCredential) OpenAPIModelName() string {
+	return "com.github.loft-sh.api.v4.pkg.apis.management.v1.ExternalCredential"
+}
+
+// OpenAPIModelName returns the OpenAPI model name for this type.
+func (in ExternalCredentialCredentials) OpenAPIModelName() string {
+	return "com.github.loft-sh.api.v4.pkg.apis.management.v1.ExternalCredentialCredentials"
+}
+
+// OpenAPIModelName returns the OpenAPI model name for this type.
+func (in ExternalCredentialCredentialsList) OpenAPIModelName() string {
+	return "com.github.loft-sh.api.v4.pkg.apis.management.v1.ExternalCredentialCredentialsList"
+}
+
+// OpenAPIModelName returns the OpenAPI model name for this type.
+func (in ExternalCredentialList) OpenAPIModelName() string {
+	return "com.github.loft-sh.api.v4.pkg.apis.management.v1.ExternalCredentialList"
+}
+
+// OpenAPIModelName returns the OpenAPI model name for this type.
+func (in ExternalCredentialSecretSelector) OpenAPIModelName() string {
+	return "com.github.loft-sh.api.v4.pkg.apis.management.v1.ExternalCredentialSecretSelector"
+}
+
+// OpenAPIModelName returns the OpenAPI model name for this type.
+func (in ExternalCredentialSpec) OpenAPIModelName() string {
+	return "com.github.loft-sh.api.v4.pkg.apis.management.v1.ExternalCredentialSpec"
+}
+
+// OpenAPIModelName returns the OpenAPI model name for this type.
+func (in ExternalCredentialStatus) OpenAPIModelName() string {
+	return "com.github.loft-sh.api.v4.pkg.apis.management.v1.ExternalCredentialStatus"
+}
+
+// OpenAPIModelName returns the OpenAPI model name for this type.
 func (in Feature) OpenAPIModelName() string {
 	return "com.github.loft-sh.api.v4.pkg.apis.management.v1.Feature"
 }
@@ -733,26 +768,6 @@ func (in NodeEnvironmentSpec) OpenAPIModelName() string {
 // OpenAPIModelName returns the OpenAPI model name for this type.
 func (in NodeEnvironmentStatus) OpenAPIModelName() string {
 	return "com.github.loft-sh.api.v4.pkg.apis.management.v1.NodeEnvironmentStatus"
-}
-
-// OpenAPIModelName returns the OpenAPI model name for this type.
-func (in NodeProfile) OpenAPIModelName() string {
-	return "com.github.loft-sh.api.v4.pkg.apis.management.v1.NodeProfile"
-}
-
-// OpenAPIModelName returns the OpenAPI model name for this type.
-func (in NodeProfileList) OpenAPIModelName() string {
-	return "com.github.loft-sh.api.v4.pkg.apis.management.v1.NodeProfileList"
-}
-
-// OpenAPIModelName returns the OpenAPI model name for this type.
-func (in NodeProfileSpec) OpenAPIModelName() string {
-	return "com.github.loft-sh.api.v4.pkg.apis.management.v1.NodeProfileSpec"
-}
-
-// OpenAPIModelName returns the OpenAPI model name for this type.
-func (in NodeProfileStatus) OpenAPIModelName() string {
-	return "com.github.loft-sh.api.v4.pkg.apis.management.v1.NodeProfileStatus"
 }
 
 // OpenAPIModelName returns the OpenAPI model name for this type.
@@ -1286,6 +1301,56 @@ func (in SharedSecretStatus) OpenAPIModelName() string {
 }
 
 // OpenAPIModelName returns the OpenAPI model name for this type.
+func (in SlurmInstance) OpenAPIModelName() string {
+	return "com.github.loft-sh.api.v4.pkg.apis.management.v1.SlurmInstance"
+}
+
+// OpenAPIModelName returns the OpenAPI model name for this type.
+func (in SlurmInstanceAccounting) OpenAPIModelName() string {
+	return "com.github.loft-sh.api.v4.pkg.apis.management.v1.SlurmInstanceAccounting"
+}
+
+// OpenAPIModelName returns the OpenAPI model name for this type.
+func (in SlurmInstanceAccountingList) OpenAPIModelName() string {
+	return "com.github.loft-sh.api.v4.pkg.apis.management.v1.SlurmInstanceAccountingList"
+}
+
+// OpenAPIModelName returns the OpenAPI model name for this type.
+func (in SlurmInstanceAccountingOptions) OpenAPIModelName() string {
+	return "com.github.loft-sh.api.v4.pkg.apis.management.v1.SlurmInstanceAccountingOptions"
+}
+
+// OpenAPIModelName returns the OpenAPI model name for this type.
+func (in SlurmInstanceAccountingStatus) OpenAPIModelName() string {
+	return "com.github.loft-sh.api.v4.pkg.apis.management.v1.SlurmInstanceAccountingStatus"
+}
+
+// OpenAPIModelName returns the OpenAPI model name for this type.
+func (in SlurmInstanceList) OpenAPIModelName() string {
+	return "com.github.loft-sh.api.v4.pkg.apis.management.v1.SlurmInstanceList"
+}
+
+// OpenAPIModelName returns the OpenAPI model name for this type.
+func (in SlurmInstanceSpec) OpenAPIModelName() string {
+	return "com.github.loft-sh.api.v4.pkg.apis.management.v1.SlurmInstanceSpec"
+}
+
+// OpenAPIModelName returns the OpenAPI model name for this type.
+func (in SlurmInstanceStatus) OpenAPIModelName() string {
+	return "com.github.loft-sh.api.v4.pkg.apis.management.v1.SlurmInstanceStatus"
+}
+
+// OpenAPIModelName returns the OpenAPI model name for this type.
+func (in SlurmJob) OpenAPIModelName() string {
+	return "com.github.loft-sh.api.v4.pkg.apis.management.v1.SlurmJob"
+}
+
+// OpenAPIModelName returns the OpenAPI model name for this type.
+func (in SlurmTRES) OpenAPIModelName() string {
+	return "com.github.loft-sh.api.v4.pkg.apis.management.v1.SlurmTRES"
+}
+
+// OpenAPIModelName returns the OpenAPI model name for this type.
 func (in SnapshotRequest) OpenAPIModelName() string {
 	return "com.github.loft-sh.api.v4.pkg.apis.management.v1.SnapshotRequest"
 }
@@ -1733,11 +1798,6 @@ func (in VirtualClusterInstanceJoinScript) OpenAPIModelName() string {
 // OpenAPIModelName returns the OpenAPI model name for this type.
 func (in VirtualClusterInstanceJoinScriptList) OpenAPIModelName() string {
 	return "com.github.loft-sh.api.v4.pkg.apis.management.v1.VirtualClusterInstanceJoinScriptList"
-}
-
-// OpenAPIModelName returns the OpenAPI model name for this type.
-func (in VirtualClusterInstanceJoinScriptSpec) OpenAPIModelName() string {
-	return "com.github.loft-sh.api.v4.pkg.apis.management.v1.VirtualClusterInstanceJoinScriptSpec"
 }
 
 // OpenAPIModelName returns the OpenAPI model name for this type.
