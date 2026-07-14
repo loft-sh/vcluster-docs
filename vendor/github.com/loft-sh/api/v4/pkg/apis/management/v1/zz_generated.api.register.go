@@ -20,6 +20,10 @@ func addKnownTypes(scheme *runtime.Scheme) error {
 		&App{},
 		&AppList{},
 		&AppCredentials{},
+		&ArgoCDApplication{},
+		&ArgoCDApplicationList{},
+		&ArgoCDApplicationTemplate{},
+		&ArgoCDApplicationTemplateList{},
 		&Backup{},
 		&BackupList{},
 		&BackupApply{},
@@ -57,6 +61,8 @@ func addKnownTypes(scheme *runtime.Scheme) error {
 		&LicenseRequest{},
 		&LoftUpgrade{},
 		&LoftUpgradeList{},
+		&MachineConfigTemplate{},
+		&MachineConfigTemplateList{},
 		&NetworkPeer{},
 		&NetworkPeerList{},
 		&NetworkPeerDebug{},
@@ -64,6 +70,8 @@ func addKnownTypes(scheme *runtime.Scheme) error {
 		&NodeClaimList{},
 		&NodeEnvironment{},
 		&NodeEnvironmentList{},
+		&NodeProfile{},
+		&NodeProfileList{},
 		&NodeProvider{},
 		&NodeProviderList{},
 		&NodeProviderExec{},
@@ -92,6 +100,8 @@ func addKnownTypes(scheme *runtime.Scheme) error {
 		&RedirectTokenList{},
 		&RegisterVirtualCluster{},
 		&RegisterVirtualClusterList{},
+		&RenderVirtualClusterTemplate{},
+		&RenderVirtualClusterTemplateList{},
 		&ResetAccessKey{},
 		&ResetAccessKeyList{},
 		&SSHKey{},
@@ -131,8 +141,8 @@ func addKnownTypes(scheme *runtime.Scheme) error {
 		&VirtualClusterInstance{},
 		&VirtualClusterInstanceList{},
 		&VirtualClusterAccessKey{},
+		&VirtualClusterControlPlanePods{},
 		&VirtualClusterInstanceDebugShell{},
-		&VirtualClusterInstanceDebugShellPods{},
 		&VirtualClusterExternalDatabase{},
 		&VirtualClusterInstanceJoinScript{},
 		&VirtualClusterInstanceKubeConfig{},
@@ -161,6 +171,8 @@ var (
 			nil,
 			management.NewAppCredentialsREST,
 		),
+		management.ManagementArgoCDApplicationStorage,
+		management.ManagementArgoCDApplicationTemplateStorage,
 		management.ManagementBackupStorage,
 		builders.NewApiResourceWithStorage(
 			management.InternalBackupApplyREST,
@@ -239,6 +251,7 @@ var (
 			management.NewLicenseRequestREST,
 		),
 		management.ManagementLoftUpgradeStorage,
+		management.ManagementMachineConfigTemplateStorage,
 		management.ManagementNetworkPeerStorage,
 		builders.NewApiResourceWithStorage(
 			management.InternalNetworkPeerDebugREST,
@@ -258,6 +271,7 @@ var (
 			func() runtime.Object { return &NodeEnvironment{} },     // Register versioned resource
 			func() runtime.Object { return &NodeEnvironmentList{} }, // Register versioned resource list
 			management.NewNodeEnvironmentStatusREST),
+		management.ManagementNodeProfileStorage,
 		management.ManagementNodeProviderStorage,
 		builders.NewApiResourceWithStorage(
 			management.InternalNodeProviderStatus,
@@ -342,6 +356,7 @@ var (
 		management.ManagementProjectSecretStorage,
 		management.ManagementRedirectTokenStorage,
 		management.ManagementRegisterVirtualClusterStorage,
+		management.ManagementRenderVirtualClusterTemplateStorage,
 		management.ManagementResetAccessKeyStorage,
 		management.ManagementSSHKeyStorage,
 		management.ManagementSelfStorage,
@@ -423,16 +438,16 @@ var (
 			management.NewVirtualClusterAccessKeyREST,
 		),
 		builders.NewApiResourceWithStorage(
+			management.InternalVirtualClusterControlPlanePodsREST,
+			func() runtime.Object { return &VirtualClusterControlPlanePods{} }, // Register versioned resource
+			nil,
+			management.NewVirtualClusterControlPlanePodsREST,
+		),
+		builders.NewApiResourceWithStorage(
 			management.InternalVirtualClusterInstanceDebugShellREST,
 			func() runtime.Object { return &VirtualClusterInstanceDebugShell{} }, // Register versioned resource
 			nil,
 			management.NewVirtualClusterInstanceDebugShellREST,
-		),
-		builders.NewApiResourceWithStorage(
-			management.InternalVirtualClusterInstanceDebugShellPodsREST,
-			func() runtime.Object { return &VirtualClusterInstanceDebugShellPods{} }, // Register versioned resource
-			nil,
-			management.NewVirtualClusterInstanceDebugShellPodsREST,
 		),
 		builders.NewApiResourceWithStorage(
 			management.InternalVirtualClusterExternalDatabaseREST,
@@ -551,6 +566,22 @@ type AppCredentialsList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []AppCredentials `json:"items"`
+}
+
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+
+type ArgoCDApplicationList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata,omitempty"`
+	Items           []ArgoCDApplication `json:"items"`
+}
+
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+
+type ArgoCDApplicationTemplateList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata,omitempty"`
+	Items           []ArgoCDApplicationTemplate `json:"items"`
 }
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
@@ -739,6 +770,14 @@ type LoftUpgradeList struct {
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 
+type MachineConfigTemplateList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata,omitempty"`
+	Items           []MachineConfigTemplate `json:"items"`
+}
+
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+
 type NetworkPeerList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
@@ -767,6 +806,14 @@ type NodeEnvironmentList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []NodeEnvironment `json:"items"`
+}
+
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+
+type NodeProfileList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata,omitempty"`
+	Items           []NodeProfile `json:"items"`
 }
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
@@ -919,6 +966,14 @@ type RegisterVirtualClusterList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []RegisterVirtualCluster `json:"items"`
+}
+
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+
+type RenderVirtualClusterTemplateList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata,omitempty"`
+	Items           []RenderVirtualClusterTemplate `json:"items"`
 }
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
@@ -1123,18 +1178,18 @@ type VirtualClusterAccessKeyList struct {
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 
-type VirtualClusterInstanceDebugShellList struct {
+type VirtualClusterControlPlanePodsList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []VirtualClusterInstanceDebugShell `json:"items"`
+	Items           []VirtualClusterControlPlanePods `json:"items"`
 }
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 
-type VirtualClusterInstanceDebugShellPodsList struct {
+type VirtualClusterInstanceDebugShellList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []VirtualClusterInstanceDebugShellPods `json:"items"`
+	Items           []VirtualClusterInstanceDebugShell `json:"items"`
 }
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object

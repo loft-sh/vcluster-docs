@@ -1,6 +1,8 @@
 package v1
 
 import (
+	"strings"
+
 	agentstoragev1 "github.com/loft-sh/agentapi/v4/pkg/apis/loft/storage/v1"
 	argoapplicationsv1alpha1 "github.com/loft-sh/external-types/argoproj/argo-cd/v2/pkg/apis/application/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
@@ -100,6 +102,28 @@ type ProjectSpec struct {
 	// +optional
 	AllowedTemplates []AllowedTemplate `json:"allowedTemplates,omitempty"`
 
+	// AllowedNodeTypes restricts which NodeTypes can be referenced by
+	// NodeClaims in this project. An entry can be an exact name
+	// ("aws.large") or a provider wildcard ("aws.*"). If unset (nil),
+	// all NodeTypes are allowed; an empty list disallows all NodeTypes.
+	// +optional
+	AllowedNodeTypes []AllowedNodeType `json:"allowedNodeTypes" jsonschema:"nullable"`
+
+	// AllowedNodeProfiles restricts which NodeProfiles can be referenced
+	// by NodeClaims and joinscript requests in this project. An entry can
+	// be an exact name ("platform.gpu-training") or an owner wildcard
+	// ("platform.*"). If unset (nil), all NodeProfiles are allowed; an
+	// empty list disallows all NodeProfiles.
+	// +optional
+	AllowedNodeProfiles []AllowedNodeProfile `json:"allowedNodeProfiles" jsonschema:"nullable"`
+
+	// DefaultNodeProfile is the default NodeProfile applied to nodes in this
+	// project when none is selected explicitly. It is overridden by the
+	// vCluster-level privateNodes.defaultProfile and by per-node/per-pool
+	// selection, and is validated against allowedNodeProfiles.
+	// +optional
+	DefaultNodeProfile string `json:"defaultNodeProfile,omitempty"`
+
 	// RequireTemplate configures if a template is required for instance creation.
 	// +optional
 	RequireTemplate RequireTemplate `json:"requireTemplate,omitempty"`
@@ -122,7 +146,7 @@ type ProjectSpec struct {
 	// +optional
 	NamespaceTemplate *ProjectNamespaceTemplate `json:"namespaceTemplate,omitempty"`
 
-	// NamespacePattern specifies template patterns to use for creating each space or virtual cluster's namespace
+	// NamespacePattern specifies template patterns to use for creating each space or tenant cluster's namespace
 	// +optional
 	NamespacePattern *NamespacePattern `json:"namespacePattern,omitempty"`
 
@@ -133,7 +157,6 @@ type ProjectSpec struct {
 	// VaultIntegration holds information about Vault Integration
 	// +optional
 	VaultIntegration *VaultIntegrationSpec `json:"vault,omitempty"`
-
 }
 
 type RequireTemplate struct {
@@ -162,7 +185,7 @@ type NamespacePattern struct {
 	// +optional
 	Space string `json:"space,omitempty"`
 
-	// VirtualCluster holds the namespace pattern to use for virtual cluster instances
+	// VirtualCluster holds the namespace pattern to use for tenant cluster instances
 	// +optional
 	VirtualCluster string `json:"virtualCluster,omitempty"`
 }
@@ -226,6 +249,40 @@ type AllowedCluster struct {
 	// Name is the name of the cluster that is allowed to create an environment in.
 	// +optional
 	Name string `json:"name,omitempty"`
+}
+
+type AllowedNodeType struct {
+	// Name of the NodeType, or "<provider>.*" to allow all NodeTypes
+	// of the given provider.
+	// +optional
+	Name string `json:"name,omitempty"`
+}
+
+// AllowedNodeProfile restricts which NodeProfile a project's consumers may
+// reference. The Name field is either an exact profile name or an
+// "<owner>.*" wildcard, matching the same semantics as AllowedNodeType.
+type AllowedNodeProfile struct {
+	// Name of the NodeProfile, or "<owner>.*" to allow all NodeProfiles
+	// with the given owner prefix.
+	// +optional
+	Name string `json:"name,omitempty"`
+}
+
+// IsNodeProfileAllowed reports whether name is permitted by AllowedNodeProfiles. A nil
+// list means all NodeProfiles are allowed; an empty list means none are.
+func (s ProjectSpec) IsNodeProfileAllowed(name string) bool {
+	if s.AllowedNodeProfiles == nil {
+		return true
+	}
+	for _, a := range s.AllowedNodeProfiles {
+		if a.Name == name {
+			return true
+		}
+		if strings.HasSuffix(a.Name, ".*") && strings.HasPrefix(name, strings.TrimSuffix(a.Name, "*")) {
+			return true
+		}
+	}
+	return false
 }
 
 type ProjectStatus struct {
@@ -326,9 +383,9 @@ type ArgoIntegrationSpec struct {
 	// +optional
 	Cluster string `json:"cluster,omitempty"`
 
-	// VirtualClusterInstance defines the name of *virtual cluster* (instance) that ArgoCD is
+	// VirtualClusterInstance defines the name of *tenant cluster* (instance) that ArgoCD is
 	// deployed into. If provided, Cluster will be ignored and Loft will assume that ArgoCD is
-	// running in the specified virtual cluster.
+	// running in the specified tenant cluster.
 	// +optional
 	VirtualClusterInstance string `json:"virtualClusterInstance,omitempty"`
 

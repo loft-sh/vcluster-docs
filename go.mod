@@ -1,13 +1,13 @@
 module github.com/loft-sh/vcluster-docs
 
-go 1.26.0
+go 1.26.3
 
 require (
 	github.com/gertd/go-pluralize v0.2.1
 	github.com/ghodss/yaml v1.0.0
 	github.com/invopop/jsonschema v0.12.1-0.20240219232115-a4467074499d
-	github.com/loft-sh/agentapi/v4 v4.9.3-rc.2
-	github.com/loft-sh/api/v4 v4.9.3-rc.2
+	github.com/loft-sh/agentapi/v4 v4.11.0-rc.1
+	github.com/loft-sh/api/v4 v4.11.0-rc.1
 	k8s.io/api v0.36.0
 	k8s.io/apimachinery v0.36.0
 	sigs.k8s.io/controller-runtime v0.23.1-0.20260424122448-c8b4b9d61fbd
@@ -48,8 +48,8 @@ require (
 	github.com/josharian/intern v1.0.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/kylelemons/godebug v1.1.0 // indirect
-	github.com/loft-sh/admin-apis v0.0.0-20260601071241-26d546886c99 // indirect
-	github.com/loft-sh/apiserver v0.0.0-20260424174643-365191901530 // indirect
+	github.com/loft-sh/admin-apis v0.0.0-20260707131545-11a67ade9341 // indirect
+	github.com/loft-sh/apiserver v0.0.0-20260707184419-aef558a5ae8d // indirect
 	github.com/loft-sh/external-types v0.1.0-alpha.2.0.20260409132559-a38365a8cbf2 // indirect
 	github.com/mailru/easyjson v0.7.7 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
