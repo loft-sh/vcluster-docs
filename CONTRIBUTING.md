@@ -560,7 +560,7 @@ instead of silently orphaned.
 If the prose is conceptual (an overview page, a how-to, a comparison)
 and only happens to live near generated content, write it as a
 hand-authored `.mdx` outside `vcluster/_partials/config/` and import it
-where needed. The generator will not touch it. This is the right choice
+where needed. The generator doesn't modify it. This is the right choice
 when:
 
 - The prose can be read on its own without a specific schema field next
