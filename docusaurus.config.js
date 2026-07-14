@@ -294,10 +294,16 @@ const config = {
           [remarkVersionTokens, { siteDir: __dirname }],
         ],
         lastVersion: "4.10.0",
-        onlyIncludeVersions: ["current", "4.10.0", "4.9.0", "4.8.0", "4.7.0"],
+        onlyIncludeVersions: ["current", "4.11.0", "4.10.0", "4.9.0", "4.8.0", "4.7.0"],
         versions: {
           current: {
             label: "main 🚧",
+          },
+          "4.11.0": {
+            label: "v4.11",
+            banner: "unreleased",
+            badge: true,
+            noIndex: true,
           },
           "4.10.0": {
             label: "v4.10 Stable",
