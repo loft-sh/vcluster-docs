@@ -9,7 +9,7 @@ When reviewing PRs with `@claude`, use these MCP servers based on PR content:
 
 **vcluster-yaml MCP** (`mcp__vcluster-yaml__validate-config`):
 
-- Use when PR modifies or creates vCluster YAML files
+- Use when PR modifies or creates vcluster.yaml files
 - Validates syntax and configuration against schema
 - Catches common misconfigurations
 
@@ -42,11 +42,11 @@ If in doubt, don't change it. Broken paths break the build.
 ## Versioned docs
 
 Do NOT modify `vcluster_versioned_docs/version-*/` or `platform_versioned_docs/version-*/`
-folders. Changes are backported automatically via a CI process.
+folders. Changes are backported automatically using a CI process.
 
 ## Link resolution
 
-**Within same section** (e.g., platform → platform): Use relative file paths with the `.mdx` suffix. The suffix is mandatory, not a preference.
+**Within same section** (for example, platform → platform): Use relative file paths with the `.mdx` suffix. The suffix is mandatory, not a preference.
 
 - **Correct:** `[Link](../understand/what-are-projects.mdx)`
 - **Correct (directory target):** `[Link](../networking/README.mdx)`
@@ -66,7 +66,7 @@ and the post-mortem for the full failure mode.
 Relative paths (with `.mdx`) are also preferred over `/docs/` URL paths:
 they work on GitHub, survive slug changes, and track moves.
 
-**Cross-section links** (e.g., platform → vcluster): Use `/docs/` absolute paths
+**Cross-section links** (for example, platform → vcluster): Use `/docs/` absolute paths
 (different Docusaurus plugin instances, so file paths don't resolve):
 
 - **Correct:** `[vCluster docs](/docs/vcluster)`
@@ -80,7 +80,7 @@ they work on GitHub, survive slug changes, and track moves.
 **Debugging broken links:**
 
 1. CD into the versioned folder matching the error path
-2. Grep for the referenced file name
+2. Grep for the referenced filename
 3. Fix the relative path
 
 Clear caches: `rm -rf .docusaurus build node_modules/.cache`
@@ -161,7 +161,7 @@ When writing docs for new features:
 
 ### Examples format
 
-- vCluster.yaml: description + code block
+- vcluster.yaml: description + code block
 - Platform: description + step-by-step (no UI screenshots - they go stale)
 
 ### Checklist
@@ -230,7 +230,7 @@ than rewriting the caveat. See the "Tenancy Model Positioning" section of
 
 ## SVG diagrams
 
-SVGs must be imported as React components, not via `require().default`:
+SVGs must be imported as React components, not using `require().default`:
 
 ```jsx
 import MyDiagram from '@site/static/media/diagrams/my-diagram.svg';
