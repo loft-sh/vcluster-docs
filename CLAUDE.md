@@ -212,9 +212,11 @@ with vNode for runtime isolation.
 
 Shared nodes give control-plane, API, and namespace isolation, but tenants
 share the kernel and physical nodes, so this is an architectural property, not a
-vCluster defect. Isolation also depends on controls that must be actively
-enforced (a CNI can accept NetworkPolicy without enforcing it). Don't soften
-this to "strongly not recommended". Keep the guidance principle-based. Never
+vCluster defect. Recommend NetworkPolicy as an added layer even for trusted
+tenants. vCluster can create it through `policies.networkPolicy`, and the
+control plane cluster's CNI enforces it. Some CNIs accept NetworkPolicy without
+enforcing it, so enforcement must be verified. Don't soften the positioning to
+"strongly not recommended". Keep the guidance principle-based. Never
 reference specific customers, their CNI or infra choices, or security incidents
 in published docs.
 

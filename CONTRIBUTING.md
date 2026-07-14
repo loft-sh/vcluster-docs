@@ -426,7 +426,8 @@ Shared nodes are a supported tenancy boundary for trusted tenants, not a securit
 
 - Recommend shared nodes for trusted tenants such as development, testing, CI/CD, and internal engineering teams.
 - Route external, resale, regulated, or otherwise untrusted tenant offerings to private nodes, optionally with vNode for runtime isolation.
-- Don't soften this to "strongly not recommended". Shared-node mitigations such as NetworkPolicy don't replace data-plane isolation.
+- Don't soften this to "strongly not recommended". Shared-node mitigations such as NetworkPolicy don't replace data-plane isolation for untrusted tenants.
+- Recommend NetworkPolicy as an added isolation layer for all tenants, including trusted ones. vCluster can create it through `policies.networkPolicy`, and the CNI enforces it.
 - Frame the risk as an architectural property (shared kernel and nodes) plus a configuration responsibility, not as a vCluster defect. Don't reference specific customers or security incidents.
 - Reuse the `vcluster/_partials/admonitions/shared-nodes-suitability.mdx` partial rather than rewriting the caveat.
 
