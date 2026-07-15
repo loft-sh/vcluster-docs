@@ -132,6 +132,41 @@ get() {
     [ "$(get channel)" = "beta" ]
 }
 
+@test "vcluster: -next prerelease on a frozen minor is always skipped" {
+    # -next.internal.* tags are cut from feature branches (DEVOPS-1092).
+    # 0.34.0 is frozen with a folder, so without the -next guard this would
+    # classify skip=false and open a docs-sync PR. The guard must win.
+    VERSION=v0.34.0-next.internal.0 EVENT_TYPE=vcluster-released run "$SCRIPT"
+    [ "$status" -eq 0 ]
+    [ "$(get skip)" = "true" ]
+    [ "$(get target_folder)" = "" ]
+    [ "$(get channel)" = "next" ]
+}
+
+@test "vcluster: -next prerelease of the next minor is always skipped" {
+    # 0.35 is max-frozen+1, which would otherwise route to the current docs
+    # folder. The -next guard fires before either routing branch.
+    VERSION=v0.35.0-next.internal.0 EVENT_TYPE=vcluster-released run "$SCRIPT"
+    [ "$status" -eq 0 ]
+    [ "$(get skip)" = "true" ]
+    [ "$(get channel)" = "next" ]
+}
+
+@test "vcluster-cli: -next prerelease is always skipped" {
+    VERSION=v0.34.0-next.internal.0 EVENT_TYPE=vcluster-cli-released run "$SCRIPT"
+    [ "$status" -eq 0 ]
+    [ "$(get skip)" = "true" ]
+    [ "$(get channel)" = "next" ]
+}
+
+@test "platform: -next prerelease is always skipped" {
+    # Real-world shape from DEVOPS-1092: v4.11.0-next.internal.5.
+    VERSION=v4.9.0-next.internal.5 EVENT_TYPE=platform-released run "$SCRIPT"
+    [ "$status" -eq 0 ]
+    [ "$(get skip)" = "true" ]
+    [ "$(get channel)" = "next" ]
+}
+
 @test "vcluster: frozen-but-pruned minor (in versions.json, no folder) → skip" {
     # 0.26.0 is in versions.json but no folder exists for it.
     VERSION=v0.26.5 EVENT_TYPE=vcluster-released run "$SCRIPT"
