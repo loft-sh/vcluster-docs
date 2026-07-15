@@ -5,7 +5,7 @@
 # Maps a released VERSION + EVENT_TYPE to a routing decision:
 #   - skip:           true if the version should not produce docs
 #   - target_folder:  path (relative to REPO_ROOT) where generated docs land
-#   - channel:        stable | rc | alpha | beta | invalid | unknown-event
+#   - channel:        stable | rc | alpha | beta | next | invalid | unknown-event
 #
 # Inputs (env):
 #   VERSION      Released version, e.g. v0.34.5, v0.34.0-rc.3, v4.6.0-alpha.1
@@ -22,7 +22,9 @@
 #
 # Routing rules (matches A4 design appendix B):
 #
-#   * alpha / beta  → always skip
+#   * alpha / beta / next → always skip (next = -next.internal.* prereleases
+#     cut from feature branches; these must never open a docs-sync PR, per
+#     DEVOPS-1092)
 #   * MAJOR.MINOR strictly newer than the highest frozen MAJOR.MINOR in the
 #     event's versions.json → target = current docs root (the unreleased
 #     "next" docs folder)
@@ -74,6 +76,7 @@ channel=stable
 case "$stripped" in
     *-alpha*) emit_skip alpha ;;
     *-beta*)  emit_skip beta  ;;
+    *-next*)  emit_skip next  ;;
     *-rc.*|*-rc[0-9]*) channel=rc ;;
 esac
 
