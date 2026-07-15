@@ -409,6 +409,21 @@ type NodeProviderMetal3 struct {
 
 	// NodeTypes define NodeTypes that should be automatically created for this provider.
 	NodeTypes []Metal3NodeTypeSpec `json:"nodeTypes,omitempty"`
+
+	// NeutronEnabled turns on the neutron network shim for this provider: BareMetalHost network
+	// attachments are allocated by the platform and reconciled through ConfigMaps instead of
+	// being written directly as DHCP annotations.
+	// +optional
+	NeutronEnabled bool `json:"neutronEnabled,omitempty"`
+
+	// Netris attaches BareMetalHosts to a Netris server cluster on provisioning.
+	// +optional
+	Netris *NodeProviderMetal3Netris `json:"netris,omitempty"`
+}
+
+type NodeProviderMetal3Netris struct {
+	// SecretRef references a Secret with keys url, username and password for the Netris API.
+	SecretRef *NamespacedRef `json:"secretRef"`
 }
 
 type Metal3NodeTypeSpec struct {

@@ -173,8 +173,18 @@ var (
 	NewEventREST = func(getter generic.RESTOptionsGetter) rest.Storage {
 		return NewEventRESTFunc(Factory)
 	}
-	NewEventRESTFunc         NewRESTFunc
-	ManagementFeatureStorage = builders.NewApiResourceWithStorage( // Resource status endpoint
+	NewEventRESTFunc                    NewRESTFunc
+	ManagementExternalCredentialStorage = builders.NewApiResourceWithStorage( // Resource status endpoint
+		InternalExternalCredential,
+		func() runtime.Object { return &ExternalCredential{} },     // Register versioned resource
+		func() runtime.Object { return &ExternalCredentialList{} }, // Register versioned resource list
+		NewExternalCredentialREST,
+	)
+	NewExternalCredentialREST = func(getter generic.RESTOptionsGetter) rest.Storage {
+		return NewExternalCredentialRESTFunc(Factory)
+	}
+	NewExternalCredentialRESTFunc NewRESTFunc
+	ManagementFeatureStorage      = builders.NewApiResourceWithStorage( // Resource status endpoint
 		InternalFeature,
 		func() runtime.Object { return &Feature{} },     // Register versioned resource
 		func() runtime.Object { return &FeatureList{} }, // Register versioned resource list
@@ -448,6 +458,20 @@ var (
 		return NewSharedSecretRESTFunc(Factory)
 	}
 	NewSharedSecretRESTFunc        NewRESTFunc
+	ManagementSlurmInstanceStorage = builders.NewApiResourceWithStorage( // Resource status endpoint
+		InternalSlurmInstance,
+		func() runtime.Object { return &SlurmInstance{} },     // Register versioned resource
+		func() runtime.Object { return &SlurmInstanceList{} }, // Register versioned resource list
+		NewSlurmInstanceREST,
+	)
+	NewSlurmInstanceREST = func(getter generic.RESTOptionsGetter) rest.Storage {
+		return NewSlurmInstanceRESTFunc(Factory)
+	}
+	NewSlurmInstanceRESTFunc   NewRESTFunc
+	NewSlurmInstanceStatusREST = func(getter generic.RESTOptionsGetter) rest.Storage {
+		return NewSlurmInstanceStatusRESTFunc(Factory)
+	}
+	NewSlurmInstanceStatusRESTFunc NewRESTFunc
 	ManagementSpaceInstanceStorage = builders.NewApiResourceWithStorage( // Resource status endpoint
 		InternalSpaceInstance,
 		func() runtime.Object { return &SpaceInstance{} },     // Register versioned resource
@@ -798,7 +822,27 @@ var (
 		func() runtime.Object { return &Event{} },
 		func() runtime.Object { return &EventList{} },
 	)
-	InternalFeature = builders.NewInternalResource(
+	InternalExternalCredential = builders.NewInternalResource(
+		"externalcredentials",
+		"ExternalCredential",
+		func() runtime.Object { return &ExternalCredential{} },
+		func() runtime.Object { return &ExternalCredentialList{} },
+	)
+	InternalExternalCredentialStatus = builders.NewInternalResourceStatus(
+		"externalcredentials",
+		"ExternalCredentialStatus",
+		func() runtime.Object { return &ExternalCredential{} },
+		func() runtime.Object { return &ExternalCredentialList{} },
+	)
+	InternalExternalCredentialCredentialsREST = builders.NewInternalSubresource(
+		"externalcredentials", "ExternalCredentialCredentials", "credentials",
+		func() runtime.Object { return &ExternalCredentialCredentials{} },
+	)
+	NewExternalCredentialCredentialsREST = func(getter generic.RESTOptionsGetter) rest.Storage {
+		return NewExternalCredentialCredentialsRESTFunc(Factory)
+	}
+	NewExternalCredentialCredentialsRESTFunc NewRESTFunc
+	InternalFeature                          = builders.NewInternalResource(
 		"features",
 		"Feature",
 		func() runtime.Object { return &Feature{} },
@@ -1194,7 +1238,27 @@ var (
 		func() runtime.Object { return &SharedSecret{} },
 		func() runtime.Object { return &SharedSecretList{} },
 	)
-	InternalSpaceInstance = builders.NewInternalResource(
+	InternalSlurmInstance = builders.NewInternalResource(
+		"slurminstances",
+		"SlurmInstance",
+		func() runtime.Object { return &SlurmInstance{} },
+		func() runtime.Object { return &SlurmInstanceList{} },
+	)
+	InternalSlurmInstanceStatus = builders.NewInternalResourceStatus(
+		"slurminstances",
+		"SlurmInstanceStatus",
+		func() runtime.Object { return &SlurmInstance{} },
+		func() runtime.Object { return &SlurmInstanceList{} },
+	)
+	InternalSlurmInstanceAccountingREST = builders.NewInternalSubresource(
+		"slurminstances", "SlurmInstanceAccounting", "accounting",
+		func() runtime.Object { return &SlurmInstanceAccounting{} },
+	)
+	NewSlurmInstanceAccountingREST = func(getter generic.RESTOptionsGetter) rest.Storage {
+		return NewSlurmInstanceAccountingRESTFunc(Factory)
+	}
+	NewSlurmInstanceAccountingRESTFunc NewRESTFunc
+	InternalSpaceInstance              = builders.NewInternalResource(
 		"spaceinstances",
 		"SpaceInstance",
 		func() runtime.Object { return &SpaceInstance{} },
@@ -1541,6 +1605,9 @@ var (
 		InternalDirectClusterEndpointTokenStatus,
 		InternalEvent,
 		InternalEventStatus,
+		InternalExternalCredential,
+		InternalExternalCredentialStatus,
+		InternalExternalCredentialCredentialsREST,
 		InternalFeature,
 		InternalFeatureStatus,
 		InternalIngressAuthToken,
@@ -1603,6 +1670,9 @@ var (
 		InternalSelfSubjectAccessReviewStatus,
 		InternalSharedSecret,
 		InternalSharedSecretStatus,
+		InternalSlurmInstance,
+		InternalSlurmInstanceStatus,
+		InternalSlurmInstanceAccountingREST,
 		InternalSpaceInstance,
 		InternalSpaceInstanceStatus,
 		InternalSpaceTemplate,
@@ -2190,6 +2260,43 @@ type EventSpec struct {
 
 type EventStatus struct {
 	auditv1.Event `json:",inline"`
+}
+
+// +genclient
+// +genclient
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+
+type ExternalCredential struct {
+	metav1.TypeMeta   `json:",inline"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
+	Spec              ExternalCredentialSpec   `json:"spec,omitempty"`
+	Status            ExternalCredentialStatus `json:"status,omitempty"`
+}
+
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+
+type ExternalCredentialCredentials struct {
+	metav1.TypeMeta   `json:",inline"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
+	Username          string `json:"username,omitempty"`
+	Password          string `json:"password"`
+}
+
+type ExternalCredentialSecretSelector struct {
+	SecretKeyRef corev1.SecretKeySelector `json:"secretKeyRef"`
+}
+
+type ExternalCredentialSpec struct {
+	DisplayName string                            `json:"displayName,omitempty"`
+	Description string                            `json:"description,omitempty"`
+	Username    *ExternalCredentialSecretSelector `json:"username,omitempty"`
+	Password    ExternalCredentialSecretSelector  `json:"password"`
+	Access      []storagev1.Access                `json:"access,omitempty"`
+}
+
+type ExternalCredentialStatus struct {
+	Available bool   `json:"available"`
+	Username  string `json:"username,omitempty"`
 }
 
 // +genclient
@@ -2990,6 +3097,62 @@ type SharedSecretSpec struct {
 
 type SharedSecretStatus struct {
 	storagev1.SharedSecretStatus `json:",inline"`
+}
+
+// +genclient
+// +genclient
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+
+type SlurmInstance struct {
+	metav1.TypeMeta   `json:",inline"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
+	Spec              SlurmInstanceSpec   `json:"spec,omitempty"`
+	Status            SlurmInstanceStatus `json:"status,omitempty"`
+}
+
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+
+type SlurmInstanceAccounting struct {
+	metav1.TypeMeta   `json:",inline"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
+	Status            SlurmInstanceAccountingStatus `json:"status,omitempty"`
+}
+
+type SlurmInstanceAccountingStatus struct {
+	Enabled bool       `json:"enabled"`
+	Message string     `json:"message,omitempty"`
+	Jobs    []SlurmJob `json:"jobs,omitempty"`
+}
+
+type SlurmInstanceSpec struct {
+	storagev1.SlurmInstanceSpec `json:",inline"`
+}
+
+type SlurmInstanceStatus struct {
+	storagev1.SlurmInstanceStatus `json:",inline"`
+	CanUse                        bool `json:"canUse,omitempty"`
+	CanUpdate                     bool `json:"canUpdate,omitempty"`
+}
+
+type SlurmJob struct {
+	ID                 int64        `json:"id"`
+	Name               string       `json:"name,omitempty"`
+	User               string       `json:"user,omitempty"`
+	Account            string       `json:"account,omitempty"`
+	Partition          string       `json:"partition,omitempty"`
+	State              string       `json:"state,omitempty"`
+	SubmitTime         *metav1.Time `json:"submitTime,omitempty"`
+	StartTime          *metav1.Time `json:"startTime,omitempty"`
+	EndTime            *metav1.Time `json:"endTime,omitempty"`
+	Elapsed            int64        `json:"elapsed,omitempty"`
+	Nodes              string       `json:"nodes,omitempty"`
+	AllocatedResources []SlurmTRES  `json:"allocatedResources,omitempty"`
+}
+
+type SlurmTRES struct {
+	Type  string `json:"type"`
+	Name  string `json:"name,omitempty"`
+	Count int64  `json:"count"`
 }
 
 type SnapshotRequest struct {
@@ -5334,6 +5497,133 @@ func (s *storageEvent) UpdateEvent(ctx context.Context, object *Event) (*Event, 
 }
 
 func (s *storageEvent) DeleteEvent(ctx context.Context, id string) (bool, error) {
+	st := s.GetStandardStorage()
+	_, sync, err := st.Delete(ctx, id, nil, &metav1.DeleteOptions{})
+	return sync, err
+}
+
+// ExternalCredential Functions and Structs
+//
+// +k8s:deepcopy-gen=false
+type ExternalCredentialStrategy struct {
+	builders.DefaultStorageStrategy
+}
+
+// +k8s:deepcopy-gen=false
+type ExternalCredentialStatusStrategy struct {
+	builders.DefaultStatusStorageStrategy
+}
+
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+
+type ExternalCredentialList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata,omitempty"`
+	Items           []ExternalCredential `json:"items"`
+}
+
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+
+type ExternalCredentialCredentialsList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata,omitempty"`
+	Items           []ExternalCredentialCredentials `json:"items"`
+}
+
+func (ExternalCredential) NewStatus() interface{} {
+	return ExternalCredentialStatus{}
+}
+
+func (pc *ExternalCredential) GetStatus() interface{} {
+	return pc.Status
+}
+
+func (pc *ExternalCredential) SetStatus(s interface{}) {
+	pc.Status = s.(ExternalCredentialStatus)
+}
+
+func (pc *ExternalCredential) GetSpec() interface{} {
+	return pc.Spec
+}
+
+func (pc *ExternalCredential) SetSpec(s interface{}) {
+	pc.Spec = s.(ExternalCredentialSpec)
+}
+
+func (pc *ExternalCredential) GetObjectMeta() *metav1.ObjectMeta {
+	return &pc.ObjectMeta
+}
+
+func (pc *ExternalCredential) SetGeneration(generation int64) {
+	pc.ObjectMeta.Generation = generation
+}
+
+func (pc ExternalCredential) GetGeneration() int64 {
+	return pc.ObjectMeta.Generation
+}
+
+// Registry is an interface for things that know how to store ExternalCredential.
+// +k8s:deepcopy-gen=false
+type ExternalCredentialRegistry interface {
+	ListExternalCredentials(ctx context.Context, options *internalversion.ListOptions) (*ExternalCredentialList, error)
+	GetExternalCredential(ctx context.Context, id string, options *metav1.GetOptions) (*ExternalCredential, error)
+	CreateExternalCredential(ctx context.Context, id *ExternalCredential) (*ExternalCredential, error)
+	UpdateExternalCredential(ctx context.Context, id *ExternalCredential) (*ExternalCredential, error)
+	DeleteExternalCredential(ctx context.Context, id string) (bool, error)
+}
+
+// NewRegistry returns a new Registry interface for the given Storage. Any mismatched types will panic.
+func NewExternalCredentialRegistry(sp builders.StandardStorageProvider) ExternalCredentialRegistry {
+	return &storageExternalCredential{sp}
+}
+
+// Implement Registry
+// storage puts strong typing around storage calls
+// +k8s:deepcopy-gen=false
+type storageExternalCredential struct {
+	builders.StandardStorageProvider
+}
+
+func (s *storageExternalCredential) ListExternalCredentials(ctx context.Context, options *internalversion.ListOptions) (*ExternalCredentialList, error) {
+	if options != nil && options.FieldSelector != nil && !options.FieldSelector.Empty() {
+		return nil, fmt.Errorf("field selector not supported yet")
+	}
+	st := s.GetStandardStorage()
+	obj, err := st.List(ctx, options)
+	if err != nil {
+		return nil, err
+	}
+	return obj.(*ExternalCredentialList), err
+}
+
+func (s *storageExternalCredential) GetExternalCredential(ctx context.Context, id string, options *metav1.GetOptions) (*ExternalCredential, error) {
+	st := s.GetStandardStorage()
+	obj, err := st.Get(ctx, id, options)
+	if err != nil {
+		return nil, err
+	}
+	return obj.(*ExternalCredential), nil
+}
+
+func (s *storageExternalCredential) CreateExternalCredential(ctx context.Context, object *ExternalCredential) (*ExternalCredential, error) {
+	st := s.GetStandardStorage()
+	obj, err := st.Create(ctx, object, nil, &metav1.CreateOptions{})
+	if err != nil {
+		return nil, err
+	}
+	return obj.(*ExternalCredential), nil
+}
+
+func (s *storageExternalCredential) UpdateExternalCredential(ctx context.Context, object *ExternalCredential) (*ExternalCredential, error) {
+	st := s.GetStandardStorage()
+	obj, _, err := st.Update(ctx, object.Name, rest.DefaultUpdatedObjectInfo(object), nil, nil, false, &metav1.UpdateOptions{})
+	if err != nil {
+		return nil, err
+	}
+	return obj.(*ExternalCredential), nil
+}
+
+func (s *storageExternalCredential) DeleteExternalCredential(ctx context.Context, id string) (bool, error) {
 	st := s.GetStandardStorage()
 	_, sync, err := st.Delete(ctx, id, nil, &metav1.DeleteOptions{})
 	return sync, err
@@ -8405,6 +8695,133 @@ func (s *storageSharedSecret) UpdateSharedSecret(ctx context.Context, object *Sh
 }
 
 func (s *storageSharedSecret) DeleteSharedSecret(ctx context.Context, id string) (bool, error) {
+	st := s.GetStandardStorage()
+	_, sync, err := st.Delete(ctx, id, nil, &metav1.DeleteOptions{})
+	return sync, err
+}
+
+// SlurmInstance Functions and Structs
+//
+// +k8s:deepcopy-gen=false
+type SlurmInstanceStrategy struct {
+	builders.DefaultStorageStrategy
+}
+
+// +k8s:deepcopy-gen=false
+type SlurmInstanceStatusStrategy struct {
+	builders.DefaultStatusStorageStrategy
+}
+
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+
+type SlurmInstanceList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata,omitempty"`
+	Items           []SlurmInstance `json:"items"`
+}
+
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+
+type SlurmInstanceAccountingList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata,omitempty"`
+	Items           []SlurmInstanceAccounting `json:"items"`
+}
+
+func (SlurmInstance) NewStatus() interface{} {
+	return SlurmInstanceStatus{}
+}
+
+func (pc *SlurmInstance) GetStatus() interface{} {
+	return pc.Status
+}
+
+func (pc *SlurmInstance) SetStatus(s interface{}) {
+	pc.Status = s.(SlurmInstanceStatus)
+}
+
+func (pc *SlurmInstance) GetSpec() interface{} {
+	return pc.Spec
+}
+
+func (pc *SlurmInstance) SetSpec(s interface{}) {
+	pc.Spec = s.(SlurmInstanceSpec)
+}
+
+func (pc *SlurmInstance) GetObjectMeta() *metav1.ObjectMeta {
+	return &pc.ObjectMeta
+}
+
+func (pc *SlurmInstance) SetGeneration(generation int64) {
+	pc.ObjectMeta.Generation = generation
+}
+
+func (pc SlurmInstance) GetGeneration() int64 {
+	return pc.ObjectMeta.Generation
+}
+
+// Registry is an interface for things that know how to store SlurmInstance.
+// +k8s:deepcopy-gen=false
+type SlurmInstanceRegistry interface {
+	ListSlurmInstances(ctx context.Context, options *internalversion.ListOptions) (*SlurmInstanceList, error)
+	GetSlurmInstance(ctx context.Context, id string, options *metav1.GetOptions) (*SlurmInstance, error)
+	CreateSlurmInstance(ctx context.Context, id *SlurmInstance) (*SlurmInstance, error)
+	UpdateSlurmInstance(ctx context.Context, id *SlurmInstance) (*SlurmInstance, error)
+	DeleteSlurmInstance(ctx context.Context, id string) (bool, error)
+}
+
+// NewRegistry returns a new Registry interface for the given Storage. Any mismatched types will panic.
+func NewSlurmInstanceRegistry(sp builders.StandardStorageProvider) SlurmInstanceRegistry {
+	return &storageSlurmInstance{sp}
+}
+
+// Implement Registry
+// storage puts strong typing around storage calls
+// +k8s:deepcopy-gen=false
+type storageSlurmInstance struct {
+	builders.StandardStorageProvider
+}
+
+func (s *storageSlurmInstance) ListSlurmInstances(ctx context.Context, options *internalversion.ListOptions) (*SlurmInstanceList, error) {
+	if options != nil && options.FieldSelector != nil && !options.FieldSelector.Empty() {
+		return nil, fmt.Errorf("field selector not supported yet")
+	}
+	st := s.GetStandardStorage()
+	obj, err := st.List(ctx, options)
+	if err != nil {
+		return nil, err
+	}
+	return obj.(*SlurmInstanceList), err
+}
+
+func (s *storageSlurmInstance) GetSlurmInstance(ctx context.Context, id string, options *metav1.GetOptions) (*SlurmInstance, error) {
+	st := s.GetStandardStorage()
+	obj, err := st.Get(ctx, id, options)
+	if err != nil {
+		return nil, err
+	}
+	return obj.(*SlurmInstance), nil
+}
+
+func (s *storageSlurmInstance) CreateSlurmInstance(ctx context.Context, object *SlurmInstance) (*SlurmInstance, error) {
+	st := s.GetStandardStorage()
+	obj, err := st.Create(ctx, object, nil, &metav1.CreateOptions{})
+	if err != nil {
+		return nil, err
+	}
+	return obj.(*SlurmInstance), nil
+}
+
+func (s *storageSlurmInstance) UpdateSlurmInstance(ctx context.Context, object *SlurmInstance) (*SlurmInstance, error) {
+	st := s.GetStandardStorage()
+	obj, _, err := st.Update(ctx, object.Name, rest.DefaultUpdatedObjectInfo(object), nil, nil, false, &metav1.UpdateOptions{})
+	if err != nil {
+		return nil, err
+	}
+	return obj.(*SlurmInstance), nil
+}
+
+func (s *storageSlurmInstance) DeleteSlurmInstance(ctx context.Context, id string) (bool, error) {
 	st := s.GetStandardStorage()
 	_, sync, err := st.Delete(ctx, id, nil, &metav1.DeleteOptions{})
 	return sync, err

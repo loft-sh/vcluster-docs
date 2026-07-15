@@ -171,3 +171,19 @@ type NetworkPeerDebugOptions struct {
 	// +optional
 	Action string `json:"action,omitempty"`
 }
+
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+
+type SlurmInstanceAccountingOptions struct {
+	metav1.TypeMeta `json:",inline"`
+
+	// Since restricts the returned jobs to those that ran at or after this time.
+	// Defaults to 24 hours before now when unset.
+	// +optional
+	Since *metav1.Time `json:"since,omitempty"`
+
+	// Until restricts the returned jobs to those that ran at or before this time.
+	// Defaults to now when unset.
+	// +optional
+	Until *metav1.Time `json:"until,omitempty"`
+}

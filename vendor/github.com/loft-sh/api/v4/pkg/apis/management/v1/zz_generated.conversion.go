@@ -981,6 +981,76 @@ func RegisterConversions(s *runtime.Scheme) error {
 	}); err != nil {
 		return err
 	}
+	if err := s.AddGeneratedConversionFunc((*ExternalCredential)(nil), (*management.ExternalCredential)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_v1_ExternalCredential_To_management_ExternalCredential(a.(*ExternalCredential), b.(*management.ExternalCredential), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddGeneratedConversionFunc((*management.ExternalCredential)(nil), (*ExternalCredential)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_management_ExternalCredential_To_v1_ExternalCredential(a.(*management.ExternalCredential), b.(*ExternalCredential), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddGeneratedConversionFunc((*ExternalCredentialCredentials)(nil), (*management.ExternalCredentialCredentials)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_v1_ExternalCredentialCredentials_To_management_ExternalCredentialCredentials(a.(*ExternalCredentialCredentials), b.(*management.ExternalCredentialCredentials), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddGeneratedConversionFunc((*management.ExternalCredentialCredentials)(nil), (*ExternalCredentialCredentials)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_management_ExternalCredentialCredentials_To_v1_ExternalCredentialCredentials(a.(*management.ExternalCredentialCredentials), b.(*ExternalCredentialCredentials), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddGeneratedConversionFunc((*ExternalCredentialCredentialsList)(nil), (*management.ExternalCredentialCredentialsList)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_v1_ExternalCredentialCredentialsList_To_management_ExternalCredentialCredentialsList(a.(*ExternalCredentialCredentialsList), b.(*management.ExternalCredentialCredentialsList), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddGeneratedConversionFunc((*management.ExternalCredentialCredentialsList)(nil), (*ExternalCredentialCredentialsList)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_management_ExternalCredentialCredentialsList_To_v1_ExternalCredentialCredentialsList(a.(*management.ExternalCredentialCredentialsList), b.(*ExternalCredentialCredentialsList), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddGeneratedConversionFunc((*ExternalCredentialList)(nil), (*management.ExternalCredentialList)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_v1_ExternalCredentialList_To_management_ExternalCredentialList(a.(*ExternalCredentialList), b.(*management.ExternalCredentialList), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddGeneratedConversionFunc((*management.ExternalCredentialList)(nil), (*ExternalCredentialList)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_management_ExternalCredentialList_To_v1_ExternalCredentialList(a.(*management.ExternalCredentialList), b.(*ExternalCredentialList), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddGeneratedConversionFunc((*ExternalCredentialSecretSelector)(nil), (*management.ExternalCredentialSecretSelector)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_v1_ExternalCredentialSecretSelector_To_management_ExternalCredentialSecretSelector(a.(*ExternalCredentialSecretSelector), b.(*management.ExternalCredentialSecretSelector), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddGeneratedConversionFunc((*management.ExternalCredentialSecretSelector)(nil), (*ExternalCredentialSecretSelector)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_management_ExternalCredentialSecretSelector_To_v1_ExternalCredentialSecretSelector(a.(*management.ExternalCredentialSecretSelector), b.(*ExternalCredentialSecretSelector), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddGeneratedConversionFunc((*ExternalCredentialSpec)(nil), (*management.ExternalCredentialSpec)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_v1_ExternalCredentialSpec_To_management_ExternalCredentialSpec(a.(*ExternalCredentialSpec), b.(*management.ExternalCredentialSpec), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddGeneratedConversionFunc((*management.ExternalCredentialSpec)(nil), (*ExternalCredentialSpec)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_management_ExternalCredentialSpec_To_v1_ExternalCredentialSpec(a.(*management.ExternalCredentialSpec), b.(*ExternalCredentialSpec), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddGeneratedConversionFunc((*ExternalCredentialStatus)(nil), (*management.ExternalCredentialStatus)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_v1_ExternalCredentialStatus_To_management_ExternalCredentialStatus(a.(*ExternalCredentialStatus), b.(*management.ExternalCredentialStatus), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddGeneratedConversionFunc((*management.ExternalCredentialStatus)(nil), (*ExternalCredentialStatus)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_management_ExternalCredentialStatus_To_v1_ExternalCredentialStatus(a.(*management.ExternalCredentialStatus), b.(*ExternalCredentialStatus), scope)
+	}); err != nil {
+		return err
+	}
 	if err := s.AddGeneratedConversionFunc((*Feature)(nil), (*management.Feature)(nil), func(a, b interface{}, scope conversion.Scope) error {
 		return Convert_v1_Feature_To_management_Feature(a.(*Feature), b.(*management.Feature), scope)
 	}); err != nil {
@@ -2561,6 +2631,106 @@ func RegisterConversions(s *runtime.Scheme) error {
 	}); err != nil {
 		return err
 	}
+	if err := s.AddGeneratedConversionFunc((*SlurmInstance)(nil), (*management.SlurmInstance)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_v1_SlurmInstance_To_management_SlurmInstance(a.(*SlurmInstance), b.(*management.SlurmInstance), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddGeneratedConversionFunc((*management.SlurmInstance)(nil), (*SlurmInstance)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_management_SlurmInstance_To_v1_SlurmInstance(a.(*management.SlurmInstance), b.(*SlurmInstance), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddGeneratedConversionFunc((*SlurmInstanceAccounting)(nil), (*management.SlurmInstanceAccounting)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_v1_SlurmInstanceAccounting_To_management_SlurmInstanceAccounting(a.(*SlurmInstanceAccounting), b.(*management.SlurmInstanceAccounting), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddGeneratedConversionFunc((*management.SlurmInstanceAccounting)(nil), (*SlurmInstanceAccounting)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_management_SlurmInstanceAccounting_To_v1_SlurmInstanceAccounting(a.(*management.SlurmInstanceAccounting), b.(*SlurmInstanceAccounting), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddGeneratedConversionFunc((*SlurmInstanceAccountingList)(nil), (*management.SlurmInstanceAccountingList)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_v1_SlurmInstanceAccountingList_To_management_SlurmInstanceAccountingList(a.(*SlurmInstanceAccountingList), b.(*management.SlurmInstanceAccountingList), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddGeneratedConversionFunc((*management.SlurmInstanceAccountingList)(nil), (*SlurmInstanceAccountingList)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_management_SlurmInstanceAccountingList_To_v1_SlurmInstanceAccountingList(a.(*management.SlurmInstanceAccountingList), b.(*SlurmInstanceAccountingList), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddGeneratedConversionFunc((*SlurmInstanceAccountingOptions)(nil), (*management.SlurmInstanceAccountingOptions)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_v1_SlurmInstanceAccountingOptions_To_management_SlurmInstanceAccountingOptions(a.(*SlurmInstanceAccountingOptions), b.(*management.SlurmInstanceAccountingOptions), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddGeneratedConversionFunc((*management.SlurmInstanceAccountingOptions)(nil), (*SlurmInstanceAccountingOptions)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_management_SlurmInstanceAccountingOptions_To_v1_SlurmInstanceAccountingOptions(a.(*management.SlurmInstanceAccountingOptions), b.(*SlurmInstanceAccountingOptions), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddGeneratedConversionFunc((*SlurmInstanceAccountingStatus)(nil), (*management.SlurmInstanceAccountingStatus)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_v1_SlurmInstanceAccountingStatus_To_management_SlurmInstanceAccountingStatus(a.(*SlurmInstanceAccountingStatus), b.(*management.SlurmInstanceAccountingStatus), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddGeneratedConversionFunc((*management.SlurmInstanceAccountingStatus)(nil), (*SlurmInstanceAccountingStatus)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_management_SlurmInstanceAccountingStatus_To_v1_SlurmInstanceAccountingStatus(a.(*management.SlurmInstanceAccountingStatus), b.(*SlurmInstanceAccountingStatus), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddGeneratedConversionFunc((*SlurmInstanceList)(nil), (*management.SlurmInstanceList)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_v1_SlurmInstanceList_To_management_SlurmInstanceList(a.(*SlurmInstanceList), b.(*management.SlurmInstanceList), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddGeneratedConversionFunc((*management.SlurmInstanceList)(nil), (*SlurmInstanceList)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_management_SlurmInstanceList_To_v1_SlurmInstanceList(a.(*management.SlurmInstanceList), b.(*SlurmInstanceList), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddGeneratedConversionFunc((*SlurmInstanceSpec)(nil), (*management.SlurmInstanceSpec)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_v1_SlurmInstanceSpec_To_management_SlurmInstanceSpec(a.(*SlurmInstanceSpec), b.(*management.SlurmInstanceSpec), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddGeneratedConversionFunc((*management.SlurmInstanceSpec)(nil), (*SlurmInstanceSpec)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_management_SlurmInstanceSpec_To_v1_SlurmInstanceSpec(a.(*management.SlurmInstanceSpec), b.(*SlurmInstanceSpec), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddGeneratedConversionFunc((*SlurmInstanceStatus)(nil), (*management.SlurmInstanceStatus)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_v1_SlurmInstanceStatus_To_management_SlurmInstanceStatus(a.(*SlurmInstanceStatus), b.(*management.SlurmInstanceStatus), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddGeneratedConversionFunc((*management.SlurmInstanceStatus)(nil), (*SlurmInstanceStatus)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_management_SlurmInstanceStatus_To_v1_SlurmInstanceStatus(a.(*management.SlurmInstanceStatus), b.(*SlurmInstanceStatus), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddGeneratedConversionFunc((*SlurmJob)(nil), (*management.SlurmJob)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_v1_SlurmJob_To_management_SlurmJob(a.(*SlurmJob), b.(*management.SlurmJob), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddGeneratedConversionFunc((*management.SlurmJob)(nil), (*SlurmJob)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_management_SlurmJob_To_v1_SlurmJob(a.(*management.SlurmJob), b.(*SlurmJob), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddGeneratedConversionFunc((*SlurmTRES)(nil), (*management.SlurmTRES)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_v1_SlurmTRES_To_management_SlurmTRES(a.(*SlurmTRES), b.(*management.SlurmTRES), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddGeneratedConversionFunc((*management.SlurmTRES)(nil), (*SlurmTRES)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_management_SlurmTRES_To_v1_SlurmTRES(a.(*management.SlurmTRES), b.(*SlurmTRES), scope)
+	}); err != nil {
+		return err
+	}
 	if err := s.AddGeneratedConversionFunc((*SnapshotRequest)(nil), (*management.SnapshotRequest)(nil), func(a, b interface{}, scope conversion.Scope) error {
 		return Convert_v1_SnapshotRequest_To_management_SnapshotRequest(a.(*SnapshotRequest), b.(*management.SnapshotRequest), scope)
 	}); err != nil {
@@ -3873,6 +4043,11 @@ func RegisterConversions(s *runtime.Scheme) error {
 	}
 	if err := s.AddGeneratedConversionFunc((*url.Values)(nil), (*PodExecOptions)(nil), func(a, b interface{}, scope conversion.Scope) error {
 		return Convert_url_Values_To_v1_PodExecOptions(a.(*url.Values), b.(*PodExecOptions), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddGeneratedConversionFunc((*url.Values)(nil), (*SlurmInstanceAccountingOptions)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_url_Values_To_v1_SlurmInstanceAccountingOptions(a.(*url.Values), b.(*SlurmInstanceAccountingOptions), scope)
 	}); err != nil {
 		return err
 	}
@@ -6273,6 +6448,180 @@ func autoConvert_management_EventStatus_To_v1_EventStatus(in *management.EventSt
 // Convert_management_EventStatus_To_v1_EventStatus is an autogenerated conversion function.
 func Convert_management_EventStatus_To_v1_EventStatus(in *management.EventStatus, out *EventStatus, s conversion.Scope) error {
 	return autoConvert_management_EventStatus_To_v1_EventStatus(in, out, s)
+}
+
+func autoConvert_v1_ExternalCredential_To_management_ExternalCredential(in *ExternalCredential, out *management.ExternalCredential, s conversion.Scope) error {
+	out.ObjectMeta = in.ObjectMeta
+	if err := Convert_v1_ExternalCredentialSpec_To_management_ExternalCredentialSpec(&in.Spec, &out.Spec, s); err != nil {
+		return err
+	}
+	if err := Convert_v1_ExternalCredentialStatus_To_management_ExternalCredentialStatus(&in.Status, &out.Status, s); err != nil {
+		return err
+	}
+	return nil
+}
+
+// Convert_v1_ExternalCredential_To_management_ExternalCredential is an autogenerated conversion function.
+func Convert_v1_ExternalCredential_To_management_ExternalCredential(in *ExternalCredential, out *management.ExternalCredential, s conversion.Scope) error {
+	return autoConvert_v1_ExternalCredential_To_management_ExternalCredential(in, out, s)
+}
+
+func autoConvert_management_ExternalCredential_To_v1_ExternalCredential(in *management.ExternalCredential, out *ExternalCredential, s conversion.Scope) error {
+	out.ObjectMeta = in.ObjectMeta
+	if err := Convert_management_ExternalCredentialSpec_To_v1_ExternalCredentialSpec(&in.Spec, &out.Spec, s); err != nil {
+		return err
+	}
+	if err := Convert_management_ExternalCredentialStatus_To_v1_ExternalCredentialStatus(&in.Status, &out.Status, s); err != nil {
+		return err
+	}
+	return nil
+}
+
+// Convert_management_ExternalCredential_To_v1_ExternalCredential is an autogenerated conversion function.
+func Convert_management_ExternalCredential_To_v1_ExternalCredential(in *management.ExternalCredential, out *ExternalCredential, s conversion.Scope) error {
+	return autoConvert_management_ExternalCredential_To_v1_ExternalCredential(in, out, s)
+}
+
+func autoConvert_v1_ExternalCredentialCredentials_To_management_ExternalCredentialCredentials(in *ExternalCredentialCredentials, out *management.ExternalCredentialCredentials, s conversion.Scope) error {
+	out.ObjectMeta = in.ObjectMeta
+	out.Username = in.Username
+	out.Password = in.Password
+	return nil
+}
+
+// Convert_v1_ExternalCredentialCredentials_To_management_ExternalCredentialCredentials is an autogenerated conversion function.
+func Convert_v1_ExternalCredentialCredentials_To_management_ExternalCredentialCredentials(in *ExternalCredentialCredentials, out *management.ExternalCredentialCredentials, s conversion.Scope) error {
+	return autoConvert_v1_ExternalCredentialCredentials_To_management_ExternalCredentialCredentials(in, out, s)
+}
+
+func autoConvert_management_ExternalCredentialCredentials_To_v1_ExternalCredentialCredentials(in *management.ExternalCredentialCredentials, out *ExternalCredentialCredentials, s conversion.Scope) error {
+	out.ObjectMeta = in.ObjectMeta
+	out.Username = in.Username
+	out.Password = in.Password
+	return nil
+}
+
+// Convert_management_ExternalCredentialCredentials_To_v1_ExternalCredentialCredentials is an autogenerated conversion function.
+func Convert_management_ExternalCredentialCredentials_To_v1_ExternalCredentialCredentials(in *management.ExternalCredentialCredentials, out *ExternalCredentialCredentials, s conversion.Scope) error {
+	return autoConvert_management_ExternalCredentialCredentials_To_v1_ExternalCredentialCredentials(in, out, s)
+}
+
+func autoConvert_v1_ExternalCredentialCredentialsList_To_management_ExternalCredentialCredentialsList(in *ExternalCredentialCredentialsList, out *management.ExternalCredentialCredentialsList, s conversion.Scope) error {
+	out.ListMeta = in.ListMeta
+	out.Items = *(*[]management.ExternalCredentialCredentials)(unsafe.Pointer(&in.Items))
+	return nil
+}
+
+// Convert_v1_ExternalCredentialCredentialsList_To_management_ExternalCredentialCredentialsList is an autogenerated conversion function.
+func Convert_v1_ExternalCredentialCredentialsList_To_management_ExternalCredentialCredentialsList(in *ExternalCredentialCredentialsList, out *management.ExternalCredentialCredentialsList, s conversion.Scope) error {
+	return autoConvert_v1_ExternalCredentialCredentialsList_To_management_ExternalCredentialCredentialsList(in, out, s)
+}
+
+func autoConvert_management_ExternalCredentialCredentialsList_To_v1_ExternalCredentialCredentialsList(in *management.ExternalCredentialCredentialsList, out *ExternalCredentialCredentialsList, s conversion.Scope) error {
+	out.ListMeta = in.ListMeta
+	out.Items = *(*[]ExternalCredentialCredentials)(unsafe.Pointer(&in.Items))
+	return nil
+}
+
+// Convert_management_ExternalCredentialCredentialsList_To_v1_ExternalCredentialCredentialsList is an autogenerated conversion function.
+func Convert_management_ExternalCredentialCredentialsList_To_v1_ExternalCredentialCredentialsList(in *management.ExternalCredentialCredentialsList, out *ExternalCredentialCredentialsList, s conversion.Scope) error {
+	return autoConvert_management_ExternalCredentialCredentialsList_To_v1_ExternalCredentialCredentialsList(in, out, s)
+}
+
+func autoConvert_v1_ExternalCredentialList_To_management_ExternalCredentialList(in *ExternalCredentialList, out *management.ExternalCredentialList, s conversion.Scope) error {
+	out.ListMeta = in.ListMeta
+	out.Items = *(*[]management.ExternalCredential)(unsafe.Pointer(&in.Items))
+	return nil
+}
+
+// Convert_v1_ExternalCredentialList_To_management_ExternalCredentialList is an autogenerated conversion function.
+func Convert_v1_ExternalCredentialList_To_management_ExternalCredentialList(in *ExternalCredentialList, out *management.ExternalCredentialList, s conversion.Scope) error {
+	return autoConvert_v1_ExternalCredentialList_To_management_ExternalCredentialList(in, out, s)
+}
+
+func autoConvert_management_ExternalCredentialList_To_v1_ExternalCredentialList(in *management.ExternalCredentialList, out *ExternalCredentialList, s conversion.Scope) error {
+	out.ListMeta = in.ListMeta
+	out.Items = *(*[]ExternalCredential)(unsafe.Pointer(&in.Items))
+	return nil
+}
+
+// Convert_management_ExternalCredentialList_To_v1_ExternalCredentialList is an autogenerated conversion function.
+func Convert_management_ExternalCredentialList_To_v1_ExternalCredentialList(in *management.ExternalCredentialList, out *ExternalCredentialList, s conversion.Scope) error {
+	return autoConvert_management_ExternalCredentialList_To_v1_ExternalCredentialList(in, out, s)
+}
+
+func autoConvert_v1_ExternalCredentialSecretSelector_To_management_ExternalCredentialSecretSelector(in *ExternalCredentialSecretSelector, out *management.ExternalCredentialSecretSelector, s conversion.Scope) error {
+	out.SecretKeyRef = in.SecretKeyRef
+	return nil
+}
+
+// Convert_v1_ExternalCredentialSecretSelector_To_management_ExternalCredentialSecretSelector is an autogenerated conversion function.
+func Convert_v1_ExternalCredentialSecretSelector_To_management_ExternalCredentialSecretSelector(in *ExternalCredentialSecretSelector, out *management.ExternalCredentialSecretSelector, s conversion.Scope) error {
+	return autoConvert_v1_ExternalCredentialSecretSelector_To_management_ExternalCredentialSecretSelector(in, out, s)
+}
+
+func autoConvert_management_ExternalCredentialSecretSelector_To_v1_ExternalCredentialSecretSelector(in *management.ExternalCredentialSecretSelector, out *ExternalCredentialSecretSelector, s conversion.Scope) error {
+	out.SecretKeyRef = in.SecretKeyRef
+	return nil
+}
+
+// Convert_management_ExternalCredentialSecretSelector_To_v1_ExternalCredentialSecretSelector is an autogenerated conversion function.
+func Convert_management_ExternalCredentialSecretSelector_To_v1_ExternalCredentialSecretSelector(in *management.ExternalCredentialSecretSelector, out *ExternalCredentialSecretSelector, s conversion.Scope) error {
+	return autoConvert_management_ExternalCredentialSecretSelector_To_v1_ExternalCredentialSecretSelector(in, out, s)
+}
+
+func autoConvert_v1_ExternalCredentialSpec_To_management_ExternalCredentialSpec(in *ExternalCredentialSpec, out *management.ExternalCredentialSpec, s conversion.Scope) error {
+	out.DisplayName = in.DisplayName
+	out.Description = in.Description
+	out.Username = (*management.ExternalCredentialSecretSelector)(unsafe.Pointer(in.Username))
+	if err := Convert_v1_ExternalCredentialSecretSelector_To_management_ExternalCredentialSecretSelector(&in.Password, &out.Password, s); err != nil {
+		return err
+	}
+	out.Access = *(*[]storagev1.Access)(unsafe.Pointer(&in.Access))
+	return nil
+}
+
+// Convert_v1_ExternalCredentialSpec_To_management_ExternalCredentialSpec is an autogenerated conversion function.
+func Convert_v1_ExternalCredentialSpec_To_management_ExternalCredentialSpec(in *ExternalCredentialSpec, out *management.ExternalCredentialSpec, s conversion.Scope) error {
+	return autoConvert_v1_ExternalCredentialSpec_To_management_ExternalCredentialSpec(in, out, s)
+}
+
+func autoConvert_management_ExternalCredentialSpec_To_v1_ExternalCredentialSpec(in *management.ExternalCredentialSpec, out *ExternalCredentialSpec, s conversion.Scope) error {
+	out.DisplayName = in.DisplayName
+	out.Description = in.Description
+	out.Username = (*ExternalCredentialSecretSelector)(unsafe.Pointer(in.Username))
+	if err := Convert_management_ExternalCredentialSecretSelector_To_v1_ExternalCredentialSecretSelector(&in.Password, &out.Password, s); err != nil {
+		return err
+	}
+	out.Access = *(*[]storagev1.Access)(unsafe.Pointer(&in.Access))
+	return nil
+}
+
+// Convert_management_ExternalCredentialSpec_To_v1_ExternalCredentialSpec is an autogenerated conversion function.
+func Convert_management_ExternalCredentialSpec_To_v1_ExternalCredentialSpec(in *management.ExternalCredentialSpec, out *ExternalCredentialSpec, s conversion.Scope) error {
+	return autoConvert_management_ExternalCredentialSpec_To_v1_ExternalCredentialSpec(in, out, s)
+}
+
+func autoConvert_v1_ExternalCredentialStatus_To_management_ExternalCredentialStatus(in *ExternalCredentialStatus, out *management.ExternalCredentialStatus, s conversion.Scope) error {
+	out.Available = in.Available
+	out.Username = in.Username
+	return nil
+}
+
+// Convert_v1_ExternalCredentialStatus_To_management_ExternalCredentialStatus is an autogenerated conversion function.
+func Convert_v1_ExternalCredentialStatus_To_management_ExternalCredentialStatus(in *ExternalCredentialStatus, out *management.ExternalCredentialStatus, s conversion.Scope) error {
+	return autoConvert_v1_ExternalCredentialStatus_To_management_ExternalCredentialStatus(in, out, s)
+}
+
+func autoConvert_management_ExternalCredentialStatus_To_v1_ExternalCredentialStatus(in *management.ExternalCredentialStatus, out *ExternalCredentialStatus, s conversion.Scope) error {
+	out.Available = in.Available
+	out.Username = in.Username
+	return nil
+}
+
+// Convert_management_ExternalCredentialStatus_To_v1_ExternalCredentialStatus is an autogenerated conversion function.
+func Convert_management_ExternalCredentialStatus_To_v1_ExternalCredentialStatus(in *management.ExternalCredentialStatus, out *ExternalCredentialStatus, s conversion.Scope) error {
+	return autoConvert_management_ExternalCredentialStatus_To_v1_ExternalCredentialStatus(in, out, s)
 }
 
 func autoConvert_v1_Feature_To_management_Feature(in *Feature, out *management.Feature, s conversion.Scope) error {
@@ -10216,6 +10565,289 @@ func autoConvert_management_SharedSecretStatus_To_v1_SharedSecretStatus(in *mana
 // Convert_management_SharedSecretStatus_To_v1_SharedSecretStatus is an autogenerated conversion function.
 func Convert_management_SharedSecretStatus_To_v1_SharedSecretStatus(in *management.SharedSecretStatus, out *SharedSecretStatus, s conversion.Scope) error {
 	return autoConvert_management_SharedSecretStatus_To_v1_SharedSecretStatus(in, out, s)
+}
+
+func autoConvert_v1_SlurmInstance_To_management_SlurmInstance(in *SlurmInstance, out *management.SlurmInstance, s conversion.Scope) error {
+	out.ObjectMeta = in.ObjectMeta
+	if err := Convert_v1_SlurmInstanceSpec_To_management_SlurmInstanceSpec(&in.Spec, &out.Spec, s); err != nil {
+		return err
+	}
+	if err := Convert_v1_SlurmInstanceStatus_To_management_SlurmInstanceStatus(&in.Status, &out.Status, s); err != nil {
+		return err
+	}
+	return nil
+}
+
+// Convert_v1_SlurmInstance_To_management_SlurmInstance is an autogenerated conversion function.
+func Convert_v1_SlurmInstance_To_management_SlurmInstance(in *SlurmInstance, out *management.SlurmInstance, s conversion.Scope) error {
+	return autoConvert_v1_SlurmInstance_To_management_SlurmInstance(in, out, s)
+}
+
+func autoConvert_management_SlurmInstance_To_v1_SlurmInstance(in *management.SlurmInstance, out *SlurmInstance, s conversion.Scope) error {
+	out.ObjectMeta = in.ObjectMeta
+	if err := Convert_management_SlurmInstanceSpec_To_v1_SlurmInstanceSpec(&in.Spec, &out.Spec, s); err != nil {
+		return err
+	}
+	if err := Convert_management_SlurmInstanceStatus_To_v1_SlurmInstanceStatus(&in.Status, &out.Status, s); err != nil {
+		return err
+	}
+	return nil
+}
+
+// Convert_management_SlurmInstance_To_v1_SlurmInstance is an autogenerated conversion function.
+func Convert_management_SlurmInstance_To_v1_SlurmInstance(in *management.SlurmInstance, out *SlurmInstance, s conversion.Scope) error {
+	return autoConvert_management_SlurmInstance_To_v1_SlurmInstance(in, out, s)
+}
+
+func autoConvert_v1_SlurmInstanceAccounting_To_management_SlurmInstanceAccounting(in *SlurmInstanceAccounting, out *management.SlurmInstanceAccounting, s conversion.Scope) error {
+	out.ObjectMeta = in.ObjectMeta
+	if err := Convert_v1_SlurmInstanceAccountingStatus_To_management_SlurmInstanceAccountingStatus(&in.Status, &out.Status, s); err != nil {
+		return err
+	}
+	return nil
+}
+
+// Convert_v1_SlurmInstanceAccounting_To_management_SlurmInstanceAccounting is an autogenerated conversion function.
+func Convert_v1_SlurmInstanceAccounting_To_management_SlurmInstanceAccounting(in *SlurmInstanceAccounting, out *management.SlurmInstanceAccounting, s conversion.Scope) error {
+	return autoConvert_v1_SlurmInstanceAccounting_To_management_SlurmInstanceAccounting(in, out, s)
+}
+
+func autoConvert_management_SlurmInstanceAccounting_To_v1_SlurmInstanceAccounting(in *management.SlurmInstanceAccounting, out *SlurmInstanceAccounting, s conversion.Scope) error {
+	out.ObjectMeta = in.ObjectMeta
+	if err := Convert_management_SlurmInstanceAccountingStatus_To_v1_SlurmInstanceAccountingStatus(&in.Status, &out.Status, s); err != nil {
+		return err
+	}
+	return nil
+}
+
+// Convert_management_SlurmInstanceAccounting_To_v1_SlurmInstanceAccounting is an autogenerated conversion function.
+func Convert_management_SlurmInstanceAccounting_To_v1_SlurmInstanceAccounting(in *management.SlurmInstanceAccounting, out *SlurmInstanceAccounting, s conversion.Scope) error {
+	return autoConvert_management_SlurmInstanceAccounting_To_v1_SlurmInstanceAccounting(in, out, s)
+}
+
+func autoConvert_v1_SlurmInstanceAccountingList_To_management_SlurmInstanceAccountingList(in *SlurmInstanceAccountingList, out *management.SlurmInstanceAccountingList, s conversion.Scope) error {
+	out.ListMeta = in.ListMeta
+	out.Items = *(*[]management.SlurmInstanceAccounting)(unsafe.Pointer(&in.Items))
+	return nil
+}
+
+// Convert_v1_SlurmInstanceAccountingList_To_management_SlurmInstanceAccountingList is an autogenerated conversion function.
+func Convert_v1_SlurmInstanceAccountingList_To_management_SlurmInstanceAccountingList(in *SlurmInstanceAccountingList, out *management.SlurmInstanceAccountingList, s conversion.Scope) error {
+	return autoConvert_v1_SlurmInstanceAccountingList_To_management_SlurmInstanceAccountingList(in, out, s)
+}
+
+func autoConvert_management_SlurmInstanceAccountingList_To_v1_SlurmInstanceAccountingList(in *management.SlurmInstanceAccountingList, out *SlurmInstanceAccountingList, s conversion.Scope) error {
+	out.ListMeta = in.ListMeta
+	out.Items = *(*[]SlurmInstanceAccounting)(unsafe.Pointer(&in.Items))
+	return nil
+}
+
+// Convert_management_SlurmInstanceAccountingList_To_v1_SlurmInstanceAccountingList is an autogenerated conversion function.
+func Convert_management_SlurmInstanceAccountingList_To_v1_SlurmInstanceAccountingList(in *management.SlurmInstanceAccountingList, out *SlurmInstanceAccountingList, s conversion.Scope) error {
+	return autoConvert_management_SlurmInstanceAccountingList_To_v1_SlurmInstanceAccountingList(in, out, s)
+}
+
+func autoConvert_v1_SlurmInstanceAccountingOptions_To_management_SlurmInstanceAccountingOptions(in *SlurmInstanceAccountingOptions, out *management.SlurmInstanceAccountingOptions, s conversion.Scope) error {
+	out.Since = (*metav1.Time)(unsafe.Pointer(in.Since))
+	out.Until = (*metav1.Time)(unsafe.Pointer(in.Until))
+	return nil
+}
+
+// Convert_v1_SlurmInstanceAccountingOptions_To_management_SlurmInstanceAccountingOptions is an autogenerated conversion function.
+func Convert_v1_SlurmInstanceAccountingOptions_To_management_SlurmInstanceAccountingOptions(in *SlurmInstanceAccountingOptions, out *management.SlurmInstanceAccountingOptions, s conversion.Scope) error {
+	return autoConvert_v1_SlurmInstanceAccountingOptions_To_management_SlurmInstanceAccountingOptions(in, out, s)
+}
+
+func autoConvert_management_SlurmInstanceAccountingOptions_To_v1_SlurmInstanceAccountingOptions(in *management.SlurmInstanceAccountingOptions, out *SlurmInstanceAccountingOptions, s conversion.Scope) error {
+	out.Since = (*metav1.Time)(unsafe.Pointer(in.Since))
+	out.Until = (*metav1.Time)(unsafe.Pointer(in.Until))
+	return nil
+}
+
+// Convert_management_SlurmInstanceAccountingOptions_To_v1_SlurmInstanceAccountingOptions is an autogenerated conversion function.
+func Convert_management_SlurmInstanceAccountingOptions_To_v1_SlurmInstanceAccountingOptions(in *management.SlurmInstanceAccountingOptions, out *SlurmInstanceAccountingOptions, s conversion.Scope) error {
+	return autoConvert_management_SlurmInstanceAccountingOptions_To_v1_SlurmInstanceAccountingOptions(in, out, s)
+}
+
+func autoConvert_url_Values_To_v1_SlurmInstanceAccountingOptions(in *url.Values, out *SlurmInstanceAccountingOptions, s conversion.Scope) error {
+	// WARNING: Field TypeMeta does not have json tag, skipping.
+
+	if values, ok := map[string][]string(*in)["since"]; ok && len(values) > 0 {
+		if err := metav1.Convert_Slice_string_To_Pointer_v1_Time(&values, &out.Since, s); err != nil {
+			return err
+		}
+	} else {
+		out.Since = nil
+	}
+	if values, ok := map[string][]string(*in)["until"]; ok && len(values) > 0 {
+		if err := metav1.Convert_Slice_string_To_Pointer_v1_Time(&values, &out.Until, s); err != nil {
+			return err
+		}
+	} else {
+		out.Until = nil
+	}
+	return nil
+}
+
+// Convert_url_Values_To_v1_SlurmInstanceAccountingOptions is an autogenerated conversion function.
+func Convert_url_Values_To_v1_SlurmInstanceAccountingOptions(in *url.Values, out *SlurmInstanceAccountingOptions, s conversion.Scope) error {
+	return autoConvert_url_Values_To_v1_SlurmInstanceAccountingOptions(in, out, s)
+}
+
+func autoConvert_v1_SlurmInstanceAccountingStatus_To_management_SlurmInstanceAccountingStatus(in *SlurmInstanceAccountingStatus, out *management.SlurmInstanceAccountingStatus, s conversion.Scope) error {
+	out.Enabled = in.Enabled
+	out.Message = in.Message
+	out.Jobs = *(*[]management.SlurmJob)(unsafe.Pointer(&in.Jobs))
+	return nil
+}
+
+// Convert_v1_SlurmInstanceAccountingStatus_To_management_SlurmInstanceAccountingStatus is an autogenerated conversion function.
+func Convert_v1_SlurmInstanceAccountingStatus_To_management_SlurmInstanceAccountingStatus(in *SlurmInstanceAccountingStatus, out *management.SlurmInstanceAccountingStatus, s conversion.Scope) error {
+	return autoConvert_v1_SlurmInstanceAccountingStatus_To_management_SlurmInstanceAccountingStatus(in, out, s)
+}
+
+func autoConvert_management_SlurmInstanceAccountingStatus_To_v1_SlurmInstanceAccountingStatus(in *management.SlurmInstanceAccountingStatus, out *SlurmInstanceAccountingStatus, s conversion.Scope) error {
+	out.Enabled = in.Enabled
+	out.Message = in.Message
+	out.Jobs = *(*[]SlurmJob)(unsafe.Pointer(&in.Jobs))
+	return nil
+}
+
+// Convert_management_SlurmInstanceAccountingStatus_To_v1_SlurmInstanceAccountingStatus is an autogenerated conversion function.
+func Convert_management_SlurmInstanceAccountingStatus_To_v1_SlurmInstanceAccountingStatus(in *management.SlurmInstanceAccountingStatus, out *SlurmInstanceAccountingStatus, s conversion.Scope) error {
+	return autoConvert_management_SlurmInstanceAccountingStatus_To_v1_SlurmInstanceAccountingStatus(in, out, s)
+}
+
+func autoConvert_v1_SlurmInstanceList_To_management_SlurmInstanceList(in *SlurmInstanceList, out *management.SlurmInstanceList, s conversion.Scope) error {
+	out.ListMeta = in.ListMeta
+	out.Items = *(*[]management.SlurmInstance)(unsafe.Pointer(&in.Items))
+	return nil
+}
+
+// Convert_v1_SlurmInstanceList_To_management_SlurmInstanceList is an autogenerated conversion function.
+func Convert_v1_SlurmInstanceList_To_management_SlurmInstanceList(in *SlurmInstanceList, out *management.SlurmInstanceList, s conversion.Scope) error {
+	return autoConvert_v1_SlurmInstanceList_To_management_SlurmInstanceList(in, out, s)
+}
+
+func autoConvert_management_SlurmInstanceList_To_v1_SlurmInstanceList(in *management.SlurmInstanceList, out *SlurmInstanceList, s conversion.Scope) error {
+	out.ListMeta = in.ListMeta
+	out.Items = *(*[]SlurmInstance)(unsafe.Pointer(&in.Items))
+	return nil
+}
+
+// Convert_management_SlurmInstanceList_To_v1_SlurmInstanceList is an autogenerated conversion function.
+func Convert_management_SlurmInstanceList_To_v1_SlurmInstanceList(in *management.SlurmInstanceList, out *SlurmInstanceList, s conversion.Scope) error {
+	return autoConvert_management_SlurmInstanceList_To_v1_SlurmInstanceList(in, out, s)
+}
+
+func autoConvert_v1_SlurmInstanceSpec_To_management_SlurmInstanceSpec(in *SlurmInstanceSpec, out *management.SlurmInstanceSpec, s conversion.Scope) error {
+	out.SlurmInstanceSpec = in.SlurmInstanceSpec
+	return nil
+}
+
+// Convert_v1_SlurmInstanceSpec_To_management_SlurmInstanceSpec is an autogenerated conversion function.
+func Convert_v1_SlurmInstanceSpec_To_management_SlurmInstanceSpec(in *SlurmInstanceSpec, out *management.SlurmInstanceSpec, s conversion.Scope) error {
+	return autoConvert_v1_SlurmInstanceSpec_To_management_SlurmInstanceSpec(in, out, s)
+}
+
+func autoConvert_management_SlurmInstanceSpec_To_v1_SlurmInstanceSpec(in *management.SlurmInstanceSpec, out *SlurmInstanceSpec, s conversion.Scope) error {
+	out.SlurmInstanceSpec = in.SlurmInstanceSpec
+	return nil
+}
+
+// Convert_management_SlurmInstanceSpec_To_v1_SlurmInstanceSpec is an autogenerated conversion function.
+func Convert_management_SlurmInstanceSpec_To_v1_SlurmInstanceSpec(in *management.SlurmInstanceSpec, out *SlurmInstanceSpec, s conversion.Scope) error {
+	return autoConvert_management_SlurmInstanceSpec_To_v1_SlurmInstanceSpec(in, out, s)
+}
+
+func autoConvert_v1_SlurmInstanceStatus_To_management_SlurmInstanceStatus(in *SlurmInstanceStatus, out *management.SlurmInstanceStatus, s conversion.Scope) error {
+	out.SlurmInstanceStatus = in.SlurmInstanceStatus
+	out.CanUse = in.CanUse
+	out.CanUpdate = in.CanUpdate
+	return nil
+}
+
+// Convert_v1_SlurmInstanceStatus_To_management_SlurmInstanceStatus is an autogenerated conversion function.
+func Convert_v1_SlurmInstanceStatus_To_management_SlurmInstanceStatus(in *SlurmInstanceStatus, out *management.SlurmInstanceStatus, s conversion.Scope) error {
+	return autoConvert_v1_SlurmInstanceStatus_To_management_SlurmInstanceStatus(in, out, s)
+}
+
+func autoConvert_management_SlurmInstanceStatus_To_v1_SlurmInstanceStatus(in *management.SlurmInstanceStatus, out *SlurmInstanceStatus, s conversion.Scope) error {
+	out.SlurmInstanceStatus = in.SlurmInstanceStatus
+	out.CanUse = in.CanUse
+	out.CanUpdate = in.CanUpdate
+	return nil
+}
+
+// Convert_management_SlurmInstanceStatus_To_v1_SlurmInstanceStatus is an autogenerated conversion function.
+func Convert_management_SlurmInstanceStatus_To_v1_SlurmInstanceStatus(in *management.SlurmInstanceStatus, out *SlurmInstanceStatus, s conversion.Scope) error {
+	return autoConvert_management_SlurmInstanceStatus_To_v1_SlurmInstanceStatus(in, out, s)
+}
+
+func autoConvert_v1_SlurmJob_To_management_SlurmJob(in *SlurmJob, out *management.SlurmJob, s conversion.Scope) error {
+	out.ID = in.ID
+	out.Name = in.Name
+	out.User = in.User
+	out.Account = in.Account
+	out.Partition = in.Partition
+	out.State = in.State
+	out.SubmitTime = (*metav1.Time)(unsafe.Pointer(in.SubmitTime))
+	out.StartTime = (*metav1.Time)(unsafe.Pointer(in.StartTime))
+	out.EndTime = (*metav1.Time)(unsafe.Pointer(in.EndTime))
+	out.Elapsed = in.Elapsed
+	out.Nodes = in.Nodes
+	out.AllocatedResources = *(*[]management.SlurmTRES)(unsafe.Pointer(&in.AllocatedResources))
+	return nil
+}
+
+// Convert_v1_SlurmJob_To_management_SlurmJob is an autogenerated conversion function.
+func Convert_v1_SlurmJob_To_management_SlurmJob(in *SlurmJob, out *management.SlurmJob, s conversion.Scope) error {
+	return autoConvert_v1_SlurmJob_To_management_SlurmJob(in, out, s)
+}
+
+func autoConvert_management_SlurmJob_To_v1_SlurmJob(in *management.SlurmJob, out *SlurmJob, s conversion.Scope) error {
+	out.ID = in.ID
+	out.Name = in.Name
+	out.User = in.User
+	out.Account = in.Account
+	out.Partition = in.Partition
+	out.State = in.State
+	out.SubmitTime = (*metav1.Time)(unsafe.Pointer(in.SubmitTime))
+	out.StartTime = (*metav1.Time)(unsafe.Pointer(in.StartTime))
+	out.EndTime = (*metav1.Time)(unsafe.Pointer(in.EndTime))
+	out.Elapsed = in.Elapsed
+	out.Nodes = in.Nodes
+	out.AllocatedResources = *(*[]SlurmTRES)(unsafe.Pointer(&in.AllocatedResources))
+	return nil
+}
+
+// Convert_management_SlurmJob_To_v1_SlurmJob is an autogenerated conversion function.
+func Convert_management_SlurmJob_To_v1_SlurmJob(in *management.SlurmJob, out *SlurmJob, s conversion.Scope) error {
+	return autoConvert_management_SlurmJob_To_v1_SlurmJob(in, out, s)
+}
+
+func autoConvert_v1_SlurmTRES_To_management_SlurmTRES(in *SlurmTRES, out *management.SlurmTRES, s conversion.Scope) error {
+	out.Type = in.Type
+	out.Name = in.Name
+	out.Count = in.Count
+	return nil
+}
+
+// Convert_v1_SlurmTRES_To_management_SlurmTRES is an autogenerated conversion function.
+func Convert_v1_SlurmTRES_To_management_SlurmTRES(in *SlurmTRES, out *management.SlurmTRES, s conversion.Scope) error {
+	return autoConvert_v1_SlurmTRES_To_management_SlurmTRES(in, out, s)
+}
+
+func autoConvert_management_SlurmTRES_To_v1_SlurmTRES(in *management.SlurmTRES, out *SlurmTRES, s conversion.Scope) error {
+	out.Type = in.Type
+	out.Name = in.Name
+	out.Count = in.Count
+	return nil
+}
+
+// Convert_management_SlurmTRES_To_v1_SlurmTRES is an autogenerated conversion function.
+func Convert_management_SlurmTRES_To_v1_SlurmTRES(in *management.SlurmTRES, out *SlurmTRES, s conversion.Scope) error {
+	return autoConvert_management_SlurmTRES_To_v1_SlurmTRES(in, out, s)
 }
 
 func autoConvert_v1_SnapshotRequest_To_management_SnapshotRequest(in *SnapshotRequest, out *management.SnapshotRequest, s conversion.Scope) error {
