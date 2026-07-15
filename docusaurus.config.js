@@ -107,6 +107,12 @@ const config = {
             '/tags/**',
             '/search',
             '/search/**',
+            // Standalone kubectl-doc evaluation sandbox (DOC-1512). Not a real
+            // docs page; the live example lives on the sync/to-host reference.
+            // ignorePatterns matches route.path, which includes the site baseUrl,
+            // so these must be prefixed with /docs to match.
+            '/docs/kubectl-doc-prototype',
+            '/docs/kubectl-doc-prototype/**',
             '*/page/*',
             // Exclude versioned URLs from the sitemap. Unversioned paths (served
             // by lastVersion) are the canonical entry points for search engines.
