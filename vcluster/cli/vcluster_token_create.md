@@ -24,10 +24,11 @@ Create a new node bootstrap token for a vCluster with private nodes enabled.
 ## Flags
 
 ```
-      --control-plane    If set the created token will be used to join the control plane node. Mutually exclusive with --kubeadm
+      --control-plane    If set the created token will be used to join the control plane node. Mutually exclusive with --kubeadm and --profile
       --expires string   The duration the token will be valid for. Format: 1h, 1d, 1w, 1m, 1y. If empty, the token will never expire. (default "1h")
   -h, --help             help for create
       --kubeadm          If enabled shows the raw kubeadm join command.
+      --profile string   The node profile to attach to the token. Validated against the project's allowedNodeProfiles. Mutually exclusive with --kubeadm and --control-plane
 ```
 
 
