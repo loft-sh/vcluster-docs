@@ -59,7 +59,8 @@ const config = {
     },
   ],
 
-  onBrokenLinks: "throw",
+  onBrokenLinks: "warn",
+  noIndex: true,
 
   // Even if you don't use internationalization, you can use this field to set
   // useful metadata like html lang. For example, if your site is Chinese, you
@@ -262,8 +263,8 @@ const config = {
         beforeDefaultRemarkPlugins: [
           [remarkVersionTokens, { siteDir: __dirname }],
         ],
-        lastVersion: "0.35.0",
-        onlyIncludeVersions: ["current", "0.36.0", "0.35.0", "0.34.0", "0.33.0"],
+        lastVersion: "0.33.0",
+        onlyIncludeVersions: ["0.33.0"],
         versions: {
           current: {
             label: "main 🚧",
@@ -285,7 +286,7 @@ const config = {
             badge: true,
           },
           "0.33.0": {
-            label: "v0.33",
+            label: "v0.33 (EOS)",
             banner: "none",
             badge: true,
           },
@@ -306,7 +307,7 @@ const config = {
           [remarkVersionTokens, { siteDir: __dirname }],
         ],
         lastVersion: "4.10.0",
-        onlyIncludeVersions: ["current", "4.11.0", "4.10.0", "4.9.0", "4.8.0"],
+        onlyIncludeVersions: ["4.10.0"],
         versions: {
           current: {
             label: "main 🚧",
@@ -480,12 +481,12 @@ const config = {
         additionalLanguages: ["bash", "hcl"],
       },
       announcementBar: {
-        id: "vcluster-0-35-platform-4-10-release",
+        id: "vcluster-v0-33-eos-archive",
         content:
-          '🚀 <strong>New releases: <a href="https://www.vcluster.com/releases/en/changelog?hideLogo=true&hideMenu=true&theme=dark&embed=true&c=vCluster" target="_blank">vCluster Platform 4.10 and vCluster 0.35</a></strong>',
-        backgroundColor: "#050b24",
-        textColor: "#ffffff",
-        isCloseable: true,
+          '⚠️ <strong>This is an archived EOS version of vCluster v0.33 documentation.</strong> For the latest docs, visit <a href="https://vcluster.com/docs/vcluster/">vcluster.com/docs/vcluster</a>.',
+        backgroundColor: "#f5a623",
+        textColor: "#000000",
+        isCloseable: false,
       },
     }
   ),
