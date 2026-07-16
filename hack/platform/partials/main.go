@@ -16,6 +16,7 @@ import (
 	clusterv1 "github.com/loft-sh/agentapi/v4/pkg/apis/loft/cluster/v1"
 	managementv1 "github.com/loft-sh/api/v4/pkg/apis/management/v1"
 	storagev1 "github.com/loft-sh/api/v4/pkg/apis/storage/v1"
+	argoapplicationsv1alpha1 "github.com/loft-sh/external-types/argoproj/argo-cd/v2/pkg/apis/application/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -1129,6 +1130,284 @@ spec:
 			Status: managementv1.NodeProviderStatus{},
 		},
 		Create: true,
+	})
+
+	// MachineConfigTemplate
+	util.GenerateObjectOverview(&util.ObjectInformation{
+		Title:       "Machine Config Template",
+		Name:        "MachineConfigTemplate",
+		Resource:    "machineconfigtemplates",
+		Description: "MachineConfigTemplate holds a reusable Go template for a cloud-init (user data) or network-data document. A node provider renders the template when it provisions a Machine.",
+		File:        path.Join(util.BaseResourcesPath, "machineconfigtemplate.mdx"),
+		Object: &managementv1.MachineConfigTemplate{
+			TypeMeta: metav1.TypeMeta{
+				Kind:       "MachineConfigTemplate",
+				APIVersion: managementv1.SchemeGroupVersion.String(),
+			},
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "ubuntu-cloud-init",
+			},
+			Spec: managementv1.MachineConfigTemplateSpec{
+				MachineConfigTemplateSpec: storagev1.MachineConfigTemplateSpec{
+					DisplayName: "Ubuntu cloud-init",
+					CloudInitTemplate: `#cloud-config
+hostname: {{ .Values.NodeClaim.Name }}
+users:
+  - name: ubuntu
+    sudo: ALL=(ALL) NOPASSWD:ALL`,
+				},
+			},
+		},
+		Create:   true,
+		Retrieve: true,
+		Update:   true,
+		Delete:   true,
+	})
+
+	// SSHKey
+	util.GenerateObjectOverview(&util.ObjectInformation{
+		Title:       "SSH Key",
+		Name:        "SSHKey",
+		Resource:    "sshkeys",
+		Description: "SSHKey holds a public SSH key that can be attached to auto-provisioned or manually joined nodes.",
+		File:        path.Join(util.BaseResourcesPath, "sshkey.mdx"),
+		Object: &managementv1.SSHKey{
+			TypeMeta: metav1.TypeMeta{
+				Kind:       "SSHKey",
+				APIVersion: managementv1.SchemeGroupVersion.String(),
+			},
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "my-ssh-key",
+			},
+			Spec: managementv1.SSHKeySpec{
+				SSHKeySpec: storagev1.SSHKeySpec{
+					DisplayName: "My SSH Key",
+					Description: "Development access key",
+					PublicKey:   "ssh-ed25519 AAAA... user@host",
+				},
+			},
+		},
+		Create:   true,
+		Retrieve: true,
+		Update:   true,
+		Delete:   true,
+	})
+
+	// OSImage
+	util.GenerateObjectOverview(&util.ObjectInformation{
+		Title:       "OS Image",
+		Name:        "OSImage",
+		Resource:    "osimages",
+		Description: "OSImage describes an operating system image available for bare metal provisioning.",
+		File:        path.Join(util.BaseResourcesPath, "osimage.mdx"),
+		Object: &managementv1.OSImage{
+			TypeMeta: metav1.TypeMeta{
+				Kind:       "OSImage",
+				APIVersion: managementv1.SchemeGroupVersion.String(),
+			},
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "ubuntu-noble",
+			},
+			Spec: managementv1.OSImageSpec{
+				OSImageSpec: storagev1.OSImageSpec{
+					DisplayName: "Ubuntu Noble (24.04 LTS)",
+					Description: "Ubuntu Noble (24.04) server cloud image for bare metal provisioning",
+					Properties: map[string]string{
+						"metal3.vcluster.com/image-url":           "https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img",
+						"metal3.vcluster.com/image-checksum":      "https://cloud-images.ubuntu.com/noble/current/SHA256SUMS",
+						"metal3.vcluster.com/image-checksum-type": "sha256",
+					},
+				},
+			},
+		},
+		Create:   true,
+		Retrieve: true,
+		Update:   true,
+		Delete:   true,
+	})
+
+	// NodeProfile
+	util.GenerateObjectOverview(&util.ObjectInformation{
+		Title:       "Node Profile",
+		Name:        "NodeProfile",
+		Resource:    "nodeprofiles",
+		Description: "NodeProfile holds reusable node runtime configuration (labels, annotations, and taints) that can be referenced by manual joins, auto nodes, and platform NodeClaims.",
+		File:        path.Join(util.BaseResourcesPath, "nodeprofile.mdx"),
+		Object: &managementv1.NodeProfile{
+			TypeMeta: metav1.TypeMeta{
+				Kind:       "NodeProfile",
+				APIVersion: managementv1.SchemeGroupVersion.String(),
+			},
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "gpu-training",
+			},
+			Spec: managementv1.NodeProfileSpec{
+				NodeProfileSpec: storagev1.NodeProfileSpec{
+					DisplayName: "GPU Training",
+					Description: "GPU worker defaults for training workloads.",
+					NodeLabels: map[string]string{
+						"workload.vcluster.com/class": "gpu",
+					},
+					NodeAnnotations: map[string]string{
+						"ops.vcluster.com/owner": "ml-platform",
+					},
+					Taints: []corev1.Taint{
+						{
+							Key:    "nvidia.com/gpu",
+							Value:  "true",
+							Effect: corev1.TaintEffectNoSchedule,
+						},
+					},
+				},
+			},
+		},
+		Create:   true,
+		Retrieve: true,
+		Update:   true,
+		Delete:   true,
+	})
+
+	// NodeClaim - typically created automatically by auto-nodes rather than
+	// authored by hand, so Create is intentionally omitted; Retrieve/Delete
+	// cover inspecting and deprovisioning a claim.
+	util.GenerateObjectOverview(&util.ObjectInformation{
+		Title:       "Node Claim",
+		Name:        "NodeClaim",
+		Resource:    "nodeclaims",
+		Description: "NodeClaim tracks a node that the platform has provisioned or is provisioning for a tenant cluster. Auto-nodes creates these automatically; they are not typically authored by hand.",
+		File:        path.Join(util.BaseResourcesPath, "nodeclaim.mdx"),
+		Object: &managementv1.NodeClaim{
+			TypeMeta: metav1.TypeMeta{
+				Kind:       "NodeClaim",
+				APIVersion: managementv1.SchemeGroupVersion.String(),
+			},
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "vcluster-62ftb",
+				Namespace: "p-default",
+			},
+			Spec: managementv1.NodeClaimSpec{
+				NodeClaimSpec: storagev1.NodeClaimSpec{
+					ProviderRef: "my-node-provider",
+					VClusterRef: "my-vcluster",
+					DesiredCapacity: corev1.ResourceList{
+						corev1.ResourceCPU:    resource.MustParse("120m"),
+						corev1.ResourceMemory: resource.MustParse("114Mi"),
+					},
+				},
+			},
+		},
+		Project:  true,
+		Retrieve: true,
+		Delete:   true,
+	})
+
+	// ProjectSecret
+	util.GenerateObjectOverview(&util.ObjectInformation{
+		Title:       "Project Secret",
+		Name:        "ProjectSecret",
+		Resource:    "projectsecrets",
+		Description: "ProjectSecret is a Kubernetes Secret managed by the platform inside a project, often synced from an external secret store such as HashiCorp Vault.",
+		File:        path.Join(util.BaseResourcesPath, "projectsecret.mdx"),
+		Object: &managementv1.ProjectSecret{
+			TypeMeta: metav1.TypeMeta{
+				Kind:       "ProjectSecret",
+				APIVersion: managementv1.SchemeGroupVersion.String(),
+			},
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "my-secret",
+				Namespace: "loft-p-my-project",
+			},
+			Spec: managementv1.ProjectSecretSpec{
+				DisplayName: "My Secret",
+				Data: map[string][]byte{
+					"password": []byte("password"),
+				},
+			},
+		},
+		Project:  true,
+		Create:   true,
+		Retrieve: true,
+		Update:   true,
+		Delete:   true,
+	})
+
+	// ArgoCDApplicationTemplate
+	util.GenerateObjectOverview(&util.ObjectInformation{
+		Title:       "ArgoCD Application Template",
+		Name:        "ArgoCDApplicationTemplate",
+		Resource:    "argocdapplicationtemplates",
+		Description: "ArgoCDApplicationTemplate is a reusable Argo CD ApplicationSpec that can be referenced by name from an ArgoCDApplication to avoid duplicating configuration across tenant clusters.",
+		File:        path.Join(util.BaseResourcesPath, "argocdapplicationtemplate.mdx"),
+		Object: &managementv1.ArgoCDApplicationTemplate{
+			TypeMeta: metav1.TypeMeta{
+				Kind:       "ArgoCDApplicationTemplate",
+				APIVersion: managementv1.SchemeGroupVersion.String(),
+			},
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "app-template",
+			},
+			Spec: managementv1.ArgoCDApplicationTemplateSpec{
+				ArgoCDApplicationTemplateSpec: storagev1.ArgoCDApplicationTemplateSpec{
+					Template: storagev1.ArgoCDApplicationTemplateDefinition{
+						Spec: argoapplicationsv1alpha1.ApplicationSpec{
+							Source: &argoapplicationsv1alpha1.ApplicationSource{
+								RepoURL:        "https://github.com/acme/app-charts",
+								Path:           "app",
+								TargetRevision: "main",
+							},
+							Project: "default",
+							SyncPolicy: &argoapplicationsv1alpha1.SyncPolicy{
+								Automated: &argoapplicationsv1alpha1.SyncPolicyAutomated{
+									Prune:    true,
+									SelfHeal: true,
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		Create:   true,
+		Retrieve: true,
+		Update:   true,
+		Delete:   true,
+	})
+
+	// ArgoCDApplication
+	util.GenerateObjectOverview(&util.ObjectInformation{
+		Title:       "ArgoCD Application",
+		Name:        "ArgoCDApplication",
+		Resource:    "argocdapplications",
+		Description: "ArgoCDApplication declares an Argo CD Application that the platform reconciles and syncs to a connected Argo CD instance.",
+		File:        path.Join(util.BaseResourcesPath, "argocdapplication.mdx"),
+		Object: &managementv1.ArgoCDApplication{
+			TypeMeta: metav1.TypeMeta{
+				Kind:       "ArgoCDApplication",
+				APIVersion: managementv1.SchemeGroupVersion.String(),
+			},
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "shared-infra",
+				Namespace: "p-my-project",
+			},
+			Spec: managementv1.ArgoCDApplicationSpec{
+				ArgoCDApplicationSpec: storagev1.ArgoCDApplicationSpec{
+					DisplayName: "Shared Infrastructure",
+					Destination: storagev1.ArgoCDDestination{
+						Cluster: &storagev1.ArgoCDDestinationCluster{
+							Name: "loft-cluster",
+						},
+					},
+					TemplateRef: &storagev1.ArgoCDApplicationTemplateRef{
+						Name: "infra-template",
+					},
+				},
+			},
+		},
+		Project:  true,
+		Create:   true,
+		Retrieve: true,
+		Update:   true,
+		Delete:   true,
 	})
 }
 
