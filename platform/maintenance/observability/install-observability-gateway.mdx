@@ -27,7 +27,8 @@ Before you create the connector, prepare:
 - A metrics backend that accepts OTLP metrics from the gateway.
 - A Prometheus-compatible query endpoint for the same backend.
 - Network access from the Platform namespace to both backend endpoints.
-- Optional CA, gateway serving certificate, or backend client certificate Secrets.
+- A vCluster Platform license that includes Fleet Observability.
+- Optional custom gateway serving certificate or backend mTLS Secrets.
 
 :::note
 The observability gateway doesn't install or size the metrics backend for you. Bring your
@@ -37,8 +38,13 @@ integration. See [Deploy Fleet Observability with Argo CD](./deploy-with-argocd.
 
 ## Create the connector Secret
 
-Create the Fleet Observability connector in the Platform namespace. It must use the name
-`fleet-observability` and the label `loft.sh/fleet-observability-connector: "true"`.
+Create the Fleet Observability connector in the Platform namespace. The connector ID can be
+any valid Secret name. Platform derives the gateway resource name as `gateway-<connector-id>`.
+The examples use `fleet-observability`, which produces `gateway-fleet-observability`.
+
+Mark the connector as the fleet default with the
+`platform.vcluster.com/fleet-observability-connector` label set to `"true"`. Only one
+connector can be the fleet default.
 
 <Tabs
   defaultValue="yaml"
@@ -57,7 +63,7 @@ metadata:
   namespace: vcluster-platform
   labels:
     loft.sh/connector-type: observability
-    loft.sh/fleet-observability-connector: "true"
+    platform.vcluster.com/fleet-observability-connector: "true"
 type: Opaque
 stringData:
   metricsBackendOtlpEndpoint: https://metrics.example.com/otlp
@@ -83,7 +89,7 @@ kubectl apply -f fleet-observability-connector.yaml
   <Step>
     In the <Label>Display name</Label> field, enter a human-readable name for the connector.
     The <Label>Observability Connector ID</Label> is auto-generated from the display name.
-    For the Fleet Observability connector, use a display name that resolves to the ID `fleet-observability`.
+    The connector ID determines the gateway resource names. The first observability connector is automatically marked as the fleet default.
   </Step>
   <Step>
     In the <Label>Metrics Backend OTLP Endpoint</Label> field, enter the OTLP endpoint that receives metrics from the Write Gateway.
@@ -106,7 +112,7 @@ Platform reconciles the following resources:
 
 - `Deployment/gateway-fleet-observability`
 - `Service/gateway-fleet-observability`
-- Grafana datasource ConfigMaps for fleet, Control Plane Cluster, and tenant cluster
+- Grafana datasource ConfigMaps for fleet, control plane cluster, and tenant cluster
   views when Grafana datasource reconciliation is enabled.
 
 ## Connector keys
@@ -115,21 +121,26 @@ Platform reconciles the following resources:
 |---|---:|---|
 | `metricsBackendOtlpEndpoint` | Yes | OTLP endpoint that receives metrics from the Write Gateway. |
 | `metricsBackendPromQLEndpoint` | Yes | Prometheus HTTP API endpoint queried by the Query Proxy. |
-| `metricsBackendCaData` | No | PEM CA data used to verify the metrics backend. |
 | `metricsBackendInsecureSkipVerify` | No | Set to `"true"` only for test backends with unverifiable TLS. |
 | `metricsBackendServerName` | No | TLS server name override for the metrics backend. |
-| `observabilityCaSecretName` | No | Secret name with `ca.crt` used to verify the backend and gateway datasource TLS. |
-| `observabilityGatewayCertSecretName` | No | Secret name with `tls.crt` and `tls.key` for gateway serving TLS. |
-| `metricsBackendCertSecretName` | No | Secret name with `tls.crt` and `tls.key` for mTLS to the backend. |
+| `observabilityGatewayCertSecretName` | No | Custom Secret with `tls.crt` and `tls.key` for gateway serving TLS. Include `ca.crt` when clients must trust a private CA. Platform creates a self-signed serving certificate when this key is omitted. |
+| `metricsBackendCertSecretName` | No | Secret with `ca.crt`, `tls.crt`, and `tls.key` for mTLS to the backend. The gateway trusts the backend with `ca.crt` and presents the certificate and key as its client identity. |
 | `gatewayResources` | No | YAML `resources` block for the Write Gateway container. |
 | `queryProxyResources` | No | YAML `resources` block for the Query Proxy container. |
+| `serviceType` | No | Gateway Service type. Valid values are `ClusterIP`, the default, and `LoadBalancer`. |
+| `serviceAnnotations` | No | YAML map of annotations applied to a `LoadBalancer` gateway Service. |
+| `grafanaUrl` | No | Grafana upstream URL used by the Platform `/grafana/` reverse proxy. |
+| `grafanaInsecureSkipVerify` | No | Set to `"true"` only to test a Grafana endpoint with an unverifiable certificate. |
+| `grafanaCertSecretName` | No | Grafana serving certificate Secret. Platform uses its `ca.crt` to trust the Grafana upstream. |
+| `fleetObservabilityDashboardUid` | No | UID of the fleet dashboard embedded by the Fleet Observability page. |
 
-If both `metricsBackendCaData` and `observabilityCaSecretName` are set, the Secret
-referenced by `observabilityCaSecretName` is used.
+## Customize the gateway serving certificate
 
-## Enable gateway TLS
+The gateway always serves OTLP and query traffic over TLS. When you don't specify a
+certificate Secret, Platform creates and manages a self-signed Secret named
+`gateway-<connector-id>-tls`.
 
-To serve OTLP and query traffic over TLS, create a Secret in the Platform namespace:
+To use your own certificate, create a Secret in the Platform namespace:
 
 ```yaml title="gateway-tls.yaml"
 apiVersion: v1
@@ -147,6 +158,10 @@ stringData:
     -----BEGIN PRIVATE KEY-----
     ...
     -----END PRIVATE KEY-----
+  ca.crt: |
+    -----BEGIN CERTIFICATE-----
+    ...
+    -----END CERTIFICATE-----
 ```
 
 Reference it from the connector:
@@ -156,9 +171,27 @@ stringData:
   observabilityGatewayCertSecretName: fleet-gateway-tls
 ```
 
-Edge collectors must then use `https` for OTLP HTTP or TLS for OTLP gRPC. Grafana
-datasources generated by Platform use the same query proxy Service and include the
-CA data when you also configure `observabilityCaSecretName`.
+Edge collectors use HTTPS for OTLP HTTP or TLS for OTLP gRPC in both the managed and custom
+certificate cases. Distribute `ca.crt` to collectors that don't already trust the issuing
+CA. Grafana datasources generated by Platform trust the `ca.crt` from the gateway serving
+certificate Secret. If a custom certificate is signed by a public CA, `ca.crt` can be
+omitted and clients use their system trust stores.
+
+## Expose the gateway with a LoadBalancer
+
+The gateway Service defaults to `ClusterIP`. To make the gateway reachable from collectors
+outside the Platform cluster, set `serviceType` to `LoadBalancer`. You can optionally apply
+provider-specific Service annotations:
+
+```yaml
+stringData:
+  serviceType: LoadBalancer
+  serviceAnnotations: |
+    service.beta.kubernetes.io/aws-load-balancer-scheme: internal
+```
+
+For a Platform-managed certificate, the controller waits for the LoadBalancer address and
+adds it to the certificate before deploying the gateway.
 
 ## Use backend mTLS
 
@@ -172,6 +205,10 @@ metadata:
   namespace: vcluster-platform
 type: kubernetes.io/tls
 stringData:
+  ca.crt: |
+    -----BEGIN CERTIFICATE-----
+    ...
+    -----END CERTIFICATE-----
   tls.crt: |
     -----BEGIN CERTIFICATE-----
     ...
@@ -194,13 +231,15 @@ stringData:
 Check that the gateway pod is running:
 
 ```bash
-kubectl get pods -n vcluster-platform -l app.kubernetes.io/name=gateway,app.kubernetes.io/instance=fleet-observability
+CONNECTOR_ID=fleet-observability
+kubectl get pods -n vcluster-platform -l app.kubernetes.io/name=gateway,app.kubernetes.io/instance="$CONNECTOR_ID"
 ```
 
 Check the service ports:
 
 ```bash
-kubectl get svc -n vcluster-platform gateway-fleet-observability
+CONNECTOR_ID=fleet-observability
+kubectl get svc -n vcluster-platform "gateway-$CONNECTOR_ID"
 ```
 
 Expected service ports:

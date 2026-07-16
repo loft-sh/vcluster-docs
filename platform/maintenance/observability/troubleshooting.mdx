@@ -20,7 +20,7 @@ Verify:
 
 - The Secret is in the Platform namespace.
 - `metadata.labels["loft.sh/connector-type"]` is `observability`.
-- The fleet connector has `loft.sh/fleet-observability-connector: "true"`.
+- The fleet connector has the `platform.vcluster.com/fleet-observability-connector` label set to `"true"`.
 - `metricsBackendOtlpEndpoint` and `metricsBackendPromQLEndpoint` are set.
 
 The gateway isn't reconciled until both backend endpoints are present.
@@ -30,7 +30,7 @@ The gateway isn't reconciled until both backend endpoints are present.
 Only one connector can carry the fleet label:
 
 ```yaml
-loft.sh/fleet-observability-connector: "true"
+platform.vcluster.com/fleet-observability-connector: "true"
 ```
 
 If multiple connector Secrets have this label, Platform still creates per-connector
@@ -99,10 +99,24 @@ If gateway pods start but can't write or query the backend:
 - Verify `metricsBackendOtlpEndpoint` and `metricsBackendPromQLEndpoint`.
 - Set `metricsBackendServerName` when the backend certificate's DNS name differs from
   the endpoint host.
-- Use `observabilityCaSecretName` or `metricsBackendCaData` when the backend uses a
-  private CA.
-- Use `metricsBackendCertSecretName` when the backend requires mTLS.
+- Use `metricsBackendCertSecretName` when the backend requires mTLS. This Secret is also the
+  source of trust for a private backend CA. It must contain `ca.crt`, `tls.crt`, and
+  `tls.key`.
 - Use `metricsBackendInsecureSkipVerify: "true"` only as a temporary test setting.
+
+## Gateway TLS failures
+
+The gateway always serves OTLP and query traffic over TLS. If collectors or query clients
+can't connect:
+
+- For the Platform-managed certificate, read `ca.crt` from the
+  `gateway-<connector-id>-tls` Secret and configure the client to trust it.
+- For a custom private certificate, include `ca.crt` in the Secret referenced by
+  `observabilityGatewayCertSecretName`.
+- Verify that the client uses `https` for OTLP HTTP and query traffic or enables TLS for
+  OTLP gRPC.
+- If the gateway uses a `LoadBalancer` Service and a Platform-managed certificate, wait for
+  the LoadBalancer address before expecting the gateway Deployment to become available.
 
 ## Platform API outage
 
@@ -121,19 +135,22 @@ Expected behavior:
 Gateway pods:
 
 ```bash
-kubectl get pods -n vcluster-platform -l app.kubernetes.io/name=gateway,app.kubernetes.io/instance=fleet-observability
+CONNECTOR_ID=fleet-observability
+kubectl get pods -n vcluster-platform -l app.kubernetes.io/name=gateway,app.kubernetes.io/instance="$CONNECTOR_ID"
 ```
 
 Gateway service:
 
 ```bash
-kubectl get svc -n vcluster-platform gateway-fleet-observability
+CONNECTOR_ID=fleet-observability
+kubectl get svc -n vcluster-platform "gateway-$CONNECTOR_ID"
 ```
 
 Write Gateway metrics:
 
 ```bash
-GATEWAY_POD=$(kubectl get pod -n vcluster-platform -l app.kubernetes.io/name=gateway,app.kubernetes.io/instance=fleet-observability -o jsonpath='{.items[0].metadata.name}')
+CONNECTOR_ID=fleet-observability
+GATEWAY_POD=$(kubectl get pod -n vcluster-platform -l app.kubernetes.io/name=gateway,app.kubernetes.io/instance="$CONNECTOR_ID" -o jsonpath='{.items[0].metadata.name}')
 kubectl port-forward -n vcluster-platform pod/$GATEWAY_POD 8889:8889
 curl http://127.0.0.1:8889/metrics
 ```
@@ -141,7 +158,8 @@ curl http://127.0.0.1:8889/metrics
 Query Proxy metrics:
 
 ```bash
-GATEWAY_POD=$(kubectl get pod -n vcluster-platform -l app.kubernetes.io/name=gateway,app.kubernetes.io/instance=fleet-observability -o jsonpath='{.items[0].metadata.name}')
+CONNECTOR_ID=fleet-observability
+GATEWAY_POD=$(kubectl get pod -n vcluster-platform -l app.kubernetes.io/name=gateway,app.kubernetes.io/instance="$CONNECTOR_ID" -o jsonpath='{.items[0].metadata.name}')
 kubectl port-forward -n vcluster-platform pod/$GATEWAY_POD 8080:8080
 curl http://127.0.0.1:8080/metrics
 ```
