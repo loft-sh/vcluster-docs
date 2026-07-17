@@ -534,6 +534,13 @@ the single fenced block below it. Both scanners honor it, for YAML blocks and
 for CLI examples alike. Do not use it to silence a finding on current-state
 docs; fix the drift instead.
 
+`InterpolatedCodeBlock` components are scanned the same way as fences:
+`[[VAR:...]]` placeholders are resolved to their defaults before validation,
+and the marker on the line directly above the component tag opts it out. A
+`yaml` block or component titled `vcluster.yaml` is always validated, even
+when its top-level keys no longer match any current schema root (that is what
+a block looks like after a release removes the field it documents).
+
 <!-- vale on -->
 
 ## Adding prose to generated partials

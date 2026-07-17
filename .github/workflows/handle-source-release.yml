@@ -283,6 +283,29 @@ jobs:
           REPORT_DIR: ${{ runner.temp }}/drift-reports
         run: bash hack/release/run-drift-check.sh
 
+      # The baseline checkout below rewinds the whole tree to the pre-release
+      # commit, which also reverts the just-regenerated references. Preserve
+      # the CURRENT references outside the tree first, and seed the drafter's
+      # summary file, so the drafter consults current flags and fields (not
+      # the stale baseline) and has a channel for findings it cannot resolve.
+      - name: Preserve regenerated references for the drafter
+        id: refs
+        if: steps.classify.outputs.skip != 'true' && steps.drift.outputs.drift_detected == 'true'
+        continue-on-error: true
+        env:
+          TARGET_FOLDER: ${{ steps.classify.outputs.target_folder }}
+          REFS_DIR: ${{ runner.temp }}/current-refs
+          SUMMARY_FILE: ${{ runner.temp }}/drift-summary.md
+        run: |
+          mkdir -p "$REFS_DIR"
+          for d in "${TARGET_FOLDER}/cli" "${TARGET_FOLDER}/_partials/config"; do
+            if [ -d "$d" ]; then
+              mkdir -p "$REFS_DIR/$(dirname "$d")"
+              cp -r "$d" "$REFS_DIR/$d"
+            fi
+          done
+          printf '### Findings the drafter could not resolve\n\n(none)\n' > "$SUMMARY_FILE"
+
       # The docs-sync PR (regenerated references) is already pushed. Reset to the
       # pre-sync baseline so the drift-fix PR carries ONLY prose edits, never the
       # regenerated references.
@@ -302,7 +325,7 @@ jobs:
       # the runner for the 6-hour job default (it is continue-on-error, so the
       # only cost is runner time, but that still delays failure notification).
       - name: Draft prose drift fixes with Claude
-        if: steps.classify.outputs.skip != 'true' && steps.drift.outputs.drift_detected == 'true' && steps.baseline.outcome == 'success'
+        if: steps.classify.outputs.skip != 'true' && steps.drift.outputs.drift_detected == 'true' && steps.baseline.outcome == 'success' && steps.refs.outcome == 'success'
         continue-on-error: true
         timeout-minutes: 15
         uses: anthropics/claude-code-action@v1
@@ -316,6 +339,13 @@ jobs:
             canonical generated references (CLI cobra docs / vcluster.yaml schema).
 
             The JSON drift report is at: ${{ steps.drift.outputs.report_path }}
+
+            IMPORTANT: the working tree is rewound to the pre-release baseline,
+            so any generated reference files in it (under `*/cli/` or
+            `*/_partials/config/`) are STALE. The CURRENT regenerated references
+            are preserved at ${{ runner.temp }}/current-refs — consult those
+            copies (Read/Grep/Glob) whenever you need the current set of valid
+            flags, commands, or fields.
 
             Step 1: Read the report with Bash + jq. Exactly one report shape is
             present per run — inspect the JSON to see which:
@@ -332,9 +362,13 @@ jobs:
             the surrounding prose, and fix ONLY the drifted reference:
             - Deprecated field → replace with the replacement named in `detail`.
             - Unknown field / removed command / unknown flag → correct it to the
-              current equivalent when the intent is clear from context. If it is
-              genuinely ambiguous, leave it unchanged and call it out in the PR
-              body rather than guessing.
+              current equivalent when the intent is clear from context (verify
+              against the preserved references, not the stale working tree).
+            - If a finding is genuinely ambiguous, leave the prose unchanged and
+              record it in ${{ runner.temp }}/drift-summary.md instead: Edit that
+              file, replacing "(none)" with one bullet per unresolved finding
+              (file:line, the finding, why it is ambiguous). The file becomes
+              part of the fix PR body, so never leave a finding unrecorded.
 
             Rules:
             - Edit prose files ONLY. Never touch generated files under any
@@ -349,8 +383,32 @@ jobs:
             --allowedTools "Bash(jq *)" "Bash(cat *)" "Read" "Edit" "Glob" "Grep"
             --model claude-sonnet-4-5-20250929
 
+      # The drafter's unresolved-findings summary must reach reviewers, so the
+      # PR body is composed from a file: static context plus whatever the
+      # drafter recorded in the summary.
+      - name: Compose drift fix PR body
+        id: prbody
+        if: steps.classify.outputs.skip != 'true' && steps.drift.outputs.drift_detected == 'true' && steps.baseline.outcome == 'success' && steps.refs.outcome == 'success'
+        continue-on-error: true
+        env:
+          EVENT: ${{ steps.inputs.outputs.event }}
+          VERSION: ${{ steps.inputs.outputs.version }}
+          SUMMARY_FILE: ${{ runner.temp }}/drift-summary.md
+          BODY_FILE: ${{ runner.temp }}/drift-pr-body.md
+        run: |
+          {
+            printf 'The release-sync drift check found hand-written prose that no longer\n'
+            # shellcheck disable=SC2016  # literal backticks are markdown, not expansion
+            printf 'matches the regenerated `%s` references (`%s`).\n\n' "$EVENT" "$VERSION"
+            printf 'Claude drafted these prose fixes. Please review for accuracy before\n'
+            printf 'merging: this PR is never auto-merged.\n\n'
+            cat "$SUMMARY_FILE"
+            printf '\n---\n*Generated by handle-source-release (DOC-1626 drift check)*\n'
+          } > "$BODY_FILE"
+
       - name: Open drift fix PR
-        if: steps.classify.outputs.skip != 'true' && steps.drift.outputs.drift_detected == 'true' && steps.baseline.outcome == 'success'
+        id: driftpr
+        if: steps.classify.outputs.skip != 'true' && steps.drift.outputs.drift_detected == 'true' && steps.baseline.outcome == 'success' && steps.prbody.outcome == 'success'
         continue-on-error: true
         timeout-minutes: 10
         uses: peter-evans/create-pull-request@v7
@@ -358,21 +416,34 @@ jobs:
           token: ${{ secrets.GH_ACCESS_TOKEN }}
           commit-message: "docs: fix cli/vcluster.yaml prose drift for ${{ steps.inputs.outputs.event }} ${{ steps.inputs.outputs.version }}"
           title: "docs: fix prose drift for ${{ steps.inputs.outputs.event }} ${{ steps.inputs.outputs.version }}"
-          body: |
-            The release-sync drift check found hand-written prose that no longer
-            matches the regenerated `${{ steps.inputs.outputs.event }}` references
-            (`${{ steps.inputs.outputs.version }}`).
-
-            Claude drafted these prose fixes. Please review for accuracy before
-            merging — this PR is never auto-merged. Ambiguous findings the drafter
-            could not resolve are noted above.
-
-            ---
-            *Generated by handle-source-release (DOC-1626 drift check)*
+          body-path: ${{ runner.temp }}/drift-pr-body.md
           branch: docs-drift-fix/${{ steps.inputs.outputs.event }}-${{ steps.inputs.outputs.version }}
           base: main
           delete-branch: true
           labels: automation,drift
+
+      # An all-ambiguous round changes no files, so create-pull-request opens
+      # no PR and the drafter's summary would vanish. Surface it on the run
+      # summary and as a comment on the docs-sync PR instead.
+      - name: Surface drift summary when no fix PR was opened
+        if: steps.classify.outputs.skip != 'true' && steps.drift.outputs.drift_detected == 'true' && steps.driftpr.outcome == 'success' && steps.driftpr.outputs.pull-request-number == ''
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GH_ACCESS_TOKEN }}
+          SUMMARY_FILE: ${{ runner.temp }}/drift-summary.md
+          SYNC_BRANCH: docs-sync/${{ steps.inputs.outputs.event }}-${{ steps.inputs.outputs.version }}
+        run: |
+          {
+            printf '## Prose drift detected, but no auto-fix PR was opened\n\n'
+            cat "$SUMMARY_FILE"
+          } >> "$GITHUB_STEP_SUMMARY"
+          pr="$(gh pr list --head "$SYNC_BRANCH" --state open --json number --jq '.[0].number' || true)"
+          if [ -n "$pr" ]; then
+            {
+              printf 'The drift check flagged prose that no longer matches the regenerated references, but the drafter left it unchanged. Review manually:\n\n'
+              cat "$SUMMARY_FILE"
+            } | gh pr comment "$pr" --body-file -
+          fi
 
       # Alerts a chosen Slack channel when a non-skip receiver run fails.
       # Guarded on `skip != 'true'` because the classifier reports skip

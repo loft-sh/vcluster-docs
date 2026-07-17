@@ -102,6 +102,57 @@ func TestScanProse_DriftIgnoreMarkerSkipsFence(t *testing.T) {
 	}
 }
 
+func TestScanProse_GlobalFlagBeforeSubcommand(t *testing.T) {
+	gt := testGroundTruth(t)
+	// Global flags may precede the subcommand; the invocation must still
+	// resolve to `connect` (not the root command), and its flags validate
+	// against connect's set, which already includes the inherited globals.
+	content := "```bash\nvcluster --namespace foo connect my-vcluster --bogus-flag\n```\n"
+	findings := scanContent(t, gt, content)
+	if len(findings) != 1 || findings[0].Flag != "--bogus-flag" || findings[0].Command != "vcluster connect" {
+		t.Fatalf("want one --bogus-flag finding on vcluster connect, got %+v", findings)
+	}
+}
+
+func TestScanProse_InterpolatedCodeBlock(t *testing.T) {
+	gt := testGroundTruth(t)
+	bt := "`"
+	content := "<InterpolatedCodeBlock\n  code={" + bt + "vcluster connect [[VAR:CLUSTER NAME:my-vcluster]] --update-current=false" + bt + "}\n  language=\"bash\"\n/>\n"
+	findings := scanContent(t, gt, content)
+	if len(findings) != 1 || findings[0].Flag != "--update-current" || findings[0].Command != "vcluster connect" {
+		t.Fatalf("want one --update-current finding from the component, got %+v", findings)
+	}
+	if findings[0].LineNumber != 1 {
+		t.Errorf("component findings anchor at the tag line, got %d", findings[0].LineNumber)
+	}
+}
+
+func TestScanProse_InterpolatedContinuationAndConcat(t *testing.T) {
+	gt := testGroundTruth(t)
+	bt := "`"
+	// A template literal with escaped shell continuations (the dominant
+	// multi-line style) and a component built from concatenated quoted
+	// strings; both shapes must parse.
+	tpl := "<InterpolatedCodeBlock code={" + bt + "vcluster create x \\\\\n  --bogus-a" + bt + "} language=\"bash\" />\n"
+	concat := "<InterpolatedCodeBlock code={'vcluster create y ' + '--bogus-b'} language=\"bash\" />\n"
+	findings := scanContent(t, gt, tpl+concat)
+	if len(findings) != 2 || findings[0].Flag != "--bogus-a" || findings[1].Flag != "--bogus-b" {
+		t.Fatalf("want --bogus-a and --bogus-b findings, got %+v", findings)
+	}
+}
+
+func TestScanProse_InterpolatedSkipsMarkedAndDynamic(t *testing.T) {
+	gt := testGroundTruth(t)
+	bt := "`"
+	// A marked component is deliberate; a ${} template is not statically
+	// known and must be skipped rather than guessed at.
+	marked := "{/* drift-ignore */}\n<InterpolatedCodeBlock code={'vcluster connect x --bogus'} language=\"bash\" />\n"
+	dynamic := "<InterpolatedCodeBlock code={" + bt + "vcluster connect ${name} --also-bogus" + bt + "} language=\"bash\" />\n"
+	if findings := scanContent(t, gt, marked+dynamic); len(findings) != 0 {
+		t.Fatalf("marked and ${}-interpolated components must be skipped, got %+v", findings)
+	}
+}
+
 func TestParseLongFlag(t *testing.T) {
 	cases := map[string]string{
 		"--print":                "print",

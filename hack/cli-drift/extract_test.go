@@ -90,16 +90,19 @@ func TestResolveCommand_LongestMatch(t *testing.T) {
 		name     string
 		tokens   []string
 		wantStem string
-		wantN    int
 	}{
-		{"longest platform match", []string{"vcluster", "platform", "sleep", "namespace", "myns", "--project", "p"}, "vcluster_platform_sleep_namespace", 4},
-		{"stops at flag", []string{"vcluster", "platform", "sleep", "--x"}, "vcluster_platform_sleep", 3},
-		{"unknown subcommand falls back to group", []string{"vcluster", "platform", "bogus"}, "vcluster_platform", 2},
-		{"bare vcluster unresolved", []string{"vcluster", "--help"}, "", 0},
+		{"longest platform match", []string{"vcluster", "platform", "sleep", "namespace", "myns", "--project", "p"}, "vcluster_platform_sleep_namespace"},
+		{"stops at trailing flag", []string{"vcluster", "platform", "sleep", "--x"}, "vcluster_platform_sleep"},
+		{"unknown subcommand falls back to group", []string{"vcluster", "platform", "bogus"}, "vcluster_platform"},
+		{"bare vcluster unresolved", []string{"vcluster", "--help"}, ""},
+		{"global flag before subcommand", []string{"vcluster", "-n", "test", "platform", "sleep"}, "vcluster_platform_sleep"},
+		{"flag value not mistaken for subcommand", []string{"vcluster", "--config", "cfg.yaml", "platform", "sleep"}, "vcluster_platform_sleep"},
+		{"equals-form flag consumes no value", []string{"vcluster", "--config=cfg.yaml", "connect", "x"}, "vcluster_connect"},
+		{"positional ends the path", []string{"vcluster", "connect", "myvc", "sleep"}, "vcluster_connect"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			cmd, n := gt.resolveCommand(tc.tokens)
+			cmd := gt.resolveCommand(tc.tokens)
 			if tc.wantStem == "" {
 				if cmd != nil {
 					t.Fatalf("expected nil command, got %s", cmd.Stem)
@@ -108,9 +111,6 @@ func TestResolveCommand_LongestMatch(t *testing.T) {
 			}
 			if cmd == nil || cmd.Stem != tc.wantStem {
 				t.Fatalf("resolved %v, want %s", cmd, tc.wantStem)
-			}
-			if n != tc.wantN {
-				t.Errorf("consumed = %d, want %d", n, tc.wantN)
 			}
 		})
 	}
@@ -130,6 +130,24 @@ func TestGrepInvocation_DriftIgnoreMarkerSkipsFence(t *testing.T) {
 	}
 	if len(hits) != 1 || hits[0].LineNumber != 6 {
 		t.Fatalf("marked fence must be skipped, prose mention kept: %+v", hits)
+	}
+}
+
+func TestGrepInvocation_DriftIgnoreMarkerSkipsComponent(t *testing.T) {
+	docs := t.TempDir()
+	// A marked InterpolatedCodeBlock deliberately shows the removed command;
+	// matches inside it are suppressed through the tag's closing "/>". The
+	// unmarked prose mention after it must still match.
+	content := "{/* drift-ignore */}\n<InterpolatedCodeBlock\n  code={'vcluster convert config < old.yaml'}\n  language=\"bash\"\n/>\n\nvcluster convert appears here too.\n"
+	if err := os.WriteFile(filepath.Join(docs, "page.mdx"), []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	hits, err := grepInvocation(docs, "vcluster convert")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) != 1 || hits[0].LineNumber != 7 {
+		t.Fatalf("marked component must be skipped, prose mention kept: %+v", hits)
 	}
 }
 

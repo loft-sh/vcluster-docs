@@ -12,6 +12,11 @@ import (
 // with '-' rewritten to '.', IS the dotted schema path.
 var anchorPattern = regexp.MustCompile(`\{#([A-Za-z0-9][A-Za-z0-9-]*)\}`)
 
+// typeSpanPattern captures the field type the generator renders on the same
+// heading line as the anchor, e.g.
+// `<span className="config-field-type">&#123;key: object&#125;</span>`.
+var typeSpanPattern = regexp.MustCompile(`config-field-type">([^<]*)</span>`)
+
 // ConfigGroundTruth is the parsed vcluster.yaml schema ground truth derived
 // from the generated config partials.
 type ConfigGroundTruth struct {
@@ -24,6 +29,15 @@ type ConfigGroundTruth struct {
 	// one known child. A path with no known children is a scalar or a
 	// free-form map, so unknown keys beneath it must not be flagged.
 	hasChild map[string]bool
+	// freeFormMap is the set of paths whose generated field type is a
+	// user-keyed map ("{key: object}"), e.g. sync.toHost.customResources or
+	// controlPlane.standalone.joinNode.containerd.registry.mirrors. The
+	// generator enumerates the value struct's fields directly beneath such a
+	// path (so it "has known children"), but the real key level is
+	// user-defined (a CRD name, a registry domain), so the user's keys must
+	// not be flagged as unknown. Derived from the config-field-type span so
+	// new map fields never need a hard-coded allowlist entry.
+	freeFormMap map[string]bool
 	// roots is the set of authoritative top-level schema keys, taken from the
 	// single-segment anchors of the depth-1 partial files.
 	roots map[string]bool
@@ -43,10 +57,11 @@ var deprecatedPattern = regexp.MustCompile(`\bDeprecated\b`)
 // single-segment anchors define the authoritative top-level roots.
 func ParseConfigPartials(configDir string) (*ConfigGroundTruth, error) {
 	gt := &ConfigGroundTruth{
-		known:      make(map[string]bool),
-		deprecated: make(map[string]string),
-		hasChild:   make(map[string]bool),
-		roots:      make(map[string]bool),
+		known:       make(map[string]bool),
+		deprecated:  make(map[string]string),
+		hasChild:    make(map[string]bool),
+		roots:       make(map[string]bool),
+		freeFormMap: make(map[string]bool),
 	}
 
 	err := filepath.Walk(configDir, func(path string, info os.FileInfo, err error) error {
@@ -88,6 +103,9 @@ func (gt *ConfigGroundTruth) ingestFile(content string, isDepth1 bool) {
 			if isDepth1 && !strings.Contains(path, ".") {
 				gt.roots[path] = true
 			}
+			if t := typeSpanPattern.FindStringSubmatch(line); t != nil && isUserKeyedMapType(t[1]) {
+				gt.freeFormMap[path] = true
+			}
 			currentPath = path
 			continue
 		}
@@ -99,6 +117,15 @@ func (gt *ConfigGroundTruth) ingestFile(content string, isDepth1 bool) {
 			}
 		}
 	}
+}
+
+// isUserKeyedMapType reports whether a rendered config-field-type value is a
+// user-keyed map. The generator emits "{key: object}" with the braces
+// HTML-escaped (&#123; / &#125;); the raw form is accepted too in case the
+// escaping ever changes.
+func isUserKeyedMapType(t string) bool {
+	t = strings.TrimSpace(t)
+	return strings.HasPrefix(t, "{key:") || strings.HasPrefix(t, "&#123;key:")
 }
 
 // parentPath returns the dotted parent of a path ("" for a top-level key).

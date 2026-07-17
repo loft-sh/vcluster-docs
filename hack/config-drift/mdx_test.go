@@ -60,13 +60,79 @@ func TestWalk_FreeFormScalarMapNotFlagged(t *testing.T) {
 }
 
 func TestWalk_FreeFormMapPathGuard(t *testing.T) {
-	// plugins is in freeFormMapPaths: its documented child anchors make it
+	// plugins is typed "{key: object}": its documented child anchors make it
 	// look structured, but real configs key it by user-chosen plugin names.
-	// Without the guard, "my-plugin" would be flagged unknown (its parent has
-	// known children) and the fix drafter would "correct" valid config.
+	// Without the derived guard, "my-plugin" would be flagged unknown (its
+	// parent has known children) and the fix drafter would "correct" valid
+	// config.
 	findings := scanConfigContent(t, fence("plugins:\n  my-plugin:\n    image: ghcr.io/acme/plugin:1.0"))
 	if len(findings) != 0 {
 		t.Fatalf("user-defined keys under a free-form map path must not be flagged, got %+v", findings)
+	}
+}
+
+func TestWalk_DerivedFreeFormRegistryMirrors(t *testing.T) {
+	// registry.mirrors is a user-keyed map at depth: the keys are registry
+	// domains (docker.io), and must not be flagged even though mirrors has
+	// documented children in the partials.
+	findings := scanConfigContent(t, fence(
+		"controlPlane:\n  standalone:\n    joinNode:\n      containerd:\n        registry:\n          mirrors:\n            docker.io:\n              server: https://registry-1.docker.io"))
+	if len(findings) != 0 {
+		t.Fatalf("registry-domain keys under a derived user-keyed map must not be flagged, got %+v", findings)
+	}
+}
+
+func TestScanFile_TitledBlockForcedScan(t *testing.T) {
+	// A block titled vcluster.yaml is scanned even when no top-level key
+	// matches a current schema root: that is exactly what a block looks like
+	// after a release removes the root it documents. The same block without
+	// the title has no known root and stays skipped (it could be any YAML).
+	titled := "```yaml title=\"vcluster.yaml\"\nremovedRoot:\n  x: 1\n```\n"
+	untitled := "```yaml\nremovedRoot:\n  x: 1\n```\n"
+	findings := scanConfigContent(t, titled+untitled)
+	if len(findings) != 1 || findings[0].Path != "removedRoot" || findings[0].Kind != "unknown" {
+		t.Fatalf("titled block must flag the removed root, untitled stays skipped: %+v", findings)
+	}
+}
+
+func TestScanFile_TitledBlockUndocumentedRootStillSkipped(t *testing.T) {
+	// pro and plugin are valid in values.schema.json but absent from the
+	// generated partials; a title must not turn them into findings.
+	content := "```yaml title=\"vcluster.yaml\"\npro: true\nplugin:\n  my-plugin:\n    image: x\n```\n"
+	if findings := scanConfigContent(t, content); len(findings) != 0 {
+		t.Fatalf("undocumented roots must stay exempt in titled blocks, got %+v", findings)
+	}
+}
+
+func TestScanFile_InterpolatedCodeBlockScanned(t *testing.T) {
+	bt := "`"
+	content := "<InterpolatedCodeBlock\n  code={" + bt + "exportKubeConfig:\n  bogus: true" + bt + "}\n  language=\"yaml\"\n/>\n"
+	findings := scanConfigContent(t, content)
+	if len(findings) != 1 || findings[0].Path != "exportKubeConfig.bogus" {
+		t.Fatalf("yaml component must be validated like a fence, got %+v", findings)
+	}
+}
+
+func TestScanFile_InterpolatedPlainAttrString(t *testing.T) {
+	// code="..." is a plain JSX attribute: newlines stay literal, so the YAML
+	// inside must parse and validate like any fenced block.
+	content := "<InterpolatedCodeBlock\n  code=\"exportKubeConfig:\n  bogus: true\"\n  language=\"yaml\"\n/>\n"
+	findings := scanConfigContent(t, content)
+	if len(findings) != 1 || findings[0].Path != "exportKubeConfig.bogus" {
+		t.Fatalf("plain-attribute yaml component must be validated, got %+v", findings)
+	}
+}
+
+func TestScanFile_InterpolatedComponentRules(t *testing.T) {
+	bt := "`"
+	// Non-yaml components are ignored; a drift-ignore marker above the tag
+	// opts a yaml component out; a titled yaml component is force-scanned.
+	bash := "<InterpolatedCodeBlock code={'exportKubeConfig:\\n  bogus: true'} language=\"bash\" />\n"
+	marked := "{/* drift-ignore */}\n<InterpolatedCodeBlock code={'exportKubeConfig:\\n  bogus: true'} language=\"yaml\" />\n"
+	titled := "<InterpolatedCodeBlock code={" + bt + "removedRoot:\n  x: 1" + bt + "} language=\"yaml\" title=\"vcluster.yaml\" />\n"
+	findings := scanConfigContent(t, bash+marked+titled)
+	if len(findings) != 1 || findings[0].Path != "removedRoot" {
+		t.Fatalf("want only the titled component's removed root, got %+v", findings)
 	}
 }
 

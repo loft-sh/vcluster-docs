@@ -77,44 +77,70 @@ func ScanProse(docsRoot string, gt *CLIGroundTruth) ([]FlagFinding, error) {
 	return findings, nil
 }
 
-// scanFileForFlagDrift extracts fenced code blocks from a single file's content
-// and checks every vcluster invocation for unknown flags.
+// scanFileForFlagDrift extracts fenced code blocks and InterpolatedCodeBlock
+// components from a single file's content and checks every vcluster
+// invocation for unknown flags.
 func scanFileForFlagDrift(path, content string, gt *CLIGroundTruth) []FlagFinding {
 	var findings []FlagFinding
 	lines := strings.Split(content, "\n")
 
-	inFence := false
-	ignoreFence := false
-	for i := 0; i < len(lines); i++ {
-		if fencePattern.MatchString(lines[i]) {
-			inFence = !inFence
-			if inFence {
-				ignoreFence = i > 0 && strings.Contains(lines[i-1], driftIgnoreMarker)
-			} else {
-				ignoreFence = false
-			}
+	i := 0
+	for i < len(lines) {
+		if !fencePattern.MatchString(lines[i]) {
+			i++
 			continue
 		}
-		if !inFence || ignoreFence {
-			continue
+		ignored := i > 0 && strings.Contains(lines[i-1], driftIgnoreMarker)
+		// lines[i] is the opening fence at 0-indexed i, so block-relative line
+		// idx sits at 1-indexed file line i+2+idx.
+		fenceLine := i
+		var block []string
+		i++
+		for i < len(lines) && !fencePattern.MatchString(lines[i]) {
+			block = append(block, lines[i])
+			i++
 		}
+		i++ // consume closing fence
 
-		// Join backslash line-continuations so multi-line invocations parse as
-		// one logical command. Track the starting line for reporting.
-		startLine := i + 1
+		if ignored {
+			continue
+		}
+		for _, f := range checkCodeLines(block, func(idx int) int { return fenceLine + 2 + idx }, gt) {
+			f.File = path
+			findings = append(findings, f)
+		}
+	}
+
+	// Components carry their code as a JS string; exact per-line mapping is
+	// not possible in general, so findings anchor at the component tag line.
+	for _, b := range extractInterpolatedBlocks(content) {
+		if b.ignored {
+			continue
+		}
+		codeLines := strings.Split(b.code, "\n")
+		for _, f := range checkCodeLines(codeLines, func(int) int { return b.startLine }, gt) {
+			f.File = path
+			findings = append(findings, f)
+		}
+	}
+	return findings
+}
+
+// checkCodeLines runs flag validation over the lines of one code block,
+// joining backslash line-continuations so multi-line invocations parse as one
+// logical command. lineAt maps a block-relative line index to the file line
+// reported for findings on that line.
+func checkCodeLines(lines []string, lineAt func(int) int, gt *CLIGroundTruth) []FlagFinding {
+	var findings []FlagFinding
+	for i := 0; i < len(lines); i++ {
+		startIdx := i
 		logical := stripContinuation(lines[i])
 		for strings.HasSuffix(strings.TrimRight(lines[i], " \t"), "\\") && i+1 < len(lines) {
 			i++
-			if fencePattern.MatchString(lines[i]) {
-				inFence = !inFence
-				break
-			}
 			logical += " " + stripContinuation(lines[i])
 		}
-
 		for _, f := range checkLine(logical, gt) {
-			f.File = path
-			f.LineNumber = startLine
+			f.LineNumber = lineAt(startIdx)
 			findings = append(findings, f)
 		}
 	}
@@ -153,11 +179,15 @@ func checkLine(line string, gt *CLIGroundTruth) []FlagFinding {
 			run = append(run, tokens[j])
 		}
 
-		cmd, consumed := gt.resolveCommand(run)
+		cmd := gt.resolveCommand(run)
 		if cmd == nil {
 			continue // unresolved command path; flag drift is not decidable
 		}
-		for _, tok := range run[consumed:] {
+		// Validate every long flag in the run, wherever it sits: global flags
+		// may precede the subcommand (`vcluster --debug create x`), and each
+		// command's flag set already includes the inherited globals. Command
+		// path barewords yield no flag and fall through harmlessly.
+		for _, tok := range run[1:] {
 			// A bare "--" ends vcluster's own flags; everything after it is the
 			// command vcluster execs (e.g. `vcluster connect x -- kubectl ...`),
 			// whose flags are not ours to validate.

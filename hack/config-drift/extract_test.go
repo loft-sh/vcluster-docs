@@ -39,13 +39,31 @@ const syncPartial = `
 ##### ` + "`labels`" + ` ... {#sync-toHost-pods-labels}
 `
 
-// pluginsPartial models a freeFormMapPaths root: the partial documents child
-// anchors (so the parent looks structured), but real configs key it by
-// user-chosen plugin names.
+// pluginsPartial models a user-keyed map root: the generator emits the
+// "{key: object}" type span (HTML-escaped) and documents the value struct's
+// fields as child anchors, but real configs key it by user-chosen names.
 const pluginsPartial = `
-## ` + "`plugins`" + ` ... {#plugins}
+## ` + "`plugins`" + ` <span className="config-field-type">&#123;key: object&#125;</span> ... {#plugins}
 
 ### ` + "`image`" + ` ... {#plugins-image}
+`
+
+// registryPartial models a deeply nested user-keyed map (registry mirrors are
+// keyed by registry domain, e.g. docker.io).
+const registryPartial = `
+## ` + "`controlPlane`" + ` ... {#controlPlane}
+
+### ` + "`standalone`" + ` ... {#controlPlane-standalone}
+
+#### ` + "`joinNode`" + ` ... {#controlPlane-standalone-joinNode}
+
+##### ` + "`containerd`" + ` ... {#controlPlane-standalone-joinNode-containerd}
+
+###### ` + "`registry`" + ` ... {#controlPlane-standalone-joinNode-containerd-registry}
+
+###### ` + "`mirrors`" + ` <span className="config-field-type">&#123;key: object&#125;</span> ... {#controlPlane-standalone-joinNode-containerd-registry-mirrors}
+
+###### ` + "`server`" + ` <span className="config-field-type">string</span> ... {#controlPlane-standalone-joinNode-containerd-registry-mirrors-server}
 `
 
 func writeConfigDir(t *testing.T) string {
@@ -55,6 +73,7 @@ func writeConfigDir(t *testing.T) string {
 		"exportKubeConfig.mdx": exportPartial,
 		"sync.mdx":             syncPartial,
 		"plugins.mdx":          pluginsPartial,
+		"controlPlane.mdx":     registryPartial,
 	} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0644); err != nil {
 			t.Fatal(err)
@@ -102,5 +121,15 @@ func TestParseConfigPartials(t *testing.T) {
 	}
 	if !gt.hasChild[""] {
 		t.Error("root must have known children")
+	}
+
+	// freeFormMap is derived from the "{key: object}" type span, at any depth.
+	for _, p := range []string{"plugins", "controlPlane.standalone.joinNode.containerd.registry.mirrors"} {
+		if !gt.freeFormMap[p] {
+			t.Errorf("expected %q to be derived as a user-keyed map", p)
+		}
+	}
+	if gt.freeFormMap["sync.toHost.pods.labels"] || gt.freeFormMap["exportKubeConfig"] {
+		t.Errorf("non-map fields must not be user-keyed maps: %v", gt.freeFormMap)
 	}
 }

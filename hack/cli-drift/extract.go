@@ -93,35 +93,46 @@ func ParseCLIDocs(dir string) (*CLIGroundTruth, error) {
 }
 
 // resolveCommand takes the token run of a "vcluster ..." invocation (tokens[0]
-// is "vcluster") and returns the Command matched by the longest run of leading
-// bareword tokens whose underscore-join is a known stem. It also returns the
-// number of tokens consumed by the command path, so the caller can scan the
-// remaining tokens for flags. Returns nil if no stem matched.
-func (gt *CLIGroundTruth) resolveCommand(tokens []string) (*Command, int) {
-	var best *Command
-	bestConsumed := 0
-
-	cur := ""
-	for i, tok := range tokens {
-		// A command path is an unbroken run of barewords; stop at the first
-		// flag or non-bareword token.
-		if strings.HasPrefix(tok, "-") {
-			break
-		}
-		if i == 0 {
-			cur = tok
-		} else {
-			cur = cur + "_" + tok
-		}
-		if !gt.stemPrefix[cur] {
-			break
-		}
-		if cmd, ok := gt.byStem[cur]; ok {
-			best = cmd
-			bestConsumed = i + 1
-		}
+// is "vcluster") and returns the Command matched by the longest token sequence
+// whose underscore-join is a known stem. Global flags may interleave before
+// the subcommand (`vcluster -n test certs check`), so flag tokens are skipped
+// during resolution; a bareword directly after a valueless flag is treated as
+// that flag's value UNLESS appending it extends a known command path, in which
+// case the command interpretation wins. Returns nil if no stem matched.
+func (gt *CLIGroundTruth) resolveCommand(tokens []string) *Command {
+	if len(tokens) == 0 {
+		return nil
 	}
-	return best, bestConsumed
+	cur := tokens[0]
+	if !gt.stemPrefix[cur] {
+		return nil
+	}
+	best := gt.byStem[cur]
+
+	pendingFlagValue := false
+	for _, tok := range tokens[1:] {
+		if tok == "--" {
+			break // everything after is the exec'd command, not ours
+		}
+		if strings.HasPrefix(tok, "-") {
+			pendingFlagValue = !strings.Contains(tok, "=")
+			continue
+		}
+		if next := cur + "_" + tok; gt.stemPrefix[next] {
+			cur = next
+			pendingFlagValue = false
+			if cmd, ok := gt.byStem[cur]; ok {
+				best = cmd
+			}
+			continue
+		}
+		if pendingFlagValue {
+			pendingFlagValue = false
+			continue
+		}
+		break // positional argument; the command path ended before it
+	}
+	return best
 }
 
 // CommandDrift diffs the set of command files present at oldRef against the set
@@ -209,7 +220,7 @@ func grepInvocation(docsRoot, invocation string) ([]CommandFinding, error) {
 			return nil
 		}
 		lines := strings.Split(string(data), "\n")
-		inFence, ignoreFence := false, false
+		inFence, ignoreFence, skipComponent := false, false, false
 		for i, line := range lines {
 			// Honor the drift-ignore marker for fenced blocks, same as the flag
 			// scan: a marked fence deliberately shows a removed command.
@@ -223,6 +234,19 @@ func grepInvocation(docsRoot, invocation string) ([]CommandFinding, error) {
 				continue
 			}
 			if inFence && ignoreFence {
+				continue
+			}
+			// Same convention for InterpolatedCodeBlock components: a marker on
+			// the line above the tag suppresses matches through the tag's end.
+			// (An unmarked component stays greppable — a contiguous invocation
+			// in its code string is a real finding.)
+			if strings.Contains(line, interpolatedTag) && i > 0 && strings.Contains(lines[i-1], driftIgnoreMarker) {
+				skipComponent = true
+			}
+			if skipComponent {
+				if strings.Contains(line, "/>") {
+					skipComponent = false
+				}
 				continue
 			}
 			if pat.MatchString(line) {

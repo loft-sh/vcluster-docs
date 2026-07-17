@@ -27,17 +27,12 @@ var fenceClose = regexp.MustCompile("^\\s*```\\s*$")
 // not re-flag them and prompt the fix drafter to "correct" intentional docs.
 const driftIgnoreMarker = "drift-ignore"
 
-// freeFormMapPaths are known schema paths that are Go map[string]struct fields.
-// The generator enumerates the value struct's fields directly beneath the path
-// (so the path "has known children"), but the real key level is user-defined,
-// so the user's keys must not be flagged as unknown. Descent stops at these.
-var freeFormMapPaths = map[string]bool{
-	"sync.toHost.customResources":        true,
-	"sync.fromHost.customResources":      true,
-	"experimental.proxy.customResources": true,
-	"plugins":                            true,
-	"plugin":                             true,
-}
+// forcedTitlePattern marks a fence or component whose title names the file as
+// vcluster.yaml. Such a block is scanned even when none of its top-level keys
+// match a current schema root: that is exactly the shape a block takes when a
+// release REMOVES the root it documents, and skipping it would make removed
+// top-level fields undetectable.
+var forcedTitlePattern = regexp.MustCompile(`title=["']vcluster\.ya?ml["']`)
 
 // undocumentedRoots are top-level keys that exist in the product's
 // values.schema.json but are deliberately absent from the generated config
@@ -47,6 +42,9 @@ var undocumentedRoots = map[string]bool{
 	"pro":         true,
 	"global":      true,
 	"serviceCIDR": true,
+	// Legacy single-plugin syntax: still accepted by the product for
+	// backwards compatibility, but absent from the generated partials.
+	"plugin": true,
 }
 
 // ScanProse walks docsRoot for prose files, extracts ```yaml blocks that look
@@ -95,18 +93,21 @@ func ScanProse(docsRoot string, gt *ConfigGroundTruth) ([]Finding, error) {
 	return findings, nil
 }
 
-// scanFile extracts ```yaml blocks from one file and validates each.
+// scanFile extracts ```yaml blocks and InterpolatedCodeBlock components from
+// one file and validates each.
 func scanFile(path, content string, gt *ConfigGroundTruth) []Finding {
 	var findings []Finding
 	lines := strings.Split(content, "\n")
 
 	i := 0
 	for i < len(lines) {
-		if !yamlFenceOpen.MatchString(lines[i]) {
+		m := yamlFenceOpen.FindStringSubmatch(lines[i])
+		if m == nil {
 			i++
 			continue
 		}
 		ignored := i > 0 && strings.Contains(lines[i-1], driftIgnoreMarker)
+		forced := forcedTitlePattern.MatchString(m[1])
 		// lines[i] is the opening fence (0-indexed i, 1-indexed i+1), so the
 		// first content line is 1-indexed i+2. yaml.Node.Line is 1-indexed
 		// within the block, so a key's file line is blockStart + node.Line - 1.
@@ -122,14 +123,24 @@ func scanFile(path, content string, gt *ConfigGroundTruth) []Finding {
 		if ignored {
 			continue
 		}
-		findings = append(findings, validateBlock(path, blockStart, strings.Join(block, "\n"), gt)...)
+		findings = append(findings, validateBlock(path, blockStart, strings.Join(block, "\n"), gt, forced)...)
+	}
+
+	for _, b := range extractInterpolatedBlocks(content) {
+		if b.ignored || (b.language != "yaml" && b.language != "yml") {
+			continue
+		}
+		forced := strings.Contains(b.title, "vcluster.yaml") || strings.Contains(b.title, "vcluster.yml")
+		findings = append(findings, validateBlock(path, b.startLine, b.code, gt, forced)...)
 	}
 	return findings
 }
 
 // validateBlock parses a single YAML block (possibly multiple documents) and
-// walks every document that looks like vcluster.yaml.
-func validateBlock(path string, blockStartLine int, block string, gt *ConfigGroundTruth) []Finding {
+// walks every document that looks like vcluster.yaml. A forced block (titled
+// vcluster.yaml) is walked even when no top-level key matches a current root,
+// so a root the release removed is still reported.
+func validateBlock(path string, blockStartLine int, block string, gt *ConfigGroundTruth, forced bool) []Finding {
 	var findings []Finding
 
 	dec := yaml.NewDecoder(bytes.NewReader([]byte(block)))
@@ -144,7 +155,7 @@ func validateBlock(path string, blockStartLine int, block string, gt *ConfigGrou
 		if root == nil {
 			continue
 		}
-		if !looksLikeVClusterYAML(root, gt) {
+		if !forced && !looksLikeVClusterYAML(root, gt) {
 			continue
 		}
 		walk(path, blockStartLine, root, "", gt, &findings)
@@ -205,7 +216,7 @@ func walk(file string, blockStart int, m *yaml.Node, prefix string, gt *ConfigGr
 					Path: path, Kind: "deprecated", Detail: note,
 				})
 			}
-			if freeFormMapPaths[path] {
+			if gt.freeFormMap[path] {
 				continue // user-defined keys below; schema stops here
 			}
 			recurse(file, blockStart, valNode, path, gt, out)
