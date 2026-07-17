@@ -91,6 +91,17 @@ func TestScanProse_IgnoresCommentLines(t *testing.T) {
 	}
 }
 
+func TestScanProse_DriftIgnoreMarkerSkipsFence(t *testing.T) {
+	gt := testGroundTruth(t)
+	// The first fence is marked (a deliberate legacy example); the second is
+	// not and must still be scanned.
+	content := "{/* drift-ignore */}\n```bash\nvcluster connect x --bogus-flag\n```\n\n```bash\nvcluster connect x --also-bogus\n```\n"
+	findings := scanContent(t, gt, content)
+	if len(findings) != 1 || findings[0].Flag != "--also-bogus" {
+		t.Fatalf("marked fence must be skipped, unmarked scanned: %+v", findings)
+	}
+}
+
 func TestParseLongFlag(t *testing.T) {
 	cases := map[string]string{
 		"--print":                "print",

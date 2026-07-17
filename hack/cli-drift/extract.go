@@ -203,9 +203,28 @@ func grepInvocation(docsRoot, invocation string) ([]CommandFinding, error) {
 		}
 		data, err := os.ReadFile(path)
 		if err != nil {
+			// Skipping silently would mask drift that lives only in this file;
+			// make the skip visible without failing the scan.
+			fmt.Fprintf(os.Stderr, "WARN: skipping %s: %v\n", path, err)
 			return nil
 		}
-		for i, line := range strings.Split(string(data), "\n") {
+		lines := strings.Split(string(data), "\n")
+		inFence, ignoreFence := false, false
+		for i, line := range lines {
+			// Honor the drift-ignore marker for fenced blocks, same as the flag
+			// scan: a marked fence deliberately shows a removed command.
+			if fencePattern.MatchString(line) {
+				inFence = !inFence
+				if inFence {
+					ignoreFence = i > 0 && strings.Contains(lines[i-1], driftIgnoreMarker)
+				} else {
+					ignoreFence = false
+				}
+				continue
+			}
+			if inFence && ignoreFence {
+				continue
+			}
 			if pat.MatchString(line) {
 				findings = append(findings, CommandFinding{
 					File:       path,

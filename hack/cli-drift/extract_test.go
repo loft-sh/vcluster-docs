@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 )
@@ -112,6 +113,96 @@ func TestResolveCommand_LongestMatch(t *testing.T) {
 				t.Errorf("consumed = %d, want %d", n, tc.wantN)
 			}
 		})
+	}
+}
+
+func TestGrepInvocation_DriftIgnoreMarkerSkipsFence(t *testing.T) {
+	docs := t.TempDir()
+	// The marked fence deliberately shows the removed command; only the
+	// unmarked prose mention on the last line may match.
+	content := "{/* drift-ignore */}\n```bash\nvcluster convert config < old.yaml\n```\n\nRun vcluster convert to migrate.\n"
+	if err := os.WriteFile(filepath.Join(docs, "page.mdx"), []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	hits, err := grepInvocation(docs, "vcluster convert")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) != 1 || hits[0].LineNumber != 6 {
+		t.Fatalf("marked fence must be skipped, prose mention kept: %+v", hits)
+	}
+}
+
+// TestCommandDrift_EndToEnd exercises the full removed-command path: a git
+// history where a command file existed at the old ref but is gone on disk,
+// and a prose doc still referencing the dead invocation.
+func TestCommandDrift_EndToEnd(t *testing.T) {
+	repo := t.TempDir()
+	git := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repo
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+
+	cliDir := filepath.Join(repo, "cli")
+	if err := os.MkdirAll(cliDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	files := map[string]string{
+		"vcluster_connect.md": connectDoc,
+		"vcluster_convert.md": "## Flags\n```\n  --distro string  the distro\n```\n",
+	}
+	for name, body := range files {
+		if err := os.WriteFile(filepath.Join(cliDir, name), []byte(body), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	git("init", "-q")
+	git("add", ".")
+	git("-c", "user.email=test@test", "-c", "user.name=test", "commit", "-q", "-m", "old command set")
+
+	// The release removed `vcluster convert`: its file vanishes from disk but
+	// remains at HEAD (the old ref).
+	if err := os.Remove(filepath.Join(cliDir, "vcluster_convert.md")); err != nil {
+		t.Fatal(err)
+	}
+	docsDir := filepath.Join(repo, "docs")
+	if err := os.MkdirAll(docsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	prose := "Run vcluster convert config to migrate.\nvcluster connect is fine.\n"
+	if err := os.WriteFile(filepath.Join(docsDir, "page.mdx"), []byte(prose), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	gt, err := ParseCLIDocs(cliDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// gitFileStems runs git in the working directory; run the test from the
+	// temp repo so relative paths resolve there.
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(repo); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldWD) })
+
+	findings, err := CommandDrift("cli", "HEAD", "docs", gt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(findings) != 1 {
+		t.Fatalf("got %d findings, want 1: %+v", len(findings), findings)
+	}
+	if findings[0].Command != "vcluster convert" || findings[0].LineNumber != 1 {
+		t.Errorf("unexpected finding: %+v", findings[0])
 	}
 }
 

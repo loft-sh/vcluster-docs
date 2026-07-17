@@ -509,6 +509,31 @@ This content won't be checked by Vale.
 {/* vale on */}
 ```
 
+### Suppressing the release drift check
+
+On every vCluster release, `hack/cli-drift` and `hack/config-drift` compare
+prose code blocks against the regenerated CLI reference and `vcluster.yaml`
+schema partials, and drift findings open an automated fix PR.
+
+Some pages show outdated config or removed commands on purpose: migration
+guides, before/after comparisons, changelog examples. Opt such a block out by
+placing a `drift-ignore` comment on the line directly above the opening fence:
+
+````text
+{/* drift-ignore */}
+```yaml
+# deliberately shows the pre-0.24 syntax
+exportKubeConfig:
+  secret:
+    name: my-secret
+```
+````
+
+In `.md` files use `<!-- drift-ignore -->` instead. The marker applies only to
+the single fenced block below it. Both scanners honor it, for YAML blocks and
+for CLI examples alike. Do not use it to silence a finding on current-state
+docs; fix the drift instead.
+
 <!-- vale on -->
 
 ## Adding prose to generated partials

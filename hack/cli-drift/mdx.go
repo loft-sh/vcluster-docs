@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -12,6 +13,13 @@ import (
 // info string (language) is ignored; any fenced block may hold a shell
 // invocation.
 var fencePattern = regexp.MustCompile("^\\s*```")
+
+// driftIgnoreMarker opts a fence out of scanning when it appears on the line
+// directly above the opening fence, e.g. {/* drift-ignore */} in MDX or
+// <!-- drift-ignore --> in plain Markdown. Deliberate examples of removed
+// flags or commands (migration guides, before/after comparisons) use it.
+// Same convention as config-drift; both flag drift and command drift honor it.
+const driftIgnoreMarker = "drift-ignore"
 
 // promptPattern strips a leading shell prompt ("$ " or "> ") from a code line.
 var promptPattern = regexp.MustCompile(`^\s*[$>]\s+`)
@@ -45,6 +53,9 @@ func ScanProse(docsRoot string, gt *CLIGroundTruth) ([]FlagFinding, error) {
 		}
 		data, err := os.ReadFile(path)
 		if err != nil {
+			// Skipping silently would mask drift that lives only in this file;
+			// make the skip visible without failing the scan.
+			fmt.Fprintf(os.Stderr, "WARN: skipping %s: %v\n", path, err)
 			return nil
 		}
 		findings = append(findings, scanFileForFlagDrift(path, string(data), gt)...)
@@ -73,12 +84,18 @@ func scanFileForFlagDrift(path, content string, gt *CLIGroundTruth) []FlagFindin
 	lines := strings.Split(content, "\n")
 
 	inFence := false
+	ignoreFence := false
 	for i := 0; i < len(lines); i++ {
 		if fencePattern.MatchString(lines[i]) {
 			inFence = !inFence
+			if inFence {
+				ignoreFence = i > 0 && strings.Contains(lines[i-1], driftIgnoreMarker)
+			} else {
+				ignoreFence = false
+			}
 			continue
 		}
-		if !inFence {
+		if !inFence || ignoreFence {
 			continue
 		}
 

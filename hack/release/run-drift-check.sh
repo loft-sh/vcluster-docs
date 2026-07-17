@@ -22,10 +22,16 @@
 #   REPO_ROOT      (optional) docs repo root. Default $PWD.
 #   DRY_RUN        (optional) "true" prints the resolved tool command and exits
 #                  without building or running it. Used by the bats suite.
+#   TOOL_BIN       (optional) path to a pre-built tool binary; skips the
+#                  go build. Test seam for the bats runtime-contract cases.
 #
 # Outputs (key=value on stdout, also appended to $GITHUB_OUTPUT when set):
 #   drift_detected  true | false
 #   report_path     path to the JSON report when drift was detected, else ""
+#
+# Degraded paths (build failure, tool error) emit drift_detected=false plus a
+# ::warning:: and a $GITHUB_STEP_SUMMARY line, so a persistently broken check
+# is visible on the run summary instead of silently reporting "no drift".
 #
 # Exit codes: 0 always, except a missing required env var (non-zero).
 
@@ -48,6 +54,15 @@ emit() {
 emit_none() {
     emit drift_detected false
     emit report_path ""
+}
+
+# warn_degraded surfaces a degraded check (drift NOT verified) in both the
+# step log and the run summary; the job itself stays green by design.
+warn_degraded() {
+    echo "::warning::run-drift-check: $1"
+    if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
+        printf 'run-drift-check: drift NOT checked: %s\n\n' "$1" >>"$GITHUB_STEP_SUMMARY"
+    fi
 }
 
 case "$EVENT_TYPE" in
@@ -83,11 +98,15 @@ fi
 cd "$REPO_ROOT"
 mkdir -p "$REPORT_DIR"
 
-bin="$(mktemp -d)/${tool}"
-if ! go build -C "hack/${tool}" -o "$bin" .; then
-    echo "::warning::run-drift-check: could not build ${tool}; skipping drift check"
-    emit_none
-    exit 0
+if [[ -n "${TOOL_BIN:-}" ]]; then
+    bin="$TOOL_BIN"
+else
+    bin="$(mktemp -d)/${tool}"
+    if ! go build -C "hack/${tool}" -o "$bin" .; then
+        warn_degraded "could not build ${tool}; skipping drift check"
+        emit_none
+        exit 0
+    fi
 fi
 
 set +e
@@ -106,7 +125,7 @@ case "$code" in
         emit report_path "${report}"
         ;;
     *)
-        echo "::warning::${tool} exited ${code}; treating as no drift to stay non-blocking"
+        warn_degraded "${tool} exited ${code}; treating as no drift to stay non-blocking"
         emit_none
         ;;
 esac

@@ -7,7 +7,18 @@ setup() {
     SCRIPT="${BATS_TEST_DIRNAME}/run-drift-check.sh"
     export DRY_RUN=true
     export GITHUB_OUTPUT="${BATS_TEST_TMPDIR}/gh_output"
+    export GITHUB_STEP_SUMMARY="${BATS_TEST_TMPDIR}/gh_summary"
     : >"$GITHUB_OUTPUT"
+    : >"$GITHUB_STEP_SUMMARY"
+}
+
+# make_stub writes a fake drift tool that exits with the given code, for
+# exercising the wrapper's exit-code → output dispatch without a Go build.
+make_stub() {
+    local stub="${BATS_TEST_TMPDIR}/stub-tool"
+    printf '#!/bin/sh\nexit %s\n' "$1" >"$stub"
+    chmod +x "$stub"
+    echo "$stub"
 }
 
 @test "vcluster-cli-released → cli-drift against \${TARGET_FOLDER}/cli with old-ref" {
@@ -63,6 +74,63 @@ setup() {
         run "$SCRIPT"
     [ "$status" -eq 0 ]
     grep -q "drift_detected=false" "$GITHUB_OUTPUT"
+}
+
+@test "tool exit 0 → drift_detected=false, empty report_path, job green" {
+    stub=$(make_stub 0)
+    DRY_RUN=false TOOL_BIN="$stub" \
+        EVENT_TYPE=vcluster-released \
+        TARGET_FOLDER=vcluster \
+        REPO_ROOT="$BATS_TEST_TMPDIR" \
+        REPORT_DIR="${BATS_TEST_TMPDIR}/reports" \
+        run "$SCRIPT"
+    [ "$status" -eq 0 ]
+    grep -q "^drift_detected=false$" "$GITHUB_OUTPUT"
+    grep -q "^report_path=$" "$GITHUB_OUTPUT"
+}
+
+@test "tool exit 1 → drift_detected=true with report_path, job green" {
+    stub=$(make_stub 1)
+    DRY_RUN=false TOOL_BIN="$stub" \
+        EVENT_TYPE=vcluster-released \
+        TARGET_FOLDER=vcluster \
+        REPO_ROOT="$BATS_TEST_TMPDIR" \
+        REPORT_DIR="${BATS_TEST_TMPDIR}/reports" \
+        run "$SCRIPT"
+    [ "$status" -eq 0 ]
+    grep -q "^drift_detected=true$" "$GITHUB_OUTPUT"
+    grep -q "^report_path=${BATS_TEST_TMPDIR}/reports/config-drift.json$" "$GITHUB_OUTPUT"
+}
+
+@test "tool exit ≥2 degrades to no drift with warning and summary, job green" {
+    stub=$(make_stub 3)
+    DRY_RUN=false TOOL_BIN="$stub" \
+        EVENT_TYPE=vcluster-cli-released \
+        TARGET_FOLDER=vcluster \
+        REPO_ROOT="$BATS_TEST_TMPDIR" \
+        REPORT_DIR="${BATS_TEST_TMPDIR}/reports" \
+        run "$SCRIPT"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"::warning::"* ]]
+    [[ "$output" == *"exited 3"* ]]
+    grep -q "^drift_detected=false$" "$GITHUB_OUTPUT"
+    grep -q "drift NOT checked" "$GITHUB_STEP_SUMMARY"
+}
+
+@test "build failure degrades to no drift with warning and summary, job green" {
+    # REPO_ROOT is an empty dir: hack/<tool> does not exist, so the go build
+    # fails (also covers "go not installed" — both must degrade, not fail).
+    DRY_RUN=false \
+        EVENT_TYPE=vcluster-released \
+        TARGET_FOLDER=vcluster \
+        REPO_ROOT="$BATS_TEST_TMPDIR" \
+        REPORT_DIR="${BATS_TEST_TMPDIR}/reports" \
+        run "$SCRIPT"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"::warning::"* ]]
+    [[ "$output" == *"could not build"* ]]
+    grep -q "^drift_detected=false$" "$GITHUB_OUTPUT"
+    grep -q "drift NOT checked" "$GITHUB_STEP_SUMMARY"
 }
 
 @test "missing EVENT_TYPE → non-zero (wiring bug)" {

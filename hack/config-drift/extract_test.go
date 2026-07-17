@@ -39,12 +39,22 @@ const syncPartial = `
 ##### ` + "`labels`" + ` ... {#sync-toHost-pods-labels}
 `
 
+// pluginsPartial models a freeFormMapPaths root: the partial documents child
+// anchors (so the parent looks structured), but real configs key it by
+// user-chosen plugin names.
+const pluginsPartial = `
+## ` + "`plugins`" + ` ... {#plugins}
+
+### ` + "`image`" + ` ... {#plugins-image}
+`
+
 func writeConfigDir(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	for name, body := range map[string]string{
 		"exportKubeConfig.mdx": exportPartial,
 		"sync.mdx":             syncPartial,
+		"plugins.mdx":          pluginsPartial,
 	} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0644); err != nil {
 			t.Fatal(err)

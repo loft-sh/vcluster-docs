@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -70,6 +71,9 @@ func ScanProse(docsRoot string, gt *ConfigGroundTruth) ([]Finding, error) {
 		}
 		data, err := os.ReadFile(path)
 		if err != nil {
+			// Skipping silently would mask drift that lives only in this file;
+			// make the skip visible without failing the scan.
+			fmt.Fprintf(os.Stderr, "WARN: skipping %s: %v\n", path, err)
 			return nil
 		}
 		findings = append(findings, scanFile(path, string(data), gt)...)

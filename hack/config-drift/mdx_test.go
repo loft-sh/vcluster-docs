@@ -59,6 +59,17 @@ func TestWalk_FreeFormScalarMapNotFlagged(t *testing.T) {
 	}
 }
 
+func TestWalk_FreeFormMapPathGuard(t *testing.T) {
+	// plugins is in freeFormMapPaths: its documented child anchors make it
+	// look structured, but real configs key it by user-chosen plugin names.
+	// Without the guard, "my-plugin" would be flagged unknown (its parent has
+	// known children) and the fix drafter would "correct" valid config.
+	findings := scanConfigContent(t, fence("plugins:\n  my-plugin:\n    image: ghcr.io/acme/plugin:1.0"))
+	if len(findings) != 0 {
+		t.Fatalf("user-defined keys under a free-form map path must not be flagged, got %+v", findings)
+	}
+}
+
 func TestWalk_StopsDescendingPastUnknown(t *testing.T) {
 	// One unknown parent should yield exactly one finding, not one per child.
 	findings := scanConfigContent(t, fence("exportKubeConfig:\n  bogus:\n    child1: a\n    child2: b"))
