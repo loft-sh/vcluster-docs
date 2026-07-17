@@ -10,9 +10,8 @@ import Tabs from "@theme/Tabs";
 import TabItem from "@theme/TabItem";
 import ConfigureAuditLevelsUI from "../../_partials/guides/configure-audit-levels-ui.mdx";
 import ConfigureAuditLevelsHelm from "../../_partials/guides/configure-audit-levels-helm.mdx";
-import PolicyConfiguration from "../../api/_partials/resources/config/status/audit/policy.mdx";
-import AuditConfiguration from "../../api/_partials/resources/config/status/audit.mdx";
 import FeatureTable from '@site/src/components/FeatureTable';
+import GlossaryTerm from '@site/src/components/GlossaryTerm';
 
 <FeatureTable names="audit-logging" />
 
@@ -23,36 +22,11 @@ Audit logging in the platform provides a security-relevant, chronological set of
 
 The platform can log activities related to:
 
-- Management instance changes, such as creation of new tenant clusters, spaces, etc.
-- Changes within a tenant cluster or space
+- Management instance changes, such as creation of new tenant clusters, spaces, and so on.
+- Changes within a <GlossaryTerm term="tenant-cluster">tenant cluster</GlossaryTerm> or space
 - Changes within a connected cluster
 
 Auditing in the platform is similar to [auditing Kubernetes clusters](https://kubernetes.io/docs/tasks/debug-application-cluster/audit/) in general.
-
-## Enable auditing
-
-:::info Two separate audit fields
-`values.yaml` has two distinct `audit` fields with different purposes:
-
-- **`audit`** (top-level Helm value) — configures audit log recording and persistence for the platform pod. This is a Helm-only setting. Changes require a Helm upgrade and a platform restart.
-- **`config.audit`** (under the `config` section) — controls audit policy and enables the Audit Log UI. This can be set in **Admin > Config** in the UI or under `config` in `values.yaml`.
-
-`audit.enabled: true` must be set at the top level first. Without it, no audit events are recorded regardless of `config.audit` settings.
-:::
-
-Configure auditing through the platform config in the platform UI (**Admin > Config**). Content added in the UI goes automatically under the `config` section of `values.yaml`.
-
-An example configuration could look like:
-
-```yaml title="Example audit configuration in platform UI"
-audit:
-  enabled: true
-  level: 1
-```
-
-:::warning
-Changing `config.audit` settings requires a platform restart to take effect. Restart through **Admin > Config** in the UI or with `kubectl rollout restart deploy/loft -n loft`.
-:::
 
 Each request on each stage of its execution generates an audit event, which is then pre-processed according to a certain policy and written to a backend (currently only log backends are supported). The policy determines what's recorded and the backends persist the records.
 
@@ -62,22 +36,43 @@ Each request can be recorded with an associated stage. The defined stages are:
 - `ResponseComplete`: The response body has been completed and no more bytes are sent.
 - `Panic`: Events generated when a panic occurred.
 
-:::info
 The audit logging feature increases the memory consumption of the platform because some context required for auditing is stored for each request. Memory consumption depends on the audit logging configuration.
+
+## Enable auditing
+
+:::info Two separate audit fields
+`values.yaml` has two distinct `audit` fields with different purposes:
+
+- **`audit`** (top-level Helm value) — configures the audit sidecar and log persistence (PVC) for the platform pod. This is a Helm-only setting. Changes require a Helm upgrade and a platform restart.
+- **`config.audit`** (under the `config` section) — controls audit recording and policy, and enables the Audit Log UI. This can be set in **Platform > Platform Config > Config** in the UI or under `config` in `values.yaml`. `config.audit.enabled` defaults to `true`, so audit events are recorded without any additional configuration.
+
+Changes to `config.audit` made through the UI take effect automatically within about 10-15 seconds, no restart required. Changing `config.audit` through a Helm upgrade also restarts the platform pod, since the chart stamps the pod template with a config hash. The setting itself still takes effect through the same hot-reload mechanism either way.
 :::
+
+Configure auditing through the platform config in the platform UI (**Platform > Platform Config > Config**). Content added in the UI goes automatically under the `config` section of `values.yaml`.
+
+An example configuration could look like:
+
+```yaml title="Example audit configuration in platform UI"
+audit:
+  enabled: true
+  level: 1
+```
+
+See the [complete list of fields](../../api/resources/config.mdx#status-audit) under the `config.audit` section of `values.yaml`.
 
 ## Audit levels
 
 The platform provides audit levels, which are preconfigured audit policies for the most common use cases. These levels range from 1 to 4 where 1 logs the fewest requests, while 4 logs the most:
 
-- **Level 1**: Logs modifying requests such as creation / modification or deletion of any objects
-- **Level 2**: Like Level 1 but also logs the metadata of reading requests, such as listing pods inside a tenant cluster or space. It won't log the response or request payload and instead only the metadata such as request origin, target, etc.
-- **Level 3**: Like Level 2 but instead of only logging the request metadata also logs the complete request payload sent to the platform
-- **Level 4**: Like Level 3 but instead of only logging metadata and request payload, also logs the response the platform has sent to the requester
+- **Level 1**: Logs modifying requests such as creation, modification, or deletion of any objects. Creation requests also log the request payload.
+- **Level 2**: Like Level 1 but also logs the metadata of reading requests, such as listing pods inside a tenant cluster or space. Reading requests won't log the response or request payload and instead only the metadata, such as request origin and target.
+- **Level 3**: Like Level 2 but instead of only logging the request metadata, also logs the complete request payload sent to the platform.
+- **Level 4**: Like Level 3 but instead of only logging metadata and request payload, also logs the response the platform has sent to the requester.
 
-:::info
-For all of these levels certain internal read-only APIs are not logged since those might pollute the log and drastically increase log size. To log these, create a custom audit policy as described below.
-:::
+Captured payloads are normalized to JSON and size-limited before storage. Unconvertible or oversized payloads are omitted with an annotation. See [Request and response payload storage](#request-and-response-payload-storage).
+
+For all of these levels, certain internal read-only APIs aren't logged since those might pollute the log and drastically increase log size. To log these, create a custom audit policy as described below.
 
 Configure the audit level through the platform config, which can be modified either through the platform UI or Helm:
 
@@ -96,18 +91,47 @@ Configure the audit level through the platform config, which can be modified eit
   </TabItem>
 </Tabs>
 
-## Optional: Audit policy
+## Request and response payload storage
 
-:::warning
-It is recommended to use audit levels instead of audit policy directly, because a policy is much more complex to define.
-:::
+Audit levels and custom policies both determine payload storage through one of four granularity settings. `Request` stores the request payload. `RequestResponse` also stores the response payload. See [Audit policy](#audit-policy) for the full list.
 
-As an alternative to audit levels, policy allows you to define exact rules about what events should be recorded and what data they should include. When an event is processed, it's compared against the list of rules in order. The first matching rule sets the audit granularity of the event. The defined audit granularity options are:
+The platform stores payloads for resource requests only. Long-running requests, such as log streaming, never store payloads. Creates of sensitive resources, such as shared secrets and access keys, keep metadata-only events on every level.
+
+The platform always stores payloads as JSON:
+
+- Payloads that arrive as plain JSON are stored unchanged.
+- Gzip-compressed request and response bodies are stored in their decompressed form.
+- Payloads sent in the Kubernetes Protobuf format are converted to their JSON equivalent for known Kubernetes API types. The stored payload matches what a JSON client would have sent.
+
+### Payload size limit
+
+The platform captures at most 2 MiB per request or response payload. It doesn't store payloads above this limit.
+
+### Omitted payloads
+
+When the platform can't store a payload, it keeps the audit event with all of its metadata but leaves out the payload. The event then carries an annotation that names the omission reason:
+
+- `audit.platform.vcluster.com/request-object-omitted` for the request payload
+- `audit.platform.vcluster.com/response-object-omitted` for the response payload
+
+The following reasons can appear as annotation values:
+
+| Reason | Description |
+|--------|-------------|
+| `truncated` | The payload exceeded the capture limit, so the platform captured only a partial copy. |
+| `too-large` | The payload exceeded the capture limit after decompression or conversion to JSON. |
+| `decode-failed` | The platform couldn't decompress or decode the payload. |
+| `unsupported-encoding` | The payload used a content encoding or media type that the platform can't convert to JSON. |
+| `invalid-json` | The payload wasn't valid JSON and not in any recognized format. |
+
+## Audit policy
+
+Audit policy is a more complex alternative to audit levels, letting you define exact rules about what events should be recorded and what data they should include. When an event is processed, it's compared against the list of rules in order. The first matching rule sets the audit granularity of the event. The defined audit granularity options are:
 
 - `None`: Don't log events that match this rule.
-- `Metadata`: Log request metadata (requesting user, timestamp, resource, verb, etc.) but not request or response body.
-- `Request`: Log event metadata and request body but not response body. This does not apply for non-resource requests.
-- `RequestResponse`: Log event metadata, request and response bodies. This does not apply for non-resource requests.
+- `Metadata`: Log request metadata (requesting user, timestamp, resource, verb, and so on) but not request or response body.
+- `Request`: Log event metadata and request body but not response body. This doesn't apply for non-resource requests.
+- `RequestResponse`: Log event metadata, request and response bodies. This doesn't apply for non-resource requests.
 
 An example policy that catches all requests:
 
@@ -122,16 +146,14 @@ config:
             - RequestReceived
 ```
 
-Below you can find a complete policy reference:
-
-<PolicyConfiguration />
+See the [complete policy reference](../../api/resources/config.mdx#status-audit-policy).
 
 ## Persist audit logs
 
-There are two ways to persist platform audit logs: deploying the platform with a persistent volume claim (PVC) or connecting the platform to a persistent database. 
+Persist platform audit logs in one of two ways: deploy the platform with a persistent volume claim (PVC), or connect the platform to a persistent database.
 
 :::info HA only supported with persistent database
-If you are running the platform in high availability (HA mode), the only way to persist audit logs is to use a persistent database. The PVC approach does not work.
+If you are running the platform in high availability (HA mode), the only way to persist audit logs is to use a persistent database. The PVC approach doesn't work.
 :::
 
 ### Deploy the platform with a PVC to save audit logs
@@ -145,9 +167,7 @@ audit:
     # size: 30Gi
 ```
 
-:::note
-This is the top-level `audit` field in `values.yaml`, not `config.audit`. See [Enable auditing](#enable-auditing) for the distinction.
-:::
+This is the top-level `audit` field in `values.yaml`, not `config.audit` (see [Enable auditing](#enable-auditing) for the distinction).
 
 Apply the values using Helm:
 
@@ -161,37 +181,39 @@ helm upgrade vcluster-platform vcluster-platform \
 
 ### Use a persistent database as platform audit backend
 
-Go to `Admin > Config` and specify the following platform config setting:
+Instead of the internal sqlite storage (see [View and export audit logs](#view-and-export-audit-logs)), the platform can write audit events to a persistent MySQL database. This is a `config.audit` setting, so you can configure it through the platform UI or Helm.
+
+Through the UI, go to **Platform > Platform Config > Config** and specify the following platform config setting:
 
 ```yaml title="Platform config for persistent database"
 audit:
   dataStoreEndpoint: mysql://username:password@tcp(hostname:3306)/database-name
 ```
 
-Apply the changes and wait until the platform is restarted.
+Through Helm, add the following to `values.yaml`:
 
-## View and export audit logs
-
-By default, the platform logs audit events to the following locations:
-
-- To a log file in JSON format located at `/var/log/loft/audit.log` inside the platform container. Each line inside the log represents a single audit event.
-- To an internal sqlite storage located at `/var/log/loft/audit.db` inside the
-platform container. This sqlite database is used to display audit log events in
-the platform UI. By default audit events in the sqlite are not persisted, so
-restarting the platform clears the database. Instead of using a sqlite database, the platform can write those events to a persistent mysql database configured through the platform config:
-
-```yaml title="Platform config for MySQL database in values.yaml"
+```yaml title="values.yaml for persistent database"
 config:
   audit:
     enabled: true
     dataStoreEndpoint: mysql://username:password@tcp(hostname:3306)/database-name
 ```
 
+Apply the changes. Through the UI, they take effect automatically within about 10-15 seconds, with no platform restart required. Through Helm, `helm upgrade` restarts the platform pod as a side effect of the upgrade, though the setting itself takes effect through the same hot-reload mechanism either way.
+
+## View and export audit logs
+
+By default, the platform logs audit events to the following locations:
+
+- To a log file in JSON format located at `/var/lib/loft/audit.log` inside the platform container. Each line inside the log represents a single audit event.
+- To an internal sqlite storage located at `/var/lib/loft/audit.db` inside the
+platform container. This sqlite database is used to display audit log events in
+the platform UI. By default audit events in the sqlite are not persisted, so
+restarting the platform clears the database. See [Use a persistent database as platform audit backend](#use-a-persistent-database-as-platform-audit-backend) to configure a persistent MySQL backend instead.
+
 ### Enable audit sidecar
 
-To easily export the audit events to third party systems, enable the audit log
-sidecar that prints all the audit events onto stdout in a separate container which can then be easily watched and exported.
-Enabling the sidecar is only possible through Helm values.
+To export audit events to third-party systems, enable the audit log sidecar. It prints all audit events to `stdout` in a separate container, so you can watch and export them from there. You can only enable the sidecar through Helm values.
 
 Create a `values.yaml` with the following contents:
 
@@ -200,9 +222,7 @@ audit:
   enableSideCar: true
 ```
 
-:::note
-This is the top-level `audit` field in `values.yaml`, not `config.audit`. It cannot be set in **Admin > Config**. See [Enable auditing](#enable-auditing) for the distinction.
-:::
+This is the top-level `audit` field in `values.yaml`, not `config.audit`, so it cannot be set in **Platform > Platform Config > Config** (see [Enable auditing](#enable-auditing) for the distinction).
 
 Update the Helm release:
 
@@ -220,15 +240,8 @@ Wait until the platform has restarted, then view the audit logs:
 kubectl logs -n vcluster-platform -l app=loft -c audit -f
 ```
 
-### Audit config reference
-The following is the complete list of fields under `config.audit` section of the `values.yaml`.
-
-<AuditConfiguration />
-
 ## Audit logging for Regional Cluster Endpoints
 
-Regional Cluster Endpoints allow direct communication between users and clusters, bypassing the central platform instance. When this feature is enabled, the platform audit configuration is synced to each agent. Each platform agent propagates audit events it receives back to the central platform instance, which then logs it as a regular audit event. These "propagated" events can be identified by the `annotations.audit.loft.sh/sent-by-agent` identifier in an audit event.
+[Regional Cluster Endpoints](../../administer/clusters/advanced/regional-cluster-endpoints.mdx) allow direct communication between users and clusters, bypassing the central platform instance. When this feature is enabled, the platform audit configuration is synced to each agent. Each platform agent propagates audit events it receives back to the central platform instance, which then logs it as a regular audit event. These "propagated" events can be identified by the `annotations.audit.loft.sh/sent-by-agent` identifier in an audit event.
 
-:::info Disable agent sync back
-Disable event sync back from the agent to the central platform instance via the audit config option `disableAgentSyncBack`.
-:::
+To disable this behavior, set the audit config option `disableAgentSyncBack`.
