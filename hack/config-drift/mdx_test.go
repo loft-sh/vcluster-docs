@@ -126,3 +126,52 @@ func TestWalk_IgnoresNonYamlFences(t *testing.T) {
 		t.Fatalf("non-yaml fence must be ignored, got %+v", findings)
 	}
 }
+
+func TestScanFile_AttributedFenceScanned(t *testing.T) {
+	// Docusaurus fences carry attributes (title, line highlights); they must be
+	// scanned like bare ```yaml fences.
+	content := "```yaml title=\"vcluster.yaml\"\nexportKubeConfig:\n  bogus: true\n```\n" +
+		"```yaml {1,3}\nexportKubeConfig:\n  alsoBogus: true\n```\n"
+	findings := scanConfigContent(t, content)
+	if len(findings) != 2 {
+		t.Fatalf("attributed yaml fences must be scanned, got %+v", findings)
+	}
+}
+
+func TestScanFile_LanguagePrefixNotOverMatched(t *testing.T) {
+	// ```yamlish (or any language merely starting with "yaml") is not YAML.
+	findings := scanConfigContent(t, "```yamlish\nexportKubeConfig:\n  bogus: true\n```\n")
+	if len(findings) != 0 {
+		t.Fatalf("non-yaml language must be ignored, got %+v", findings)
+	}
+}
+
+func TestWalk_PlaceholderKeySkipped(t *testing.T) {
+	// `<resource>:` is a template placeholder, not a real field; neither it nor
+	// its subtree is decidable against the schema.
+	findings := scanConfigContent(t, fence("sync:\n  toHost:\n    <resource>:\n      bogus: true"))
+	if len(findings) != 0 {
+		t.Fatalf("placeholder keys must be skipped, got %+v", findings)
+	}
+}
+
+func TestWalk_UndocumentedRootSkipped(t *testing.T) {
+	// `pro` is valid in values.schema.json but absent from the generated
+	// partials, so it must not be flagged; a sibling known root still is.
+	findings := scanConfigContent(t, fence("pro: true\nexportKubeConfig:\n  bogus: true"))
+	if len(findings) != 1 || findings[0].Path != "exportKubeConfig.bogus" {
+		t.Fatalf("undocumented root must be skipped, sibling scanned, got %+v", findings)
+	}
+}
+
+func TestScanFile_DriftIgnoreMarkerSkipsBlock(t *testing.T) {
+	// A drift-ignore marker directly above the fence opts the block out: used
+	// by migration docs that deliberately show deprecated/removed config. A
+	// second unmarked block in the same file is still scanned.
+	content := "{/* drift-ignore */}\n" + fence("exportKubeConfig:\n  secret:\n    name: legacy") +
+		fence("exportKubeConfig:\n  bogus: true")
+	findings := scanConfigContent(t, content)
+	if len(findings) != 1 || findings[0].Path != "exportKubeConfig.bogus" {
+		t.Fatalf("marked block must be skipped, unmarked still scanned, got %+v", findings)
+	}
+}

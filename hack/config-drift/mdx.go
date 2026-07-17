@@ -11,21 +11,41 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// yamlFenceOpen matches the opening of a ```yaml / ```yml fenced block.
-var yamlFenceOpen = regexp.MustCompile("^\\s*```ya?ml\\s*$")
+// yamlFenceOpen matches the opening of a ```yaml / ```yml fenced block,
+// including Docusaurus-attributed fences (```yaml title="vcluster.yaml",
+// ```yaml {3-5}), which most docs pages use.
+var yamlFenceOpen = regexp.MustCompile("^\\s*```ya?ml(\\s.*)?$")
 
 // fenceClose matches any fenced-block delimiter line.
 var fenceClose = regexp.MustCompile("^\\s*```\\s*$")
+
+// driftIgnoreMarker opts a fence out of scanning when it appears on the line
+// directly above the opening fence, e.g. {/* drift-ignore */} in MDX or
+// <!-- drift-ignore --> in plain Markdown. Deliberate examples of deprecated
+// or removed config (migration guides) use it so every release-sync run does
+// not re-flag them and prompt the fix drafter to "correct" intentional docs.
+const driftIgnoreMarker = "drift-ignore"
 
 // freeFormMapPaths are known schema paths that are Go map[string]struct fields.
 // The generator enumerates the value struct's fields directly beneath the path
 // (so the path "has known children"), but the real key level is user-defined,
 // so the user's keys must not be flagged as unknown. Descent stops at these.
 var freeFormMapPaths = map[string]bool{
-	"sync.toHost.customResources":   true,
-	"sync.fromHost.customResources": true,
-	"plugins":                       true,
-	"plugin":                        true,
+	"sync.toHost.customResources":        true,
+	"sync.fromHost.customResources":      true,
+	"experimental.proxy.customResources": true,
+	"plugins":                            true,
+	"plugin":                             true,
+}
+
+// undocumentedRoots are top-level keys that exist in the product's
+// values.schema.json but are deliberately absent from the generated config
+// reference partials (the ground truth), so their validity cannot be judged
+// from the partials. They are skipped entirely rather than flagged.
+var undocumentedRoots = map[string]bool{
+	"pro":         true,
+	"global":      true,
+	"serviceCIDR": true,
 }
 
 // ScanProse walks docsRoot for prose files, extracts ```yaml blocks that look
@@ -82,6 +102,7 @@ func scanFile(path, content string, gt *ConfigGroundTruth) []Finding {
 			i++
 			continue
 		}
+		ignored := i > 0 && strings.Contains(lines[i-1], driftIgnoreMarker)
 		// lines[i] is the opening fence (0-indexed i, 1-indexed i+1), so the
 		// first content line is 1-indexed i+2. yaml.Node.Line is 1-indexed
 		// within the block, so a key's file line is blockStart + node.Line - 1.
@@ -94,6 +115,9 @@ func scanFile(path, content string, gt *ConfigGroundTruth) []Finding {
 		}
 		i++ // consume closing fence
 
+		if ignored {
+			continue
+		}
 		findings = append(findings, validateBlock(path, blockStart, strings.Join(block, "\n"), gt)...)
 	}
 	return findings
@@ -154,6 +178,15 @@ func walk(file string, blockStart int, m *yaml.Node, prefix string, gt *ConfigGr
 		keyNode := m.Content[i]
 		valNode := m.Content[i+1]
 		key := keyNode.Value
+
+		// Template placeholders (`<resource>:`) and their subtrees are not
+		// decidable against the schema.
+		if strings.ContainsAny(key, "<>") {
+			continue
+		}
+		if prefix == "" && undocumentedRoots[key] {
+			continue
+		}
 
 		path := key
 		if prefix != "" {
