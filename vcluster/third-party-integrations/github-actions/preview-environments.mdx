@@ -11,53 +11,62 @@ import TenancySupport from '../../_fragments/tenancy-support.mdx';
 
 <TenancySupport hostNodes="true" privateNodes="true" />
 
-This guide shows how to use vCluster and GitHub Actions to deploy preview environments for an application on every pull request. This example creates a new tenant cluster for each pull request and deploy ArgoCD into it. It makes use of the sleep mode feature of the platform to make sure the environments are not using any resources if they are unused.
+This guide shows how to use vCluster and GitHub Actions to deploy preview environments on every pull request. The example creates a new tenant cluster for each pull request and installs Argo CD into it as a stand-in workload. It uses the sleep mode feature of vCluster Platform so that idle environments consume no resources.
 
 ## Prepare the platform
 
-### Install an `IngressController`
+### Install an ingress controller
 
-Make sure to install an `IngressController` into the Kubernetes cluster where the preview environments should get created.
+Install an ingress controller into the control plane cluster where the preview environments run. The tenant cluster template later reuses this controller to expose each preview environment through `sync.toHost.ingresses`.
 
-### Configure preview environments domain
+### Configure a preview environments domain
 
-As a next step, make sure you have a wildcard domain configured under which the preview environments should be reachable, such as `*.my-preview-environments.com`. If you don't have access to a custom domain, the platform allows you to configure a `*.CUSTOM.kubedev.sh` domain in the Clusters > Cluster tab.
+Configure a wildcard domain under which the preview environments are reachable, such as `*.my-preview-environments.com`. Point a wildcard DNS record at your ingress controller's external IP or hostname. If you don't have access to a custom domain, vCluster Platform can provide a wildcard domain for a connected cluster, which you configure in the cluster settings.
 
-### Create virtual cluster template
+### Create a tenant cluster template
 
-Next, create a new virtual cluster template for the preview environments. Navigate to Templates > Virtual Clusters and press on the <Button>Add Virtual Cluster Template</Button> button. Make sure to use the following Helm values:
+Create a tenant cluster template for the preview environments and name it `preview-template`. In vCluster Platform, select **Templates**, then **Tenant Clusters**, and click **Add Tenant Cluster Template**. For the full flow, see [Create a template](/docs/platform/administer/templates/create-templates).
 
-```yaml
-# Reuse the host ingress controller for your ingresses
+Use the following `vcluster.yaml` values so the template reuses the ingress controller, isolates each environment, and puts idle environments to sleep:
+
+```yaml title="Tenant cluster template values"
+# Reuse the control plane cluster ingress controller for tenant cluster ingresses
 sync:
   toHost:
     ingresses:
       enabled: true
 
-# Make sure pods don't break out of the tenant cluster
+# Enforce resource limits and pod security to keep preview environments isolated
 policies:
+  resourceQuota:
+    enabled: true
+  limitRange:
+    enabled: true
   podSecurityStandard: baseline
-  networkPolicy:
-    enabled: false
+
+# Put idle preview environments to sleep so they consume no resources
+sleep:
+  auto:
+    afterInactivity: 30m
 ```
 
-Next make sure sleep mode is configured to start after 30-60 minutes.
-
 :::info Optional: ingress authentication
-In the Advanced Options tab, you can also enable 'Ingress Authentication' to only allow users that have access to your platform instance to access the preview environments.
+Add the `loft.sh/require-ingress-authentication: "true"` annotation to the template, or enable ingress authentication in the template's advanced options, to allow only users with access to your platform instance to reach the preview environments.
 :::
 
-### Create preview environments project
+### Create a preview environments project
 
-Next create a new project `preview` to host the preview environments by pressing the plus button under the projects view. Make sure to only select the just created template as an allowed template and assign yourself and all other users or teams you want to have access to the preview environments in the members tab.
+Create a new project named `preview` to host the preview environments. Add the template you just created as the only allowed template, and assign yourself and any other users or teams that need access to the preview environments.
 
 ## Create a GitHub deploy action
 
-After having the vCluster project configured correctly, write the actual GitHub workflow that creates the preview environments. On every pull request this action creates a new tenant cluster that hosts the example application (ArgoCD in this case) and can be accessed through an Ingress.
+With the project configured, write the GitHub workflow that creates the preview environments. On every pull request, this workflow creates a tenant cluster, installs Argo CD, and exposes it through an ingress.
+
+The workflow logs in with `PLATFORM_URL` and `ACCESS_KEY`, populated from [GitHub secrets](https://docs.github.com/en/actions/security-guides/using-secrets-in-github-actions) of the same name. Add both secrets to the repository before running the workflow. See [Access Keys](/docs/platform/administer/authentication/access-keys) for how to generate a platform access key.
 
 The GitHub workflow looks like this:
 
-```yaml
+```yaml title=".github/workflows/preview-create.yaml"
 name: Create Preview Environment
 
 # Run for pull requests to the main branch
@@ -66,57 +75,67 @@ on:
     branches:
       - main
 
-# make sure the pipeline is only running once
+# Only run one deployment at a time per pull request
 concurrency:
   group: preview-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
-# define a job that deploys the preview environment
+# Deploy the preview environment
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    # Allow the comment step to create and update the pull request comment
+    permissions:
+      pull-requests: write
     steps:
-      - name: checkout
-        uses: actions/checkout@v3
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Install vCluster CLI
-        uses: loft-sh/setup-loft@v2
-        with:
-          version: v3.0.0
-          url: https://url-to-your-loft-instance.com
-          # Specify your platform access key here
-          access-key: ${{ secrets.LOFT_PREVIEW_ACCESS_KEY }}
-          # Optional if your platform domain certificate is insecure
-          #insecure: true
+        uses: loft-sh/setup-vcluster@main
 
-      - name: Deploy Preview Environment
+      - name: Log in to vCluster Platform
+        env:
+          PLATFORM_URL: ${{ secrets.PLATFORM_URL }}
+          ACCESS_KEY: ${{ secrets.ACCESS_KEY }}
+        run: vcluster platform login $PLATFORM_URL --access-key $ACCESS_KEY
+
+      - name: Deploy preview environment
         run: |
-          INGRESS_HOST=loft-preview-${{ github.event.pull_request.number }}.my-preview-environments.com
+          INGRESS_HOST=preview-${{ github.event.pull_request.number }}.my-preview-environments.com
 
-          # Make sure to recreate if there is an already existing environment
-          vcluster pro create loft-preview-${{ github.event.pull_request.number }} --project preview --recreate
+          # Create the tenant cluster, or update it on later pushes to the same pull request
+          vcluster create preview-${{ github.event.pull_request.number }} \
+            --project preview \
+            --template preview-template \
+            --upgrade
 
-          # Deploy the application here with an ingress
+          # Deploy the example application with an ingress
           helm repo add argo https://argoproj.github.io/argo-helm
-          helm install argocd argo/argo-cd --version 5.16.3 \
-                                            --create-namespace \
-                                            -n argocd \
-                                            --set server.ingress.enabled=true \
-                                            --set server.ingress.hosts={$INGRESS_HOST}
+          helm upgrade --install argocd argo/argo-cd \
+            --create-namespace \
+            --namespace argocd \
+            --set global.domain=$INGRESS_HOST \
+            --set server.ingress.enabled=true
 
-      - uses: marocchino/sticky-pull-request-comment@v2
+      - name: Comment preview URL on the pull request
+        uses: marocchino/sticky-pull-request-comment@v2
         with:
           number: ${{ github.event.pull_request.number }}
-          header: release
+          header: preview
           message: |
-            Preview environment deployed at: http://loft-preview-${{ github.event.pull_request.number }}.my-preview-environments.com
+            Preview environment deployed at: https://preview-${{ github.event.pull_request.number }}.my-preview-environments.com
 ```
+
+:::info Deploy your own application
+This workflow installs bare Argo CD as a stand-in workload. To deploy your own application through it, add an Argo CD `Application` manifest that points at your repository. See the [Argo CD documentation](https://argo-cd.readthedocs.io/en/stable/user-guide/application-specification/) for the manifest format.
+:::
 
 ## Create a destroy action
 
-Environments must be cleaned up if they are not needed anymore. In order to accomplish this, create a separate workflow to cleanup the tenant cluster created for the preview environment as soon as the pull request is closed or merged:
+Environments must be cleaned up when they are no longer needed. Create a separate workflow that deletes the tenant cluster as soon as the pull request is closed or merged:
 
-```yaml
+```yaml title=".github/workflows/preview-destroy.yaml"
 name: Destroy Preview Environment
 
 on:
@@ -130,23 +149,19 @@ jobs:
   destroy:
     runs-on: ubuntu-latest
     steps:
-      - name: checkout
-        uses: actions/checkout@v3
-
       - name: Install vCluster CLI
-        uses: loft-sh/setup-loft@v2
-        with:
-          version: v3.0.0
-          url: https://url-to-your-loft-instance.com
-          # Specify your platform access key here
-          access-key: ${{ secrets.LOFT_PREVIEW_ACCESS_KEY }}
-          #insecure: true
+        uses: loft-sh/setup-vcluster@main
 
-      - name: Destroy Preview Environment
-        run: |
-          loft delete vcluster loft-preview-${{ github.event.pull_request.number }} --project preview
+      - name: Log in to vCluster Platform
+        env:
+          PLATFORM_URL: ${{ secrets.PLATFORM_URL }}
+          ACCESS_KEY: ${{ secrets.ACCESS_KEY }}
+        run: vcluster platform login $PLATFORM_URL --access-key $ACCESS_KEY
+
+      - name: Destroy preview environment
+        run: vcluster delete preview-${{ github.event.pull_request.number }} --project preview
 ```
 
 ## Conclusion
 
-This guide showed how to build a complete flow for creating preview environments with the platform and GitHub Actions. After creation, the preview environments starts sleeping if it's not used and consumes no computing resources in the cluster. If you want to access a preview environment, just click the link in the pull request comment and the platform wakes up the environment automatically. This way you can build preview environments that are fast to create, flexible like separate Kubernetes clusters and with no costs at all for unused environments.
+This guide showed how to build a complete flow for preview environments with vCluster Platform and GitHub Actions. After creation, a preview environment sleeps when it is not used and consumes no compute resources in the cluster. To access a preview environment, click the link in the pull request comment and the platform wakes the environment automatically. This gives you preview environments that are fast to create, isolated like separate Kubernetes clusters, and free of cost while unused.
