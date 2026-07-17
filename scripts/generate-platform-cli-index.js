@@ -64,6 +64,14 @@ const VERB_ORDER = new Set(VERB_HEADINGS.map(([verb]) => verb));
 const OTHER_KEY = 'other';
 const OTHER_HEADING = 'Other';
 
+// Upstream data bug: vcluster_platform_wakeup_vcluster.md's one-line
+// description is copy-pasted from vcluster_platform_list_vclusters.md
+// ("Lists all virtual clusters that are connected to the current platform").
+// Override until the upstream CLI reference is fixed (see ENG-12332).
+const DESCRIPTION_OVERRIDES = {
+  vcluster_platform_wakeup_vcluster: 'Wake up a virtual cluster after it was put to sleep.',
+};
+
 function listCommandFiles() {
   return fs
     .readdirSync(CLI_DIR)
@@ -93,9 +101,8 @@ function parseCommandFile(filename) {
   const afterFrontmatter = fmMatch ? content.slice(fmMatch[0].length) : content;
   const withoutLeadingHeading = afterFrontmatter.replace(/^\n*#{1,6}\s+[^\n]*\n/, '\n');
   const descMatch = withoutLeadingHeading.match(/^\n*([^\n]+)\n/);
-  const description = descMatch ? descMatch[1].trim() : '';
-
   const slug = filename.replace(/\.md$/, '');
+  const description = DESCRIPTION_OVERRIDES[slug] ?? (descMatch ? descMatch[1].trim() : '');
 
   // The verb is the path segment right after "vcluster_platform_", e.g.
   // "create" from vcluster_platform_create_vcluster.md, or "access-key" from
