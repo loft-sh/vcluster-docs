@@ -23,7 +23,6 @@ const (
 	anchorSeparator = "-"
 )
 
-
 // BasePath and BaseResourcesPath are package-level vars (not const) so the
 // release-dispatch receiver can redirect generator output to versioned
 // folders without a fork. Defaults match the legacy const values byte-for-byte
@@ -354,8 +353,7 @@ func GenerateFromPathWithError(schema *jsonschema.Schema, basePath string, schem
 		return err
 	}
 	filePath := path.Join(basePath, schemaPath) + ".mdx"
-	_ = os.MkdirAll(path.Dir(filePath), 0o777)
-	if err := os.WriteFile(filePath, []byte(content), os.ModePerm); err != nil {
+	if err := writeGeneratedFile(filePath, []byte(content)); err != nil {
 		return fmt.Errorf("failed to write file: %w", err)
 	}
 	return nil
@@ -442,9 +440,7 @@ func createSections(pageFile string, schema *jsonschema.Schema, definitions json
 	}
 
 	content = fmt.Sprintf("%s%s", importContent, content)
-	_ = os.MkdirAll(path.Dir(pageFile), 0o777)
-	err := os.WriteFile(pageFile, []byte(content), os.ModePerm)
-	if err != nil {
+	if err := writeGeneratedFile(pageFile, []byte(content)); err != nil {
 		panic(err)
 	}
 
@@ -714,9 +710,22 @@ func writeTemplate(templateContents, filePath string, values interface{}) {
 		panic(err)
 	}
 
-	_ = os.MkdirAll(path.Dir(filePath), 0o777)
-	err = os.WriteFile(filePath, b.Bytes(), os.ModePerm)
-	if err != nil {
+	if err := writeGeneratedFile(filePath, b.Bytes()); err != nil {
 		panic(err)
 	}
+}
+
+func writeGeneratedFile(filePath string, content []byte) error {
+	if err := os.MkdirAll(path.Dir(filePath), 0o755); err != nil {
+		return fmt.Errorf("create output directory: %w", err)
+	}
+	if err := os.WriteFile(filePath, content, 0o644); err != nil {
+		return fmt.Errorf("write output file: %w", err)
+	}
+	// WriteFile only applies its permission argument when creating a file.
+	// Chmod also normalizes files that were generated with executable bits.
+	if err := os.Chmod(filePath, 0o644); err != nil {
+		return fmt.Errorf("set output file permissions: %w", err)
+	}
+	return nil
 }
