@@ -65,12 +65,14 @@ See the [complete list of fields](../../api/resources/config.mdx#status-audit) u
 
 The platform provides audit levels, which are preconfigured audit policies for the most common use cases. These levels range from 1 to 4 where 1 logs the fewest requests, while 4 logs the most:
 
-- **Level 1**: Logs modifying requests such as creation / modification or deletion of any objects
-- **Level 2**: Like Level 1 but also logs the metadata of reading requests, such as listing pods inside a tenant cluster or space. It won't log the response or request payload and instead only the metadata such as request origin, target, and so on.
-- **Level 3**: Like Level 2 but instead of only logging the request metadata also logs the complete request payload sent to the platform
-- **Level 4**: Like Level 3 but instead of only logging metadata and request payload, also logs the response the platform has sent to the requester
+- **Level 1**: Logs modifying requests such as creation, modification, or deletion of any objects. Creation requests also log the request payload.
+- **Level 2**: Like Level 1 but also logs the metadata of reading requests, such as listing pods inside a tenant cluster or space. Reading requests won't log the response or request payload and instead only the metadata, such as request origin and target.
+- **Level 3**: Like Level 2 but instead of only logging the request metadata, also logs the complete request payload sent to the platform.
+- **Level 4**: Like Level 3 but instead of only logging metadata and request payload, also logs the response the platform has sent to the requester.
 
-For all of these levels, certain internal read-only APIs are not logged since those might pollute the log and drastically increase log size. To log these, create a custom audit policy as described below.
+Captured payloads are normalized to JSON and size-limited before storage. Unconvertible or oversized payloads are omitted with an annotation. See [Request and response payload storage](#request-and-response-payload-storage).
+
+For all of these levels, certain internal read-only APIs aren't logged since those might pollute the log and drastically increase log size. To log these, create a custom audit policy as described below.
 
 Configure the audit level through the platform config, which can be modified either through the platform UI or Helm:
 
@@ -89,18 +91,47 @@ Configure the audit level through the platform config, which can be modified eit
   </TabItem>
 </Tabs>
 
+## Request and response payload storage
+
+Audit levels and custom policies both determine payload storage through one of four granularity settings. `Request` stores the request payload. `RequestResponse` also stores the response payload. See [Audit policy](#audit-policy) for the full list.
+
+The platform stores payloads for resource requests only. Long-running requests, such as log streaming, never store payloads. Creates of sensitive resources, such as shared secrets and access keys, keep metadata-only events on every level.
+
+The platform always stores payloads as JSON:
+
+- Payloads that arrive as plain JSON are stored unchanged.
+- Gzip-compressed request and response bodies are stored in their decompressed form.
+- Payloads sent in the Kubernetes Protobuf format are converted to their JSON equivalent for known Kubernetes API types. The stored payload matches what a JSON client would have sent.
+
+### Payload size limit
+
+The platform captures at most 2 MiB per request or response payload. It doesn't store payloads above this limit.
+
+### Omitted payloads
+
+When the platform can't store a payload, it keeps the audit event with all of its metadata but leaves out the payload. The event then carries an annotation that names the omission reason:
+
+- `audit.platform.vcluster.com/request-object-omitted` for the request payload
+- `audit.platform.vcluster.com/response-object-omitted` for the response payload
+
+The following reasons can appear as annotation values:
+
+| Reason | Description |
+|--------|-------------|
+| `truncated` | The payload exceeded the capture limit, so the platform captured only a partial copy. |
+| `too-large` | The payload exceeded the capture limit after decompression or conversion to JSON. |
+| `decode-failed` | The platform couldn't decompress or decode the payload. |
+| `unsupported-encoding` | The payload used a content encoding or media type that the platform can't convert to JSON. |
+| `invalid-json` | The payload wasn't valid JSON and not in any recognized format. |
+
 ## Audit policy
 
-:::warning
-It is recommended to use audit levels instead of audit policy directly, because a policy is much more complex to define.
-:::
-
-As an alternative to audit levels, policy allows you to define exact rules about what events should be recorded and what data they should include. When an event is processed, it's compared against the list of rules in order. The first matching rule sets the audit granularity of the event. The defined audit granularity options are:
+Audit policy is a more complex alternative to audit levels, letting you define exact rules about what events should be recorded and what data they should include. When an event is processed, it's compared against the list of rules in order. The first matching rule sets the audit granularity of the event. The defined audit granularity options are:
 
 - `None`: Don't log events that match this rule.
 - `Metadata`: Log request metadata (requesting user, timestamp, resource, verb, and so on) but not request or response body.
-- `Request`: Log event metadata and request body but not response body. This does not apply for non-resource requests.
-- `RequestResponse`: Log event metadata, request and response bodies. This does not apply for non-resource requests.
+- `Request`: Log event metadata and request body but not response body. This doesn't apply for non-resource requests.
+- `RequestResponse`: Log event metadata, request and response bodies. This doesn't apply for non-resource requests.
 
 An example policy that catches all requests:
 
@@ -119,10 +150,10 @@ See the [complete policy reference](../../api/resources/config.mdx#status-audit-
 
 ## Persist audit logs
 
-There are two ways to persist platform audit logs: deploying the platform with a persistent volume claim (PVC) or connecting the platform to a persistent database.
+Persist platform audit logs in one of two ways: deploy the platform with a persistent volume claim (PVC), or connect the platform to a persistent database.
 
 :::info HA only supported with persistent database
-If you are running the platform in high availability (HA mode), the only way to persist audit logs is to use a persistent database. The PVC approach does not work.
+If you are running the platform in high availability (HA mode), the only way to persist audit logs is to use a persistent database. The PVC approach doesn't work.
 :::
 
 ### Deploy the platform with a PVC to save audit logs
@@ -182,9 +213,7 @@ restarting the platform clears the database. See [Use a persistent database as p
 
 ### Enable audit sidecar
 
-To easily export the audit events to third party systems, enable the audit log
-sidecar that prints all the audit events to `stdout` in a separate container which can then be easily watched and exported.
-Enabling the sidecar is only possible through Helm values.
+To export audit events to third-party systems, enable the audit log sidecar. It prints all audit events to `stdout` in a separate container, so you can watch and export them from there. You can only enable the sidecar through Helm values.
 
 Create a `values.yaml` with the following contents:
 
@@ -213,8 +242,6 @@ kubectl logs -n vcluster-platform -l app=loft -c audit -f
 
 ## Audit logging for Regional Cluster Endpoints
 
-Regional Cluster Endpoints allow direct communication between users and clusters, bypassing the central platform instance. When this feature is enabled, the platform audit configuration is synced to each agent. Each platform agent propagates audit events it receives back to the central platform instance, which then logs it as a regular audit event. These "propagated" events can be identified by the `annotations.audit.loft.sh/sent-by-agent` identifier in an audit event.
+[Regional Cluster Endpoints](../../administer/clusters/advanced/regional-cluster-endpoints.mdx) allow direct communication between users and clusters, bypassing the central platform instance. When this feature is enabled, the platform audit configuration is synced to each agent. Each platform agent propagates audit events it receives back to the central platform instance, which then logs it as a regular audit event. These "propagated" events can be identified by the `annotations.audit.loft.sh/sent-by-agent` identifier in an audit event.
 
-:::info Disable agent sync back
-Disable event sync back from the agent to the central platform instance using the audit config option `disableAgentSyncBack`.
-:::
+To disable this behavior, set the audit config option `disableAgentSyncBack`.
