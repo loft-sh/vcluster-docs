@@ -121,6 +121,22 @@ npm run validate-glossary      # check for issues
 
 See `src/data/glossary.yaml` for available terms.
 
+**Drift check** - release-time validation of prose against generated references
+(`hack/cli-drift`, `hack/config-drift`; wired into `handle-source-release.yml`):
+
+```bash
+go build -C hack/cli-drift -o bin . && ./hack/cli-drift/bin --help
+go build -C hack/config-drift -o bin . && ./hack/config-drift/bin --help
+```
+
+A `{/* drift-ignore */}` line (or `<!-- drift-ignore -->` in `.md`) directly
+above a fence opts that single block out - only for pages that deliberately
+show outdated config or removed commands (migration guides, comparisons).
+Never add it to silence a finding on current-state docs; fix the drift.
+`InterpolatedCodeBlock` components are scanned too (placeholders resolve to
+their defaults); the marker above the component tag opts one out, and a yaml
+block titled `vcluster.yaml` is validated even without a known schema root.
+
 **Lifecycle JSON** - when updating version support tables:
 
 ```bash
