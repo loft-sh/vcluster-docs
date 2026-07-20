@@ -4,7 +4,7 @@
 # loft-sh/agentapi module versions are actually consumable by the
 # platform-pin bump step, not merely present as GitHub tags.
 #
-# Run by handle-source-release.yml before the bump step, only for
+# Run by handle-source-release.yml before bump-platform-pins.sh, only for
 # platform-released events.
 #
 # Two checks, in order:
@@ -13,33 +13,38 @@
 #      publishes its own release first (which fires the repository_dispatch
 #      that triggers the receiver), THEN creates the matching tags in
 #      loft-sh/{agentapi,api} a short time later. The bump step must not
-#      run before those tags exist. (DEVOPS-904.)
+#      run before those tags exist. (DEVOPS-904.) A clean 404 means the
+#      upstream tag is not there yet; any other gh error (auth, rate limit,
+#      5xx, network) is a different problem and is surfaced as such instead
+#      of being mislabeled "upstream never published".
 #
-#   2. Checksum-verified download (go mod download <module>@<version>).
-#      The bump step runs `go mod tidy`, which both resolves api/agentapi
-#      through GOPROXY (proxy.golang.org) AND verifies each module against
-#      GOSUMDB (sum.golang.org); these modules are NOT in GOPRIVATE, which
-#      is narrowed to vcluster-pro*, so the checksum database is consulted.
-#      Both Google services cache a version only after fetching it from the
-#      origin, and they lag tag creation independently:
-#        - DEVOPS-1008 (platform v4.10.1): the tag check passed but the
-#          proxy had not cached agentapi/v4@v4.10.1, so `go mod tidy` failed
-#          with `unknown revision`. A `go list -m` probe (proxy only) closed
-#          that gap.
-#        - DEVOPS-1041 (platform v4.10.2): the proxy HAD cached the version
-#          (the `go list -m` probe passed) but sum.golang.org had not, so
-#          `go mod tidy` failed verifying the module: 404 from
-#          `sum.golang.org/lookup/...` ("unknown revision v4.10.2"). The
-#          proxy and the checksum DB propagate on separate timelines, so a
-#          proxy-only probe is not sufficient.
-#      `go mod download` exercises BOTH services exactly as the bump step
-#      does, so the wait does not pass until the release is genuinely
-#      consumable. Gating on tag presence first keeps these requests from
-#      racing ahead of the origin tag; the download then verifies and warms
-#      the module cache, so the bump never runs ahead of propagation.
+#   2. Direct-fetch consumability (go mod download <module>@<version>).
+#      The bump step routes api + agentapi through direct VCS via
+#      GONOPROXY/GONOSUMDB (set by the workflow's "Route api + agentapi to
+#      direct VCS" step), so once the GitHub tag exists the module is
+#      immediately fetchable. This probe fetches exactly the way the bump
+#      does: it confirms the tag resolves to a valid Go module (correct
+#      module path/major, readable go.mod, constructible zip), exercises the
+#      git auth, and warms the module cache so the bump does not re-download.
+#
+#      This used to poll the PUBLIC module proxy + sum.golang.org, whose
+#      propagation lags tag creation on independent, unbounded timelines and
+#      repeatedly stalled this receiver: DEVOPS-1008 (proxy had not cached
+#      the version), DEVOPS-1041 (sum.golang.org had not), and platform
+#      v4.11.0 (agentapi never propagated within the 10-minute wait while
+#      api did). Each "wait longer on Google" fix failed again on the next
+#      release. Fetching direct from GitHub removes that dependency: the
+#      authoritative signal is the GitHub tag, which check 1 already gates.
 #
 # `go mod download <module>@<version>` needs -mod=mod: this repo carries a
 # vendor/ tree, so the default -mod=vendor cannot satisfy a version query.
+#
+# Resolution routing: this script relies on GONOPROXY/GONOSUMDB being set
+# for api + agentapi (the workflow does this before invoking the script). A
+# manual run outside the workflow must export the same, or check 2 falls
+# back to the flaky public proxy:
+#   export GONOPROXY=github.com/loft-sh/vcluster-pro*,github.com/loft-sh/api,github.com/loft-sh/agentapi
+#   export GONOSUMDB=github.com/loft-sh/vcluster-pro*,github.com/loft-sh/api,github.com/loft-sh/agentapi
 #
 # Inputs (env):
 #   VERSION        Released platform version, vX.Y.Z[-pre] (required).
@@ -61,14 +66,31 @@ SLEEP_SECONDS="${SLEEP_SECONDS:-10}"
 stripped="${VERSION#v}"
 major="v${stripped%%.*}"
 
-# Phase 1: GitHub tag presence. Surfaces "upstream never published" as a
-# distinct, actionable error instead of a confusing downstream go mod error.
+# Phase 1: GitHub tag presence. A clean 404 keeps polling (tag not created
+# yet); a non-404 error is surfaced immediately so an auth/API problem is
+# not misreported as a missing upstream release.
 for repo in loft-sh/agentapi loft-sh/api; do
     attempt=0
-    until gh api "repos/${repo}/git/refs/tags/${VERSION}" >/dev/null 2>&1; do
+    last_err=""
+    until last_err="$(gh api "repos/${repo}/git/refs/tags/${VERSION}" 2>&1)"; do
+        # Surface a non-404 (auth, rate limit, 5xx, network) as it happens; a
+        # clean 404 just means the tag is not created yet.
+        case "$last_err" in
+            *404*|*"Not Found"*) : ;;
+            *) echo "::warning::${repo}: tag query failed with a non-404 error (attempt ${attempt}); retrying: ${last_err}" >&2 ;;
+        esac
         attempt=$((attempt + 1))
         if [ "$attempt" -ge "$MAX_ATTEMPTS" ]; then
-            echo "::error::${repo}: tag ${VERSION} not present after ${MAX_ATTEMPTS} attempts; upstream pipeline never published it" >&2
+            # Classify on the FINAL error, so a transient early non-404 does
+            # not mislabel a run that ends on a clean 404, or vice versa.
+            case "$last_err" in
+                *404*|*"Not Found"*)
+                    echo "::error::${repo}: tag ${VERSION} not present after ${MAX_ATTEMPTS} attempts; upstream pipeline never published it. last error: ${last_err}" >&2
+                    ;;
+                *)
+                    echo "::error::${repo}: tag ${VERSION} could not be queried after ${MAX_ATTEMPTS} attempts; the last error was not a clean 404, so treat this as a GitHub API/auth problem, not a missing release. last error: ${last_err}" >&2
+                    ;;
+            esac
             exit 1
         fi
         echo "${repo}: waiting for tag ${VERSION} (attempt ${attempt}/${MAX_ATTEMPTS})"
@@ -77,21 +99,20 @@ for repo in loft-sh/agentapi loft-sh/api; do
     echo "::notice::${repo}: tag ${VERSION} present (attempt ${attempt})"
 done
 
-# Phase 2: checksum-verified download. `go mod download` resolves through
-# the proxy AND verifies against the checksum database (sum.golang.org) for
-# these public modules, which is exactly what the bump step's `go mod tidy`
-# requires; gating on it here keeps the bump from racing either service's
-# propagation.
+# Phase 2: direct-fetch consumability. Mirrors the bump step's resolution
+# (GONOPROXY/GONOSUMDB route these two modules to direct VCS) and warms the
+# module cache. Succeeds as soon as the tag from phase 1 is fetchable.
 for mod in "github.com/loft-sh/agentapi/${major}" "github.com/loft-sh/api/${major}"; do
     attempt=0
-    until GOFLAGS=-mod=mod go mod download "${mod}@${VERSION}" >/dev/null 2>&1; do
+    last_err=""
+    until last_err="$(GOFLAGS=-mod=mod go mod download "${mod}@${VERSION}" 2>&1)"; do
         attempt=$((attempt + 1))
         if [ "$attempt" -ge "$MAX_ATTEMPTS" ]; then
-            echo "::error::${mod}@${VERSION} was not downloadable and checksum-verified after ${MAX_ATTEMPTS} attempts; proxy or checksum database (sum.golang.org) propagation stalled" >&2
+            echo "::error::${mod}@${VERSION} did not resolve via direct fetch after ${MAX_ATTEMPTS} attempts; the tag exists but its commit is not yet fetchable from GitHub, or the module's go.mod at that tag is invalid. last error: ${last_err}" >&2
             exit 1
         fi
-        echo "${mod}: waiting for ${VERSION} to download and checksum-verify (attempt ${attempt}/${MAX_ATTEMPTS})"
+        echo "${mod}: waiting for ${VERSION} to resolve via direct fetch (attempt ${attempt}/${MAX_ATTEMPTS})"
         sleep "$SLEEP_SECONDS"
     done
-    echo "::notice::${mod}: ${VERSION} downloads and checksum-verifies (attempt ${attempt})"
+    echo "::notice::${mod}: ${VERSION} resolves via direct fetch (attempt ${attempt})"
 done

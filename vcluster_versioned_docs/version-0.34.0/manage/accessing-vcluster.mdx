@@ -34,7 +34,7 @@ vcluster connect my-vcluster --print
 vcluster disconnect
 
 # Create a separate kube config to use instead of changing the current context
-vcluster connect my-vcluster --update-current=false
+vcluster connect my-vcluster --print > kubeconfig.yaml
 
 # Execute a command directly with vCluster context without changing the current context
 vcluster connect my-vcluster -- kubectl get namespaces
@@ -43,18 +43,18 @@ vcluster connect my-vcluster -- bash
 
 Depending on if the vCluster was created within a local Kubernetes cluster or with the `--expose` flag, the CLI either starts port-forwarding or creates a context that can be used directly.
 
-If you have manually [exposed the vCluster](#expose-vcluster), you can specify the domain where the vCluster is reachable via the `--server` flag:
+If you have manually [exposed the vCluster](#expose-vcluster), you can specify the domain where the vCluster is reachable with the `--server` flag:
 
 ```
 # Create a kube context that uses https://my-domain.org as endpoint
 vcluster connect my-vcluster -n my-vcluster --server my-domain.org
 ```
 
-#### Connect using Service Accounts
+#### Connect using service accounts
 
 By default, vCluster updates the current kubeconfig to access the vCluster that contains the default admin client certificate and client key to authenticate to the vCluster. This means that all kubeconfig files generated have cluster admin access within the vCluster.
 
-Often this might not be desired. Instead of giving a user admin access to the tenant cluster, you can also use [service account authentication](https://kubernetes.io/docs/reference/access-authn-authz/authentication/#service-account-tokens) to the tenant cluster. Say we want to create a kubeconfig file that only has view access in the tenant cluster. Then you would create a new service account inside the vCluster and assign it the cluster role `view` via a cluster role binding. Then we would generate a service account token and use that instead of the client-cert and client-key inside the kubeconfig.
+Often this might not be desired. Instead of giving a user admin access to the tenant cluster, you can also use [service account authentication](https://kubernetes.io/docs/reference/access-authn-authz/authentication/#service-account-tokens) to the tenant cluster. Say we want to create a kubeconfig file that only has view access in the tenant cluster. Then you would create a new service account inside the vCluster and assign it the cluster role `view` through a cluster role binding. Then we would generate a service account token and use that instead of the client-cert and client-key inside the kubeconfig.
 
 ```
 vcluster connect my-vcluster -n my-vcluster --service-account kube-system/my-user --cluster-role view
@@ -110,10 +110,10 @@ You can replace the token field in the kubeconfig with any other service account
 
 There might be cases where connecting to a vCluster with the CLI is not feasible or the CLI cannot be installed. For such cases, you can retrieve the vCluster kubeconfig from a secret that is created automatically in the vCluster namespace.
 
-The secret is prefixed with `vc-` and ends with the vCluster name, so a vCluster called `my-vcluster` in namespace `test` would create a secret called `vc-my-vcluster` in the namespace `test`. You can retrieve the kubeconfig after the vCluster has started via:
+The secret is prefixed with `vc-` and ends with the vCluster name, so a vCluster called `my-vcluster` in namespace `test` would create a secret called `vc-my-vcluster` in the namespace `test`. You can retrieve the kubeconfig after the vCluster has started with:
 
 ```
-kubectl get secret vc-my-vcluster -n test --template={{.data.config}} | base64 -D
+kubectl get secret vc-my-vcluster -n test --template={{.data.config}} | base64 --decode
 ```
 
 The secret holds a kubeconfig in this format:
@@ -147,12 +147,12 @@ kubectl port-forward my-vcluster-0 -n test 8443
 ```
 
 :::tip
-With the syncer flag `--out-kube-config-secret-namespace` you can specify a different namespace where the kubeconfig secret should be created in. Keep in mind that you have to manually apply RBAC permissions for the vCluster to allow creation and retrieving of secrets in that namespace.
+You can specify a different namespace where the kubeconfig secret gets created with the `exportKubeConfig.additionalSecrets` field in `vcluster.yaml`. This lets you emit multiple kubeconfig secrets, each with its own namespace. Keep in mind that you have to manually apply RBAC permissions for the vCluster to allow creation and retrieving of secrets in that namespace. See [Access vCluster externally](#access-vcluster-externally) below.
 :::
 
 ### Access vCluster externally
 
-If you have [exposed the vCluster](#expose-vcluster), you can also tell the vCluster to create the kubeconfig secret with another server endpoint through the `exportKubeConfig` flag.
+If you have [exposed the vCluster](#expose-vcluster), you can also tell the vCluster to create the kubeconfig secret with another server endpoint through the `exportKubeConfig` field.
 
 For example, if you want to expose a vCluster at `https://my-domain.org`, you can create a `vcluster.yaml` like this:
 ```yaml
@@ -169,16 +169,47 @@ exportKubeConfig:
   server: https://my-domain.org:443
 ```
 
+`exportKubeConfig` also supports these fields.
+
+- `context` sets the context name and `current-context` in the generated kubeconfig.
+- `insecure` sets `insecure-skip-tls-verify: true` and removes the CA data from the generated kubeconfig.
+- `serviceAccount.name`, `serviceAccount.namespace` (defaults to `kube-system`), and `serviceAccount.clusterRole` generate a service account token instead of the default admin client certificate. vCluster creates the service account and a cluster role binding to the given `clusterRole` inside the tenant cluster.
+- `additionalSecrets` emits multiple kubeconfig secrets, each with its own `name`, `namespace`, `server`, `context`, `insecure`, and `serviceAccount`.
+
+:::info
+`exportKubeConfig.secret` is deprecated in favor of `additionalSecrets`.
+:::
+
+For example, to export three kubeconfig secrets with different access levels:
+```yaml
+exportKubeConfig:
+  additionalSecrets:
+  - name: kubeconfig-admin
+    namespace: my-vcluster
+    server: https://my-domain.org:443
+  - name: kubeconfig-viewer
+    namespace: my-vcluster
+    server: https://my-domain.org:443
+    serviceAccount:
+      name: my-viewer
+      namespace: kube-system
+      clusterRole: view
+  - name: kubeconfig-insecure
+    namespace: my-vcluster
+    server: https://my-domain.org:443
+    insecure: true
+```
+
 Then you can create or upgrade the vCluster with:
 
 ```
 vcluster create my-vcluster -n my-vcluster --upgrade --connect=false -f values.yaml
 ```
 
-Wait until the vCluster has started and you can retrieve the kubeconfig via:
+Wait until the vCluster has started and you can retrieve the kubeconfig with:
 
 ```
-kubectl get secret vc-my-vcluster -n my-vcluster --template={{.data.config}} | base64 -D
+kubectl get secret vc-my-vcluster -n my-vcluster --template={{.data.config}} | base64 --decode
 ```
 
 <div class="videoWrapper">
@@ -215,7 +246,7 @@ If you are using a local Kubernetes cluster, such as docker-desktop, rancher-des
         { label: 'Ingress without SSL (Deprecated)', value: 'ingress-wo-ssl', },
         { label: 'Load Balancer Service', value: 'load-balancer-service', },
         { label: 'NodePort Service', value: 'node-port-service', },
-        { label: 'From Host Cluster', value: 'from-host-cluster', },
+        { label: 'From Control Plane Cluster', value: 'from-host-cluster', },
     ]}>
 <TabItem value="tlsroute">
 
@@ -465,8 +496,10 @@ The annotations in the example below are specific to ingress-nginx, which is dep
 
   Update the current kube config via:
   ```
-  # Update the current kube config (or use --update-current=false to create a separate one)
   vcluster connect my-vcluster -n my-vcluster --server=https://x.x.x.x
+
+  # OR: create a separate kube config file instead of updating the current context
+  vcluster connect my-vcluster -n my-vcluster --server=https://x.x.x.x --print > kubeconfig.yaml
   ```
 
   Access the vCluster:
@@ -533,7 +566,7 @@ The annotations in the example below are specific to ingress-nginx, which is dep
 
   Retrieve the kube config via:
   ```
-  vcluster connect my-vcluster -n my-vcluster --update-current=false --server=https://x.x.x.x
+  vcluster connect my-vcluster -n my-vcluster --server=https://x.x.x.x --print > kubeconfig.yaml
   ```
 
   Access the vCluster:
@@ -548,7 +581,7 @@ The annotations in the example below are specific to ingress-nginx, which is dep
 
   To access the tenant cluster from within the control plane cluster, you can directly connect to the vCluster service. Make sure you can access that service and then create a kube config in the following form:
   ```
-  vcluster connect my-vcluster -n my-vcluster --server=my-vcluster.my-vcluster --insecure --update-current=false
+  vcluster connect my-vcluster -n my-vcluster --server=my-vcluster.my-vcluster --insecure --print > kubeconfig.yaml
   ```
 
   Now access the tenant cluster with:

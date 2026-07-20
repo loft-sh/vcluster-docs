@@ -1,0 +1,310 @@
+---
+title: Patching
+sidebar_label: Patching
+sidebar_position: 0
+description: Configure sync patches for resources synced between tenant and control plane clusters.
+sidebar_class_name: free host-nodes
+slug: /configure/vcluster-yaml/sync/patching
+---
+
+import TenancySupport from '../../../../_fragments/tenancy-support.mdx';
+import FeatureTable from '@site/src/components/FeatureTable';
+import SyncPatchingFlow from '@site/static/media/diagrams/sync-patching-flow.svg';
+
+<FeatureTable names="vcp-distro-sync-patches" />
+
+<TenancySupport hostNodes="true" />
+
+Use patches when a resource needs different field values on each side of the sync boundary. For example, you can rewrite image references to a private registry, or rewrite fields that contain the name of another synced object that vCluster translates. Without a patch, vCluster applies its built-in translations and otherwise leaves synced fields unchanged.
+
+Patches are translation rules. When a resource changes, vCluster rewrites the fields that match your patch configuration and writes the result to the target cluster.
+
+Patch lists live under the resource's sync direction. Use `sync.toHost.<resource>.patches` for resources synced from the tenant cluster to the control plane cluster, and `sync.fromHost.<resource>.patches` for resources synced from the control plane cluster into the tenant cluster.
+
+<figure>
+  <SyncPatchingFlow style={{width: '100%', height: 'auto'}} role="img" aria-label="Sync patch flow showing expression rewriting tenant values for the control plane cluster and reverseExpression restoring values for the tenant cluster" />
+  <figcaption>Sync patches rewrite matched fields as changes move between the tenant and control plane clusters</figcaption>
+</figure>
+
+## Path syntax
+
+A path identifies the field in the Kubernetes object the patch targets. Patch paths use a dot notation.
+
+### Bracket notation
+
+Use bracket notation for map keys that contain `.`, `[`, or `]`.
+
+```yaml
+patches:
+  - path: metadata.annotations["example.com/key"]
+    expression: '"patched-" + value'
+```
+
+### All entries
+
+Use `[*]` to match all elements of an array or all keys of a map. `*` does not match patterns or globs. Rather, it selects every entry at that position in the path. vCluster runs the patch once for each.
+
+You can use `[*]` multiple times in a single path. `spec.containers[*].volumeMounts[*].mountPath` applies the patch to every `mountPath` across every container.
+
+```yaml
+patches:
+  - path: spec.containers[*].env[*].value
+    expression: 'value.replace("internal.svc", "internal.svc.cluster.local")'
+```
+
+## Patch modes
+
+Choose the mode based on what the field contains:
+
+| To transform | Use |
+| --- | --- |
+| A field value | `expression` / `reverseExpression` |
+| A field referencing another Kubernetes object | `reference` |
+| Labels on a custom resource | `labels` |
+
+You can use `expression` and `reverseExpression` together in one entry.
+
+## Validation rules
+
+- Each patch requires a `path`.
+- Each patch uses exactly one mode. `expression` and `reverseExpression` can coexist in one entry, but neither can be combined with `reference` or `labels`.
+- A resource's patch list cannot contain duplicate paths.
+- `metadata.name` and `metadata.namespace` are not valid patch paths.
+- Reference patches require a vCluster mapper for the referenced resource type.
+
+## Expression patches
+
+Expression patches run JavaScript against each matched value. The expression receives `value` as the current field value and its return value replaces it.
+
+For `sync.toHost`, `expression` transforms changes from the tenant cluster to the control plane cluster. `reverseExpression` transforms changes from the control plane cluster back to the tenant cluster.
+If you omit `expression`, vCluster drops that field from the patch when syncing to the control plane cluster. If you omit `reverseExpression`, it drops the field when syncing back to the tenant cluster. Write only one to create a one-way transform.
+
+For `sync.fromHost`, the transform only happens in one direction, from the control plane cluster to the tenant cluster. For most fromHost resources, `expression` transforms values as they arrive from the control plane cluster. ConfigMaps, Secrets, and custom resources are exceptions that use `reverseExpression` for this direction. See the [Supported resources](#from-the-control-plane-cluster) table for which keyword each resource requires. If you configure the wrong keyword for a resource, vCluster silently skips the expression and syncs the field unchanged.
+
+```yaml title="Rewrite container images to a private registry"
+sync:
+  toHost:
+    pods:
+      enabled: true
+      patches:
+        - path: spec.containers[*].image
+          expression: 'value.replace("docker.io/", "registry.internal/")'
+```
+
+In this example, any container image from `docker.io` in the tenant cluster is rewritten when the Pod syncs to the control plane cluster. A Pod with `image: docker.io/nginx:latest` runs as `image: registry.internal/nginx:latest` on the control plane cluster.
+
+```yaml title="Prefix service port names when syncing to the control plane cluster"
+sync:
+  toHost:
+    services:
+      enabled: true
+      patches:
+        - path: spec.ports[*].name
+          expression: '"tenant-" + value'
+          reverseExpression: 'value.replace(/^tenant-/, "")'
+```
+
+In this example, a port named `http` in the tenant cluster becomes `tenant-http` on the control plane cluster. When a change flows back from the control plane cluster, the prefix is stripped and the port is `http` again in the tenant cluster.
+
+```yaml title="Remove a prefix from imported ConfigMap annotations"
+sync:
+  fromHost:
+    configMaps:
+      enabled: true
+      mappings:
+        byName:
+          "default/my-cm": "tenant/my-cm"
+      patches:
+        - path: metadata.annotations[*]
+          reverseExpression: 'value.startsWith("www.") ? value.slice(4) : value'
+```
+
+In this example, the ConfigMap `my-cm` from the `default` namespace on the control plane cluster is synced into the `tenant` namespace in the tenant cluster. For every annotation value, if the value starts with `www.`, that prefix is stripped in the tenant cluster. An annotation value of `www.example.com` on the control plane cluster appears as `example.com` in the tenant cluster. The control plane cluster object is unchanged.
+
+### JavaScript runtime
+
+Expressions can use these variables:
+
+| Variable | Description |
+| --- | --- |
+| `value` | The matched value. |
+| `valueExists` | `true` when the matched path exists in the patch. |
+| `context.vcluster.name` | Tenant cluster name. |
+| `context.vcluster.namespace` | Tenant cluster namespace in the control plane cluster. |
+| `context.vcluster.config` | Effective `vcluster.yaml` configuration. |
+| `context.hostObject` | Control plane cluster object, or `null` when unavailable. |
+| `context.virtualObject` | Tenant cluster object, or `null` when unavailable. |
+| `context.path` | The concrete matched path, useful with wildcards. |
+
+Expressions can use these helper functions:
+
+| Function | Description |
+| --- | --- |
+| `btoa(value)` | Base64-encode a string. |
+| `atob(value)` | Base64-decode a string. |
+| `virtualToHostDNS(value)` | Rewrite a tenant service DNS name to the control plane cluster service DNS name. |
+
+`virtualToHostDNS` supports service DNS names in the form `<name>.<namespace>.svc` or `<name>.<namespace>.svc.<cluster-domain>`.
+
+### Empty paths
+
+Empty paths are an advanced use case. Use them when you need to read multiple fields to decide what to change, or when you need to set multiple fields in a single expression.
+
+With a normal path, `value` is the single field the patch targets. With an empty path, `value` is the entire set of fields being changed in this sync operation. This is only the changed fields, not the full object. The expression must return the modified change set.
+
+```yaml
+patches:
+  - path: ""
+    expression: |
+      (value => {
+        value.metadata ??= {};
+        value.metadata.annotations ??= {};
+        value.metadata.annotations["patched-by"] = "vcluster";
+        return value;
+      })(value)
+```
+
+If the incoming change set is `{"spec": {"replicas": 3}}`, the expression receives that object, adds the annotation, and returns `{"spec": {"replicas": 3}, "metadata": {"annotations": {"patched-by": "vcluster"}}}`. Both changes are then applied together.
+
+## Reference patches
+
+Reference patches tell vCluster that a field contains the name of another synced object. When syncing, vCluster rewrites the name to its translated value in the target cluster.
+
+vCluster renames synced objects on the control plane cluster to avoid collisions across tenant clusters. A Secret named `my-secret` in the `default` namespace becomes `default-x-my-secret-x-my-vcluster` on the control plane cluster. Any field that holds that name must be rewritten to match, or the reference breaks.
+
+### Simple reference patch
+
+Use a simple reference patch when the field value is a plain string holding only the object name.
+
+```yaml title="Treat an annotation value as a Secret name"
+sync:
+  toHost:
+    pods:
+      enabled: true
+      patches:
+        - path: metadata.annotations["example.com/secret-name"]
+          reference:
+            apiVersion: v1
+            kind: Secret
+```
+
+If a Pod in the tenant cluster has the annotation `example.com/secret-name: my-secret`, vCluster rewrites it when syncing the Pod to the control plane cluster. On the control plane cluster, the annotation becomes `example.com/secret-name: default-x-my-secret-x-my-vcluster`. Without the patch, the annotation stays as `my-secret`, which would not match the actual Secret name on the control plane cluster.
+
+### Structured reference patch
+
+Use a structured reference patch when the field value is a nested object that contains the name as a sub-field, such as a Kubernetes `ObjectReference` or `LocalObjectReference`.
+
+```yaml title="Rewrite a structured Secret reference"
+sync:
+  toHost:
+    customResources:
+      widgets.example.com:
+        enabled: true
+        patches:
+          - path: spec.secretRef
+            reference:
+              apiVersion: v1
+              kind: Secret
+              namePath: name
+              namespacePath: namespace
+```
+
+In the tenant cluster, `spec.secretRef` holds an object like:
+
+```yaml
+name: my-secret
+namespace: default
+```
+
+`namePath: name` and `namespacePath: namespace` are paths relative to that object, pointing to the sub-fields vCluster should rewrite. On the control plane cluster, those values become the translated Secret name and namespace:
+
+```yaml
+name: default-x-my-secret-x-my-vcluster
+namespace: my-vcluster-ns
+```
+
+The values you set for `namePath` and `namespacePath` depend on how the resource defines its reference. If the sub-field were named `secretName` instead of `name`, you would write `namePath: secretName`.
+
+`namePath` is required when you set `namespacePath`, `kindPath`, or `apiVersionPath`.
+
+## Labels patches
+
+Use `labels` patches only with custom resource sync. They are not supported on built-in resources.
+
+vCluster translates pod label keys when syncing to the control plane cluster to prevent collisions across tenant clusters. If a custom resource has a field containing label selectors, such as `spec.selector.matchLabels`, those keys must be translated the same way or the selector will not match any pods on the control plane cluster. Setting `labels: {}` on a path tells vCluster to apply that translation to the field. The `labels` key takes an empty object — there are no configuration options inside it.
+
+```yaml title="Translate selector labels on a custom resource"
+sync:
+  toHost:
+    customResources:
+      widgets.example.com:
+        enabled: true
+        patches:
+          - path: spec.selector.matchLabels
+            labels: {}
+```
+
+If `spec.selector.matchLabels` held `{app: my-app}` in the tenant cluster, vCluster rewrites the key to its translated form on the control plane cluster so the selector continues to match the correct pods.
+
+## Supported resources
+
+### To the control plane cluster
+
+These resources sync tenant cluster state to the control plane cluster. Use `expression` for changes flowing outbound and `reverseExpression` for changes flowing back.
+
+| Resource | Config key |
+| --- | --- |
+| [Pods](../to-host/core/pods/README.mdx) | `sync.toHost.pods.patches` |
+| [ConfigMaps](../to-host/core/config-maps.mdx) | `sync.toHost.configMaps.patches` |
+| [Secrets](../to-host/core/secrets.mdx) | `sync.toHost.secrets.patches` |
+| [Services](../to-host/networking/services.mdx) | `sync.toHost.services.patches` |
+| [Endpoints](../to-host/networking/endpoints.mdx) | `sync.toHost.endpoints.patches` |
+| [EndpointSlices](../to-host/networking/endpointslices.mdx) | `sync.toHost.endpointSlices.patches` |
+| [Ingresses](../to-host/networking/ingresses.mdx) | `sync.toHost.ingresses.patches` |
+| [NetworkPolicies](../to-host/networking/network-policies.mdx) | `sync.toHost.networkPolicies.patches` |
+| [Gateway API: HTTPRoutes](../to-host/networking/gateway-api.mdx) | `sync.toHost.gatewayApi.httpRoutes.patches` |
+| [Gateway API: TLSRoutes](../to-host/networking/gateway-api.mdx) | `sync.toHost.gatewayApi.tlsRoutes.patches` |
+| [Gateway API: BackendTLSPolicies](../to-host/networking/gateway-api.mdx) | `sync.toHost.gatewayApi.backendTLSPolicies.patches` |
+| [Gateway API: ReferenceGrants](../to-host/networking/gateway-api.mdx) | `sync.toHost.gatewayApi.referenceGrants.patches` |
+| [PersistentVolumeClaims](../to-host/storage/persistent-volume-claims.mdx) | `sync.toHost.persistentVolumeClaims.patches` |
+| [PersistentVolumes](../to-host/storage/persistent-volumes.mdx) | `sync.toHost.persistentVolumes.patches` |
+| [StorageClasses](../to-host/storage/storage-classes.mdx) | `sync.toHost.storageClasses.patches` |
+| [ResourceClaims](../to-host/DRA/resourceclaims.mdx) | `sync.toHost.resourceClaims.patches` |
+| [ResourceClaimTemplates](../to-host/DRA/resourceclaimtemplates.mdx) | `sync.toHost.resourceClaimTemplates.patches` |
+| [PodDisruptionBudgets](../to-host/advanced/pod-disruption-budgets.mdx) | `sync.toHost.podDisruptionBudgets.patches` |
+| [Custom resources](../to-host/advanced/custom-resources.mdx) | `sync.toHost.customResources.<resource>.patches` |
+
+### From the control plane cluster
+
+These resources sync control plane cluster state into the tenant cluster. For most resources, `expression` transforms values as they arrive from the control plane cluster, which matches the natural reading of the keyword for this direction. ConfigMaps, Secrets, and custom resources are the exception: their sync implementations share the same direction model as `sync.toHost`, where `reverseExpression` means the control plane→tenant direction. Use the third column to confirm which keyword applies to each resource rather than reasoning from the keyword names alone.
+
+| Resource | Config key | Use for control plane→tenant |
+| --- | --- | --- |
+| [ConfigMaps](../from-host/configmaps.mdx) | `sync.fromHost.configMaps.patches` | `reverseExpression` |
+| [Secrets](../from-host/secrets.mdx) | `sync.fromHost.secrets.patches` | `reverseExpression` |
+| [Custom resources](../from-host/custom-resources.mdx) | `sync.fromHost.customResources.<resource>.patches` | `reverseExpression` |
+| [CSI Drivers](../from-host/csi-drivers.mdx) | `sync.fromHost.csiDrivers.patches` | `expression` |
+| [CSI Nodes](../from-host/csi-nodes.mdx) | `sync.fromHost.csiNodes.patches` | `expression` |
+| [CSI Storage Capacities](../from-host/csi-storage-capacities.mdx) | `sync.fromHost.csiStorageCapacities.patches` | `expression` |
+| [Device Classes](../from-host/device-classes.mdx) | `sync.fromHost.deviceClasses.patches` | `expression` |
+| [Events](../from-host/events.mdx) | `sync.fromHost.events.patches` | `expression` |
+| [Gateway Classes](../from-host/gateway-classes.mdx) | `sync.fromHost.gatewayClasses.patches` | `expression` |
+| [Gateways](../from-host/gateways.mdx) | `sync.fromHost.gateways.patches` | `expression` |
+| [Ingress Classes](../from-host/ingress-classes.mdx) | `sync.fromHost.ingressClasses.patches` | `expression` |
+| [Nodes](../from-host/nodes.mdx) | `sync.fromHost.nodes.patches` | `expression` |
+| [Priority Classes](../from-host/priority-classes.mdx) | `sync.fromHost.priorityClasses.patches` | `expression` |
+| [Runtime Classes](../from-host/runtime-classes.mdx) | `sync.fromHost.runtimeClasses.patches` | `expression` |
+| [Storage Classes](../from-host/storage-classes.mdx) | `sync.fromHost.storageClasses.patches` | `expression` |
+| Volume Snapshot Classes | `sync.fromHost.volumeSnapshotClasses.patches` | `expression` |
+
+## Troubleshoot
+
+| Symptom | What to check |
+| --- | --- |
+| Pro feature license error | Confirm the tenant cluster uses the Pro image and has a license from vCluster Platform. See [Resolve Pro feature license errors](../../../../troubleshoot/pro-feature-license-error.mdx). |
+| Patch appears to do nothing | Confirm the path exists in the merge patch for the update. Patches run on changed fields only, not the full object. On create, vCluster converts the object to a patch, so more fields are available. |
+| `sync.fromHost` patch appears to do nothing | Confirm you are using the correct expression keyword for the resource. vCluster silently skips the wrong keyword with no error. See the [Supported resources](#from-the-control-plane-cluster) table. |
+| A field stops syncing in one direction | Check whether you have an `expression` or `reverseExpression` entry for that direction. Omitting the expression for a direction causes vCluster to drop that field from the patch. |
+| An object is stuck in a failing sync loop | An expression error is likely. Check vCluster pod logs for messages containing `apply patches host object` or `apply patches virtual object`. No event or status condition is set on the object. |
+| A field is being deleted instead of transformed | The expression may be returning `null` or `undefined`. vCluster deletes the field when an expression returns either value. |
+| Reference patch fails with a missing mapper error | The referenced resource type must be synced or otherwise known to vCluster. |
