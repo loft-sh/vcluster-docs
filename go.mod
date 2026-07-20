@@ -6,8 +6,8 @@ require (
 	github.com/gertd/go-pluralize v0.2.1
 	github.com/ghodss/yaml v1.0.0
 	github.com/invopop/jsonschema v0.12.1-0.20240219232115-a4467074499d
-	github.com/loft-sh/agentapi/v4 v4.11.0-rc.6
-	github.com/loft-sh/api/v4 v4.11.0-rc.6
+	github.com/loft-sh/agentapi/v4 v4.11.0-rc.7
+	github.com/loft-sh/api/v4 v4.11.0-rc.7
 	github.com/loft-sh/external-types v0.1.0-alpha.2.0.20260409132559-a38365a8cbf2
 	k8s.io/api v0.36.0
 	k8s.io/apimachinery v0.36.0
