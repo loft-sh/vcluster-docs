@@ -5,101 +5,11 @@ sidebar_position: 6
 description: Query fleet metrics through the Fleet Observability Query Proxy with scoped headers and platform-owned labels.
 ---
 
-The Query Proxy exposes a Prometheus-compatible HTTP API on the gateway Service. It
-authorizes each request with Platform, injects the requested scope into PromQL, and
-forwards the rewritten query to the metrics backend.
-
-## Endpoint
-
-Inside the Platform cluster:
-
-```text
-https://gateway-fleet-observability.vcluster-platform.svc.cluster.local:8081/api/v1/query
-```
-
-This endpoint assumes the example connector ID `fleet-observability`. For another ID,
-replace the Service name with `gateway-<connector-id>`.
-
-To connect your own datasource or query client from outside the Platform cluster, expose
-the gateway with a LoadBalancer and use its address on port `8081` instead of the in-cluster
-Service name:
-
-```text
-https://<loadbalancer-address>:8081/api/v1/query
-```
-
-See [Expose the gateway with a LoadBalancer](./install-observability-gateway.mdx#expose-the-gateway-with-a-loadbalancer)
-to enable it and retrieve the address. Scope headers and `metrics-reader` authorization are
-unchanged; only the host differs.
-
-The gateway always uses TLS. For the default Platform-managed certificate, read `ca.crt`
-from the `gateway-<connector-id>-tls` Secret and make it available to your query client. The
-examples use its local path through the `GATEWAY_CA_FILE` environment variable:
-
-```bash
-CONNECTOR_ID=fleet-observability
-kubectl get secret -n vcluster-platform "gateway-$CONNECTOR_ID-tls" -o jsonpath='{.data.ca\.crt}' | base64 -d > /tmp/gateway-ca.crt
-export GATEWAY_CA_FILE=/tmp/gateway-ca.crt
-```
-
-## Query a tenant cluster
-
-Send a `metrics-reader` token from
-[Create a reader key](./configure-metrics-access.mdx#create-a-reader-key) and tenant scope
-headers:
-
-```bash
-curl -G \
-  --cacert "$GATEWAY_CA_FILE" \
-  -H "Authorization: Bearer $METRICS_READER_TOKEN" \
-  -H "X-Vcluster-Platform-Project: my-project" \
-  -H "X-Vcluster-Platform-Instance: my-vcluster" \
-  --data-urlencode 'query=sum(rate(container_cpu_usage_seconds_total[5m]))' \
-  https://gateway-fleet-observability.vcluster-platform.svc.cluster.local:8081/api/v1/query
-```
-
-The Query Proxy injects tenant scope into vector selectors before forwarding the query.
-The backend receives an equivalent query constrained by:
-
-```promql
-vcluster_platform_project="my-project",
-vcluster_platform_instance="my-vcluster"
-```
-
-## Query a control plane cluster
-
-```bash
-curl -G \
-  --cacert "$GATEWAY_CA_FILE" \
-  -H "Authorization: Bearer $METRICS_READER_TOKEN" \
-  -H "X-Vcluster-Platform-Cluster: local-cluster" \
-  --data-urlencode 'query=sum(rate(apiserver_request_total[5m]))' \
-  https://gateway-fleet-observability.vcluster-platform.svc.cluster.local:8081/api/v1/query
-```
-
-The backend query is constrained by:
-
-```promql
-vcluster_platform_cluster="local-cluster"
-```
-
-## Use labels in PromQL
-
-You can also include scope labels directly in PromQL. Equality matchers and literal
-alternation regular expression matchers are allowed on scope-controlling labels.
-
-```promql
-sum by (vcluster_platform_project, vcluster_platform_instance) (
-  rate(container_cpu_usage_seconds_total{
-    vcluster_platform_project="my-project",
-    vcluster_platform_instance=~"api|worker"
-  }[5m])
-)
-```
-
-The Query Proxy rejects unsafe scope matchers such as `!=`, `!~`, `.*`, or regexes
-that aren't top-level literal alternations. Descriptive labels can use normal PromQL
-matchers because they don't drive authorization.
+Query fleet metrics through the bundled Grafana, the fastest path once it's deployed, or
+directly against the Query Proxy's Prometheus-compatible HTTP API for automation and your
+own query clients. In both cases the Query Proxy authorizes each request with Platform,
+injects the requested scope into PromQL, and forwards the rewritten query to your metrics
+backend.
 
 ## Query with the bundled Grafana
 
@@ -194,6 +104,99 @@ Grafana users don't need a static `metrics-reader` key.
 The Query Proxy authorizes every query as your user, so the datasource you pick can't widen
 your access. If you select the fleet-wide datasource, you still only get the metrics your
 access key is allowed to read. Only Platform admins receive fleet-wide results from it.
+
+## Endpoint
+
+Query the Query Proxy's HTTP API directly when you automate reads or bring your own query
+client. Inside the Platform cluster:
+
+```text
+https://gateway-fleet-observability.vcluster-platform.svc.cluster.local:8081/api/v1/query
+```
+
+This endpoint assumes the example connector ID `fleet-observability`. For another ID,
+replace the Service name with `gateway-<connector-id>`.
+
+To connect your own datasource or query client from outside the Platform cluster, expose
+the gateway with a LoadBalancer and use its address on port `8081` instead of the in-cluster
+Service name:
+
+```text
+https://<loadbalancer-address>:8081/api/v1/query
+```
+
+See [Expose the gateway with a LoadBalancer](./install-observability-gateway.mdx#expose-the-gateway-with-a-loadbalancer)
+to enable it and retrieve the address. Scope headers and `metrics-reader` authorization are
+unchanged; only the host differs.
+
+The gateway always uses TLS. For the default Platform-managed certificate, read `ca.crt`
+from the `gateway-<connector-id>-tls` Secret and make it available to your query client. The
+examples use its local path through the `GATEWAY_CA_FILE` environment variable:
+
+```bash
+CONNECTOR_ID=fleet-observability
+kubectl get secret -n vcluster-platform "gateway-$CONNECTOR_ID-tls" -o jsonpath='{.data.ca\.crt}' | base64 -d > /tmp/gateway-ca.crt
+export GATEWAY_CA_FILE=/tmp/gateway-ca.crt
+```
+
+## Query a tenant cluster
+
+Send a `metrics-reader` token from
+[Create a reader key](./configure-metrics-access.mdx#create-a-reader-key) and tenant scope
+headers:
+
+```bash
+curl -G \
+  --cacert "$GATEWAY_CA_FILE" \
+  -H "Authorization: Bearer $METRICS_READER_TOKEN" \
+  -H "X-Vcluster-Platform-Project: my-project" \
+  -H "X-Vcluster-Platform-Instance: my-vcluster" \
+  --data-urlencode 'query=sum(rate(container_cpu_usage_seconds_total[5m]))' \
+  https://gateway-fleet-observability.vcluster-platform.svc.cluster.local:8081/api/v1/query
+```
+
+The Query Proxy injects tenant scope into vector selectors before forwarding the query.
+The backend receives an equivalent query constrained by:
+
+```promql
+vcluster_platform_project="my-project",
+vcluster_platform_instance="my-vcluster"
+```
+
+## Query a control plane cluster
+
+```bash
+curl -G \
+  --cacert "$GATEWAY_CA_FILE" \
+  -H "Authorization: Bearer $METRICS_READER_TOKEN" \
+  -H "X-Vcluster-Platform-Cluster: local-cluster" \
+  --data-urlencode 'query=sum(rate(apiserver_request_total[5m]))' \
+  https://gateway-fleet-observability.vcluster-platform.svc.cluster.local:8081/api/v1/query
+```
+
+The backend query is constrained by:
+
+```promql
+vcluster_platform_cluster="local-cluster"
+```
+
+## Use labels in PromQL
+
+You can also include scope labels directly in PromQL. Equality matchers and literal
+alternation regular expression matchers are allowed on scope-controlling labels.
+
+```promql
+sum by (vcluster_platform_project, vcluster_platform_instance) (
+  rate(container_cpu_usage_seconds_total{
+    vcluster_platform_project="my-project",
+    vcluster_platform_instance=~"api|worker"
+  }[5m])
+)
+```
+
+The Query Proxy rejects unsafe scope matchers such as `!=`, `!~`, `.*`, or regexes
+that aren't top-level literal alternations. Descriptive labels can use normal PromQL
+matchers because they don't drive authorization.
 
 ## Example queries
 
