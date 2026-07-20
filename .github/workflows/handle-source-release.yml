@@ -121,13 +121,15 @@ jobs:
       # public proxy, hits 404, then tries an unauthenticated `git
       # ls-remote` and fails.
       #
-      # GOPRIVATE is narrowed to the actually-private patterns. A broad
-      # `github.com/loft-sh/*` pattern forces direct VCS for public deps
-      # too — including the indirect github.com/loft-sh/external-types,
-      # whose sparse-then-dense git history reproducibly triggers a
-      # `git fetch --unshallow` race ("shallow file has changed since
-      # we read it") in `go mod tidy` after the platform pin bump.
-      # Mirrors loft-enterprise#6910.
+      # GOPRIVATE stays narrow: only vcluster-pro* is genuinely private, so
+      # only it is forced to direct VCS on every event. It must NOT widen to
+      # `github.com/loft-sh/*`, which would also force direct VCS for the
+      # indirect github.com/loft-sh/external-types, whose sparse-then-dense
+      # git history reproducibly triggers a `git fetch --unshallow` race
+      # ("shallow file has changed since we read it") in `go mod tidy`.
+      # Mirrors loft-enterprise#6910. The platform pin bump needs api +
+      # agentapi resolved directly too, but only on platform-released and
+      # without disturbing GOPRIVATE; the next step scopes that.
       - name: Configure git for private loft-sh modules
         if: steps.classify.outputs.skip != 'true'
         env:
@@ -138,18 +140,52 @@ jobs:
           echo "GOPRIVATE=github.com/loft-sh/vcluster-pro*" >>"$GITHUB_ENV"
           echo "GOPROXY=https://proxy.golang.org,direct" >>"$GITHUB_ENV"
 
+      # The platform pin bump (below) moves api + agentapi to a version
+      # loft-enterprise tagged moments ago. proxy.golang.org and
+      # sum.golang.org cache a version only after fetching it from origin,
+      # and that propagation lags tag creation on independent, unbounded
+      # timelines: it stalled past the 10-minute wait for platform v4.11.0
+      # (agentapi), and before that under DEVOPS-904, DEVOPS-1008 and
+      # DEVOPS-1041, each "wait longer on Google" patch failing again on the
+      # next release. Route just these two modules to direct VCS (git auth
+      # above) so they are consumable the instant their GitHub tag exists,
+      # which the wait step gates on authoritatively. GONOSUMDB also skips
+      # the checksum DB for them, correct because sum.golang.org has not seen
+      # the version either; go still records their content hashes in go.sum
+      # from the direct download.
+      #
+      # Set GONOPROXY/GONOSUMDB explicitly rather than widening GOPRIVATE:
+      # the explicit values replace the GOPRIVATE-derived defaults, so
+      # vcluster-pro* is repeated here or private-module requests would leak
+      # to the public services. external-types is deliberately absent,
+      # keeping it on the proxy and away from the unshallow race. Scoped to
+      # platform-released so unrelated vcluster/cli generator runs keep
+      # verifying api/agentapi through the checksum DB. Prefix patterns match
+      # on path element boundaries, so `.../api` covers api and api/v4
+      # without matching the sibling `.../apiserver`.
+      - name: Route api + agentapi to direct VCS for the platform pin bump
+        if: steps.classify.outputs.skip != 'true' && steps.inputs.outputs.event == 'platform-released'
+        run: |
+          set -eo pipefail
+          modules="github.com/loft-sh/vcluster-pro*,github.com/loft-sh/api,github.com/loft-sh/agentapi"
+          echo "GONOPROXY=${modules}" >>"$GITHUB_ENV"
+          echo "GONOSUMDB=${modules}" >>"$GITHUB_ENV"
+
       # loft-enterprise's release pipeline cuts its own tag + release first
       # (which triggers our dispatch), then creates matching upstream tags
-      # in loft-sh/{agentapi,api} and lets them propagate to the Go module
-      # proxy. The bump step's `go mod tidy` below resolves both modules
-      # through GOPROXY, so it must not run until the proxy can serve the
-      # released version, not merely until the GitHub tag exists. The wait
-      # checks tag presence first (a clear "upstream never published"
-      # signal) then module-proxy resolution (the propagation race that
-      # broke platform v4.10.1 under DEVOPS-1008, where the tag existed but
-      # `go mod tidy` still reported `unknown revision`). Logic + bats
-      # coverage live in the script. 10s x 60 = 10 min ceiling per check.
-      - name: Wait for agentapi + api to resolve through the module proxy
+      # in loft-sh/{agentapi,api} a short time later. The bump step below
+      # must not run until those tags exist. Because the bump now resolves
+      # api + agentapi via direct VCS (routing step above), the GitHub tag
+      # existing is sufficient for consumability; we no longer wait on the
+      # public proxy or sum.golang.org, whose propagation lag broke this
+      # receiver repeatedly (DEVOPS-904, DEVOPS-1008, DEVOPS-1041, platform
+      # v4.11.0). The script checks tag presence first (a clear "upstream
+      # never published" signal), then confirms each module resolves via a
+      # direct fetch that mirrors the bump and warms the module cache.
+      # Logic + bats coverage live in the script. Each of the four checks
+      # (tag + resolve, per module) polls 10s x 60 = 10 min, so ~40 min
+      # worst case, though a healthy release passes each on the first try.
+      - name: Wait for agentapi + api release tags to be consumable
         if: steps.classify.outputs.skip != 'true' && steps.inputs.outputs.event == 'platform-released'
         env:
           VERSION: ${{ steps.inputs.outputs.version }}
@@ -172,19 +208,15 @@ jobs:
       # vendoring". The bumped vendor tree ships in the same docs-sync PR
       # alongside go.mod/go.sum + regenerated partials — they have to ship
       # together to compile on next regen.
+      #
+      # The bump edits go.mod, runs `go mod tidy` + `go mod vendor`, and
+      # asserts MVS actually selected VERSION (not a higher transitive
+      # require). Logic + bats coverage live in the script.
       - name: Bump loft-sh/api + loft-sh/agentapi pins to released platform version
         if: steps.classify.outputs.skip != 'true' && steps.inputs.outputs.event == 'platform-released'
         env:
           VERSION: ${{ steps.inputs.outputs.version }}
-        run: |
-          set -eo pipefail
-          stripped="${VERSION#v}"
-          major="v${stripped%%.*}"
-          echo "Bumping github.com/loft-sh/{api,agentapi}/${major} to ${VERSION}"
-          go mod edit -require "github.com/loft-sh/agentapi/${major}@${VERSION}"
-          go mod edit -require "github.com/loft-sh/api/${major}@${VERSION}"
-          go mod tidy
-          go mod vendor
+        run: bash hack/release/bump-platform-pins.sh
 
       # Checks whether the freshly-bumped loft-sh/api vendor tree registered
       # any Kind that hack/platform/partials/main.go has no
