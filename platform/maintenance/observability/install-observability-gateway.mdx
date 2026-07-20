@@ -14,7 +14,7 @@ import Label from "@site/src/components/Label";
 The observability gateway runs in the vCluster Platform namespace. It contains two
 containers:
 
-- `otel-gateway`, the Write Gateway that receives OTLP metrics.
+- `otel-gateway`, the Write Gateway that receives OTLP.
 - `query-proxy`, the Prometheus-compatible read proxy.
 
 Platform deploys the gateway from an observability connector Secret. The connector
@@ -122,7 +122,7 @@ Platform reconciles the following resources:
 
 | Key | Required | Description |
 |---|---:|---|
-| `metricsBackendOtlpEndpoint` | Yes | OTLP endpoint that receives metrics from the Write Gateway. |
+| `metricsBackendOtlpEndpoint` | Yes | OTLP endpoint that receives metrics from the Write Gateway. Provide the base URL only; the gateway appends `/v1/metrics` (for example, `https://prom-prometheus-server.vcluster-platform/api/v1/otlp` receives writes at `/api/v1/otlp/v1/metrics`). |
 | `metricsBackendPromQLEndpoint` | Yes | Prometheus HTTP API endpoint queried by the Query Proxy. |
 | `metricsBackendInsecureSkipVerify` | No | Set to `"true"` only for test backends with unverifiable TLS. |
 | `metricsBackendServerName` | No | TLS server name override for the metrics backend. |
@@ -183,8 +183,8 @@ omitted and clients use their system trust stores.
 ## Expose the gateway with a LoadBalancer
 
 The gateway Service defaults to `ClusterIP`. To make the gateway reachable from collectors
-outside the Platform cluster, set `serviceType` to `LoadBalancer`. You can optionally apply
-provider-specific Service annotations:
+and query clients outside the Platform cluster, set `serviceType` to `LoadBalancer`. You can
+optionally apply provider-specific Service annotations:
 
 ```yaml
 stringData:
@@ -194,7 +194,34 @@ stringData:
 ```
 
 For a Platform-managed certificate, the controller waits for the LoadBalancer address and
-adds it to the certificate before deploying the gateway.
+adds it to the certificate as a subject alternative name before deploying the gateway. This
+means clients that verify TLS trust the address without extra configuration. For a
+self-signed certificate, distribute `ca.crt` as described in
+[Customize the gateway serving certificate](#customize-the-gateway-serving-certificate). A
+certificate signed by a public CA needs no extra trust configuration.
+
+### Retrieve the load balancer address
+
+The cloud provider assigns the address asynchronously, so it stays empty until provisioning
+finishes. Read it from the gateway Service:
+
+```bash
+CONNECTOR_ID=fleet-observability
+kubectl get svc -n vcluster-platform "gateway-$CONNECTOR_ID" \
+  -o jsonpath='{range .status.loadBalancer.ingress[*]}{.hostname}{.ip}{"\n"}{end}'
+```
+
+The provider reports either a hostname (for example, AWS) or an IP address (for example,
+GCP and Azure). Build the reachable endpoints from that address:
+
+| Endpoint | Port | Purpose |
+|---|---:|---|
+| `https://<loadbalancer-address>:4318` | `4318` | OTLP HTTP writes. Use this for collectors. |
+| `https://<loadbalancer-address>:4317` | `4317` | OTLP gRPC writes. The gateway accepts gRPC, but the bundled collector sends over HTTP, so use `4318` for collectors. |
+| `https://<loadbalancer-address>:8081` | `8081` | Prometheus HTTP API through the Query Proxy. Use this for external query clients. |
+
+Use this address wherever a collector or query client connects from outside the Platform
+cluster.
 
 ## Use backend mTLS
 
