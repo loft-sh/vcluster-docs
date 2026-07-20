@@ -1,0 +1,219 @@
+---
+title: Configure metrics access
+sidebar_label: Configure access
+sidebar_position: 4
+description: Create metrics-writer and metrics-reader access keys for the Fleet Observability gateway.
+---
+
+import InterpolatedCodeBlock from "@site/src/components/InterpolatedCodeBlock";
+
+Fleet Observability uses scoped access keys to separate write access from read access.
+The gateway never trusts the metrics payload to define scope. Each request is
+authenticated with Platform and authorized against the requested cluster or tenant
+cluster.
+
+## Access roles
+
+| Role | Used by | Allows |
+|---|---|---|
+| `metrics-writer` | Edge collectors | Write metrics for the access key's scoped cluster or tenant cluster. |
+| `metrics-reader` | Grafana, PromQL clients, automation | Read metrics for the access key's scoped cluster or tenant cluster. |
+
+The roles are intentionally separate. A `metrics-writer` key can't read metrics, and
+a `metrics-reader` key can't write metrics. A key can carry both roles when an
+integration needs both paths.
+
+## Scope choices
+
+Scope metrics keys as tightly as possible:
+
+- Use `spec.scope.clusters` for control plane cluster metrics.
+- Use `spec.scope.virtualClusters` for tenant cluster metrics.
+- Use `*` only for trusted fleet-wide automation.
+
+The Platform authorization check still applies the permissions of the user or subject
+that owns the key. Scope narrows permission. It doesn't expand it.
+
+:::note Examples are blueprints, not prescriptions
+The snippets below are one example of how to create access keys. In particular, the line
+that generates the `KEY` value shows just one way to produce a random secret. Use whatever
+key generation, secret storage, and provisioning workflow fits your environment. Treat these
+commands as general blueprints rather than the required procedure.
+:::
+
+## Create a writer key for a tenant cluster
+
+Create one `metrics-writer` key for each tenant cluster collector, or for each
+automation unit that writes on behalf of one tenant cluster.
+
+Set `PROJECT` and `TENANT_CLUSTER` to the target tenant cluster's project and instance name. The
+`KEY` value is a freshly generated secret, and the command prints it as `token: <value>`
+at the end.
+
+<InterpolatedCodeBlock
+  code={
+    'PROJECT=[[VAR:PROJECT:default]]\n' +
+    'TENANT_CLUSTER=[[VAR:TENANT_CLUSTER:my-vcluster]]\n' +
+    'KEY=$(head -c 20 /dev/urandom | od -An -tx1 | tr -d \' \\n\')\n' +
+    'kubectl apply -f - <<EOF\n' +
+    'apiVersion: storage.loft.sh/v1\n' +
+    'kind: AccessKey\n' +
+    'metadata:\n' +
+    '  name: "loft-metrics-writer-p-${PROJECT}-${TENANT_CLUSTER}"\n' +
+    'spec:\n' +
+    '  type: Other\n' +
+    '  key: "${KEY}"\n' +
+    '  subject: "loft:metrics-writer:p-${PROJECT}:${TENANT_CLUSTER}"\n' +
+    '  groups:\n' +
+    '    - loft:system:metrics-writers\n' +
+    '  scope:\n' +
+    '    roles:\n' +
+    '      - role: metrics-writer\n' +
+    '    virtualClusters:\n' +
+    '      - project: ${PROJECT}\n' +
+    '        virtualCluster: "${TENANT_CLUSTER}"\n' +
+    'EOF\n' +
+    'echo "token: ${KEY}"'
+  }
+  language="bash"
+/>
+
+Use the printed token as the collector bearer token. Store it in a Kubernetes Secret in
+the cluster where the collector runs.
+
+## Create a writer key for a control plane cluster
+
+Use cluster scope when a collector writes metrics for a control plane cluster.
+
+Set `CLUSTER` to the control plane cluster name.
+
+<InterpolatedCodeBlock
+  code={
+    'CLUSTER=[[VAR:CLUSTER:my-cluster]]\n' +
+    'KEY=$(head -c 20 /dev/urandom | od -An -tx1 | tr -d \' \\n\')\n' +
+    'kubectl apply -f - <<EOF\n' +
+    'apiVersion: storage.loft.sh/v1\n' +
+    'kind: AccessKey\n' +
+    'metadata:\n' +
+    '  name: "loft-metrics-writer-${CLUSTER}"\n' +
+    'spec:\n' +
+    '  type: Other\n' +
+    '  key: "${KEY}"\n' +
+    '  subject: "loft:metrics-writer:${CLUSTER}"\n' +
+    '  groups:\n' +
+    '    - loft:system:metrics-writers\n' +
+    '  scope:\n' +
+    '    roles:\n' +
+    '      - role: metrics-writer\n' +
+    '    clusters:\n' +
+    '      - cluster: "${CLUSTER}"\n' +
+    'EOF\n' +
+    'echo "token: ${KEY}"'
+  }
+  language="bash"
+/>
+
+## Create a reader key
+
+Use a `metrics-reader` key for automation that queries metrics directly through the
+Query Proxy.
+
+Set `PROJECT` and `TENANT_CLUSTER` to the target tenant cluster's project and instance name.
+
+<InterpolatedCodeBlock
+  code={
+    'PROJECT=[[VAR:PROJECT:default]]\n' +
+    'TENANT_CLUSTER=[[VAR:TENANT_CLUSTER:my-vcluster]]\n' +
+    'KEY=$(head -c 20 /dev/urandom | od -An -tx1 | tr -d \' \\n\')\n' +
+    'kubectl apply -f - <<EOF\n' +
+    'apiVersion: storage.loft.sh/v1\n' +
+    'kind: AccessKey\n' +
+    'metadata:\n' +
+    '  name: "loft-metrics-reader-p-${PROJECT}-${TENANT_CLUSTER}"\n' +
+    'spec:\n' +
+    '  type: Other\n' +
+    '  key: "${KEY}"\n' +
+    '  subject: "loft:metrics-reader:p-${PROJECT}:${TENANT_CLUSTER}"\n' +
+    '  groups:\n' +
+    '    - loft:system:metrics-readers\n' +
+    '  scope:\n' +
+    '    roles:\n' +
+    '      - role: metrics-reader\n' +
+    '    virtualClusters:\n' +
+    '      - project: ${PROJECT}\n' +
+    '        virtualCluster: "${TENANT_CLUSTER}"\n' +
+    'EOF\n' +
+    'echo "token: ${KEY}"'
+  }
+  language="bash"
+/>
+
+Grafana datasources generated by Platform can also use the user's Platform session
+cookie. In that case the Query Proxy authorizes reads as the user instead of a static
+reader key. For details, see
+[Authorization with your access key](./query-fleet-metrics.mdx#authorization-with-your-access-key)
+in Query fleet metrics.
+
+## Request scope headers
+
+Writers and readers declare scope with headers.
+
+For a control plane cluster:
+
+```text
+X-Vcluster-Platform-Cluster: local-cluster
+```
+
+For a tenant cluster:
+
+```text
+X-Vcluster-Platform-Project: my-project
+X-Vcluster-Platform-Instance: my-vcluster
+```
+
+The Write Gateway can derive tenant scope from a writer key only when the key contains
+exactly one concrete tenant cluster scope. Explicit headers are easier to audit and are
+recommended for collector configurations.
+
+:::note Argo CD collectors set these headers for you
+When you deploy collectors with the `cluster-collector` template as described in
+[Deploy collectors to each cluster](./deploy-with-argocd.mdx#deploy-collectors-to-each-cluster), the template sets
+these scope headers automatically from the deployment destination. You only set them by hand
+when you configure a collector manually.
+:::
+
+## Rotation
+
+:::important Restart collectors after a key or config change
+Edge collectors don't roll their pods automatically when their token or config changes.
+After you rotate a `metrics-writer` key or change collector config, you must restart the
+collector so it loads the new value. Until you restart it, the collector keeps using the
+old token, and its writes fail once you disable the old key.
+:::
+
+To rotate a metrics key:
+
+1. Create a new key with the same role and scope.
+2. Update the collector or query client Secret with the new key value.
+3. Restart the collector so it picks up the new token. Reload query clients that hold the
+   reader token.
+4. Delete or disable the old key.
+
+Restart the collector workloads in the collector namespace. For collectors deployed with
+the `cluster-collector` template, restart the OpenTelemetry Collector Deployment and
+DaemonSet:
+
+```bash
+kubectl rollout restart daemonset,deployment -n observability \
+  -l app.kubernetes.io/name=opentelemetry-collector
+```
+
+For a manually deployed collector, restart its own Deployment or DaemonSet the same way.
+
+Authorization decisions are cached briefly. After you delete, disable, or narrow a key,
+allow up to the cache TTL for all gateway and query-proxy decisions to expire.
+
+## Next step
+
+Configure collectors to send metrics with these keys in
+[Configure edge collectors](./configure-edge-collectors.mdx).
