@@ -178,7 +178,10 @@ When writing docs for new features:
 ### Examples format
 
 - vcluster.yaml: description + code block
-- Platform: description + step-by-step (no UI screenshots - they go stale)
+- Platform: description + step-by-step. Minimize UI screenshots since the UI
+  changes often and screenshots go stale, but they're okay where warranted
+  (for example, illustrating a dashboard or layout that's hard to describe in
+  prose).
 
 ### Checklist
 
