@@ -1,0 +1,143 @@
+---
+title: Fleet Observability
+sidebar_label: Overview
+sidebar_position: 1
+description: Monitor tenant clusters across your vCluster Platform fleet with an observability gateway, scoped access keys, and platform-owned metric labels.
+---
+
+import FleetObservabilityArchitecture from '@site/static/media/diagrams/fleet-observability-architecture.svg';
+
+Fleet Observability gives platform operators a central telemetry path for tenant clusters and
+control plane clusters. Telemetry flows over OTLP through a vCluster Platform observability
+gateway before it reaches your backend. The gateway authenticates writes, stamps
+platform-owned labels, and exposes a scoped Prometheus query API for Grafana and other
+read clients.
+
+Use this guide when you need fleet-wide visibility across projects, tenant clusters,
+shared nodes, private nodes, or connected clusters.
+
+## Get started
+
+The default setup is out of the box and driven from the Platform UI. Three steps:
+
+1. **Deploy the metrics backend and Grafana.** Use the bundled Argo CD templates to deploy
+   Prometheus and Grafana. See [Deploy Fleet Observability with Argo CD](./deploy-with-argocd.mdx).
+2. **Create the observability connector.** In the Platform UI, open **Connectors** and
+   connect your backend on the **Observability** tab. Platform then deploys the gateway. See
+   [Install the observability gateway](./install-observability-gateway.mdx).
+3. **Deploy the edge collectors.** Create a `metrics-writer` access key, then deploy the
+   bundled collector template to each cluster to collect from. See
+   [Configure metrics access](./configure-metrics-access.mdx) and
+   [Deploy collectors to each cluster](./deploy-with-argocd.mdx#deploy-collectors-to-each-cluster).
+
+:::info Scope
+Fleet Observability is currently intended for platform administrators. It provides the
+gateway, query proxy, metrics access-key roles, label contract, and both an out-of-the-box
+and a manual configuration path for collectors and backends. The bundled Grafana template
+provides pre-provisioned dashboards today. Platform automatically manages fleet, tenant
+cluster, and control plane cluster datasource ConfigMaps. Per-tenant connector selection,
+access-key generation, and automatic deployment and reconciliation of the observability
+applications are planned as follow-up work.
+
+The current release focuses on metrics. Edge collectors and the gateway communicate over
+OTLP.
+:::
+
+:::warning Not available on embedded Kubernetes
+Fleet Observability runs the metrics gateway and Grafana datasources on the platform
+cluster, so it requires a platform cluster that can run those applications. It is
+currently not available when the platform runs on embedded Kubernetes, which backs the
+external-database and multi-region platform features. In those deployments Fleet
+Observability is turned off automatically.
+:::
+
+## Architecture
+
+<figure>
+  <FleetObservabilityArchitecture
+    style={{width: '100%', height: 'auto'}}
+    role="img"
+    aria-label="Fleet Observability architecture showing edge collectors sending OTLP metrics through the Write Gateway, the Query Proxy authorizing PromQL reads, Platform API authorization, and the metrics backend."
+  />
+  <figcaption>Fleet Observability write and query paths through the vCluster Platform observability gateway</figcaption>
+</figure>
+
+The architecture has three main parts:
+
+- **Edge collectors** are OpenTelemetry Collectors that collect metrics from control plane
+  clusters, tenant clusters, and optional exporters. They send OTLP to the Write Gateway.
+- **Write Gateway** is the vCluster-built ingestion and enforcement layer. It receives OTLP,
+  authenticates each write with a `metrics-writer` access key, authorizes the requested
+  scope with the Platform API, strips caller-supplied platform labels, and stamps the
+  authenticated `vcluster_platform_*` labels.
+- **Query Proxy** exposes a Prometheus-compatible read API. It authenticates each read,
+  authorizes the requested scope with a `metrics-reader` key or user session, rewrites
+  PromQL so reads stay scope-bound, and forwards the query to your metrics backend.
+
+## What platform manages
+
+An observability connector Secret tells Platform how to reach your metrics backend.
+When the connector is present, Platform deploys and reconciles:
+
+- The observability gateway: the Write Gateway and Query Proxy that front your backend.
+- The Grafana datasources that power the fleet, tenant cluster, and control plane cluster
+  dashboards and metrics explorer.
+
+You must provide a backend that can import OTLP metrics and serve the Prometheus HTTP
+API. You must also configure the edge collectors that send metrics to the gateway.
+
+If you enable the [Argo CD integration](../../integrations/argocd/overview.mdx),
+Platform ships default `ArgoCDApplicationTemplate` resources for the metrics backend
+and edge collectors. You can leverage these templates to create the `ArgoCDApplication`
+resources that deploy the backend and collectors, instead of wiring them up by hand.
+See [Deploy Fleet Observability with Argo CD](./deploy-with-argocd.mdx).
+
+## Security model
+
+Fleet Observability doesn't rely on backend tenant isolation. The gateway and query proxy
+are the enforcement layer.
+
+- Metrics writers must authenticate with an access key that has the `metrics-writer`
+  role and a matching cluster or tenant cluster scope.
+- Metrics readers must authenticate with a `metrics-reader` key, a user access key, or
+  a Grafana session passed through to Platform.
+- Platform authorizes both read and write requests with SelfSubjectAccessReview.
+- The Write Gateway owns the full `vcluster_platform_*` label namespace. Caller-supplied
+  labels with that prefix, or dotted variants that would sanitize to that prefix, are
+  removed before authenticated labels are added.
+- Positive authorization results are cached for a short TTL. On Platform outage, cached
+  decisions expire and the system fails closed.
+
+## Pluggable observability
+
+The bundled components are the default. Replace any of them as your environment requires:
+
+- **Metrics backend.** Swap the bundled Prometheus for any backend that ingests OTLP and
+  serves the Prometheus HTTP API. Integration is limited to an OTLP-enabled endpoint with
+  mTLS for authentication, so backends that require other auth methods aren't supported yet.
+- **Edge collectors.** Run your own OpenTelemetry Collectors instead of the bundled
+  template. See [Configure edge collectors](./configure-edge-collectors.mdx).
+- **Grafana.** The bundled Grafana is tightly coupled to the provided dashboards and
+  datasources, and to Platform SSO with access-key cookie forwarding for scoped queries.
+  Replacing it is possible but involved.
+
+## Page guide
+
+| Task | Page |
+|---|---|
+| Deploy the metrics backend and Grafana with Argo CD | [Deploy Fleet Observability with Argo CD](./deploy-with-argocd.mdx) |
+| Create the connector and deploy the gateway | [Install the observability gateway](./install-observability-gateway.mdx) |
+| Create scoped metrics access keys | [Configure metrics access](./configure-metrics-access.mdx) |
+| Send metrics from collectors to the gateway | [Configure edge collectors](./configure-edge-collectors.mdx) |
+| Query metrics through Grafana or PromQL | [Query fleet metrics](./query-fleet-metrics.mdx) |
+| Understand the platform label contract | [Labels reference](./labels-reference.mdx) |
+| Diagnose common failures | [Troubleshooting](./troubleshooting.mdx) |
+
+## Related monitoring guides
+
+For a simpler OpenTelemetry setup without the observability gateway, see
+[Aggregating metrics](../monitoring/aggregating-metrics.mdx). For Shared Nodes kubelet scraping
+background, see [Prometheus node metrics on shared nodes](../monitoring/prometheus-shared-nodes.mdx).
+For centralized workload log collection across your fleet, see
+[Central HostPath Mapper](../monitoring/central-hostpath-mapper.mdx). To understand the log
+types vCluster produces, see [vCluster Logging](/docs/vcluster/manage/logging).

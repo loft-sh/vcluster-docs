@@ -1,0 +1,169 @@
+---
+title: Configure edge collectors
+sidebar_label: Configure collectors
+sidebar_position: 5
+description: Configure OpenTelemetry Collectors to send fleet metrics to the vCluster observability Write Gateway.
+---
+
+Edge collectors are OpenTelemetry Collectors that scrape or receive metrics near the
+workloads, then send OTLP to the Write Gateway. Each collector request must include a bearer
+token and scope headers that match a `metrics-writer` access key.
+
+:::tip Deploy collectors with Argo CD
+If you use the Argo CD integration, you can deploy the collectors from a bundled template
+instead of configuring them by hand. See
+[Deploy Fleet Observability with Argo CD](./deploy-with-argocd.mdx). This manual path is the
+only option for vCluster Standalone tenant clusters, which can't use the Argo CD
+integration.
+:::
+
+## Gateway endpoints
+
+Inside the Platform cluster, the fleet gateway Service is:
+
+```text
+gateway-fleet-observability.vcluster-platform.svc.cluster.local
+```
+
+This endpoint assumes the example connector ID `fleet-observability`. For another ID,
+replace the Service name with `gateway-<connector-id>`.
+
+Use this OTLP endpoint:
+
+| Protocol | Endpoint |
+|---|---|
+| OTLP HTTP | `https://gateway-fleet-observability.vcluster-platform.svc.cluster.local:4318` |
+
+The examples on this page use OTLP HTTP on port `4318`. The gateway also accepts OTLP gRPC
+on port `4317`, but the bundled OpenTelemetry Collector sends over HTTP, so use `4318`.
+
+The gateway always uses TLS. The OpenTelemetry Collector `otlp_http` exporter accepts the
+base URL shown above. Direct OTLP HTTP clients send metrics to the `/v1/metrics` path on
+that host. Mount the CA that issued the gateway serving certificate into the collector and
+set the exporter `tls.ca_file`. The default Platform-managed certificate stores its trust
+anchor in `ca.crt` in the `gateway-<connector-id>-tls` Secret.
+
+Collectors outside the Platform cluster can't resolve the in-cluster Service DNS name.
+Expose the gateway with a LoadBalancer, then use the LoadBalancer address in the exporter
+endpoint instead of the Service name, for example
+`https://<loadbalancer-address>:4318`. See
+[Expose the gateway with a LoadBalancer](./install-observability-gateway.mdx#expose-the-gateway-with-a-loadbalancer)
+to enable it and retrieve the address. The exporter `endpoint` and TLS settings in the
+examples below are otherwise unchanged; only the host differs.
+
+## Store the writer key
+
+Create a Secret for the collector, using a `metrics-writer` access key from
+[Create a writer key for a tenant cluster](./configure-metrics-access.mdx#create-a-writer-key-for-a-tenant-cluster)
+or [Create a writer key for a control plane cluster](./configure-metrics-access.mdx#create-a-writer-key-for-a-control-plane-cluster):
+
+```yaml title="metrics-writer-token.yaml"
+apiVersion: v1
+kind: Secret
+metadata:
+  name: metrics-writer-token
+  namespace: observability
+type: Opaque
+stringData:
+  token: REPLACE_WITH_METRICS_WRITER_KEY
+```
+
+Mount or project this Secret into your collector pod and expose it as an environment
+variable or file.
+
+## Tenant cluster collector
+
+Use tenant scope headers when a collector writes metrics for a specific tenant cluster.
+
+```yaml title="otel-collector-tenant-exporter.yaml"
+exporters:
+  otlp_http/fleet:
+    endpoint: https://gateway-fleet-observability.vcluster-platform.svc.cluster.local:4318
+    tls:
+      ca_file: /etc/otel-gateway-tls/ca.crt
+    headers:
+      Authorization: Bearer ${env:METRICS_WRITER_TOKEN}
+      X-Vcluster-Platform-Project: my-project
+      X-Vcluster-Platform-Instance: my-vcluster
+
+service:
+  pipelines:
+    metrics:
+      receivers: [prometheus]
+      processors: [batch]
+      exporters: [otlp_http/fleet]
+```
+
+The `metrics-writer` key must include a matching `spec.scope.virtualClusters` entry.
+
+## Control plane cluster collector
+
+Use cluster scope headers when a collector writes metrics for a control plane cluster.
+
+```yaml title="otel-collector-cluster-exporter.yaml"
+exporters:
+  otlp_http/fleet:
+    endpoint: https://gateway-fleet-observability.vcluster-platform.svc.cluster.local:4318
+    tls:
+      ca_file: /etc/otel-gateway-tls/ca.crt
+    headers:
+      Authorization: Bearer ${env:METRICS_WRITER_TOKEN}
+      X-Vcluster-Platform-Cluster: local-cluster
+
+service:
+  pipelines:
+    metrics:
+      receivers: [prometheus]
+      processors: [batch]
+      exporters: [otlp_http/fleet]
+```
+
+The `metrics-writer` key must include a matching `spec.scope.clusters` entry.
+
+## Scrape custom targets
+
+Use the collector's `prometheus` receiver to scrape exporters such as kubelet,
+cAdvisor, DCGM exporter, or application endpoints. The gateway doesn't require a
+specific scrape receiver. It only requires OTLP metrics with valid authentication and
+scope.
+
+Example DCGM scrape job:
+
+```yaml title="dcgm-prometheus-receiver.yaml"
+receivers:
+  prometheus:
+    config:
+      scrape_configs:
+        - job_name: dcgm-exporter
+          kubernetes_sd_configs:
+            - role: pod
+          relabel_configs:
+            - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name]
+              action: keep
+              regex: dcgm-exporter
+            - source_labels: [__meta_kubernetes_pod_ip]
+              target_label: __address__
+              replacement: ${1}:9400
+```
+
+## Protect platform labels
+
+Don't set labels with the `vcluster_platform_*` prefix in edge collectors. The Write
+Gateway strips this namespace from incoming resource, scope, and datapoint attributes
+before stamping authenticated labels.
+
+Use your own label prefix for application or infrastructure dimensions.
+
+## Verify writes
+
+Check the Write Gateway metrics endpoint:
+
+```bash
+CONNECTOR_ID=fleet-observability
+GATEWAY_POD=$(kubectl get pod -n vcluster-platform -l app.kubernetes.io/name=gateway,app.kubernetes.io/instance="$CONNECTOR_ID" -o jsonpath='{.items[0].metadata.name}')
+kubectl port-forward -n vcluster-platform pod/$GATEWAY_POD 8889:8889
+curl http://127.0.0.1:8889/metrics
+```
+
+Then query through the Query Proxy as described in
+[Query fleet metrics](./query-fleet-metrics.mdx).
