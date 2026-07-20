@@ -34,8 +34,9 @@ _make_gh() {
     cat >"$BIN/gh" <<'SH'
 #!/usr/bin/env bash
 case "${GH_MODE:-ok}" in
-  fail) exit 1 ;;
-  *)    exit 0 ;;
+  fail)    echo "gh: Not Found (HTTP 404)" >&2; exit 1 ;;
+  autherr) echo "gh: Bad credentials (HTTP 401)" >&2; exit 1 ;;
+  *)       exit 0 ;;
 esac
 SH
     chmod +x "$BIN/gh"
@@ -64,13 +65,13 @@ SH
     chmod +x "$BIN/go"
 }
 
-@test "both phases pass when tag is present and the module downloads" {
+@test "both phases pass when tag is present and the module resolves" {
     VERSION=v4.10.1 run "$SCRIPT"
     [ "$status" -eq 0 ]
     [[ "$output" == *"loft-sh/agentapi: tag v4.10.1 present"* ]]
     [[ "$output" == *"loft-sh/api: tag v4.10.1 present"* ]]
-    [[ "$output" == *"github.com/loft-sh/agentapi/v4: v4.10.1 downloads and checksum-verifies"* ]]
-    [[ "$output" == *"github.com/loft-sh/api/v4: v4.10.1 downloads and checksum-verifies"* ]]
+    [[ "$output" == *"github.com/loft-sh/agentapi/v4: v4.10.1 resolves via direct fetch"* ]]
+    [[ "$output" == *"github.com/loft-sh/api/v4: v4.10.1 resolves via direct fetch"* ]]
 }
 
 @test "phase 2 downloads with -mod=mod for both modules" {
@@ -80,7 +81,7 @@ SH
     grep -q "GOFLAGS=-mod=mod args=mod download github.com/loft-sh/api/v4@v4.10.1" "$SHIM_STATE/go.log"
 }
 
-@test "tag never published → fails with upstream-pipeline error, never reaches download check" {
+@test "tag 404s forever → fails with upstream-pipeline error, never reaches fetch check" {
     GH_MODE=fail VERSION=v4.10.1 run "$SCRIPT"
     [ "$status" -eq 1 ]
     [[ "$output" == *"tag v4.10.1 not present after 5 attempts"* ]]
@@ -88,20 +89,28 @@ SH
     [ ! -f "$SHIM_STATE/go.log" ]
 }
 
-@test "download never verifies → fails with propagation error after the tag check passes" {
+@test "non-404 tag error → surfaced as API/auth problem, not a missing release" {
+    GH_MODE=autherr VERSION=v4.10.1 run "$SCRIPT"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"non-404 error"* ]]
+    [[ "$output" == *"GitHub API/auth problem"* ]]
+    [[ "$output" != *"upstream pipeline never published it"* ]]
+    [ ! -f "$SHIM_STATE/go.log" ]
+}
+
+@test "module never resolves → fails with direct-fetch error after the tag check passes" {
     GO_MODE=fail VERSION=v4.10.1 run "$SCRIPT"
     [ "$status" -eq 1 ]
     [[ "$output" == *"tag v4.10.1 present"* ]]
-    [[ "$output" == *"was not downloadable and checksum-verified after 5 attempts"* ]]
-    [[ "$output" == *"propagation stalled"* ]]
+    [[ "$output" == *"did not resolve via direct fetch after 5 attempts"* ]]
 }
 
-@test "download lags then verifies within the attempt budget → succeeds" {
-    # Each module fails twice then downloads; MAX_ATTEMPTS=5 leaves headroom.
+@test "fetch lags then resolves within the attempt budget → succeeds" {
+    # Each module fails twice then resolves; MAX_ATTEMPTS=5 leaves headroom.
     GO_MODE=flaky:2 VERSION=v4.10.1 run "$SCRIPT"
     [ "$status" -eq 0 ]
-    [[ "$output" == *"waiting for v4.10.1 to download and checksum-verify"* ]]
-    [[ "$output" == *"v4.10.1 downloads and checksum-verifies"* ]]
+    [[ "$output" == *"waiting for v4.10.1 to resolve via direct fetch"* ]]
+    [[ "$output" == *"v4.10.1 resolves via direct fetch"* ]]
 }
 
 @test "major version is derived from VERSION (v5 needs no code change)" {
