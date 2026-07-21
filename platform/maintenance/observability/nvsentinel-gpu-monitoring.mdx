@@ -13,7 +13,7 @@ import Label from "@site/src/components/Label";
 
 [NVSentinel](https://github.com/NVIDIA/NVSentinel) is NVIDIA's open source, Kubernetes-native
 service for GPU fault handling. It detects hardware and software faults on GPU nodes through
-DCGM, system logs, and cloud provider maintenance events, and can respond by cordoning nodes,
+DCGM, system logs, and cloud provider maintenance events. It can respond by cordoning nodes,
 draining workloads, and triggering node reboots or terminations.
 
 When the [Argo CD integration](../../integrations/argocd/overview.mdx) is enabled, vCluster
@@ -23,22 +23,14 @@ NVSentinel into a cluster that runs GPU nodes, typically a tenant cluster with p
 nodes. NVSentinel metrics then flow through the Fleet Observability pipeline like any other
 workload metrics and appear on the bundled GPU dashboards.
 
-:::info Prerequisites
-- The Argo CD integration is enabled and an Argo CD connector is registered on the target
-  cluster. See [Connect to Argo CD](../../integrations/argocd/connect-argocd.mdx).
-- The [NVIDIA GPU Operator](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/index.html)
-  runs in the same cluster. NVSentinel reads GPU health from the DCGM service the GPU
-  Operator deploys (`nvidia-dcgm.gpu-operator.svc:5555` by default). The integration ships
-  an `nvidia-gpu-operator` template for this. Deploy it before NVSentinel, per the
-  [deployment order](./gpu-monitoring-templates.mdx#deployment-order).
-- cert-manager, when you enable components that need internal TLS. The integration ships
-  a cert-manager template as well. With the observe-only defaults, NVSentinel runs without
-  it. See [When you need cert-manager](#when-you-need-cert-manager) for exactly which
-  components require it.
-- A default StorageClass, or one you name in the template parameters, if you enable any
-  component that requires the MongoDB store.
-- Prometheus Operator CRDs, if you enable the PodMonitor.
-:::
+## Prerequisites
+
+- The [Argo CD integration](../../integrations/argocd/overview.mdx) is enabled.
+- An Argo CD connector is registered on the target cluster. See [Connect to Argo CD](../../integrations/argocd/connect-argocd.mdx).
+- The [NVIDIA GPU Operator](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/index.html) is deployed in the same cluster, per the [deployment order](./gpu-monitoring-templates.mdx#deployment-order).
+- cert-manager is deployed, if any component you enable needs internal TLS. See [When you need cert-manager](#when-you-need-cert-manager).
+- A default StorageClass exists, or one is named in the template parameters, if any component you enable needs the MongoDB store.
+- Prometheus Operator CRDs exist, if you enable the PodMonitor.
 
 ## What the template deploys
 
@@ -61,9 +53,7 @@ NVSentinel is composed of independent components that you enable per deployment:
 | Health Events Analyzer | `false` | Analyzes patterns across health events and produces recommended actions. |
 | MongoDB Store | `false` | Persistent event storage; the coordination layer for the remediation components. |
 
-With the defaults, NVSentinel only observes: the GPU and syslog health monitors report
-health events and metrics, and nothing acts on nodes. The remediation pipeline
-(Fault Quarantine, Node Drainer, Fault Remediation, Janitor) is opt-in.
+With the defaults, NVSentinel only observes health events and metrics. Nothing acts on nodes. The remediation pipeline (Fault Quarantine, Node Drainer, Fault Remediation, Janitor) is opt-in.
 
 ### Component dependencies the template resolves for you
 
@@ -80,26 +70,21 @@ automatically, so the deployed application can differ from the toggles you set:
   `generic` for bare metal) before relying on real remediation. See
   [Janitor provider parameters](#janitor-provider-parameters).
 
-Node Drainer is the exception: it needs Fault Quarantine to have anything to drain, but
+:::note
+Node Drainer is the exception. It needs Fault Quarantine to have anything to drain, but
 the template doesn't turn on Fault Quarantine for you the way it does for the
 dependencies above. Set both `enableFaultQuarantine` and `enableNodeDrainer` to `"true"`
 yourself, as the [deploy example](#deploy-nvsentinel) does. Enabling Node Drainer alone
 deploys a drainer with no quarantined nodes to evict from.
+:::
 
 ### When you need cert-manager
 
-With the observe-only defaults, NVSentinel runs without cert-manager. It becomes required
-when you enable:
+With the observe-only defaults, NVSentinel runs without cert-manager. It becomes required when you enable any of the following:
 
-- **The internal MongoDB store.** TLS/mTLS is enabled by default, and cert-manager creates
-  the server, client, and CA certificates. Fault Quarantine, Node Drainer, and Health
-  Events Analyzer turn the MongoDB store on automatically, so they indirectly require
-  cert-manager too.
-- **The Janitor or Fault Remediation.** The Janitor uses TLS certificates for its
-  validating webhook and its provider gRPC endpoint.
-- **Chart features that aren't exposed as template parameters**, such as preflight checks
-  (the mutating admission webhook needs TLS, and cert-manager is the default provider)
-  and internal PostgreSQL with the chart's TLS configuration.
+- **The internal MongoDB store.** TLS/mTLS is enabled by default, and cert-manager creates the server, client, and CA certificates. Fault Quarantine, Node Drainer, and Health Events Analyzer turn the MongoDB store on automatically, so they indirectly require cert-manager too.
+- **The Janitor or Fault Remediation.** The Janitor uses TLS certificates for its validating webhook and its provider gRPC endpoint.
+- **Chart features that aren't exposed as template parameters**, such as preflight checks (the mutating admission webhook needs TLS, and cert-manager is the default provider) and internal PostgreSQL with the chart's TLS configuration.
 
 ## Deploy NVSentinel
 
@@ -172,36 +157,55 @@ spec:
 </TabItem>
 </Tabs>
 
-## Dry run: what it does and doesn't do
+## Dry run
 
-The template defaults to `dryRun: "true"`. Dry run runs the full detection and decision
-pipeline but stops short of changing node state or workloads. This has a side effect that
-is easy to misread: **dry run still reports as if it had acted**.
+The template defaults to `dryRun: "true"`. As with any dry run, NVSentinel runs the full
+detection and decision pipeline but skips changes to node state or workloads. **Dry run still writes real node annotations and labels, and still increments the metrics that feed the bundled GPU dashboard.**
 
 When a fault is detected in dry-run mode, NVSentinel:
 
-- **Does** log the intended action, for example `Cordoning node`.
-- **Does** write its own annotations and the `dgxc.nvidia.com/nvsentinel-state` label on
-  the node to track the quarantine decision.
-- **Does** increment quarantine metrics such as
-  `fault_quarantine_current_quarantined_nodes` and `fault_quarantine_cordons_applied_total`,
-  which feed the **Quarantined Nodes** panel on the bundled GPU dashboard.
-- **Doesn't** cordon the node. `kubectl get node <name> -o jsonpath='{.spec.unschedulable}'`
-  stays empty and the node keeps accepting workloads.
-- **Doesn't** evict workloads, and doesn't reboot or terminate nodes.
+- Logs the intended action, for example `Cordoning node`.
+- Writes its own annotations and the `dgxc.nvidia.com/nvsentinel-state` label on the node to track the quarantine decision.
+- Increments quarantine metrics such as `fault_quarantine_current_quarantined_nodes` and `fault_quarantine_cordons_applied_total`, which feed the **Quarantined Nodes** panel on the bundled GPU dashboard.
 
-:::warning Dashboard stats reflect dry-run decisions
-A non-zero **Quarantined Nodes** value on the GPU dashboard means NVSentinel decided to
-quarantine, not that a node is cordoned. In dry-run mode the node is still schedulable.
-Confirm actual node state with `kubectl get nodes` before treating the metric as capacity
-loss.
+During a dry run, NVSentinel doesn't:
+
+- Cordon the node. `kubectl get node <name> -o jsonpath='{.spec.unschedulable}'` stays empty and the node keeps accepting workloads.
+- Evict workloads.
+- Reboot or terminate nodes.
+
+Because the metrics increment but nodes are not cordoned or evicted during a dry run, both the node object and the dashboard can look like a genuine quarantine happened.
+
+Use dry run to validate detection end to end. Inject or wait for a health event, confirm the logs, node annotations, and metrics, and then set `dryRun: "false"` to let NVSentinel cordon, drain, and remediate for real.
+
+Before turning dry run off, make sure the Janitor provider is set to a real provider, since the default `kind` provider only simulates reboots and terminations.
+
+## Uninstall and cleanup
+
+Deleting the NVSentinel `ArgoCDApplication` prunes the workloads, but two artifacts are
+retained by design and stay in the cluster until you remove them:
+
+- **MongoDB PVCs.** The three `datadir-mongodb-*` PVCs (10Gi each by default, 30Gi
+  total) survive uninstall so health-event history isn't destroyed by accident.
+- **Namespace.** The destination namespace (`nvsentinel`) stays `Active` with zero pods.
+  Deleting it also removes the namespaced cert-manager resources (Certificates and
+  Issuers) that NVSentinel created.
+
+```bash title="Clean up retained NVSentinel artifacts"
+# MongoDB data (destroys health-event history)
+kubectl delete pvc -n nvsentinel datadir-mongodb-0 datadir-mongodb-1 datadir-mongodb-2
+
+kubectl delete namespace nvsentinel
+```
+
+Neither carries blocking finalizers, so deletion completes cleanly.
+
+:::warning
+Deleting the MongoDB PVCs permanently deletes NVSentinel's health-event history.
 :::
 
-Use dry run to validate detection end to end: inject or wait for a health event, confirm
-the logs, node annotations, and metrics, and then set `dryRun: "false"` to let NVSentinel
-cordon, drain, and remediate for real. Before turning dry run off, make sure the Janitor
-provider is set to a real provider, since the default `kind` provider only simulates
-reboots and terminations.
+To remove the rest of the GPU stack, including the retained cert-manager CRDs, see
+[Tear down the GPU stack](./gpu-monitoring-templates.mdx#tear-down-the-gpu-stack).
 
 ## Parameters
 
@@ -219,7 +223,7 @@ The template groups parameters by component. All boolean parameters are passed a
 | `releaseName` | `nvsentinel` | Helm release name. |
 | `chart` | `nvsentinel` | Chart name pulled from the repository. |
 | `imageTag` | `v1.13.0` | NVSentinel image tag. |
-| `dryRun` | `true` | Log and record intended actions without cordoning, draining, or remediating. See [Dry run](#dry-run-what-it-does-and-doesnt-do). |
+| `dryRun` | `true` | Log and record intended actions without cordoning, draining, or remediating. See [Dry run](#dry-run). |
 
 ### DCGM parameters
 
@@ -279,7 +283,20 @@ provider with `janitorProvider` and fill the matching provider section. The `kin
 | `janitorServiceAccountAnnotationKey` | _(empty)_ | Annotation key on the Janitor ServiceAccount for cloud identity, for example `eks.amazonaws.com/role-arn` or `iam.gke.io/gcp-service-account`. Set together with the value. |
 | `janitorServiceAccountAnnotationValue` | _(empty)_ | Value for the annotation key above, for example the IAM role ARN or GCP service account email. |
 
-#### AWS
+Select the tab for your Janitor provider:
+
+<Tabs
+  defaultValue="aws"
+  values={[
+    { label: "AWS", value: "aws" },
+    { label: "GCP", value: "gcp" },
+    { label: "Azure", value: "azure" },
+    { label: "OCI", value: "oci" },
+    { label: "Nebius", value: "nebius" },
+    { label: "Generic", value: "generic" },
+  ]}
+>
+<TabItem value="aws">
 
 | Parameter | Default | Description |
 |---|---|---|
@@ -287,7 +304,8 @@ provider with `janitorProvider` and fill the matching provider section. The `kin
 | `janitorAwsAccountId` | _(empty)_ | AWS account ID (12 digits), required for IRSA. |
 | `janitorAwsIamRoleName` | _(empty)_ | IAM role name for the Janitor ServiceAccount. The role needs `ec2:RebootInstances` and `ec2:TerminateInstances`. |
 
-#### GCP
+</TabItem>
+<TabItem value="gcp">
 
 | Parameter | Default | Description |
 |---|---|---|
@@ -295,7 +313,8 @@ provider with `janitorProvider` and fill the matching provider section. The `kin
 | `janitorGcpZone` | _(empty)_ | GCP zone where cluster nodes run (for example `us-central1-a`). Optional; auto-detected per node from its `providerID`. |
 | `janitorGcpServiceAccount` | _(empty)_ | GCP service account name for Workload Identity, without the `@project.iam.gserviceaccount.com` suffix. Needs `compute.instances.reset`. |
 
-#### Azure
+</TabItem>
+<TabItem value="azure">
 
 | Parameter | Default | Description |
 |---|---|---|
@@ -304,7 +323,8 @@ provider with `janitorProvider` and fill the matching provider section. The `kin
 | `janitorAzureLocation` | _(empty)_ | Azure region of the AKS cluster (for example `eastus`). Derived per node from its `providerID`, so not normally required. |
 | `janitorAzureClientId` | _(empty)_ | Managed identity client ID (UUID) for Workload Identity. The identity needs the Virtual Machine Contributor role. |
 
-#### OCI
+</TabItem>
+<TabItem value="oci">
 
 | Parameter | Default | Description |
 |---|---|---|
@@ -314,13 +334,15 @@ provider with `janitorProvider` and fill the matching provider section. The `kin
 | `janitorOciProfile` | `DEFAULT` | Profile name in the credentials file. |
 | `janitorOciPrincipalId` | _(empty)_ | Principal OCID for Workload Identity (the dynamic group or service principal OCID). |
 
-#### Nebius
+</TabItem>
+<TabItem value="nebius">
 
 | Parameter | Default | Description |
 |---|---|---|
 | `janitorNebiusServiceAccountKeySecret` | _(empty)_ | Name of an existing Kubernetes Secret holding the Nebius service account key as `sa-credentials.json`. The service account needs `compute.instances.stop` and `compute.instances.start`. Zone and region are auto-detected per node. |
 
-#### Generic (bare metal or on-prem)
+</TabItem>
+<TabItem value="generic">
 
 The `generic` provider reboots nodes with a privileged Job scheduled onto the node. It
 can't terminate instances.
@@ -333,32 +355,8 @@ can't terminate instances.
 | `janitorGenericRebootJobTTLSeconds` | _(empty)_ | TTL in seconds for completed reboot Jobs. Empty uses the chart default (3600). |
 | `janitorGenericImagePullSecrets` | _(empty)_ | Comma-separated image pull Secret names for the reboot Job. |
 
-## Uninstall and cleanup
-
-Deleting the NVSentinel `ArgoCDApplication` prunes the workloads, but two artifacts are
-retained by design and stay in the cluster until you remove them:
-
-- **MongoDB PVCs.** The three `datadir-mongodb-*` PVCs (10Gi each by default, 30Gi
-  total) survive uninstall so health-event history isn't destroyed by accident.
-- **Namespace.** The destination namespace (`nvsentinel`) stays `Active` with zero pods.
-  Deleting it also removes the namespaced cert-manager resources (Certificates and
-  Issuers) that NVSentinel created.
-
-```bash title="Clean up retained NVSentinel artifacts"
-# MongoDB data (destroys health-event history)
-kubectl delete pvc -n nvsentinel datadir-mongodb-0 datadir-mongodb-1 datadir-mongodb-2
-
-kubectl delete namespace nvsentinel
-```
-
-Neither carries blocking finalizers, so deletion completes cleanly.
-
-:::warning
-Deleting the MongoDB PVCs permanently deletes NVSentinel's health-event history.
-:::
-
-To remove the rest of the GPU stack, including the retained cert-manager CRDs, see
-[Tear down the GPU stack](./gpu-monitoring-templates.mdx#tear-down-the-gpu-stack).
+</TabItem>
+</Tabs>
 
 ## Related pages
 
