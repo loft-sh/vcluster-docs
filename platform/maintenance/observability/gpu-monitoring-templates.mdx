@@ -95,6 +95,26 @@ its ServiceAccount token is projected, logging
 within a few restarts. No action is needed.
 :::
 
+## The cluster-collector template scrapes GPU metrics automatically
+
+If you deploy edge collectors with the `cluster-collector` template, described in
+[Deploy collectors with Argo CD](./configure-edge-collectors.mdx#deploy-collectors-with-argo-cd),
+it also scrapes the GPU stack. No extra collector configuration is needed. Alongside its
+per-node DaemonSet, the template deploys a cluster-singleton collector preconfigured with
+scrape jobs for:
+
+- The Fleet Intelligence Agent, in the `fleet-intelligence` namespace.
+- The NVIDIA GPU Operator's dcgm-exporter, in the `gpu-operator` namespace.
+- NVSentinel's GPU Health Monitor, in the `nvsentinel` namespace.
+
+These namespaces are hardcoded in the collector template. They aren't derived from the
+GPU templates' `destinationNamespace` parameters, so this only works when you keep those
+parameters at their defaults, shown in
+[Bundled GPU templates](#bundled-gpu-templates) above. If you deploy a GPU template into a
+non-default namespace, its metrics stop reaching Fleet Observability through this
+collector. If you skip a component, such as the optional Fleet Intelligence Agent, its
+scrape job simply finds no targets.
+
 ## Tear down the GPU stack
 
 Deleting the `ArgoCDApplication` resources prunes the workloads, but some artifacts are
@@ -102,12 +122,18 @@ retained by design and stay in the cluster until you remove them. These are NVSe
 MongoDB PVCs, the cert-manager CRDs (`keepCRDs: true`), and the destination namespaces,
 which stay `Active` with zero pods.
 
+Target the tenant cluster's `kubectl` context for every command below. CRDs and
+namespaces are cluster-wide, and running these against the wrong cluster, such as your
+control plane cluster, can remove cert-manager or a namespace that other workloads there
+still depend on.
+
 First remove NVSentinel's retained data and namespace, described in
 [Uninstall and clean up NVSentinel](./nvsentinel-gpu-monitoring.mdx#uninstall-and-cleanup).
 Then remove the remaining GPU namespaces:
 
 ```bash title="Clean up GPU stack namespaces"
-kubectl delete namespace gpu-operator fleet-intelligence
+TENANT_CLUSTER_CONTEXT=my-vcluster
+kubectl --context "$TENANT_CLUSTER_CONTEXT" delete namespace gpu-operator fleet-intelligence
 ```
 
 ### Remove cert-manager entirely (optional)
@@ -118,10 +144,12 @@ when cert-manager was installed solely for the GPU stack and nothing else in the
 uses it. Deleting a CRD cascade-deletes every resource of that type in every namespace.
 
 ```bash title="Remove cert-manager CRDs and namespace"
-# Review what exists first
-kubectl get crd -o name | grep -E '\.cert-manager\.io$'
+TENANT_CLUSTER_CONTEXT=my-vcluster
 
-kubectl delete crd \
+# Review what exists first
+kubectl --context "$TENANT_CLUSTER_CONTEXT" get crd -o name | grep -E '\.cert-manager\.io$'
+
+kubectl --context "$TENANT_CLUSTER_CONTEXT" delete crd \
   certificates.cert-manager.io \
   certificaterequests.cert-manager.io \
   challenges.acme.cert-manager.io \
@@ -129,7 +157,7 @@ kubectl delete crd \
   issuers.cert-manager.io \
   orders.acme.cert-manager.io
 
-kubectl delete namespace cert-manager
+kubectl --context "$TENANT_CLUSTER_CONTEXT" delete namespace cert-manager
 ```
 
 None of these carry blocking finalizers, so deletion completes cleanly.
