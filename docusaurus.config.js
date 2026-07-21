@@ -262,20 +262,19 @@ const config = {
         beforeDefaultRemarkPlugins: [
           [remarkVersionTokens, { siteDir: __dirname }],
         ],
-        lastVersion: "0.35.0",
+        lastVersion: "0.36.0",
         onlyIncludeVersions: ["current", "0.36.0", "0.35.0", "0.34.0"],
         versions: {
           current: {
             label: "main 🚧",
           },
           "0.36.0": {
-            label: "v0.36",
-            banner: "unreleased",
+            label: "v0.36 Stable",
+            banner: "none",
             badge: true,
-            noIndex: true,
           },
           "0.35.0": {
-            label: "v0.35 Stable",
+            label: "v0.35",
             banner: "none",
             badge: true,
           },
@@ -300,20 +299,19 @@ const config = {
         beforeDefaultRemarkPlugins: [
           [remarkVersionTokens, { siteDir: __dirname }],
         ],
-        lastVersion: "4.10.0",
+        lastVersion: "4.11.0",
         onlyIncludeVersions: ["current", "4.11.0", "4.10.0", "4.9.0", "4.8.0"],
         versions: {
           current: {
             label: "main 🚧",
           },
           "4.11.0": {
-            label: "v4.11",
-            banner: "unreleased",
+            label: "v4.11 Stable",
+            banner: "none",
             badge: true,
-            noIndex: true,
           },
           "4.10.0": {
-            label: "v4.10 Stable",
+            label: "v4.10",
             banner: "none",
             badge: true,
           },
@@ -475,9 +473,9 @@ const config = {
         additionalLanguages: ["bash", "hcl"],
       },
       announcementBar: {
-        id: "vcluster-0-35-platform-4-10-release",
+        id: "vcluster-0-36-platform-4-11-release",
         content:
-          '🚀 <strong>New releases: <a href="https://www.vcluster.com/releases/en/changelog?hideLogo=true&hideMenu=true&theme=dark&embed=true&c=vCluster" target="_blank">vCluster Platform 4.10 and vCluster 0.35</a></strong>',
+          '🚀 <strong>New releases: <a href="https://www.vcluster.com/releases/en/changelog?hideLogo=true&hideMenu=true&theme=dark&embed=true&c=vCluster" target="_blank">vCluster Platform 4.11 and vCluster 0.36</a></strong>',
         backgroundColor: "#050b24",
         textColor: "#ffffff",
         isCloseable: true,
