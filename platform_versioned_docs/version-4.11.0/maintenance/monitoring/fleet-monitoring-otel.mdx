@@ -1,7 +1,7 @@
 ---
 title: "Fleet monitoring with OpenTelemetry"
 sidebar_label: "Fleet monitoring with OpenTelemetry"
-sidebar_position: 3
+sidebar_position: 4
 description: "Monitor tenant clusters across shared and private nodes using OpenTelemetry Collectors with automatic label enrichment and Prometheus remote write."
 ---
 
@@ -16,7 +16,7 @@ visibility into resource consumption and API health without deploying monitoring
 inside each tenant cluster. This guide explains how to configure OpenTelemetry
 Collectors to collect workload and control plane metrics from across multiple
 tenant clusters. All metrics are enriched with vCluster identity labels at
-ingest time and pushed to a central Prometheus via `remote_write`.
+enrichment time and pushed to a central Prometheus using `remote_write`.
 
 :::note
 For a simpler setup using the built-in OpenTelemetry DaemonSet App, see
@@ -121,8 +121,8 @@ The architecture comprises the following:
 
 - Collector architecture:
   - A central Prometheus with the remote write receiver enabled.
-  - One OTel Collector Deployment with Target Allocator per Control Plane Cluster (scrapes shared-nodes tenant clusters and their control planes via ServiceMonitors).
-  - One OTel Collector DaemonSet per private-nodes vCluster (scrapes local kubelet, cAdvisor, and API server metrics from inside the vCluster).
+  - One OTel Collector Deployment with Target Allocator per Control Plane Cluster (scrapes shared-nodes tenant clusters and their control planes using ServiceMonitors).
+  - One OTel Collector DaemonSet per private-nodes tenant cluster (scrapes local kubelet, cAdvisor, and API server metrics from inside the tenant cluster).
 
 ## How it works
 
@@ -160,7 +160,7 @@ node. The `groupbyattrs` processor splits the batch into per-pod resource scopes
 (by `namespace`, `pod`, `node`) so each pod is matched correctly.
 
 The `k8sattributes` processor resolves vCluster identity from Platform-managed
-namespace labels (`loft.sh/project`, `loft.sh/vcluster-instance-name`, etc.) and
+namespace labels (`loft.sh/project`, `loft.sh/vcluster-instance-name`, and so on) and
 pod labels/annotations set by the vCluster syncer
 (`vcluster.loft.sh/namespace`, `vcluster.loft.sh/name`).
 
@@ -170,7 +170,7 @@ which also prevents duplicate series with any existing Prometheus scrapes.
 
 ### Private nodes
 
-The private-nodes collector runs inside each vCluster as a DaemonSet with one
+The private-nodes collector runs inside each tenant cluster as a DaemonSet with one
 pod per node. Each pod scrapes only its local node's kubelet `/metrics`,
 cAdvisor `/metrics/cadvisor`, and API server `/metrics` endpoints.
 
@@ -188,14 +188,14 @@ prometheus receiver (kubelet, cAdvisor, API server)
                             pod → vcluster_virtual_pod)
 ```
 
-Since the collector runs inside the vCluster, it can't access host-cluster
-namespace labels. Instead, the Platform injects `{{ .Values.loft.* }}` template
+Since the collector runs inside the tenant cluster, it can't access Control
+Plane Cluster namespace labels. Instead, the Platform injects `{{ .Values.loft.* }}` template
 variables at deploy time, which are set as `external_labels` on the
-`prometheusremotewrite` exporter. These are static per-vCluster values applied
+`prometheusremotewrite` exporter. These are static per-tenant-cluster values applied
 to all exported metrics.
 
 The `metric_relabel_configs` copy `namespace` to `vcluster_virtual_namespace`
-and `pod` to `vcluster_virtual_pod`. Inside a private-nodes vCluster, the
+and `pod` to `vcluster_virtual_pod`. Inside a private-nodes tenant cluster, the
 `namespace` and `pod` labels already represent virtual names, so this copy
 ensures dashboard compatibility with the shared-nodes collector.
 
@@ -219,7 +219,7 @@ All metrics from both apps carry a consistent set of identity labels:
 `vcluster_virtual_namespace` and `vcluster_virtual_pod` are missing on some
 metrics. These are vCluster system pods (syncer, CoreDNS) that don't have the
 syncer labels and annotations because they aren't user workloads synced from
-inside the vCluster.
+inside the tenant cluster.
 :::
 
 ## Prerequisites
@@ -248,7 +248,7 @@ server:
 
 - kubelet scraping disabled in any existing kube-prometheus-stack to avoid
   duplicate cAdvisor series (`kubelet.enabled: false`).
-- Platform namespace labels present (added automatically by the vCluster Platform).
+- Platform namespace labels present (added automatically by vCluster Platform).
 
 ### Private nodes prerequisites
 
@@ -593,7 +593,7 @@ spec:
 - **`serviceMonitorSelector: app: vcluster`**: Without filtering, the Target
   Allocator discovers all ServiceMonitors in the cluster, overwhelming
   collectors with memory pressure.
-- **`operator.targetallocator.mtls: true`**: Each vCluster exposes its API
+- **`operator.targetallocator.mtls: true`**: Each tenant cluster exposes its API
   server metrics over mTLS. Without this feature gate, the Target Allocator
   redacts TLS private keys when passing scrape configs to collectors.
 - **`otel/opentelemetry-collector-contrib` image**: The default image doesn't
@@ -613,17 +613,16 @@ kubectl apply -f otel-collector-shared-nodes-app.yaml
 
 <Flow id="deploy-otel-shared">
   <Step>
-    Go to the <NavStep>Infra</NavStep> section using the menu on the left, and
-    select the <NavStep>Clusters</NavStep> view.
+    Go to <NavStep>Infrastructure > Control Plane Clusters</NavStep>.
   </Step>
   <Step>
-    Click on the cluster where you want to deploy the collector.
+    Click the cluster where you want to deploy the collector.
   </Step>
   <Step>
     Navigate to the <NavStep>Apps</NavStep> tab.
   </Step>
   <Step>
-    Click <Button>Deploy App</Button> and select the
+    Click <Button>Install App</Button> and click the
     **OTEL Collector - Shared Nodes** app.
   </Step>
   <Step>
@@ -646,8 +645,8 @@ Repeat these steps for each Control Plane Cluster.
 ## Deploy the private nodes collector
 <!-- vale on -->
 
-Deploy one private-nodes collector into each private-nodes vCluster. All
-vCluster identity labels are injected automatically by the Platform via
+Deploy one private-nodes collector into each private-nodes tenant cluster. All
+vCluster identity labels are injected automatically by the Platform using
 `{{ .Values.loft.* }}`.
 
 <!-- vale off -->
@@ -888,9 +887,9 @@ spec:
 :::info Key configuration details
 - **DaemonSet mode**: Private-nodes tenant clusters have dedicated nodes. A DaemonSet
   ensures one collector per node, scraping only the local kubelet and cAdvisor
-  via `${env:K8S_NODE_NAME}` filtering. No Target Allocator is needed.
+  using `${env:K8S_NODE_NAME}` filtering. No Target Allocator is needed.
 - **`external_labels` instead of `k8sattributes` for identity**: The collector
-  runs inside the vCluster, so it can't access Control Plane Cluster namespace labels.
+  runs inside the tenant cluster, so it can't access Control Plane Cluster namespace labels.
   The Platform injects `{{ .Values.loft.* }}` template variables at deploy time.
 - **`resource_to_telemetry_conversion: false`**: Setting this to `true` causes
   duplicate labels that break Grafana dashboards.
@@ -917,7 +916,7 @@ kubectl apply -f otel-collector-private-nodes-app.yaml
     Go to the <NavStep>Projects</NavStep> section using the menu on the left.
   </Step>
   <Step>
-    Select the project containing your private-nodes tenant cluster.
+    Click the project containing your private-nodes tenant cluster.
   </Step>
   <Step>
     Click on the tenant cluster, then navigate to the <NavStep>Config</NavStep>
@@ -953,7 +952,7 @@ organized around the
 [Four Golden Signals](https://sre.google/sre-book/monitoring-distributed-systems/)
 of monitoring: latency, traffic, errors, and saturation.
 
-Because identity labels are enriched at ingest time, every query can filter and
+Because identity labels are enriched at collection time, every query can filter and
 aggregate by `cluster`, `vcluster_project`, and `vcluster_name` directly.
 
 ### Latency
@@ -1216,11 +1215,12 @@ with the event rate.
 
 :::note
 This section assumes Grafana is already deployed. For setup instructions, see
-[Aggregating Metrics — Deploy Grafana](./aggregating-metrics.mdx#deploy-grafana).
+the [Deploy Grafana](./aggregating-metrics.mdx#deploy-grafana) section in
+Aggregating Metrics.
 :::
 
 Two Grafana dashboards are provided for visualizing metrics collected by the
-OTel Collectors. Both dashboards use the identity labels enriched at ingest
+OTel Collectors. Both dashboards use the identity labels enriched at collection
 time, so all panels use straightforward PromQL queries without joins.
 
 ### Import a dashboard
@@ -1235,13 +1235,11 @@ time, so all panels use straightforward PromQL queries without joins.
 ### vCluster projects dashboard
 <!-- vale on -->
 
-A platform admin overview of vCluster projects across shared and private node
-tenant clusters. Use this dashboard to monitor resource consumption and API health at
-the project level.
+A platform admin overview of vCluster projects across Shared Nodes and Private
+Nodes tenant clusters. Use this dashboard to monitor resource consumption and
+API health at the project level.
 
 **Dashboard JSON file:** [Download dashboard JSON](/media/dashboards/vcluster-projects.json)
-
-
 
 **Template variables:**
 
@@ -1256,8 +1254,8 @@ the project level.
 <!-- vale off -->
 | Section | Panels |
 |---------|--------|
-| Project summary | Total Projects, Total vClusters, Total Pods, Total CPU (cores), Total Memory, Max Error Rate (stat panels) |
-| Resource usage by project | CPU by Project (cores), Memory by Project, Pods by Project, vClusters by Project (bar charts) |
+| Project summary | Total Projects, Total tenant clusters, Total Pods, Total CPU (cores), Total Memory, Max Error Rate (stat panels) |
+| Resource usage by project | CPU by Project (cores), Memory by Project, Pods by Project, Tenant clusters by Project (bar charts) |
 | API health by project | API Request Rate, API Error Rate (5xx), API P95 Latency (time series) |
 | Resource trends | CPU Usage Trend (stacked), Memory Usage Trend (stacked) (time series) |
 <!-- vale on -->
