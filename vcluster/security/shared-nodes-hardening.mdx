@@ -143,10 +143,15 @@ Scope LoadBalancer address pools (for example, MetalLB `IPAddressPool`) with nam
 
 vCluster's [node selector](../configure/vcluster-yaml/sync/from-host/nodes.mdx) restricts which control plane cluster nodes a tenant cluster can schedule onto, but a selector is a placement mechanism, not a security boundary. It only isolates tenants from each other if the label it selects on is exclusive to tenant workload nodes.
 
-- Use a label and taint dedicated to tenant workloads, applied only to nodes meant to run tenant compute. Inject the matching toleration for every synced Pod with [`sync.toHost.pods.enforceTolerations`](../configure/vcluster-yaml/sync/to-host/core/pods/README.mdx), so tenants don't need permission to set it themselves.
+- Use a label and taint dedicated to tenant workloads, applied only to nodes meant to run tenant compute. Inject the exact tenant-pool toleration during sync with [`sync.toHost.pods.enforceTolerations`](../configure/vcluster-yaml/sync/to-host/core/pods/README.mdx), so tenants don't need to include it themselves.
 - Don't reuse a general-purpose label (for example, a generic `worker` label) that's also present on ingress, metrics, storage, VPN, or other infrastructure nodes. A tenant that can target that label can schedule onto those nodes too.
-- Taint sensitive and infrastructure nodes separately from the tenant pool, and block tenant-supplied tolerations for those taints through admission. A taint alone doesn't reject a tenant workload if the tenant can add a matching toleration, and vCluster preserves tenant-set tolerations by default. Scope the admission rule to infrastructure taints only, since blocking every tenant-supplied toleration would also block the platform-injected tenant-pool toleration.
+- Taint sensitive and infrastructure nodes separately from the tenant pool. A taint alone doesn't reject a tenant workload if the tenant can add a matching toleration, and vCluster preserves tenant-set tolerations by default.
 - Keep control plane, infrastructure, and tenant-workload node roles on distinct labels and taints, so a change to one role's scheduling doesn't silently open access to another.
+
+Blocking those tolerations has to run at two different layers, because vCluster injects the tenant-pool toleration during sync, after the tenant-authored Pod has already passed tenant-cluster admission:
+
+- **Tenant-cluster admission** sees the tenant-authored Pod before that injection happens. It can deny tenant-authored tolerations for protected infrastructure taint keys without ever seeing the toleration `enforceTolerations` adds later.
+- **Host-side admission** sees the translated Pod after injection, so it can't distinguish a tenant-supplied toleration from an injected one. It has to allowlist the exact tenant-pool toleration and deny protected infrastructure taint keys specifically, rather than blocking tenant-supplied tolerations in general.
 
 ## Admission and policy coverage
 
@@ -188,7 +193,7 @@ Before onboarding trusted tenants onto shared nodes, confirm each group below.
 
 **Scheduling and admission**
 
-- [ ] Tenant workload nodes carry a dedicated label and taint, distinct from infrastructure, ingress, metrics, and control-plane node roles. The tenant-pool toleration is injected through `enforceTolerations`, and admission blocks tenant-supplied tolerations for every other taint.
+- [ ] Tenant workload nodes carry a dedicated label and taint, distinct from infrastructure, ingress, metrics, and control-plane node roles. The tenant-pool toleration is injected through `enforceTolerations`. Tenant-cluster admission denies tenant-authored tolerations for protected infrastructure taint keys, and host-side admission allowlists only the exact tenant-pool toleration.
 - [ ] `policies.centralAdmission` has an active, reachable policy engine with rules covering the resource kinds and operations in scope, not just the webhook plumbing.
 
 **Availability, disclosure, and lifecycle**
