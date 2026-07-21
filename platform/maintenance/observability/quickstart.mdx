@@ -1,0 +1,223 @@
+---
+title: Fleet Observability quickstart
+sidebar_label: Quickstart
+sidebar_position: 2
+description: Deploy the default Fleet Observability pipeline end to end with Argo CD, from the metrics backend to your first query.
+---
+
+import InterpolatedCodeBlock from "@site/src/components/InterpolatedCodeBlock";
+
+This walks through the default, out-of-the-box path. It deploys the bundled Prometheus
+backend and edge collectors with Argo CD to one tenant cluster, using YAML and `kubectl`
+throughout. Each step links to a reference page with the full parameter list and the
+Platform UI walkthrough. See those pages for alternatives, such as bringing your own
+backend or targeting a control plane cluster.
+
+## Prerequisites
+
+- The [Argo CD integration](../../integrations/argocd/overview.mdx) is enabled, with a
+  connector registered on the target cluster. See
+  [Connect to Argo CD](../../integrations/argocd/connect-argocd.mdx).
+- A vCluster Platform license that includes Fleet Observability.
+- `kubectl` access to a project namespace.
+- A tenant cluster to collect metrics from.
+
+## 1. Deploy the metrics backend
+
+Deploy the bundled Prometheus backend to the local cluster, the cluster where Platform
+itself is installed:
+
+```yaml title="fleet-metrics-backend.yaml"
+apiVersion: management.loft.sh/v1
+kind: ArgoCDApplication
+metadata:
+  name: fleet-metrics-backend
+  namespace: p-my-project          # replace with your project namespace
+spec:
+  displayName: "Fleet metrics backend"
+  destination:
+    cluster:
+      name: loft-cluster           # the reserved name for Platform's local cluster; don't change this
+  templateRef:
+    name: fleet-observability-prometheus
+  parameters:
+    destinationNamespace: vcluster-platform
+    prometheusStorageSize: 20Gi
+    project: default
+```
+
+```bash
+kubectl apply -f fleet-metrics-backend.yaml
+```
+
+For other backends, the Platform UI, and the full parameter list, see
+[Deploy the metrics backend with Argo CD](./install-observability-gateway.mdx#deploy-the-metrics-backend-with-argo-cd).
+
+## 2. Create the connector and deploy the gateway
+
+Create the observability connector Secret. These endpoints match the backend's default
+namespace from step 1:
+
+```yaml title="fleet-observability-connector.yaml"
+apiVersion: v1
+kind: Secret
+metadata:
+  name: fleet-observability
+  namespace: vcluster-platform
+  labels:
+    loft.sh/connector-type: observability
+    platform.vcluster.com/fleet-observability-connector: "true"
+type: Opaque
+stringData:
+  metricsBackendOtlpEndpoint: https://prom-prometheus-server.vcluster-platform.svc.cluster.local/api/v1/otlp
+  metricsBackendPromQLEndpoint: https://prom-prometheus-server.vcluster-platform.svc.cluster.local
+  metricsBackendCertSecretName: metrics-backend-mtls
+```
+
+```bash
+kubectl apply -f fleet-observability-connector.yaml
+```
+
+Platform deploys the gateway from this Secret. Check that the gateway pod comes up:
+
+```bash
+kubectl get pods -n vcluster-platform -l app.kubernetes.io/name=gateway,app.kubernetes.io/instance=fleet-observability
+```
+
+For connector keys, TLS options, and the Platform UI, see
+[Install the observability gateway](./install-observability-gateway.mdx).
+
+## 3. Create a metrics-writer key
+
+Create a `metrics-writer` access key scoped to your tenant cluster. Set `PROJECT` and
+`TENANT_CLUSTER` to your tenant cluster's project and instance name; the command prints
+the generated token as `token: <value>` at the end.
+
+<InterpolatedCodeBlock
+  code={
+    'PROJECT=[[VAR:PROJECT:default]]\n' +
+    'TENANT_CLUSTER=[[VAR:TENANT_CLUSTER:my-vcluster]]\n' +
+    'KEY=$(head -c 20 /dev/urandom | od -An -tx1 | tr -d \' \\n\')\n' +
+    'kubectl apply -f - <<EOF\n' +
+    'apiVersion: storage.loft.sh/v1\n' +
+    'kind: AccessKey\n' +
+    'metadata:\n' +
+    '  name: "loft-metrics-writer-p-${PROJECT}-${TENANT_CLUSTER}"\n' +
+    'spec:\n' +
+    '  type: Other\n' +
+    '  key: "${KEY}"\n' +
+    '  subject: "loft:metrics-writer:p-${PROJECT}:${TENANT_CLUSTER}"\n' +
+    '  groups:\n' +
+    '    - loft:system:metrics-writers\n' +
+    '  scope:\n' +
+    '    roles:\n' +
+    '      - role: metrics-writer\n' +
+    '    virtualClusters:\n' +
+    '      - project: ${PROJECT}\n' +
+    '        virtualCluster: "${TENANT_CLUSTER}"\n' +
+    'EOF\n' +
+    'echo "token: ${KEY}"'
+  }
+  language="bash"
+/>
+
+Keep the printed token for the next step.
+
+For control plane cluster keys, reader keys, and rotation, see
+[Configure metrics access](./configure-metrics-access.mdx).
+
+## 4. Deploy edge collectors
+
+Store the token from step 3 in a Secret in the collector namespace:
+
+```yaml title="otel-otlp-auth.yaml"
+apiVersion: v1
+kind: Secret
+metadata:
+  name: otel-otlp-auth
+  namespace: observability
+type: Opaque
+stringData:
+  authorization: "Bearer REPLACE_WITH_METRICS_WRITER_KEY"
+```
+
+```bash
+kubectl apply -f otel-otlp-auth.yaml
+```
+
+Then deploy the collector to your tenant cluster:
+
+```yaml title="fleet-edge-collectors.yaml"
+apiVersion: management.loft.sh/v1
+kind: ArgoCDApplication
+metadata:
+  name: fleet-edge-collectors
+  namespace: p-my-project          # replace with your project namespace
+spec:
+  displayName: "Fleet edge collectors"
+  destination:
+    virtualCluster:
+      name: my-vcluster            # replace with your tenant cluster name
+      target: vCluster             # deploy into the tenant cluster
+  templateRef:
+    name: cluster-collector
+  parameters:
+    destinationNamespace: observability
+    otlpEndpoint: https://gateway-fleet-observability.vcluster-platform.svc.cluster.local:4318
+    project: default
+```
+
+```bash
+kubectl apply -f fleet-edge-collectors.yaml
+```
+
+For control plane cluster targets, manual collector configuration, and the full
+parameter list, see [Configure edge collectors](./configure-edge-collectors.mdx).
+
+## 5. Verify
+
+Check that metrics are reaching the gateway:
+
+```bash
+GATEWAY_POD=$(kubectl get pod -n vcluster-platform -l app.kubernetes.io/name=gateway,app.kubernetes.io/instance=fleet-observability -o jsonpath='{.items[0].metadata.name}')
+kubectl port-forward -n vcluster-platform pod/$GATEWAY_POD 8889:8889
+curl http://127.0.0.1:8889/metrics
+```
+
+If writes aren't showing up, see [Troubleshooting](./troubleshooting.mdx).
+
+## 6. Deploy the bundled Grafana (optional)
+
+Deploy Grafana for pre-provisioned dashboards:
+
+```yaml title="fleet-grafana.yaml"
+apiVersion: management.loft.sh/v1
+kind: ArgoCDApplication
+metadata:
+  name: fleet-grafana
+  namespace: p-my-project          # replace with your project namespace
+spec:
+  displayName: "Fleet Grafana"
+  destination:
+    cluster:
+      name: loft-cluster           # the reserved name for Platform's local cluster; don't change this
+  templateRef:
+    name: fleet-observability-grafana
+  parameters:
+    destinationNamespace: vcluster-platform
+    platformHost: platform.example.com
+    project: default
+```
+
+```bash
+kubectl apply -f fleet-grafana.yaml
+```
+
+For the connector settings Grafana needs and how to sign in, see
+[Deploy the bundled Grafana with Argo CD](./query-fleet-metrics.mdx#deploy-the-bundled-grafana-with-argo-cd).
+
+## Next steps
+
+- [Query fleet metrics](./query-fleet-metrics.mdx) for dashboards and PromQL access.
+- [GPU monitoring templates](./gpu-monitoring-templates.mdx) to add the GPU stack and NVSentinel.
+- [Troubleshooting](./troubleshooting.mdx) if something isn't working.
