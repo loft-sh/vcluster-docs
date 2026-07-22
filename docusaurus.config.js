@@ -107,6 +107,12 @@ const config = {
             '/tags/**',
             '/search',
             '/search/**',
+            // Standalone kubectl-doc evaluation sandbox (DOC-1512). Not a real
+            // docs page; the live example lives on the sync/to-host reference.
+            // ignorePatterns matches route.path, which includes the site baseUrl,
+            // so these must be prefixed with /docs to match.
+            '/docs/kubectl-doc-prototype',
+            '/docs/kubectl-doc-prototype/**',
             '*/page/*',
             // Exclude versioned URLs from the sitemap. Unversioned paths (served
             // by lastVersion) are the canonical entry points for search engines.
@@ -256,24 +262,24 @@ const config = {
         beforeDefaultRemarkPlugins: [
           [remarkVersionTokens, { siteDir: __dirname }],
         ],
-        lastVersion: "0.35.0",
-        onlyIncludeVersions: ["current", "0.35.0", "0.34.0", "0.33.0"],
+        lastVersion: "0.36.0",
+        onlyIncludeVersions: ["current", "0.36.0", "0.35.0", "0.34.0"],
         versions: {
           current: {
             label: "main 🚧",
           },
+          "0.36.0": {
+            label: "v0.36 Stable",
+            banner: "none",
+            badge: true,
+          },
           "0.35.0": {
-            label: "v0.35 Stable",
+            label: "v0.35",
             banner: "none",
             badge: true,
           },
           "0.34.0": {
             label: "v0.34",
-            banner: "none",
-            badge: true,
-          },
-          "0.33.0": {
-            label: "v0.33",
             banner: "none",
             badge: true,
           },
@@ -293,14 +299,19 @@ const config = {
         beforeDefaultRemarkPlugins: [
           [remarkVersionTokens, { siteDir: __dirname }],
         ],
-        lastVersion: "4.10.0",
-        onlyIncludeVersions: ["current", "4.10.0", "4.9.0", "4.8.0", "4.7.0"],
+        lastVersion: "4.11.0",
+        onlyIncludeVersions: ["current", "4.11.0", "4.10.0", "4.9.0", "4.8.0"],
         versions: {
           current: {
             label: "main 🚧",
           },
+          "4.11.0": {
+            label: "v4.11 Stable",
+            banner: "none",
+            badge: true,
+          },
           "4.10.0": {
-            label: "v4.10 Stable",
+            label: "v4.10",
             banner: "none",
             badge: true,
           },
@@ -311,11 +322,6 @@ const config = {
           },
           "4.8.0": {
             label: "v4.8",
-            banner: "none",
-            badge: true,
-          },
-          "4.7.0": {
-            label: "v4.7",
             banner: "none",
             badge: true,
           },
@@ -467,9 +473,9 @@ const config = {
         additionalLanguages: ["bash", "hcl"],
       },
       announcementBar: {
-        id: "vcluster-0-35-platform-4-10-release",
+        id: "vcluster-0-36-platform-4-11-release",
         content:
-          '🚀 <strong>New releases: <a href="https://www.vcluster.com/releases/en/changelog?hideLogo=true&hideMenu=true&theme=dark&embed=true&c=vCluster" target="_blank">vCluster Platform 4.10 and vCluster 0.35</a></strong>',
+          '🚀 <strong>New releases: <a href="https://www.vcluster.com/releases/en/changelog?hideLogo=true&hideMenu=true&theme=dark&embed=true&c=vCluster" target="_blank">vCluster Platform 4.11 and vCluster 0.36</a></strong>',
         backgroundColor: "#050b24",
         textColor: "#ffffff",
         isCloseable: true,

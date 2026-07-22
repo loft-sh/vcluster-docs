@@ -1,0 +1,293 @@
+---
+title: Control plane sizing and performance
+sidebar_label: Sizing and performance
+sidebar_position: 0
+description: How to evaluate, size, and tune a Tenant Cluster's Virtual Control Plane for your environment.
+---
+
+This page explains how to evaluate and tune a Tenant Cluster's Virtual Control
+Plane for your environment. It covers the evaluation framework, monitoring
+thresholds, resource profile starting points, and validated tuning settings.
+For the test methodology and analysis behind the profiles, see
+[Benchmark methodology](./benchmark-methodology.mdx).
+
+## Scope and caveats
+
+:::note Control plane only
+The numbers on this page describe the capacity of the Virtual Control Plane
+(API server, controller manager, scheduler, and embedded etcd) under simulated
+load. They don't describe data-plane capacity, networking throughput, storage
+backend behavior, or the runtime cost of your actual workloads.
+:::
+
+**The load is simulated, not real.** Tests use [KWOK](https://kwok.sigs.k8s.io/)
+fake nodes with no real container runtime or kubelet.
+[kube-burner](https://kube-burner.github.io/kube-burner/) drives object
+lifecycles to stress the control plane's bookkeeping, watch fan-out, and etcd
+write path. The tests don't cover real pod startup and shutdown latency, CNI
+throughput, container image pulls, NetworkPolicy enforcement, or application
+behavior. Treat these results as an upper bound. Your workload's true ceiling
+is lower with significant data-plane demands.
+
+**There is no published mapping from KWOK fake-node counts to real-node counts.**
+Real workloads have data-plane costs that KWOK doesn't model. If your
+customer-visible claim is a node count, validate it on real nodes at the scale
+that matters.
+
+## How to evaluate your environment
+
+The recommended approach is to run the benchmark framework against a
+representative subset of your real configuration: your operators, your CRDs,
+your object density. Measure the control-plane response as it runs. The same
+SLI checks the framework uses internally make a portable monitoring template
+you can apply to any Tenant Cluster.
+
+### Run the framework
+
+The framework is open source:
+[loft-sh/vCluster-Control-Plane-Load-Testing](https://github.com/loft-sh/vcluster-control-plane-load-testing).
+It includes per-profile EKS Terraform modules, kube-burner workload
+configurations, the 13-SLI evaluation checks, and the doubling-ladder and
+binary-search scripts. See [Benchmark methodology](./benchmark-methodology.mdx)
+for test setup details.
+
+Customize the workload (`kube-burner/configs/`) to match your tenant — your
+CRD mix, your operator density, your churn pattern — then run the ladder
+against your candidate profile.
+
+### What to monitor
+
+These are the 13 conditions the framework evaluates after each stage. They
+also make a useful production monitoring set:
+
+| # | Condition | Threshold |
+| --- | --- | --- |
+| 1 | Control plane replica Ready | Any pod not Ready → fail |
+| 2a | Container restart count | > 2 → fail |
+| 2b | OOMKilled | Any event → fail |
+| 3a | Sustained 429 responses | > 0.1 req/s → fail |
+| 3b | Sustained 5xx responses | > 0.1 req/s → fail |
+| 3c | Sustained request terminations | > 0.1 req/s → fail |
+| 4 | API P99 latency (non-watch) | > 2 s sustained → fail |
+| 5a | etcd leader lost | Any interval → fail |
+| 5b | etcd leader changes | Any → fail |
+| 5c | etcd proposals failed | Any → fail |
+| 5d | etcd WAL fsync P99 | > 25 ms → warn |
+| 5e | etcd DB size | > 4 GB → warn; > 12 GB → fail |
+| 6 | Node convergence | < 98% of target N → fail |
+
+If your workload trips any condition against a candidate profile, scale up to
+the next profile or apply the tuning settings below. For production alert
+thresholds, see [Operational guidance](#operational-guidance).
+
+### When to validate on real nodes
+
+Synthetic testing covers the control-plane portion of sizing. Real validation
+is needed for:
+
+- **Pod startup latency SLOs** — image pulls, scheduling under contention, and
+  kubelet binding latency are not modeled by KWOK.
+- **Network programming p99** — Service, EndpointSlice, kube-proxy, and CNI
+  interactions are not modeled.
+- **CRD-heavy operator workloads** — each CRD adds a separate watch cache and
+  informer that KWOK doesn't exercise.
+- **Real container runtime behavior** — image pulls, probes, and evictions
+  create event storms that synthetic load cannot reproduce.
+
+If your customer-visible claim is a node count or pod count, validate it on
+real nodes at the scale that matters.
+
+## Choose a resource profile
+
+The following profiles are **per-replica** resource limits for the Virtual
+Control Plane StatefulSet. Always run 3 replicas in HA mode for any production
+Tenant Cluster.
+
+| Scale | Profile | CPU | Memory | Notes |
+| --- | --- | --- | --- | --- |
+| Dev / sandbox | P1 | 1 | 2 GiB | Light, single-team CI environments |
+| Small team | P2 | 2 | 4 GiB | Up to a few hundred long-running services |
+| Standard production | P3 | 4 | 8 GiB | Most production tenants — recommended starting point |
+| Large production | P4 | 8 | 16 GiB | Heavy churn or dense deployments |
+| Enterprise / AI Cloud | P5 | 16 | 32 GiB | High-density GPU clusters; operator-rich workloads (cert-manager, external-secrets, GPU Operator, Argo, KServe, etc.) |
+| Hyperscale | P6 | 32 | 64 GiB | Latency headroom above P5; same node ceiling, marginal API p99 improvement |
+
+**Key principles:**
+
+- **P3 (4 CPU / 8 GiB) is the right default** for most production Tenant Clusters.
+- **Below 4 CPU**, node capacity scales roughly linearly with CPU. The control plane saturates CPU before the etcd write path becomes the constraint.
+- **Above 4 CPU**, the ceiling flattens. The etcd write path becomes the
+  binding constraint, not CPU. Additional resources buy latency headroom, not
+  more nodes.
+- **Step up to P5** when you have operator-rich workloads (20+ controllers
+  issuing persistent watches) or are hitting latency-sensitive SLOs under
+  sustained churn.
+- **Memory scales with object count, not node count.** Pod, Deployment, and
+  Service count drives etcd DB size. Plan memory based on expected object
+  density, not node count alone.
+- **Always run 3-replica HA.** A single replica can't tolerate even a brief
+  etcd compaction stall without impacting tenant API availability.
+
+To configure a resource profile, set `controlPlane.statefulSet.resources` in
+`vcluster.yaml`:
+
+```yaml title="vcluster.yaml — P5 resource profile, 3-replica HA"
+controlPlane:
+  statefulSet:
+    highAvailability:
+      replicas: 3
+    resources:
+      limits:
+        cpu: "16"
+        memory: 32Gi
+      requests:
+        cpu: "16"
+        memory: 32Gi
+```
+
+## Tune your control plane
+
+We validated these settings across all profiles under sustained synthetic load.
+The same knobs apply to real workloads, though gains depend on your traffic mix.
+
+### Go garbage collection pacing
+
+Set on the Virtual Control Plane container:
+
+```yaml title="vcluster.yaml — Go GC tuning (P5 example)"
+controlPlane:
+  statefulSet:
+    env:
+      - name: GOGC
+        value: "200"         # default is 100; doubling halves GC overhead
+      - name: GOMEMLIMIT
+        value: "24000MiB"    # ~75% of the pod memory limit
+```
+
+`GOGC=200` halves GC overhead at the cost of slightly higher steady-state
+memory use. `GOMEMLIMIT` prevents OOM events by giving the Go runtime a hard
+ceiling to plan against. This combination meaningfully reduces API p99 latency
+under sustained churn. Set `GOMEMLIMIT` to about 75% of your profile's memory
+limit. For example, use `12000MiB` for a P4 16 GiB pod, or `6000MiB` for a
+P3 8 GiB pod.
+
+<!-- vale Google.Headings off -->
+### etcd storage class
+<!-- vale Google.Headings on -->
+
+Embedded etcd is sensitive to WAL fsync latency. Use a high-IOPS
+StorageClass for the etcd PersistentVolume:
+
+```yaml title="vcluster.yaml — etcd storage"
+controlPlane:
+  backingStore:
+    etcd:
+      embedded:
+        enabled: true
+  statefulSet:
+    persistence:
+      volumeClaim:
+        storageClass: <your-high-iops-storageclass>
+        size: 100Gi
+```
+
+Create a StorageClass with at least 16K IOPS and 500 MB/s throughput. Generic
+cloud defaults push WAL fsync p99 into the 25–50 ms range under heavy churn,
+above the 25 ms warn threshold. For example, AWS `gp3` defaults to 3K IOPS
+and 125 MB/s. A high-IOPS class keeps WAL fsync p99 well within the warn
+threshold even under sustained load.
+
+<!-- vale Google.Headings off -->
+### API server concurrency
+<!-- vale Google.Headings on -->
+
+The Kubernetes defaults (400 / 200) are sufficient for most workloads. For
+operator-rich Tenant Clusters with many persistent controllers, double them to
+absorb the extra `LIST` and `WATCH` bookkeeping during churn cycles:
+
+```yaml title="vcluster.yaml — API server concurrency (k8s distro)"
+controlPlane:
+  distro:
+    k8s:
+      apiServer:
+        extraArgs:
+          - --max-requests-inflight=800
+          - --max-mutating-requests-inflight=400
+```
+
+### Controller manager and scheduler — client throttling
+
+Both components have `--kube-api-qps` and `--kube-api-burst` settings. The
+defaults (50 QPS / 100 burst) are too conservative under heavy churn:
+
+```yaml title="vcluster.yaml — controller manager and scheduler QPS"
+controlPlane:
+  distro:
+    k8s:
+      controllerManager:
+        extraArgs:
+          - --kube-api-qps=200
+          - --kube-api-burst=400
+      scheduler:
+        extraArgs:
+          - --kube-api-qps=200
+          - --kube-api-burst=400
+```
+
+### Syncer outbound rate limits
+
+The vCluster syncer reflects Tenant Cluster objects to the Control Plane
+Cluster. Under heavy churn, its outbound API rate becomes the next bottleneck
+after the tenant API server. Set the rate limits using environment variables
+on the control plane pod:
+
+```yaml title="vcluster.yaml — syncer outbound rate limits"
+controlPlane:
+  statefulSet:
+    env:
+      - name: VCLUSTER_PHYSICAL_CLIENT_QPS
+        value: "400"
+      - name: VCLUSTER_PHYSICAL_CLIENT_BURST
+        value: "800"
+```
+
+### Rate-limit alignment
+
+For high-density Tenant Clusters, raise all three rate-limit stacks together.
+Lifting one without the others shifts the bottleneck rather than removing it:
+
+| Stack | QPS | Burst |
+| --- | --- | --- |
+| Tenant controller manager / scheduler → tenant API server | 200 | 400 |
+| Syncer → Control Plane Cluster API server | 400 | 800 |
+| Client (kubectl, CI pipelines, etc.) | 100 | 200 |
+
+### Bootstrap replica order
+
+When provisioning a new HA Tenant Cluster with embedded etcd, bring up replica
+0 first. Wait for it to become Ready before scaling to 3. This avoids a race
+condition where all three replicas try to become the etcd cluster founder
+simultaneously. The vCluster CLI handles this automatically. In self-managed
+Helm pipelines, handle it explicitly.
+
+## Operational guidance
+
+**Plan Control Plane Cluster node capacity.** A P5 Virtual Control Plane runs
+comfortably on a `c6a.8xlarge` node. P6 needs `c6a.16xlarge` or larger.
+Karpenter with `consolidationPolicy: WhenEmpty` and a 5-minute
+`consolidateAfter` interval works well in steady state.
+
+| Metric | Alert threshold |
+| --- | --- |
+| API p99 latency | > 1 s |
+| API 5xx rate | > 0.1 req/s |
+| etcd WAL fsync p99 | > 25 ms |
+| etcd DB size | > 4 GB (warn) / 12 GB (fail) |
+| Dropped watches per second | > 0 sustained |
+| Node convergence ratio | < 98% |
+
+**Tenant Isolation is per-Tenant-Cluster.** Each Tenant Cluster is fully
+isolated. Control-plane sizing is per-tenant, not aggregate. A single Control
+Plane Cluster can host many Tenant Clusters concurrently, within its own
+capacity limits. When planning, multiply the per-tenant profile by your
+expected tenant count.

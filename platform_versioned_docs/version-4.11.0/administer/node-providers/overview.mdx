@@ -1,0 +1,197 @@
+---
+title: Overview
+sidebar_label: Overview
+sidebar_position: 1
+---
+
+import NodeProvidersOverviewDiagram from '@site/static/media/diagrams/node-providers-overview-diagram.svg';
+import NodeClaimsDiagram from '@site/static/media/diagrams/node-claims-diagram.svg';
+import NodeEnvironmentDiagram from '@site/static/media/diagrams/node-environment-diagram.svg';
+
+Node providers let you configure sources for private nodes for tenant clusters automatically. Platform supports the following node providers:
+* [Terraform](./terraform.mdx) (powered by [OpenTofu](https://opentofu.org) under the hood)
+* [KubeVirt](./kubevirt.mdx) <!-- vale Vale.Terms = NO --> for VM-backed private nodes. To inspect and operate KubeVirt VMs directly, see [Virtual Machines](../virtual-machines/overview.mdx).
+* [Nvidia Base Command Manager](./bcm.mdx) <!-- vale Vale.Terms = NO -->
+* [vMetal](./metal3.mdx) (bare metal provisioning using Metal3/Ironic)
+
+Each node provider defines provider-specific configuration and node types that tenant clusters select from.
+When a tenant cluster requests a new node, it creates a node claim, telling the platform to provision a node with the given requirements. The platform then matches these requirements to the cheapest available node type and creates a node from that type.
+
+<figure>
+  <NodeProvidersOverviewDiagram style={{width: '100%', height: 'auto'}} role="img" aria-label="Node providers overview diagram" />
+</figure>
+
+An example node provider with two distinct node types:
+```yaml
+apiVersion: management.loft.sh/v1
+kind: NodeProvider
+metadata:
+  name: terraform-example
+spec:
+  terraform:
+    nodeTemplate:
+      git:
+        repository: https://github.com/my-org/my-repo.git
+    nodeTypes:
+      - name: medium
+        resources:
+          cpu: "2"
+          memory: 4Gi
+        properties:
+          instance-type: medium
+      - name: large
+        resources:
+          cpu: "4"
+          memory: 8Gi
+        properties:
+          instance-type: large
+```
+
+This creates a node provider with a Terraform node template. For each node claim, the platform executes the Terraform script. Reference this node provider in your tenant cluster using:
+```yaml
+# Use this in your vcluster.yaml
+privateNodes:
+  enabled: true
+  autoNodes:
+    provider: terraform-example
+    dynamic:
+      # This node pool automatically chooses the node type
+      # to right size the amount of pods.
+      - name: my-node-pool
+```
+
+:::info Single node provider, many tenant clusters
+Do not create a node provider per tenant cluster. Create a single node provider and share it across tenant clusters.
+:::
+
+## Node types 
+
+Node types are machine types that vCluster selects based on properties, resources, and cost.
+Create a node type for each instance type you want vCluster to choose from, such as different VM sizes or cloud instance types.
+
+vCluster automatically selects the best fitting node type based on requirements.
+If there are no requirements or multiple node types match, vCluster selects the cheapest available node type.
+
+### Properties
+
+Properties on a node type are similar to labels and let users specify traits to include or exclude certain node types when tenant clusters are created. Users can define custom properties in addition to the always-available built-in properties.
+
+#### Use properties
+
+Use properties through the `requirements` field under `autoNodes` node pools to include or exclude node types:
+```yaml
+# Inside your vcluster.yaml
+privateNodes:
+  enabled: true
+  autoNodes:
+    provider: my-provider
+    properties:
+      # Exact match
+      my-propert: my-value
+
+      # One of
+      my-property/value-1: true
+      my-property/value-2: true
+      my-property/value-3: true
+      
+      # Not in
+      my-property/value-1: false
+      my-property/value-2: false
+      my-property/value-3: false
+
+      # Exists
+      my-property: true
+
+      # Not exists
+      my-property: false
+    static:
+      - name: my-static-pool
+```
+
+The following operators are available (and similar to [Kubernetes set-based requirements](https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/#set-based-requirement)):
+* `In` (default): Matches one or multiple values on the node type
+* `NotIn`: Matches if the given values aren't part of the properties
+* `Exists`: Matches if the property is defined on the node type
+* `NotExists`: Matches if the property is not defined on the node type
+
+#### Custom properties
+
+Custom properties are defined using the `properties` field and map a key to one or multiple values. For example:
+```yaml
+...
+kind: NodeProvider
+...
+spec:
+  terraform:
+    nodeTypes:
+      - name: medium
+        [...]
+        properties:
+          # Single value
+          my-property: my-value
+          # Multiple values
+          my-property-multi: my-value-1,my-value-2
+          # All values
+          my-property-all: "*"
+```
+
+Property values must adhere to the [syntax and character set of Kubernetes labels](https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/#syntax-and-character-set), as they are set as labels on created nodes.
+
+#### In-built properties
+
+The platform automatically adds these properties:
+* `vcluster.com/node-type`: The name of the node type. Maps vCluster node pools to a specific node type. Since node type names are globally unique, they always map to a single node provider.
+* `node.kubernetes.io/instance-type`: Same as `vcluster.com/node-type`, but the official Kubernetes label.
+* `kubernetes.io/os`: Always `linux`.
+* `topology.kubernetes.io/zone`: Maps to the `spec.zone` field of the node type. Defaults to `global` if unspecified.
+* `karpenter.sh/capacity-type`: Always `on-demand`. Capacity type distinctions are not currently supported.
+
+### Resources
+
+The `resources` field is required on each node type and specifies the computing resources nodes of that type provide. Certain node providers (such as BCM or KubeVirt) auto-discover resources, while others require you to specify at least `cpu` and `memory` for each node type.
+Resources are specified according to the [Kubernetes resource units](https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/#resource-units-in-kubernetes).
+
+You can also specify custom resources such as `nvidia.com/gpu`, used for scheduling inside the tenant cluster. The platform does not schedule a node claim to a node type with custom resources unless those resources are explicitly requested. A tenant cluster that does not request a GPU is never assigned a GPU node type, even if it is the only available type.
+
+### Cost
+
+Each node type has an associated cost, either set manually using `spec.cost` or calculated from `resources`. The cost unit is intentionally unspecified. It is not a currency but a relative value vCluster and the platform use to select the cheapest matching node type.
+
+Default costs when not specified manually:
+* Each `cpu` costs `10`
+* Each GB of `memory` costs `2`
+* Each other resource costs `10000`, discouraging scheduling on specialized resources.
+
+Karpenter always tries to find the cheapest node and automatically provisions or deprovisions nodes as costs change.
+
+### Capacity
+
+Capacity is the number of available nodes for a given node type. The appropriate limit depends on the scenario. For bare-metal, for example, you may want to cap the number of usable machines.
+
+Depending on the provider, capacity is set manually or discovered automatically:
+* *Terraform*: set using `maxCapacity`, otherwise unlimited
+* *KubeVirt*: set using `maxCapacity`, otherwise unlimited
+* *BCM*: is automatically discovered
+* *Metal3*: determined by available BareMetalHosts matching the node type's label selector
+
+If specified, the platform tracks how many nodes of this type have been created and marks the node type as unavailable once the limit is reached. vCluster stops using that node type until nodes are deprovisioned.
+
+## Node claims
+
+When a tenant cluster requests a new node, either dynamically using [Karpenter](https://karpenter.sh/) or through static configuration, vCluster creates a node claim in the platform with requirements. The platform then selects the node type that best fulfills those requirements. If multiple node types match, the platform chooses the cheapest available one.
+
+You can restrict the node types a project's NodeClaims may use with [`spec.allowedNodeTypes`](../projects/allowed/node-types.mdx).
+
+<figure>
+  <NodeClaimsDiagram style={{width: '100%', height: 'auto'}} role="img" aria-label="Node claims diagram" />
+</figure>
+
+## Node environments
+
+Node environments are optional and scoped to a single tenant cluster and node provider. Some node providers require one-time setup before they can create nodes. For example, a tenant cluster in AWS using the Terraform provider needs a VPC, routing tables, and subnets before deploying any nodes.
+
+The platform creates node environments lazily, only when a tenant cluster first selects that provider. Once the environment is ready, node creation proceeds.
+
+<figure>
+  <NodeEnvironmentDiagram style={{width: '100%', height: 'auto'}} role="img" aria-label="Node environment diagram" />
+</figure>

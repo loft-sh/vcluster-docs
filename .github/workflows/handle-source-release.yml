@@ -50,6 +50,9 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  # id-token is used by the non-blocking drift-fix step's claude-code-action,
+  # matching check-annotation-drift.yml.
+  id-token: write
 
 jobs:
   sync:
@@ -81,9 +84,13 @@ jobs:
             echo "::error::Refusing to proceed: version '$version' is not vX.Y.Z[-pre]" >&2
             exit 1
           fi
+          # base_sha is the pre-sync commit. The drift check diffs the
+          # regenerated command set against this ref, and the drift-fix PR is
+          # branched from it so it carries only prose edits.
           {
             echo "event=$event"
             echo "version=$version"
+            echo "base_sha=$(git rev-parse HEAD)"
           } >>"$GITHUB_OUTPUT"
 
       - name: Classify version
@@ -114,13 +121,15 @@ jobs:
       # public proxy, hits 404, then tries an unauthenticated `git
       # ls-remote` and fails.
       #
-      # GOPRIVATE is narrowed to the actually-private patterns. A broad
-      # `github.com/loft-sh/*` pattern forces direct VCS for public deps
-      # too — including the indirect github.com/loft-sh/external-types,
-      # whose sparse-then-dense git history reproducibly triggers a
-      # `git fetch --unshallow` race ("shallow file has changed since
-      # we read it") in `go mod tidy` after the platform pin bump.
-      # Mirrors loft-enterprise#6910.
+      # GOPRIVATE stays narrow: only vcluster-pro* is genuinely private, so
+      # only it is forced to direct VCS on every event. It must NOT widen to
+      # `github.com/loft-sh/*`, which would also force direct VCS for the
+      # indirect github.com/loft-sh/external-types, whose sparse-then-dense
+      # git history reproducibly triggers a `git fetch --unshallow` race
+      # ("shallow file has changed since we read it") in `go mod tidy`.
+      # Mirrors loft-enterprise#6910. The platform pin bump needs api +
+      # agentapi resolved directly too, but only on platform-released and
+      # without disturbing GOPRIVATE; the next step scopes that.
       - name: Configure git for private loft-sh modules
         if: steps.classify.outputs.skip != 'true'
         env:
@@ -130,19 +139,60 @@ jobs:
           git config --global url."https://${GH_ACCESS_TOKEN}@github.com/".insteadOf "https://github.com/"
           echo "GOPRIVATE=github.com/loft-sh/vcluster-pro*" >>"$GITHUB_ENV"
           echo "GOPROXY=https://proxy.golang.org,direct" >>"$GITHUB_ENV"
+          # The versioned docs trees were seeded from copies that carried an
+          # executable bit, so many committed partials are 100755 while the
+          # generators write them at 100644. Without this, every sync PR
+          # carries hundreds of spurious 100755->100644 mode-only diffs that
+          # bury the real content changes. .mdx/.md/.json docs are never
+          # executed, so ignore the executable bit repo-wide for the sync.
+          git config core.fileMode false
+
+      # The platform pin bump (below) moves api + agentapi to a version
+      # loft-enterprise tagged moments ago. proxy.golang.org and
+      # sum.golang.org cache a version only after fetching it from origin,
+      # and that propagation lags tag creation on independent, unbounded
+      # timelines: it stalled past the 10-minute wait for platform v4.11.0
+      # (agentapi), and before that under DEVOPS-904, DEVOPS-1008 and
+      # DEVOPS-1041, each "wait longer on Google" patch failing again on the
+      # next release. Route just these two modules to direct VCS (git auth
+      # above) so they are consumable the instant their GitHub tag exists,
+      # which the wait step gates on authoritatively. GONOSUMDB also skips
+      # the checksum DB for them, correct because sum.golang.org has not seen
+      # the version either; go still records their content hashes in go.sum
+      # from the direct download.
+      #
+      # Set GONOPROXY/GONOSUMDB explicitly rather than widening GOPRIVATE:
+      # the explicit values replace the GOPRIVATE-derived defaults, so
+      # vcluster-pro* is repeated here or private-module requests would leak
+      # to the public services. external-types is deliberately absent,
+      # keeping it on the proxy and away from the unshallow race. Scoped to
+      # platform-released so unrelated vcluster/cli generator runs keep
+      # verifying api/agentapi through the checksum DB. Prefix patterns match
+      # on path element boundaries, so `.../api` covers api and api/v4
+      # without matching the sibling `.../apiserver`.
+      - name: Route api + agentapi to direct VCS for the platform pin bump
+        if: steps.classify.outputs.skip != 'true' && steps.inputs.outputs.event == 'platform-released'
+        run: |
+          set -eo pipefail
+          modules="github.com/loft-sh/vcluster-pro*,github.com/loft-sh/api,github.com/loft-sh/agentapi"
+          echo "GONOPROXY=${modules}" >>"$GITHUB_ENV"
+          echo "GONOSUMDB=${modules}" >>"$GITHUB_ENV"
 
       # loft-enterprise's release pipeline cuts its own tag + release first
       # (which triggers our dispatch), then creates matching upstream tags
-      # in loft-sh/{agentapi,api} and lets them propagate to the Go module
-      # proxy. The bump step's `go mod tidy` below resolves both modules
-      # through GOPROXY, so it must not run until the proxy can serve the
-      # released version, not merely until the GitHub tag exists. The wait
-      # checks tag presence first (a clear "upstream never published"
-      # signal) then module-proxy resolution (the propagation race that
-      # broke platform v4.10.1 under DEVOPS-1008, where the tag existed but
-      # `go mod tidy` still reported `unknown revision`). Logic + bats
-      # coverage live in the script. 10s x 60 = 10 min ceiling per check.
-      - name: Wait for agentapi + api to resolve through the module proxy
+      # in loft-sh/{agentapi,api} a short time later. The bump step below
+      # must not run until those tags exist. Because the bump now resolves
+      # api + agentapi via direct VCS (routing step above), the GitHub tag
+      # existing is sufficient for consumability; we no longer wait on the
+      # public proxy or sum.golang.org, whose propagation lag broke this
+      # receiver repeatedly (DEVOPS-904, DEVOPS-1008, DEVOPS-1041, platform
+      # v4.11.0). The script checks tag presence first (a clear "upstream
+      # never published" signal), then confirms each module resolves via a
+      # direct fetch that mirrors the bump and warms the module cache.
+      # Logic + bats coverage live in the script. Each of the four checks
+      # (tag + resolve, per module) polls 10s x 60 = 10 min, so ~40 min
+      # worst case, though a healthy release passes each on the first try.
+      - name: Wait for agentapi + api release tags to be consumable
         if: steps.classify.outputs.skip != 'true' && steps.inputs.outputs.event == 'platform-released'
         env:
           VERSION: ${{ steps.inputs.outputs.version }}
@@ -165,19 +215,41 @@ jobs:
       # vendoring". The bumped vendor tree ships in the same docs-sync PR
       # alongside go.mod/go.sum + regenerated partials — they have to ship
       # together to compile on next regen.
+      #
+      # The bump edits go.mod, runs `go mod tidy` + `go mod vendor`, and
+      # asserts MVS actually selected VERSION (not a higher transitive
+      # require). Logic + bats coverage live in the script.
       - name: Bump loft-sh/api + loft-sh/agentapi pins to released platform version
         if: steps.classify.outputs.skip != 'true' && steps.inputs.outputs.event == 'platform-released'
         env:
           VERSION: ${{ steps.inputs.outputs.version }}
+        run: bash hack/release/bump-platform-pins.sh
+
+      # Checks whether the freshly-bumped loft-sh/api vendor tree registered
+      # any Kind that hack/platform/partials/main.go has no
+      # util.GenerateObjectOverview call for — the class of gap DOC-1630
+      # fixed for 8 pre-existing Kinds (see DOC-1632). Non-fatal: a missing
+      # Kind needs a human to write a realistic example object informed by
+      # how it's actually used, the same investigation DOC-1630 required, so
+      # this only surfaces the gap as a warning rather than blocking the
+      # canonical-docs sync PR or attempting to auto-fix it.
+      - name: Check platform resource generator coverage
+        if: steps.classify.outputs.skip != 'true' && steps.inputs.outputs.event == 'platform-released'
+        continue-on-error: true
         run: |
-          set -eo pipefail
-          stripped="${VERSION#v}"
-          major="v${stripped%%.*}"
-          echo "Bumping github.com/loft-sh/{api,agentapi}/${major} to ${VERSION}"
-          go mod edit -require "github.com/loft-sh/agentapi/${major}@${VERSION}"
-          go mod edit -require "github.com/loft-sh/api/${major}@${VERSION}"
-          go mod tidy
-          go mod vendor
+          set +e
+          go run ./hack/platform/check-resource-coverage --json-output "${RUNNER_TEMP}/coverage-report.json"
+          status=$?
+          set -e
+          if [ ! -f "${RUNNER_TEMP}/coverage-report.json" ]; then
+            echo "::warning::check-resource-coverage exited $status without writing a report (tool may need updating, e.g. after a major API version bump); skipping coverage check"
+            exit 0
+          fi
+          gaps=$(jq -r '.gaps | length' "${RUNNER_TEMP}/coverage-report.json")
+          if [ "$gaps" -gt 0 ]; then
+            names=$(jq -r '.gaps | join(", ")' "${RUNNER_TEMP}/coverage-report.json")
+            echo "::warning::check-resource-coverage found $gaps registered API Kind(s) with no generator coverage: $names"
+          fi
 
       # vcluster + vcluster-cli generators consume the released vCluster
       # source tree. Platform generator builds against API types pinned in
@@ -253,6 +325,190 @@ jobs:
             --head "$branch" \
             --title "docs: sync ${EVENT} ${VERSION}" \
             --body "Auto-generated by handle-source-release. Channel: \`${CHANNEL}\`. Target: \`${TARGET_FOLDER}\`."
+
+      # ── Prose drift check (DOC-1626) ──────────────────────────────────────
+      # The steps above keep the CANONICAL references current. These steps check
+      # whether the ~190 hand-written prose pages that embed CLI examples or
+      # vcluster.yaml snippets still agree with those regenerated references, and
+      # draft fixes into a SEPARATE, human-reviewed PR.
+      #
+      # Everything here is non-blocking (continue-on-error + a script that never
+      # fails on drift): it runs AFTER the docs-sync PR is already opened, so it
+      # can never block or pollute the canonical sync. vCluster only — the script
+      # no-ops for platform-released. Fires on the same rc/stable channels as the
+      # sync (guarded by classify's skip output), never on alpha/beta/next.
+      - name: Detect prose drift against regenerated references
+        id: drift
+        if: steps.classify.outputs.skip != 'true' && (steps.inputs.outputs.event == 'vcluster-released' || steps.inputs.outputs.event == 'vcluster-cli-released')
+        continue-on-error: true
+        env:
+          EVENT_TYPE: ${{ steps.inputs.outputs.event }}
+          TARGET_FOLDER: ${{ steps.classify.outputs.target_folder }}
+          OLD_REF: ${{ steps.inputs.outputs.base_sha }}
+          REPORT_DIR: ${{ runner.temp }}/drift-reports
+        run: bash hack/release/run-drift-check.sh
+
+      # The baseline checkout below rewinds the whole tree to the pre-release
+      # commit, which also reverts the just-regenerated references. Preserve
+      # the CURRENT references outside the tree first, and seed the drafter's
+      # summary file, so the drafter consults current flags and fields (not
+      # the stale baseline) and has a channel for findings it cannot resolve.
+      - name: Preserve regenerated references for the drafter
+        id: refs
+        if: steps.classify.outputs.skip != 'true' && steps.drift.outputs.drift_detected == 'true'
+        continue-on-error: true
+        env:
+          TARGET_FOLDER: ${{ steps.classify.outputs.target_folder }}
+          REFS_DIR: ${{ runner.temp }}/current-refs
+          SUMMARY_FILE: ${{ runner.temp }}/drift-summary.md
+        run: |
+          mkdir -p "$REFS_DIR"
+          for d in "${TARGET_FOLDER}/cli" "${TARGET_FOLDER}/_partials/config"; do
+            if [ -d "$d" ]; then
+              mkdir -p "$REFS_DIR/$(dirname "$d")"
+              cp -r "$d" "$REFS_DIR/$d"
+            fi
+          done
+          printf '### Findings the drafter could not resolve\n\n(none)\n' > "$SUMMARY_FILE"
+
+      # The docs-sync PR (regenerated references) is already pushed. Reset to the
+      # pre-sync baseline so the drift-fix PR carries ONLY prose edits, never the
+      # regenerated references.
+      - name: Check out prose baseline for drift fix
+        id: baseline
+        if: steps.classify.outputs.skip != 'true' && steps.drift.outputs.drift_detected == 'true'
+        continue-on-error: true
+        env:
+          BASE_SHA: ${{ steps.inputs.outputs.base_sha }}
+        run: git checkout -f "$BASE_SHA"
+
+      # Both steps below require the baseline checkout to have succeeded: if
+      # the tree were still on the docs-sync branch, the drift-fix PR would
+      # carry the regenerated references alongside the prose edits.
+      # timeout-minutes bounds a hung or runaway model session: --max-turns
+      # caps turns, not wall clock, and without a ceiling this step could hold
+      # the runner for the 6-hour job default (it is continue-on-error, so the
+      # only cost is runner time, but that still delays failure notification).
+      - name: Draft prose drift fixes with Claude
+        if: steps.classify.outputs.skip != 'true' && steps.drift.outputs.drift_detected == 'true' && steps.baseline.outcome == 'success' && steps.refs.outcome == 'success'
+        continue-on-error: true
+        timeout-minutes: 15
+        uses: anthropics/claude-code-action@v1
+        env:
+          GH_TOKEN: ${{ secrets.GH_ACCESS_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GH_ACCESS_TOKEN }}
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            You are fixing drift between hand-written vCluster docs prose and the
+            canonical generated references (CLI cobra docs / vcluster.yaml schema).
+
+            The JSON drift report is at: ${{ steps.drift.outputs.report_path }}
+
+            IMPORTANT: the working tree is rewound to the pre-release baseline,
+            so any generated reference files in it (under `*/cli/` or
+            `*/_partials/config/`) are STALE. The CURRENT regenerated references
+            are preserved at ${{ runner.temp }}/current-refs — consult those
+            copies (Read/Grep/Glob) whenever you need the current set of valid
+            flags, commands, or fields.
+
+            Step 1: Read the report with Bash + jq. Exactly one report shape is
+            present per run — inspect the JSON to see which:
+            - cli-drift: flag_drift[] {file, line, command, flag, invocation} — a
+              prose `vcluster ...` example uses a --flag the command no longer
+              accepts; command_drift[] {file, line, command, context} — prose
+              references a command that was removed or deprecated.
+            - config-drift: unknown_fields[] {file, line, path} — a vcluster.yaml
+              snippet uses a field absent from the current schema;
+              deprecated_fields[] {file, line, path, detail} — a snippet uses a
+              deprecated field, and `detail` names the replacement.
+
+            Step 2: For each finding, Read the file at the given line, understand
+            the surrounding prose, and fix ONLY the drifted reference:
+            - Deprecated field → replace with the replacement named in `detail`.
+            - Unknown field / removed command / unknown flag → correct it to the
+              current equivalent when the intent is clear from context (verify
+              against the preserved references, not the stale working tree).
+            - If a finding is genuinely ambiguous, leave the prose unchanged and
+              record it in ${{ runner.temp }}/drift-summary.md instead: Edit that
+              file, replacing "(none)" with one bullet per unresolved finding
+              (file:line, the finding, why it is ambiguous). The file becomes
+              part of the fix PR body, so never leave a finding unrecorded.
+
+            Rules:
+            - Edit prose files ONLY. Never touch generated files under any
+              `*/cli/` or `*/_partials/config/` path.
+            - Preserve all surrounding content; change only what drifted, and do
+              not reformat unrelated lines.
+            - Always Read a file before Edit.
+            - Do NOT use sub-agents, todo lists, or write temporary files.
+          claude_args: |
+            --max-turns 40
+            --disallowedTools "Task" "TodoRead" "TodoWrite"
+            --allowedTools "Bash(jq *)" "Bash(cat *)" "Read" "Edit" "Glob" "Grep"
+            --model claude-sonnet-4-5-20250929
+
+      # The drafter's unresolved-findings summary must reach reviewers, so the
+      # PR body is composed from a file: static context plus whatever the
+      # drafter recorded in the summary.
+      - name: Compose drift fix PR body
+        id: prbody
+        if: steps.classify.outputs.skip != 'true' && steps.drift.outputs.drift_detected == 'true' && steps.baseline.outcome == 'success' && steps.refs.outcome == 'success'
+        continue-on-error: true
+        env:
+          EVENT: ${{ steps.inputs.outputs.event }}
+          VERSION: ${{ steps.inputs.outputs.version }}
+          SUMMARY_FILE: ${{ runner.temp }}/drift-summary.md
+          BODY_FILE: ${{ runner.temp }}/drift-pr-body.md
+        run: |
+          {
+            printf 'The release-sync drift check found hand-written prose that no longer\n'
+            # shellcheck disable=SC2016  # literal backticks are markdown, not expansion
+            printf 'matches the regenerated `%s` references (`%s`).\n\n' "$EVENT" "$VERSION"
+            printf 'Claude drafted these prose fixes. Please review for accuracy before\n'
+            printf 'merging: this PR is never auto-merged.\n\n'
+            cat "$SUMMARY_FILE"
+            printf '\n---\n*Generated by handle-source-release (DOC-1626 drift check)*\n'
+          } > "$BODY_FILE"
+
+      - name: Open drift fix PR
+        id: driftpr
+        if: steps.classify.outputs.skip != 'true' && steps.drift.outputs.drift_detected == 'true' && steps.baseline.outcome == 'success' && steps.prbody.outcome == 'success'
+        continue-on-error: true
+        timeout-minutes: 10
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ secrets.GH_ACCESS_TOKEN }}
+          commit-message: "docs: fix cli/vcluster.yaml prose drift for ${{ steps.inputs.outputs.event }} ${{ steps.inputs.outputs.version }}"
+          title: "docs: fix prose drift for ${{ steps.inputs.outputs.event }} ${{ steps.inputs.outputs.version }}"
+          body-path: ${{ runner.temp }}/drift-pr-body.md
+          branch: docs-drift-fix/${{ steps.inputs.outputs.event }}-${{ steps.inputs.outputs.version }}
+          base: main
+          delete-branch: true
+          labels: automation,drift
+
+      # An all-ambiguous round changes no files, so create-pull-request opens
+      # no PR and the drafter's summary would vanish. Surface it on the run
+      # summary and as a comment on the docs-sync PR instead.
+      - name: Surface drift summary when no fix PR was opened
+        if: steps.classify.outputs.skip != 'true' && steps.drift.outputs.drift_detected == 'true' && steps.driftpr.outcome == 'success' && steps.driftpr.outputs.pull-request-number == ''
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GH_ACCESS_TOKEN }}
+          SUMMARY_FILE: ${{ runner.temp }}/drift-summary.md
+          SYNC_BRANCH: docs-sync/${{ steps.inputs.outputs.event }}-${{ steps.inputs.outputs.version }}
+        run: |
+          {
+            printf '## Prose drift detected, but no auto-fix PR was opened\n\n'
+            cat "$SUMMARY_FILE"
+          } >> "$GITHUB_STEP_SUMMARY"
+          pr="$(gh pr list --head "$SYNC_BRANCH" --state open --json number --jq '.[0].number' || true)"
+          if [ -n "$pr" ]; then
+            {
+              printf 'The drift check flagged prose that no longer matches the regenerated references, but the drafter left it unchanged. Review manually:\n\n'
+              cat "$SUMMARY_FILE"
+            } | gh pr comment "$pr" --body-file -
+          fi
 
       # Alerts a chosen Slack channel when a non-skip receiver run fails.
       # Guarded on `skip != 'true'` because the classifier reports skip

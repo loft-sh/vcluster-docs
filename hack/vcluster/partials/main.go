@@ -46,13 +46,16 @@ var pathExtras = map[string]Extras{
 			"`joinNode.enabled: false` and use separate worker nodes for tenant workloads.\n" +
 			":::\n\n",
 	},
-	"sync/toHost/gatewayApi": {
-		Before: "\nSetting `enabled: true` turns on Gateway and HTTPRoute sync, imports control plane " +
-			"cluster GatewayClasses so tenant Gateways can resolve them, and serves tenant ReferenceGrants " +
-			"for validation; TLSRoutes and BackendTLSPolicies must be enabled individually.\n\n" +
-			"In auto mode grants follow route sync and are validated within the tenant cluster; " +
-			"they sync to the control plane cluster only when namespace sync is also enabled.\n\n",
-	},
+	// NOTE: do not add a pathExtras key for a field that exists only in newer
+	// vCluster versions. The receiver runs this generator against the schema of
+	// the exact released version it is processing, which includes still-maintained
+	// older release lines (for example 0.34.x). validateExtras requires every key
+	// here to resolve in that schema, so a version-conditional key hard-fails the
+	// docs-sync run for every release predating the field. The `paths` slice below
+	// tolerates a missing path (warn + skip); pathExtras does not. The
+	// `sync/toHost/gatewayApi` entry was removed for this reason: the field landed
+	// in vCluster 0.35.0, but 0.34.x patch releases still trigger regeneration.
+	// See DEVOPS-1075. gatewayApi remains in `paths` so 0.35.0+ still generate it.
 }
 
 // we only generate paths we actually need

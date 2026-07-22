@@ -1,0 +1,165 @@
+---
+title: Troubleshooting Fleet Observability
+sidebar_label: Troubleshooting
+sidebar_position: 10
+description: Diagnose common Fleet Observability gateway, access-key, collector, and query-proxy problems.
+---
+
+Use this page to diagnose the Fleet Observability path from edge collectors through the
+observability gateway and into your metrics backend.
+
+## Gateway resources aren't created
+
+Check the connector Secret:
+
+```bash
+kubectl get secret -n vcluster-platform fleet-observability -o yaml
+```
+
+Verify:
+
+- The Secret is in the Platform namespace.
+- `metadata.labels["loft.sh/connector-type"]` is `observability`.
+- The fleet connector has the `platform.vcluster.com/fleet-observability-connector` label set to `"true"`.
+- `metricsBackendOtlpEndpoint` and `metricsBackendPromQLEndpoint` are set.
+
+The gateway isn't reconciled until both backend endpoints are present.
+
+## Multiple fleet connectors
+
+Only one connector can carry the fleet label:
+
+```yaml
+platform.vcluster.com/fleet-observability-connector: "true"
+```
+
+If multiple connector Secrets have this label, Platform still creates per-connector
+gateway resources, but it doesn't publish the fleet-wide platform admin Grafana
+datasource. Remove the fleet label from all but one connector.
+
+## Collector writes are rejected
+
+Check the collector exporter configuration:
+
+- The `Authorization` header uses a valid bearer token.
+- The token is a `metrics-writer` access key.
+- The request includes either `X-Vcluster-Platform-Cluster` or the
+  `X-Vcluster-Platform-Project` and `X-Vcluster-Platform-Instance` pair.
+- The header values match the key scope.
+
+Check gateway logs:
+
+```bash
+kubectl logs -n vcluster-platform deploy/gateway-fleet-observability -c otel-gateway
+```
+
+Common causes:
+
+| Symptom | Likely cause |
+|---|---|
+| Missing bearer token | Collector didn't set the `Authorization` header. |
+| Scope denied | Key scope doesn't include the requested cluster or tenant cluster. |
+| Ambiguous scope | Request included both cluster and tenant scope, or multiple values for one scope header. |
+| Headerless write rejected | The key has zero or multiple concrete tenant scopes, so scope can't be derived. |
+
+## Queries are rejected
+
+Check query-proxy logs:
+
+```bash
+kubectl logs -n vcluster-platform deploy/gateway-fleet-observability -c query-proxy
+```
+
+Common causes:
+
+| Symptom | Likely cause |
+|---|---|
+| HTTP `400` | Missing scope for a non-admin user, invalid scope matcher, or malformed PromQL. |
+| HTTP `403` | The user or key is authenticated but not authorized for the requested metrics scope. |
+| Query succeeds for admins only | The datasource is using the unscoped fleet-admin path. Add tenant or cluster scope headers for non-admin users. |
+| Regex query rejected | Scope-controlling labels only allow equality or literal alternation regular expression matchers. |
+
+## Platform labels are missing
+
+If metrics arrive without `vcluster_platform_*` labels:
+
+- Confirm the metrics went through the Write Gateway. Direct writes to the backend
+  don't get platform labels.
+- Confirm the collector used a valid metrics writer key and scope headers.
+- Confirm the backend stores labels from OTLP datapoint attributes.
+- Check whether the metric is expected to have tenant labels or only cluster labels.
+
+The Write Gateway strips caller-supplied platform labels and then stamps authenticated
+values. Empty authenticated values are dropped.
+
+## Backend TLS failures
+
+If gateway pods start but can't write or query the backend:
+
+- Verify `metricsBackendOtlpEndpoint` and `metricsBackendPromQLEndpoint`.
+- Set `metricsBackendServerName` when the backend certificate's DNS name differs from
+  the endpoint host.
+- Use `metricsBackendCertSecretName` when the backend requires mTLS. This Secret is also the
+  source of trust for a private backend CA. It must contain `ca.crt`, `tls.crt`, and
+  `tls.key`.
+- Use `metricsBackendInsecureSkipVerify: "true"` only as a temporary test setting.
+
+## Gateway TLS failures
+
+The gateway always serves OTLP and query traffic over TLS. If collectors or query clients
+can't connect:
+
+- For the Platform-managed certificate, read `ca.crt` from the
+  `gateway-<connector-id>-tls` Secret and configure the client to trust it.
+- For a custom private certificate, include `ca.crt` in the Secret referenced by
+  `observabilityGatewayCertSecretName`.
+- Verify that the client uses `https` for OTLP HTTP and query traffic or enables TLS for
+  OTLP gRPC.
+- If the gateway uses a `LoadBalancer` Service and a Platform-managed certificate, wait for
+  the LoadBalancer address before expecting the gateway Deployment to become available.
+
+## Platform API outage
+
+The gateway and query proxy fail closed when Platform authorization is unavailable.
+Previously allowed decisions can continue only until their short positive cache TTL
+expires.
+
+Expected behavior:
+
+- Collectors may queue and retry writes locally, depending on their exporter settings.
+- Queries fail visibly after cached authorization decisions expire.
+- Writes and reads recover when the Platform API is reachable again.
+
+## Useful checks
+
+Gateway pods:
+
+```bash
+CONNECTOR_ID=fleet-observability
+kubectl get pods -n vcluster-platform -l app.kubernetes.io/name=gateway,app.kubernetes.io/instance="$CONNECTOR_ID"
+```
+
+Gateway service:
+
+```bash
+CONNECTOR_ID=fleet-observability
+kubectl get svc -n vcluster-platform "gateway-$CONNECTOR_ID"
+```
+
+Write Gateway metrics:
+
+```bash
+CONNECTOR_ID=fleet-observability
+GATEWAY_POD=$(kubectl get pod -n vcluster-platform -l app.kubernetes.io/name=gateway,app.kubernetes.io/instance="$CONNECTOR_ID" -o jsonpath='{.items[0].metadata.name}')
+kubectl port-forward -n vcluster-platform pod/$GATEWAY_POD 8889:8889
+curl http://127.0.0.1:8889/metrics
+```
+
+Query Proxy metrics:
+
+```bash
+CONNECTOR_ID=fleet-observability
+GATEWAY_POD=$(kubectl get pod -n vcluster-platform -l app.kubernetes.io/name=gateway,app.kubernetes.io/instance="$CONNECTOR_ID" -o jsonpath='{.items[0].metadata.name}')
+kubectl port-forward -n vcluster-platform pod/$GATEWAY_POD 8080:8080
+curl http://127.0.0.1:8080/metrics
+```
