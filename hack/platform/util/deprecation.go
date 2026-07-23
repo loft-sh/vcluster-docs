@@ -11,9 +11,7 @@ import (
 )
 
 // TypeDeprecationNotice returns the "Deprecated: ..." notice carried by obj's
-// Go type doc comment, or "" if the type isn't deprecated. It re-parses the
-// vendor tree rather than reusing the generator's CommentMap, which collapses
-// type comments to a one-sentence synopsis and would drop the notice.
+// Go type doc comment, or "" if the type isn't deprecated.
 func TypeDeprecationNotice(obj interface{}) string {
 	t := reflect.TypeOf(obj)
 	for t != nil && t.Kind() == reflect.Ptr {
