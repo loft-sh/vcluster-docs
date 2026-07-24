@@ -1,0 +1,120 @@
+---
+title: "Inference Provider: Managed Model Serving"
+sidebar_label: Inference Provider
+sidebar_position: 2
+description: Build a managed inference platform on GPU infrastructure. Day 0, Day 1, and Day 2 path for inference providers.
+---
+
+import InferenceProviderArchitecture from '@site/static/img/production-paths/inference-provider.svg';
+
+Build managed inference endpoints on your GPU infrastructure. Customers interact with your product API and model endpoints. Platform and vCluster form the operations layer your team runs behind it.
+
+**Minimum stack:**
+
+- [vCluster Platform](/platform/install/quick-start-guide) as the management plane.
+- If you already operate Kubernetes, each tenant cluster's [control plane](../introduction/architecture.mdx) runs as pods on your existing cluster. If you don't have Kubernetes to host it on, use [vCluster Standalone](../deploy/control-plane/binary/basics.mdx) to bootstrap the tenant cluster control plane directly on bare metal or VMs. Move to [Standalone HA](../deploy/control-plane/binary/high-availability.mdx) before production traffic.
+- Private GPU nodes for dedicated inference customers.
+- Argo CD or Akuity to deliver the GPU stack and runtime declaratively into each tenant cluster.
+
+**Optional add-ons:**
+
+- vMetal when you own bare metal GPU lifecycle. Skip it if your GPU capacity comes from cloud GPU instances, manually joined nodes, or Auto Nodes instead.
+- vNode, a separate vCluster Labs product, for runtime isolation of custom containers, adapters, plugins, or other untrusted code.
+
+<figure>
+  <InferenceProviderArchitecture style={{ display: "block", margin: "0 auto", maxWidth: "100%", height: "auto" }} role="img" aria-label="Inference provider architecture: customers call a product API and inference endpoints through a traffic layer, while the provider runs dedicated, isolated tenant environments on private GPU nodes, orchestrated by vCluster Platform on a control plane cluster" />
+  <figcaption>Product API and traffic layer boundary backed by dedicated, isolated tenant clusters on private GPU nodes</figcaption>
+</figure>
+
+**What makes this path different:** Customers don't use Platform directly. They call your product API or inference endpoint. Templates are the core payoff for your product. Applying a template creates a tenant cluster, attaches GPU capacity, enforces quotas, publishes routes, and reclaims capacity when endpoints are deleted.
+
+Confirm licensing before you invest further. Several pieces of this stack require Platform activation or a paid tier. See [Open Source vs Free tier](../introduction/oss-vs-free.mdx) for the tier check.
+
+:::tip Not building a multi-customer provider?
+If your users are internal teams that should provision and manage their own environments in Platform, start with [Enterprise AI Factory](./enterprise-ai-factory.mdx) instead. If you only need to deploy one model inside a tenant cluster you already have, skip ahead to [Model serving runtimes](../integrations/model-serving.mdx). Use this inference provider path when your product hides Platform and exposes an inference endpoint lifecycle to multiple customers.
+:::
+
+Before standing up infrastructure, review [Building an inference platform](../introduction/inference-platform.mdx) for the tenancy models, GPU capacity classes, endpoint readiness, and product control plane mapping behind the decisions below.
+
+## Day 0: Design decisions
+
+| Decision | Read next | Outcome |
+| --- | --- | --- |
+| Choose the inference tenancy model | [Choose an inference tenancy model](../introduction/inference-platform.mdx#choose-an-inference-tenancy-model), [Architecture](../introduction/architecture.mdx) | Decide whether each customer, model family, or endpoint tier gets a tenant cluster, private GPU nodes, vNode runtime isolation, or a shared serving pool. |
+| Plan GPU capacity classes | [Size GPU capacity classes](../introduction/inference-platform.mdx#size-gpu-capacity-classes), [Node providers](/platform/administer/node-providers/overview), [GPU and accelerators](../introduction/gpu-and-accelerator-support.mdx) | Define node types by GPU model, count, region, and reservation model, and choose an isolation strategy per tenant tier. |
+| Define serving runtime templates | [Model serving runtimes](../integrations/model-serving.mdx), [Deploy applications](/platform/integrations/argocd/deploy-applications), [Certified Stacks](/platform/integrations/certified-stacks) | Standardize the components each endpoint receives as an Argo CD `ArgoCDApplicationTemplate`, such as GPU Operator, scheduler, model server, ingress or Gateway API routes, metrics, and secrets. |
+| Plan Application boundaries and sequencing | [Sequence the GPU stack and the runtime](../integrations/model-serving.mdx#sequence-the-gpu-stack-and-the-runtime), [Deploy applications](/platform/integrations/argocd/deploy-applications) | Decide which components share one Argo CD Application and which get their own. Argo CD doesn't sequence separate Applications, so bundle hard dependencies together and let Kubernetes absorb soft ones. |
+| Plan model storage and warmup | [Model storage architecture](../integrations/model-serving.mdx#plan-model-storage), [Model serving runtimes](../integrations/model-serving.mdx) | Decide where model weights live, how they reach each endpoint, how caches are warmed, and how readiness is reported while large models load. |
+| Plan endpoint routing | [Model serving runtimes](../integrations/model-serving.mdx#expose-an-inference-endpoint), [Gateway API](../key-features/gateway-api.mdx) | Decide whether tenant clusters attach routes to platform-owned shared Gateways, tenant-owned Gateways, or another ingress layer controlled by your product. |
+| Plan autoscaling signals | [GPU and inference autoscaling](../integrations/gpu-hpa-dcgm.mdx), [Monitoring overview](/platform/maintenance/monitoring/overview) | Combine hardware metrics, such as GPU utilization and memory, with serving metrics, such as request concurrency, queue depth, latency, tokens per second, and time to first token. |
+| Plan endpoint readiness | [Endpoint readiness](../introduction/inference-platform.mdx#endpoint-readiness), [Model serving runtimes](../integrations/model-serving.mdx) | Account for Argo CD sync time, node provisioning, image pulls, model downloads, and model load time before customers expect an endpoint to be ready. |
+| Plan durability and operations | [Backing store](../configure/vcluster-yaml/control-plane/components/backing-store/README.mdx), [Platform HA](/platform/maintenance/reliability-scaling/high-availability), [Platform backup](/platform/maintenance/backup-restore/backup-restore-platform) | Choose data stores, backup policy, control plane availability, and recovery procedures before customers depend on endpoints. |
+| Integrate with your product control plane | [Integrate with your product control plane](../introduction/inference-platform.mdx#integrate-with-your-product-control-plane), [Product control plane on the Platform API](/docs/platform/next/how-to/product-control-plane) | Decide the customer-facing product boundary, the mapping from product concepts to Platform resources, the metering approach, and the license tier you need before building automation. |
+
+## Day 1: Stand up the first production inference endpoint
+
+:::note
+Steps 3, 4, and 5 configure Platform for your platform engineering team and automation. Customers should provision endpoints through your product.
+:::
+
+### Set up the platform
+
+1. Install [vCluster Platform](/platform/install/quick-start-guide). If building from bare metal, deploy [vCluster Standalone](../deploy/control-plane/binary/basics.mdx) first, then move to [Standalone HA](../deploy/control-plane/binary/high-availability.mdx) before production traffic.
+2. Configure [backing store](../configure/vcluster-yaml/control-plane/components/backing-store/README.mdx), [Platform HA](/platform/maintenance/reliability-scaling/high-availability), and [Platform backup](/platform/maintenance/backup-restore/backup-restore-platform).
+3. Configure [SSO](/platform/configure/platform-configs/single-sign-on), [permissions](/platform/administer/users-permissions/overview), and [access keys](/platform/api/resources/ownedaccesskey) for the internal automation that provisions endpoints.
+4. Create an [Argo CD connector](/platform/integrations/argocd/connect-argocd) to your Argo CD or Akuity instance. Every tenant cluster template references it by name.
+5. Create [projects](/platform/administer/projects/create), [templates](/platform/administer/templates/overview), [quotas](/platform/administer/projects/quotas), and [allowed node types](/platform/administer/projects/allowed/node-types) for the endpoint tier you're standing up.
+
+### Attach GPU capacity
+
+6. Configure GPU capacity for the inference tiers you sell. If you own bare metal, set up [vMetal](https://www.vmetal.ai/docs/) and the [Metal3 node provider](/platform/administer/node-providers/metal3). If you use cloud GPU instances, create node types and automation for those instances through [node providers](/platform/administer/node-providers/overview) and Auto Nodes, or your existing provisioning system and join them as Private Nodes.
+
+### Build the tenant cluster and runtime templates
+
+7. Create a tenant cluster template for the endpoint tier. The template should enable [Private Nodes](../deploy/worker-nodes/private-nodes/overview.mdx), restrict GPU node selection, enable any required sync settings, and reference the [Argo CD connector](/platform/integrations/argocd/connect-argocd) from step 4.
+8. Declare the GPU stack and the runtime as Argo CD Applications in the same template's `deploy.argoCD.applications`. Reference an [`ArgoCDApplicationTemplate`](/platform/integrations/argocd/deploy-applications) for the GPU Operator or device plugin, scheduler, and metrics stack, and another for the model-serving Deployment, Service, and route. Each tenant cluster's scheduler makes decisions scoped to that cluster, not across your fleet.
+
+   See [Model serving runtimes](../integrations/model-serving.mdx) for the runtime pattern. Keep hard dependencies in one Application, since Argo CD doesn't sequence separate ones.
+
+### Configure routing and autoscaling
+
+9. Configure endpoint routing with Gateway API, ingress, or your product's traffic layer. Prefer Gateway API for new HTTP endpoint deployments, and decide whether the route attaches to a platform-owned imported Gateway or a tenant-owned Gateway. Bundle the route in the same Argo CD Application as the runtime Deployment and Service rather than a separate Application.
+10. Configure autoscaling with hardware metrics, serving metrics, or both. Use [GPU and inference autoscaling](../integrations/gpu-hpa-dcgm.mdx) for the hardware-metric baseline and serving-metric patterns such as queue depth, request concurrency, latency, and tokens per second.
+
+### Wire up your product automation
+
+11. Build the product automation path. For an endpoint create request, your product should choose the project and template version, then pass tier parameters. Provision the tenant cluster from a template that already has the Argo CD connector and Application references set. Wait for GPU capacity and for Argo CD to sync the runtime Application to `Healthy`, then return endpoint status and URL. Start with an internal operator workflow before exposing the API to customers. See [Build a product control plane on the Platform API](/docs/platform/next/how-to/product-control-plane) for the concept-to-resource mapping this automation implements.
+
+### Validate the first endpoint
+
+12. Validate the first endpoint from outside the tenant cluster. Confirm the endpoint accepts authorized traffic, rejects unauthorized traffic, reports healthy model status, emits metrics, and can be traced back to the tenant cluster, node type, template version, and route.
+13. Validate isolation and quota enforcement. Confirm the customer can't see Platform internals, other tenant clusters, disallowed templates, disallowed GPU node types, or control plane cluster resources.
+14. Test the full endpoint lifecycle through your product API. Create, warm, scale, update the model or adapter, rotate credentials, drain, delete, and reclaim GPU capacity.
+
+### Endpoint provisioning flow
+
+Use this flow as the acceptance test for the first provider-managed endpoint:
+
+1. Your product automation receives an endpoint request with model, region, endpoint tier, and scaling parameters.
+2. Product automation calls Platform with an internal access key.
+3. Platform creates or selects the project, tenant cluster template, runtime template, quota, and allowed node types for the requested tier.
+4. Private Nodes or Auto Nodes attach GPU capacity from the selected node type.
+5. Argo CD syncs the GPU stack and runtime Applications declared in the tenant cluster template, installing the metrics stack, model-serving runtime, Service, and route.
+6. Gateway API, ingress, or your traffic layer publishes the endpoint hostname.
+7. Product automation returns endpoint status, URL, model state, and operational identifiers.
+8. Day 2 automation watches rollout, route, GPU, and serving metrics and reconciles endpoint status.
+
+## Day 2: Operate
+
+| Operation | Read next |
+| --- | --- |
+| Manage GPU capacity and machine lifecycle | [vMetal inference fleet capacity](https://www.vmetal.ai/docs/operate/gpu-fleet#inference-provider-capacity), [Metal3 node provider](/platform/administer/node-providers/metal3), [Manage private nodes](../deploy/worker-nodes/private-nodes/manage.mdx) |
+| Monitor platform and tenant workloads | [Monitoring overview](/platform/maintenance/monitoring/overview), [Fleet monitoring](/platform/maintenance/monitoring/fleet-monitoring-otel) |
+| Expose and troubleshoot endpoint routing | [Model serving runtimes](../integrations/model-serving.mdx#expose-an-inference-endpoint), [Gateway API](../key-features/gateway-api.mdx), [Gateway API sync troubleshooting](../troubleshoot/gateway-api-sync.mdx) |
+| Scale model-serving workloads | [GPU and inference autoscaling](../integrations/gpu-hpa-dcgm.mdx), [Fleet monitoring](/platform/maintenance/monitoring/fleet-monitoring-otel) |
+| Meter customer usage | [vBilling](https://www.vcluster.com/vbilling), [Fleet monitoring](/platform/maintenance/monitoring/fleet-monitoring-otel) |
+| Roll model runtimes and endpoint templates | [Model serving runtimes](../integrations/model-serving.mdx#build-a-production-runtime-template), [Deploy applications](/platform/integrations/argocd/deploy-applications), [GPU and inference autoscaling](../integrations/gpu-hpa-dcgm.mdx) |
+| Roll drivers, vCluster versions, and OS images | [Deploy changes](../manage/deploy-changes.mdx), [vMetal GPU fleet operations](https://www.vmetal.ai/docs/operate/gpu-fleet#rotating-os-images), [Upgrade vCluster](../manage/upgrade/upgrade-version.mdx) |
+| Enforce customer capacity boundaries | [Quotas](/platform/administer/projects/quotas), [Allowed node types](/platform/administer/projects/allowed/node-types), [Projects](/platform/administer/projects/create) |
+| Back up and restore tenant clusters and Platform | [Snapshots](../manage/backup-restore/backup.mdx), [Restore](../manage/backup-restore/restore.mdx), [Platform backup](/platform/maintenance/backup-restore/backup-restore-platform) |
+| Manage vNode compatibility during upgrades | [vNode limitations](https://www.vnode.com/docs/limitations/), [vNode configuration](https://www.vnode.com/docs/configuration/) |
