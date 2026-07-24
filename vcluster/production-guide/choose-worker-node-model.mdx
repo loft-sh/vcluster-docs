@@ -6,6 +6,7 @@ description: Decide between shared and private worker nodes for a customer-facin
 ---
 
 import GlossaryTerm from '@site/src/components/GlossaryTerm';
+import ChooseWorkerNodeModelDecision from '@site/static/media/diagrams/choose-worker-node-model-decision.svg';
 
 Shared and private nodes aren't interchangeable settings you tune for cost or performance. They're a security boundary decision, and vCluster locks it at deployment time. Make this decision before you pick a [production path](./overview.mdx) or deploy a worker node model, not after.
 
@@ -19,22 +20,13 @@ For a customer-facing offering, use private nodes if the answer to **any** of th
 2. Does the customer get Kubernetes access beyond narrowly scoped, read-only visibility, such as viewing logs for their own pods?
 3. Can the customer run custom workloads, whether by supplying images or code directly, or by defining Kubernetes workload resources through a higher-level API?
 
-Shared nodes may be suitable only when all three answers are no. You own the images, workload definitions, Kubernetes configuration, and operations, and the customer only consumes your application or API. "May be suitable" isn't "secure by default." Apply the [shared node hardening guide](../security/shared-nodes-hardening.mdx) before you onboard tenants.
+Shared nodes may be suitable only when all three answers are no. You own the images, workload definitions, Kubernetes configuration, and operations, and the customer only consumes your application or API. Treat "may be suitable" as provisional, not final, until you apply the [shared node hardening guide](../security/shared-nodes-hardening.mdx) and explicitly accept the shared-kernel risk.
 
-```mermaid
-flowchart TD
-    A["Customer-facing production offering"] --> B{"Kubernetes-as-a-Service, or a customer-facing Kubernetes environment?"}
-    B -- "Yes" --> P["Use private nodes"]
-    B -- "No" --> C{"Kubernetes access beyond narrowly scoped, read-only visibility?"}
-    C -- "Yes" --> P
-    C -- "No" --> D{"Can the customer supply code or images, or create workload resources?"}
-    D -- "Yes" --> P
-    D -- "No" --> S["Shared nodes may be suitable"]
-    S --> O["You own the images, workloads, Kubernetes configuration, and operations"]
-    O --> H["Apply the shared node hardening guide"]
-```
+<figure>
+  <ChooseWorkerNodeModelDecision style={{width: '100%', height: 'auto', display: 'block', margin: '0 auto'}} role="img" aria-label="Decision tree: any yes answer to the three customer-access questions routes to private nodes. A no to all three leads to a hardening and risk-acceptance check, which routes to shared nodes if passed or private nodes if not." />
+</figure>
 
-Any "yes" routes to private nodes regardless of the other answers. Hardening reduces risk on an accepted shared-node deployment. It never turns a "private nodes" result from this decision into "shared nodes."
+Any "yes" routes to private nodes regardless of the other answers. All "no" routes to shared nodes, once you've applied the hardening guide and accepted the shared-kernel risk. Hardening reduces risk on an accepted shared-node deployment. It never turns a "private nodes" result from this decision into "shared nodes."
 
 ## What counts as narrowly scoped read-only visibility
 
@@ -70,17 +62,17 @@ You might describe your product in these terms rather than the three questions a
 ## Shared and private nodes as security boundaries
 
 - **Private nodes** give each tenant cluster dedicated nodes, with its own CNI, CSI, and compute. No tenant workload shares a kernel or physical node with another tenant. From the tenant's perspective, the environment is indistinguishable from a single-tenant Kubernetes cluster. See [Private Nodes](../deploy/worker-nodes/private-nodes/overview.mdx).
-- **Shared nodes** give each <GlossaryTerm term="tenant-cluster">tenant cluster</GlossaryTerm> its own control plane, API, and namespaces, but tenant workloads share the same kernel and physical nodes on the <GlossaryTerm term="control-plane-cluster">Control Plane Cluster</GlossaryTerm>. That's a supported model for trusted tenants. It isn't a security boundary for untrusted tenants with Kubernetes access or arbitrary workload execution. See [Architecture](../introduction/architecture.mdx#shared-nodes).
+- **Shared nodes** give each <GlossaryTerm term="tenant-cluster">tenant cluster</GlossaryTerm> its own control plane, API, and namespaces, but tenant workloads share the same kernel and physical nodes on the <GlossaryTerm term="control-plane-cluster">control plane cluster</GlossaryTerm>. That's a supported model for trusted tenants. It isn't a security boundary for untrusted tenants with Kubernetes access or arbitrary workload execution. See [Architecture](../introduction/architecture.mdx#shared-nodes).
 
-A dedicated, labeled node pool selected from the Control Plane Cluster is still the shared-node architecture. It scopes placement, not isolation, and it doesn't become private nodes.
+A dedicated, labeled node pool selected from the control plane cluster is still the shared-node architecture. It scopes placement, not isolation, and it doesn't become private nodes.
 
 | | Private nodes | Shared nodes |
 | --- | --- | --- |
 | Kernel and node isolation | Dedicated per tenant | Shared across tenants |
 | CNI / CSI | Dedicated per tenant | Shared, tenant traffic isolated by policy |
-| Suitable for untrusted or customer-facing tenants | Yes | No |
+| Suitable when the tenant controls Kubernetes access or workload execution | Yes | No |
 | Suitable for trusted internal tenants | Yes | Yes, with [hardening](../security/shared-nodes-hardening.mdx) |
-| Additional runtime isolation | Not required | [vNode](https://www.vnode.com/docs/) recommended for stronger per-tenant boundaries |
+| Additional runtime isolation | Optional, recommended for privileged or untrusted workloads | [vNode](https://www.vnode.com/docs/) recommended for stronger per-tenant boundaries |
 
 ## Examples
 
@@ -93,12 +85,21 @@ A dedicated, labeled node pool selected from the Control Plane Cluster is still 
 
 The three-question tree above is for customer-facing and other untrusted-tenant production offerings. Trusted internal teams, such as development, testing, CI/CD, and internal platform tenants, are a separate threat model.
 
-Shared nodes remain supported for trusted internal tenants, with hardening and an explicit, documented risk acceptance. Private nodes remain the right choice for internal tenants too, when compliance or infrastructure isolation requires it.
+Treat a tenant as trusted only when all of the following hold:
 
-Enable NetworkPolicy as an added isolation layer even for trusted tenants. vCluster can create the policies for you through `policies.networkPolicy`, and your control plane cluster's CNI enforces them. Confirm your CNI supports enforcement, since some accept NetworkPolicy resources without acting on them. See the [security baseline](/docs/vcluster/security).
+- Every workload owner belongs to an organization you've explicitly accepted into a common trust domain, not an external account.
+- You accept that tenant workloads share a kernel and physical nodes with each other, and that risk is documented.
+- No contract, regulation, or internal policy requires dedicated infrastructure for these workloads.
+- You can enforce and verify the shared-node hardening baseline before onboarding, not just declare it in `vcluster.yaml`.
+
+If any of these don't hold, use private nodes, even for a team you'd otherwise call internal.
+
+Shared nodes remain supported when all four hold, with hardening and an explicit, documented risk acceptance. Private nodes remain the right choice for internal tenants too, when compliance or infrastructure isolation requires it.
+
+Enable NetworkPolicy as an added isolation layer even for trusted tenants. vCluster can create the policies for you through `policies.networkPolicy`, and your control plane cluster's CNI enforces them. Confirm your CNI supports enforcement, since some accept NetworkPolicy resources without acting on them. See the [security baseline](../security/README.mdx).
 
 ## Next steps
 
-- Answered "private nodes"? Continue to [Private Nodes](../deploy/worker-nodes/private-nodes/overview.mdx) and [Deploy vCluster](../deploy/overview.mdx).
-- Answered "shared nodes may be suitable"? Apply the [shared node hardening guide](../security/shared-nodes-hardening.mdx) before onboarding tenants.
+- Answered "private nodes"? Continue to [Private Nodes](../deploy/worker-nodes/private-nodes/overview.mdx) and [Deploy vCluster](../deploy/overview.mdx). Private nodes need dedicated worker capacity per tenant. If that capacity isn't available yet, close the infrastructure gap or reconsider what you're offering customers, not fall back to shared nodes as a workaround.
+- Answered "shared nodes may be suitable"? Apply the [shared node hardening guide](../security/shared-nodes-hardening.mdx) and get explicit, documented sign-off accepting the shared-kernel risk before treating the decision as final.
 - Match your answer to a concrete path in [Build for Production](./overview.mdx).
