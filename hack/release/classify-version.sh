@@ -5,7 +5,7 @@
 # Maps a released VERSION + EVENT_TYPE to a routing decision:
 #   - skip:           true if the version should not produce docs
 #   - target_folder:  path (relative to REPO_ROOT) where generated docs land
-#   - channel:        stable | rc | alpha | beta | next | invalid | unknown-event
+#   - channel:        stable | rc | alpha | beta | next | stale-line | invalid | unknown-event
 #
 # Inputs (env):
 #   VERSION      Released version, e.g. v0.34.5, v0.34.0-rc.3, v4.6.0-alpha.1
@@ -32,6 +32,11 @@
 #     target = versioned folder (e.g. version-0.34.0)
 #   * MAJOR.MINOR ≤ highest frozen, candidate folder absent → skip
 #     (past minor we don't track)
+#   * platform-released only: MAJOR.MINOR older than the loft-sh/api pin in
+#     go.mod → skip (channel=stale-line). The platform partials generator
+#     reflects against main's pinned api Go types and only compiles against
+#     its own line; regenerating an older line is impossible and unnecessary.
+#     See the guard below for the full rationale.
 
 set -eo pipefail
 
@@ -115,6 +120,39 @@ if (( incoming_key > highest_key )); then
         exit 0
     fi
     emit_skip "$channel"
+fi
+
+# ── Platform generator is current-line-only ───────────────────────────────
+# The platform partials generator (hack/platform/partials/main.go) reflects
+# against the loft-sh/api + loft-sh/agentapi Go types pinned in this repo's
+# go.mod, and the receiver bumps that pin to the released version before
+# running it. The generator source tracks the CURRENT api line: types get
+# moved or added as upstream evolves (e.g. Authentication/Connector moved
+# management/v1 → storage/v1 in v4.11.0 per DEVOPS-1081; NodeProfile is v4.11+
+# only). So it only compiles against its own line. Bumping the pin DOWN to an
+# older released line leaves the generator referencing types that line lacks,
+# and the regen fails to compile — blocking every platform docs sync (see the
+# v4.10.6 receiver failure, DEVOPS-1168). Older frozen platform minors are
+# snapshots whose api reference does not change on a patch release, so skip
+# them rather than fail the receiver. (vcluster + vcluster-cli generators
+# compile the source checked out at the released tag, so they carry no such
+# constraint and older lines still regenerate — this guard is platform-only.)
+#
+# The generator line is read from go.mod's api pin, not from highest_key, so
+# the guard stays correct in the window between manually freezing a new docs
+# version and the receiver bumping the pin to that line. If the pin can't be
+# read, gen_key stays -1 and the guard is inert (preserves prior behavior).
+if [[ "$EVENT_TYPE" == "platform-released" ]]; then
+    gen_key=-1
+    if [[ -f "${REPO_ROOT}/go.mod" ]]; then
+        gen_line=$(sed -n 's#^[[:space:]]*github\.com/loft-sh/api/v[0-9]\+ v\([0-9]\+\.[0-9]\+\)\..*#\1#p' "${REPO_ROOT}/go.mod" | head -n1)
+        if [[ "$gen_line" =~ ^([0-9]+)\.([0-9]+)$ ]]; then
+            gen_key=$(( BASH_REMATCH[1] * 100000 + BASH_REMATCH[2] ))
+        fi
+    fi
+    if (( gen_key >= 0 && incoming_key < gen_key )); then
+        emit_skip stale-line
+    fi
 fi
 
 candidate="${versioned_root}/version-${major}.${minor}.0"
