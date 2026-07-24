@@ -314,7 +314,7 @@ func GenerateObjectOverview(information *ObjectInformation) {
 
 	extraContentBeforeDescription := information.ExtraContentBeforeDescription
 	if notice := TypeDeprecationNotice(information.Object); notice != "" {
-		admonition := fmt.Sprintf(":::warning Deprecated\n%s\n:::", notice)
+		admonition := DeprecationAdmonition(notice)
 		if extraContentBeforeDescription != "" {
 			extraContentBeforeDescription = admonition + "\n\n" + extraContentBeforeDescription
 		} else {
