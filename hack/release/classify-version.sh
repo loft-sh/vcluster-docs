@@ -145,7 +145,10 @@ fi
 if [[ "$EVENT_TYPE" == "platform-released" ]]; then
     gen_key=-1
     if [[ -f "${REPO_ROOT}/go.mod" ]]; then
-        gen_line=$(sed -n 's#^[[:space:]]*github\.com/loft-sh/api/v[0-9]\+ v\([0-9]\+\.[0-9]\+\)\..*#\1#p' "${REPO_ROOT}/go.mod" | head -n1)
+        # Extended regex (-E) so the quantifiers are portable: BSD sed on
+        # macOS does not accept GNU basic-regex \+, which would silently
+        # extract no pin and leave the guard inert for local contributors.
+        gen_line=$(sed -nE 's#^[[:space:]]*github\.com/loft-sh/api/v[0-9]+ v([0-9]+\.[0-9]+)\..*#\1#p' "${REPO_ROOT}/go.mod" | head -n1)
         if [[ "$gen_line" =~ ^([0-9]+)\.([0-9]+)$ ]]; then
             gen_key=$(( BASH_REMATCH[1] * 100000 + BASH_REMATCH[2] ))
         fi
