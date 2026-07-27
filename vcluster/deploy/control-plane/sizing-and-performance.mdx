@@ -20,6 +20,10 @@ load. They don't describe data-plane capacity, networking throughput, storage
 backend behavior, or the runtime cost of your actual workloads.
 :::
 
+:::note CoreDNS is covered here too
+CoreDNS is a control-plane-managed component, but its default replica count directly affects data-plane DNS resolution for tenant workloads. This page covers CoreDNS scaling alongside the control-plane sizing guidance above.
+:::
+
 **The load is simulated, not real.** Tests use [KWOK](https://kwok.sigs.k8s.io/)
 fake nodes with no real container runtime or kubelet.
 [kube-burner](https://kube-burner.github.io/kube-burner/) drives object
@@ -109,7 +113,7 @@ Tenant Cluster.
 | Small team | P2 | 2 | 4 GiB | Up to a few hundred long-running services |
 | Standard production | P3 | 4 | 8 GiB | Most production tenants — recommended starting point |
 | Large production | P4 | 8 | 16 GiB | Heavy churn or dense deployments |
-| Enterprise / AI Cloud | P5 | 16 | 32 GiB | High-density GPU clusters; operator-rich workloads (cert-manager, external-secrets, GPU Operator, Argo, KServe, etc.) |
+| Enterprise / AI Cloud | P5 | 16 | 32 GiB | High-density GPU clusters; operator-rich workloads such as cert-manager, external-secrets, GPU Operator, Argo, and KServe |
 | Hyperscale | P6 | 32 | 64 GiB | Latency headroom above P5; same node ceiling, marginal API p99 improvement |
 
 **Key principles:**
@@ -171,9 +175,7 @@ under sustained churn. Set `GOMEMLIMIT` to about 75% of your profile's memory
 limit. For example, use `12000MiB` for a P4 16 GiB pod, or `6000MiB` for a
 P3 8 GiB pod.
 
-<!-- vale Google.Headings off -->
 ### etcd storage class
-<!-- vale Google.Headings on -->
 
 Embedded etcd is sensitive to WAL fsync latency. Use a high-IOPS
 StorageClass for the etcd PersistentVolume:
@@ -197,9 +199,7 @@ above the 25 ms warn threshold. For example, AWS `gp3` defaults to 3K IOPS
 and 125 MB/s. A high-IOPS class keeps WAL fsync p99 well within the warn
 threshold even under sustained load.
 
-<!-- vale Google.Headings off -->
 ### API server concurrency
-<!-- vale Google.Headings on -->
 
 The Kubernetes defaults (400 / 200) are sufficient for most workloads. For
 operator-rich Tenant Clusters with many persistent controllers, double them to
@@ -260,7 +260,7 @@ Lifting one without the others shifts the bottleneck rather than removing it:
 | --- | --- | --- |
 | Tenant controller manager / scheduler → tenant API server | 200 | 400 |
 | Syncer → Control Plane Cluster API server | 400 | 800 |
-| Client (kubectl, CI pipelines, etc.) | 100 | 200 |
+| Client (kubectl, CI pipelines, and so on) | 100 | 200 |
 
 ### Bootstrap replica order
 
@@ -269,6 +269,176 @@ When provisioning a new HA Tenant Cluster with embedded etcd, bring up replica
 condition where all three replicas try to become the etcd cluster founder
 simultaneously. The vCluster CLI handles this automatically. In self-managed
 Helm pipelines, handle it explicitly.
+
+## Scale CoreDNS for large node counts
+
+CoreDNS handles DNS resolution for every pod in the tenant cluster. By default,
+it runs a single replica (`controlPlane.coredns.deployment.replicas: 1`), sized
+for small and medium tenant clusters. Large node counts, especially AI Cloud
+and ML workloads with high pod density per node, can push DNS query volume
+past what one replica handles. See
+[CoreDNS configuration](../../configure/vcluster-yaml/control-plane/components/coredns.mdx)
+for the full deployment and configuration reference.
+
+### When it becomes a bottleneck
+
+:::caution Needs confirmation from the Control Plane team
+The numbers below are estimates derived from CoreDNS's default resource limits
+and general Kubernetes DNS-scaling conventions, not from vCluster's own
+benchmark methodology. Confirm before publishing.
+:::
+
+A single CoreDNS replica is CPU-bound at vCluster's default 1 CPU limit.
+Cache-miss queries on the `kubernetes` and `forward` plugin path typically cap
+out around 2,000-3,000 queries per second per core.
+
+The node count where this becomes a bottleneck depends on pod density and
+churn. It's roughly 16-30 nodes for general-purpose Tenant Clusters, tightening
+to 8-16 nodes for AI and ML fleets with dense GPU node pools. `ndots:5`
+search-domain expansion multiplies query volume per lookup, compounding the
+effect.
+
+Tenant workloads see this as DNS resolution timeouts, intermittent `SERVFAIL`
+or `NXDOMAIN` responses, and slower pod startup when init containers or
+sidecars wait on DNS lookups.
+
+### Scale CoreDNS today
+
+Scale CoreDNS with one of these approaches.
+
+#### Increase the replica count
+
+For a fixed increase that doesn't need to track node count, raise `replicas`
+directly:
+
+```yaml title="vcluster.yaml — CoreDNS replica count"
+controlPlane:
+  coredns:
+    deployment:
+      replicas: 3
+```
+
+#### Run a node-proportional autoscaler
+
+For tenant clusters where node count changes over time, such as
+autoscaling GPU node pools, keep the CoreDNS replica count proportional to
+node count instead of using a fixed value. AI Cloud accounts running large
+GPU fleets have used a 1:8 CoreDNS-to-node ratio as a starting point.
+
+You can use [cluster-proportional-autoscaler](https://github.com/kubernetes-sigs/cluster-proportional-autoscaler)
+to do this. The `coredns` Deployment in `kube-system` is a native object
+inside the tenant cluster, not a synced mirror of something on the control
+plane cluster, so run the autoscaler directly against the tenant cluster's own
+API server. It watches the tenant cluster's node count and scales `coredns`
+directly. The tenant cluster's own controller manager reconciles the change,
+and the resulting pods sync to the control plane cluster automatically.
+
+Apply the following to the tenant cluster, not the control plane cluster:
+
+```yaml title="coredns-autoscaler.yaml — apply inside the tenant cluster"
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: coredns-autoscaler
+  namespace: kube-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: coredns-autoscaler-nodes
+rules:
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: coredns-autoscaler-nodes
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: coredns-autoscaler-nodes
+subjects:
+  - kind: ServiceAccount
+    name: coredns-autoscaler
+    namespace: kube-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: coredns-autoscaler
+  namespace: kube-system
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments/scale"]
+    resourceNames: ["coredns"]
+    verbs: ["get", "update"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: coredns-autoscaler
+  namespace: kube-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: coredns-autoscaler
+subjects:
+  - kind: ServiceAccount
+    name: coredns-autoscaler
+    namespace: kube-system
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: coredns-autoscaler
+  namespace: kube-system
+data:
+  linear: |-
+    {"nodesPerReplica": 8, "min": 1, "preventSinglePointFailure": true}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: coredns-autoscaler
+  namespace: kube-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      k8s-app: coredns-autoscaler
+  template:
+    metadata:
+      labels:
+        k8s-app: coredns-autoscaler
+    spec:
+      serviceAccountName: coredns-autoscaler
+      containers:
+        - name: autoscaler
+          # check the project's releases page for the current tag
+          image: registry.k8s.io/cpa/cluster-proportional-autoscaler:v1.8.14
+          command:
+            - /cluster-proportional-autoscaler
+            - --namespace=kube-system
+            - --configmap=coredns-autoscaler
+            - --target=deployment/coredns
+            - --logtostderr=true
+            - --v=2
+```
+
+The `linear` mode config's `nodesPerReplica: 8` reproduces the 1:8 ratio
+directly. Adjust it to match your own DNS query volume per node.
+
+### What to watch
+
+Monitor CoreDNS query latency and error rate alongside the control-plane
+conditions above. See the alert thresholds table in
+[Operational guidance](#operational-guidance) for the specific metrics and
+thresholds once confirmed.
 
 ## Operational guidance
 
@@ -285,6 +455,11 @@ Karpenter with `consolidationPolicy: WhenEmpty` and a 5-minute
 | etcd DB size | > 4 GB (warn) / 12 GB (fail) |
 | Dropped watches per second | > 0 sustained |
 | Node convergence ratio | < 98% |
+| DNS query p99 latency | Needs confirmation |
+| DNS error rate (`SERVFAIL` / `NXDOMAIN`) | Needs confirmation |
+
+DNS thresholds are pending confirmation from the Control Plane team. See
+[Scale CoreDNS for large node counts](#scale-coredns-for-large-node-counts).
 
 **Tenant Isolation is per-Tenant-Cluster.** Each Tenant Cluster is fully
 isolated. Control-plane sizing is per-tenant, not aggregate. A single Control
