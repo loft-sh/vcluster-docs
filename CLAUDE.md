@@ -250,18 +250,23 @@ than rewriting the caveat. See the "Tenancy Model Positioning" section of
 ## CR vs CRD terminology (DOC-1656)
 
 "Custom Resource Definition (CRD)" and "custom resource (CR)" are not
-interchangeable. A CRD is the installed API definition (the schema); a CR is
-an instance created from that definition.
+interchangeable. A CRD is the API definition itself — an object with
+`kind: CustomResourceDefinition` (`apiextensions.k8s.io`). A CR is an
+instance of a kind that a CRD defines (`kind: VirtualClusterInstance`,
+`kind: Cluster`, and so on).
 
-**Use CRD only for:** installing, discovering, versioning, or deleting the
-API definition itself (`apiextensions.k8s.io` objects).
+**The deciding factor is the manifest's `kind`, not the verb.** CRDs can be
+legitimately created, applied, updated, or deployed by Helm or GitOps just
+like any other object — that doesn't make them CRs. Use CRD when the
+sentence is about the `CustomResourceDefinition` object itself (however it
+gets installed, discovered, versioned, or deleted).
 
 **Use custom resource, resource, object, manifest, or the specific kind name**
 (`VirtualClusterInstance`, `Cluster`, `VirtualClusterTemplate`, `Project`,
-`Team`, and so on) for an instance created from that definition — this
-includes backup contents, GitOps manifests, tab labels for resource YAML, and
-diagram labels that represent stored instances or API traffic rather than the
-definition.
+`Team`, and so on) when the sentence is about an instance of a defined
+kind — this includes backup contents, GitOps manifests, tab labels for
+resource YAML, and diagram labels that represent stored instances or API
+traffic rather than the definition.
 
 **Common failure pattern:** "Helm/Argo CD/Flux deploys the CRD" almost always
 means it applies a manifest for a specific kind (for example, a
@@ -269,8 +274,9 @@ means it applies a manifest for a specific kind (for example, a
 platform, not by every GitOps sync.
 
 Before writing "CRD" in prose, check whether the sentence is about the
-definition (schema/install/discovery/deletion) or an instance (create/apply/
-edit/back up/sync/proxy). If it's an instance, don't say CRD.
+`CustomResourceDefinition` object itself or about an instance of a kind it
+defines. If it's an instance, don't say CRD — regardless of whether the verb
+is create, apply, deploy, back up, sync, or proxy.
 
 ## SVG diagrams
 
