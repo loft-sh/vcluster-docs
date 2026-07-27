@@ -247,6 +247,31 @@ Reuse `@site/vcluster/_partials/admonitions/shared-nodes-suitability.mdx` rather
 than rewriting the caveat. See the "Tenancy Model Positioning" section of
 `.claude/skills/vcluster-docs-writer/SKILL.md` for the full rule.
 
+## CR vs CRD terminology (DOC-1656)
+
+"Custom Resource Definition (CRD)" and "custom resource (CR)" are not
+interchangeable. A CRD is the installed API definition (the schema); a CR is
+an instance created from that definition.
+
+**Use CRD only for:** installing, discovering, versioning, or deleting the
+API definition itself (`apiextensions.k8s.io` objects).
+
+**Use custom resource, resource, object, manifest, or the specific kind name**
+(`VirtualClusterInstance`, `Cluster`, `VirtualClusterTemplate`, `Project`,
+`Team`, and so on) for an instance created from that definition — this
+includes backup contents, GitOps manifests, tab labels for resource YAML, and
+diagram labels that represent stored instances or API traffic rather than the
+definition.
+
+**Common failure pattern:** "Helm/Argo CD/Flux deploys the CRD" almost always
+means it applies a manifest for a specific kind (for example, a
+`VirtualClusterInstance`) — the CRD for that kind is installed once, by the
+platform, not by every GitOps sync.
+
+Before writing "CRD" in prose, check whether the sentence is about the
+definition (schema/install/discovery/deletion) or an instance (create/apply/
+edit/back up/sync/proxy). If it's an instance, don't say CRD.
+
 ## SVG diagrams
 
 SVGs must be imported as React components, not using `require().default`:
