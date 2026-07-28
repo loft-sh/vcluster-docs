@@ -204,12 +204,13 @@ AI performs:
 3. ✅ Verify API partials generated: `ls platform/api/_partials/resources/`
 4. ✅ All config changes applied
 5. ✅ Version is hidden from dropdown (in `platformHiddenVersions` array in `versionConfig.js`)
+6. ✅ Default vCluster Version column verified in `docs/_partials/platform_supported_versions.mdx` (added in [DOC-1658](https://linear.app/loft/issue/DOC-1658)): if the new release's row already exists, confirm the value matches `DefaultVClusterVersion` in `pkg/constants/constants.go` of the `loft-enterprise` repo at this tag; if the row doesn't exist yet, flag it for the User step below
 
 User performs:
 
 1. Build check: `npm run build` (per CLAUDE.md, AI never runs build — user only)
 2. Review enterprise/pro tags (manual)
-3. Update support dates in platform-specific supported versions file
+3. Update support dates AND the Default vCluster Version column in platform-specific supported versions file (`docs/_partials/platform_supported_versions.mdx`)
 4. Update compatibility matrix
 5. Run hurl tests after PR deployed
 
@@ -301,7 +302,7 @@ This PR is small, reviewable, and safe to merge by anyone with merge rights.
 | `src/config/versionConfig.js` | Remove version from `platformHiddenVersions` | Release day |
 | `netlify.toml` | Add redirect for new lastVersion; remove redirect for previous lastVersion | Release day |
 | `hack/test-platform-X.Y.hurl` | New test file | Release day |
-| Platform support dates file | Release/EOL dates | User |
+| Platform support dates file (`docs/_partials/platform_supported_versions.mdx`) | Release/EOL dates + Default vCluster Version column | User adds, AI verifies |
 
 ## Division of Responsibilities
 
@@ -311,6 +312,7 @@ This PR is small, reviewable, and safe to merge by anyone with merge rights.
 - ✅ **Update docusaurus config** - lastVersion, versions, SEO, banner
 - ✅ **Update netlify redirect** - `netlify.toml`
 - ✅ **Create hurl test** - Including cross-version tests
+- ✅ **Verify Default vCluster Version column** - Check the new row in `platform_supported_versions.mdx` matches `DefaultVClusterVersion` in `loft-enterprise` ([DOC-1658](https://linear.app/loft/issue/DOC-1658))
 
 ### User Handles (Items 2, 6-8):
 - **Create versioned docs** - `npm run docusaurus docs:version:platform X.Y.Z`
