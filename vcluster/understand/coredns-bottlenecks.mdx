@@ -1,0 +1,79 @@
+---
+title: Why does CoreDNS become a DNS bottleneck?
+sidebar_label: CoreDNS bottlenecks
+sidebar_position: 3
+description: Why a single CoreDNS replica runs out of headroom in a tenant cluster, and why embedded CoreDNS can't scale the same way.
+---
+
+CoreDNS handles DNS resolution for every pod in the tenant cluster. By
+default, it runs a single replica (`controlPlane.coredns.deployment.replicas: 1`)
+as a separate Deployment, sized for small and medium tenant clusters. See
+[CoreDNS configuration](../configure/vcluster-yaml/control-plane/components/coredns.mdx)
+for the full deployment and configuration reference, and
+[Scale CoreDNS for large node counts](../deploy/control-plane/coredns-scaling.mdx)
+for how to raise the ceiling described below.
+
+## Why total query volume matters more than node count
+
+A single CoreDNS replica is CPU-bound at vCluster's default 1 CPU limit. What
+matters is total query volume, not node count on its own. Pod count, lookups
+per pod, and search-domain expansion all factor in. `ndots:5` search-domain
+expansion means a single unqualified lookup can generate several sequential
+queries before it resolves, so it's a significant multiplier on the raw
+pod-and-lookup count.
+
+Measure your own fleet's query rate rather than reasoning from node count
+alone. See
+[What to watch](../deploy/control-plane/coredns-scaling.mdx#what-to-watch)
+for the exact queries.
+
+## Why GPU node pools are a common trigger, but not for the obvious reason
+
+GPU node pools are a common trigger for this, but not for the reason pod
+density suggests. GPU nodes typically run fewer pods per node than
+general-purpose nodes, so steady-state DNS load per node is often light. The
+pressure point is the job-launch burst. A batch job scheduling hundreds of
+pods at once produces a synchronized spike in DNS lookups. Every pod resolves
+the same handful of names within seconds of each other, so query rate spikes
+around scheduling events, not just steady-state averages.
+
+## What an overloaded CoreDNS looks like
+
+Tenant workloads see an overloaded CoreDNS as DNS resolution timeouts,
+intermittent `SERVFAIL` responses, and slower pod startup when init containers
+or sidecars wait on DNS lookups. Sustained `NXDOMAIN` for a Service the tenant
+API server can still resolve is a real signal. Ordinary `ndots:5` expansion
+doesn't explain a resolution failure for a name that exists. Treat it
+alongside `SERVFAIL` and latency rather than as a standalone capacity trigger,
+since `ndots:5` search-path expansion also produces `NXDOMAIN` as a normal
+byproduct of everyday lookups, whether or not CoreDNS is under load.
+
+Already seeing these symptoms right now? See
+[Resolve CoreDNS DNS timeouts and SERVFAIL errors](../troubleshoot/coredns-dns-timeouts.mdx)
+to diagnose and fix an active incident.
+
+## Why embedded CoreDNS can't scale the same way
+
+With `controlPlane.coredns.embedded: true` (a Pro feature), CoreDNS runs
+inside the syncer container instead of as its own Deployment. There's no
+`coredns` Deployment in `kube-system` for `controlPlane.coredns.deployment.replicas`
+or a Deployment-scaling autoscaler to act on, so both are silently ignored
+rather than rejected with an error.
+
+CoreDNS deployment type is a predeployment decision. You can't
+switch a live tenant cluster between embedded and separate CoreDNS without
+redeploying it. If you're already running embedded CoreDNS and hitting a DNS
+capacity wall, raising `controlPlane.statefulSet.resources` is the only lever
+available, covered in
+[Choose a resource profile](../deploy/control-plane/sizing-and-performance.mdx#choose-a-resource-profile).
+It's a blunt instrument. That setting sizes the whole control-plane pod, not
+CoreDNS specifically.
+
+## Related
+
+- [Scale CoreDNS for large node counts](../deploy/control-plane/coredns-scaling.mdx) —
+  how to raise the replica count or run an autoscaler.
+- [Resolve CoreDNS DNS timeouts and SERVFAIL errors](../troubleshoot/coredns-dns-timeouts.mdx) —
+  diagnose and fix an active incident.
+- [CoreDNS configuration](../configure/vcluster-yaml/control-plane/components/coredns.mdx) —
+  full deployment and configuration reference.

@@ -1,7 +1,7 @@
 ---
 title: Control plane sizing and performance
 sidebar_label: Sizing and performance
-sidebar_position: 0
+sidebar_position: 1
 description: How to evaluate, size, and tune a Tenant Cluster's Virtual Control Plane for your environment.
 ---
 
@@ -9,7 +9,9 @@ This page explains how to evaluate and tune a Tenant Cluster's Virtual Control
 Plane for your environment. It covers the evaluation framework, monitoring
 thresholds, resource profile starting points, and validated tuning settings.
 For the test methodology and analysis behind the profiles, see
-[Benchmark methodology](./benchmark-methodology.mdx).
+[Benchmark methodology](./benchmark-methodology.mdx). For CoreDNS, a
+control-plane-managed component with its own scaling path, see
+[Scale CoreDNS for large node counts](./coredns-scaling.mdx).
 
 ## Scope and caveats
 
@@ -18,10 +20,6 @@ The numbers on this page describe the capacity of the Virtual Control Plane
 (API server, controller manager, scheduler, and embedded etcd) under simulated
 load. They don't describe data-plane capacity, networking throughput, storage
 backend behavior, or the runtime cost of your actual workloads.
-:::
-
-:::note CoreDNS is covered here too
-CoreDNS is a control-plane-managed component, but its default replica count directly affects data-plane DNS resolution for tenant workloads. This page covers CoreDNS scaling alongside the control-plane sizing guidance above.
 :::
 
 **The load is simulated, not real.** Tests use [KWOK](https://kwok.sigs.k8s.io/)
@@ -41,8 +39,8 @@ that matters.
 ## How to evaluate your environment
 
 The recommended approach is to run the benchmark framework against a
-representative subset of your real configuration: your operators, your CRDs,
-your object density. Measure the control-plane response as it runs. The same
+representative subset of your real configuration. Match your own operators,
+CRDs, and object density. Measure the control-plane response as it runs. The same
 SLI checks the framework uses internally make a portable monitoring template
 you can apply to any Tenant Cluster.
 
@@ -55,9 +53,9 @@ configurations, the 13-SLI evaluation checks, and the doubling-ladder and
 binary-search scripts. See [Benchmark methodology](./benchmark-methodology.mdx)
 for test setup details.
 
-Customize the workload (`kube-burner/configs/`) to match your tenant — your
-CRD mix, your operator density, your churn pattern — then run the ladder
-against your candidate profile.
+Customize the workload (`kube-burner/configs/`) to match your tenant. Adjust
+CRD mix, operator density, and churn pattern to your own workload, then run
+the ladder against your candidate profile.
 
 ### What to monitor
 
@@ -90,13 +88,13 @@ Synthetic testing covers the control-plane portion of sizing. Real validation
 is needed for:
 
 - **Pod startup latency SLOs** — image pulls, scheduling under contention, and
-  kubelet binding latency are not modeled by KWOK.
+  kubelet binding latency aren't modeled by KWOK.
 - **Network programming p99** — Service, EndpointSlice, kube-proxy, and CNI
-  interactions are not modeled.
+  interactions aren't modeled.
 - **CRD-heavy operator workloads** — each CRD adds a separate watch cache and
   informer that KWOK doesn't exercise.
 - **Real container runtime behavior** — image pulls, probes, and evictions
-  create event storms that synthetic load cannot reproduce.
+  create event storms that synthetic load can't reproduce.
 
 If your customer-visible claim is a node count or pod count, validate it on
 real nodes at the scale that matters.
@@ -270,231 +268,6 @@ condition where all three replicas try to become the etcd cluster founder
 simultaneously. The vCluster CLI handles this automatically. In self-managed
 Helm pipelines, handle it explicitly.
 
-## Scale CoreDNS for large node counts
-
-CoreDNS handles DNS resolution for every pod in the tenant cluster. By default,
-it runs a single replica (`controlPlane.coredns.deployment.replicas: 1`), sized
-for small and medium tenant clusters. Large node counts, especially AI Cloud
-and ML workloads with high pod density per node, can push DNS query volume
-past what one replica handles. See
-[CoreDNS configuration](../../configure/vcluster-yaml/control-plane/components/coredns.mdx)
-for the full deployment and configuration reference.
-
-### When it becomes a bottleneck
-
-:::caution Needs confirmation from the Control Plane team
-The numbers below are estimates derived from CoreDNS's default resource limits
-and general Kubernetes DNS-scaling conventions, not from vCluster's own
-benchmark methodology. The control-plane load-testing framework doesn't model
-DNS load today, so confirming these numbers needs a new DNS-focused workload
-or real deployment telemetry, not a re-read of existing benchmark runs.
-:::
-
-A single CoreDNS replica is CPU-bound at vCluster's default 1 CPU limit.
-Cache-miss queries on the `kubernetes` and `forward` plugin path typically cap
-out around 2,000-3,000 queries per second per core.
-
-The node count where this becomes a bottleneck depends on pod density and
-churn. It's roughly 16-30 nodes for general-purpose Tenant Clusters, tightening
-to 8-16 nodes for AI and ML fleets with dense GPU node pools. `ndots:5`
-search-domain expansion multiplies query volume per lookup, compounding the
-effect.
-
-Tenant workloads see this as DNS resolution timeouts, intermittent `SERVFAIL`
-responses, and slower pod startup when init containers or sidecars wait on DNS
-lookups. `NXDOMAIN` responses aren't a reliable signal on their own, since
-`ndots:5` search-path expansion produces them as a normal byproduct of
-everyday lookups.
-
-### Scale CoreDNS today
-
-Scale CoreDNS with one of these approaches.
-
-#### Increase the replica count
-
-For a fixed increase that doesn't need to track node count, raise `replicas`
-directly:
-
-```yaml title="vcluster.yaml — CoreDNS replica count"
-controlPlane:
-  coredns:
-    deployment:
-      replicas: 3
-```
-
-#### Run a node-proportional autoscaler
-
-For tenant clusters where node count changes over time, such as
-autoscaling GPU node pools, keep the CoreDNS replica count proportional to
-node count instead of using a fixed value. AI Cloud accounts running large
-GPU fleets have used a 1:8 CoreDNS-to-node ratio as a starting point.
-
-You can use [cluster-proportional-autoscaler](https://github.com/kubernetes-sigs/cluster-proportional-autoscaler)
-to do this. The `coredns` Deployment in `kube-system` is a native object
-inside the tenant cluster, not a synced mirror of something on the control
-plane cluster, so run the autoscaler directly against the tenant cluster's own
-API server. It watches the tenant cluster's node count and scales `coredns`
-directly. The tenant cluster's own controller manager reconciles the change,
-and the resulting pods sync to the control plane cluster automatically.
-
-Apply the following to the tenant cluster, not the control plane cluster:
-
-```yaml title="coredns-autoscaler.yaml — apply inside the tenant cluster"
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: coredns-autoscaler
-  namespace: kube-system
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: coredns-autoscaler-nodes
-rules:
-  - apiGroups: [""]
-    resources: ["nodes"]
-    verbs: ["list", "watch"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: coredns-autoscaler-nodes
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: coredns-autoscaler-nodes
-subjects:
-  - kind: ServiceAccount
-    name: coredns-autoscaler
-    namespace: kube-system
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: coredns-autoscaler
-  namespace: kube-system
-rules:
-  - apiGroups: ["apps"]
-    resources: ["deployments/scale"]
-    resourceNames: ["coredns"]
-    verbs: ["get", "update"]
-  - apiGroups: [""]
-    resources: ["configmaps"]
-    verbs: ["get", "create"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: coredns-autoscaler
-  namespace: kube-system
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: coredns-autoscaler
-subjects:
-  - kind: ServiceAccount
-    name: coredns-autoscaler
-    namespace: kube-system
----
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: coredns-autoscaler
-  namespace: kube-system
-data:
-  linear: |-
-    {"nodesPerReplica": 8, "min": 1, "preventSinglePointFailure": true}
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: coredns-autoscaler
-  namespace: kube-system
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      k8s-app: coredns-autoscaler
-  template:
-    metadata:
-      labels:
-        k8s-app: coredns-autoscaler
-    spec:
-      serviceAccountName: coredns-autoscaler
-      containers:
-        - name: autoscaler
-          # check the project's releases page for the current tag
-          image: registry.k8s.io/cpa/cluster-proportional-autoscaler:v1.10.3
-          command:
-            - /cluster-proportional-autoscaler
-            - --namespace=kube-system
-            - --configmap=coredns-autoscaler
-            - --target=deployment/coredns
-            - --logtostderr=true
-            - --v=2
-```
-
-The `linear` mode config's `nodesPerReplica: 8` reproduces the 1:8 ratio
-directly. Adjust it to match your own DNS query volume per node.
-`preventSinglePointFailure: true` overrides `min` once the tenant cluster has
-more than one node: the autoscaler then enforces a floor of 2 replicas
-regardless of the ratio, so CoreDNS is never a single point of failure on a
-multi-node tenant cluster.
-
-### What to watch
-
-Monitor CoreDNS alongside the control-plane conditions above, using CoreDNS's
-own Prometheus metrics
-([CoreDNS metrics reference](https://coredns.io/plugins/metrics/)). Getting
-real SLO boundaries for the signals below needs a dedicated DNS workload in
-the control-plane load-testing framework, or telemetry from a real production
-deployment. The framework's existing KWOK and kube-burner workloads don't
-generate DNS traffic today, so treat every boundary here as `Needs
-confirmation` until then. See the summary rows in
-[Operational guidance](#operational-guidance) for the production alert-list
-view of the same signals.
-
-#### Request latency (P99)
-
-```promql
-histogram_quantile(0.99,
-  sum(rate(coredns_dns_request_duration_seconds_bucket[5m])) by (le)
-)
-```
-
-**Why:** Tail DNS resolution latency over a 5-minute rate window. Validating a
-real boundary needs a sustained query rate matching your target pod density
-and churn.
-
-#### Error rate
-
-```promql
-sum(rate(coredns_dns_responses_total{rcode="SERVFAIL"}[5m]))
-```
-
-**Why:** `SERVFAIL` over a 5-minute window is the reliable overload signal,
-unlike `NXDOMAIN` (see above). Validating a real boundary needs induced
-upstream or API server latency to trigger genuine failures, not just query
-volume.
-
-#### Request throughput
-
-```promql
-sum(rate(coredns_dns_requests_total[5m]))
-```
-
-**Why:** Total query rate over a 5-minute window. This is informational for
-capacity planning, not an alerting signal on its own.
-
-#### Replica CPU saturation
-
-**Why:** CoreDNS container CPU usage against the default 1 CPU limit signals
-when a replica is approaching the ceiling described in
-[When it becomes a bottleneck](#when-it-becomes-a-bottleneck). The Control
-Plane team's existing container CPU dashboards should already have a query for
-this; validating a real boundary needs the same dedicated DNS workload as the
-other signals above.
-
 ## Operational guidance
 
 **Plan Control Plane Cluster node capacity.** A P5 Virtual Control Plane runs
@@ -510,12 +283,13 @@ Karpenter with `consolidationPolicy: WhenEmpty` and a 5-minute
 | etcd DB size | > 4 GB (warn) / 12 GB (fail) |
 | Dropped watches per second | > 0 sustained |
 | Node convergence ratio | < 98% |
-| DNS query p99 latency | Needs confirmation |
-| DNS error rate (`SERVFAIL`) | Needs confirmation |
 
-DNS thresholds are pending confirmation from the Control Plane team. See
-[Scale CoreDNS for large node counts](#scale-coredns-for-large-node-counts)
-for the underlying metric expressions.
+There's no vCluster-published alert threshold for DNS query latency or error
+rate. Both depend on your own query volume and pod density, not a fixed
+number this table can give you. See
+[What to watch](./coredns-scaling.mdx#what-to-watch) in
+[Scale CoreDNS for large node counts](./coredns-scaling.mdx) for the metric
+expressions and how to build your own baseline.
 
 **Tenant Isolation is per-Tenant-Cluster.** Each Tenant Cluster is fully
 isolated. Control-plane sizing is per-tenant, not aggregate. A single Control

@@ -1,0 +1,275 @@
+---
+title: Scale CoreDNS for large node counts
+sidebar_label: CoreDNS scaling
+sidebar_position: 3
+description: How to scale CoreDNS in a tenant cluster when a single replica can't keep up with DNS query volume.
+---
+
+CoreDNS handles DNS resolution for every pod in the tenant cluster. By default,
+it runs a single replica (`controlPlane.coredns.deployment.replicas: 1`) as a
+separate Deployment, sized for small and medium tenant clusters. High DNS
+query volume, most often from AI and ML workloads with bursty pod scheduling,
+can push demand past what one replica handles. For why that happens, see
+[Why does CoreDNS become a DNS bottleneck?](../../understand/coredns-bottlenecks.mdx).
+See [CoreDNS configuration](../../configure/vcluster-yaml/control-plane/components/coredns.mdx)
+for the full deployment and configuration reference. Already seeing DNS
+timeouts or `SERVFAIL` errors right now? See
+[Resolve CoreDNS DNS timeouts and SERVFAIL errors](../../troubleshoot/coredns-dns-timeouts.mdx)
+instead.
+
+:::warning Doesn't apply to embedded CoreDNS
+This page covers the separate CoreDNS deployment type
+(`controlPlane.coredns.embedded: false`, the default). Neither approach below
+works with `controlPlane.coredns.embedded: true`: there's no `coredns`
+Deployment to scale, and `controlPlane.coredns.deployment.replicas` is
+silently ignored. See
+[Why embedded CoreDNS can't scale the same way](../../understand/coredns-bottlenecks.mdx#why-embedded-coredns-cant-scale-the-same-way)
+for why, and for the one workaround available.
+:::
+
+## Scale CoreDNS
+
+Scale CoreDNS by either increasing the replica count or by running an
+autoscaler. Which one to reach for depends on how stable your node count is:
+
+- **Fixed or slow-changing node count** — increase the replica count directly.
+  It's simpler to reason about and doesn't add an extra component to operate.
+- **Node count that changes over time**, such as autoscaling GPU node pools —
+  run a node-proportional autoscaler so replica count tracks it automatically.
+
+### Increase the replica count
+
+For a fixed increase that doesn't need to track node count, raise `replicas`
+directly:
+
+```yaml title="vcluster.yaml — CoreDNS replica count"
+controlPlane:
+  coredns:
+    deployment:
+      replicas: 3
+```
+
+vCluster re-applies the CoreDNS Deployment, including `spec.replicas`, every
+time the control plane pod starts, using a client-side apply that overwrites
+the live object. A restart, upgrade, or leader change resets `replicas` back
+to whatever `vcluster.yaml` specifies. Set `replicas` in `vcluster.yaml` to the
+floor you want rather than scaling the Deployment directly. The same
+overwrite-on-restart behavior applies to any other CoreDNS setting changed
+out-of-band. See [Configuration Persistence](../../configure/vcluster-yaml/control-plane/components/coredns.mdx#deploy-separate-coredns) for details.
+
+The default CoreDNS Deployment also sets a topology spread constraint
+(`maxSkew: 1` over `kubernetes.io/hostname`, `whenUnsatisfiable: DoNotSchedule`),
+which allows only one CoreDNS pod per node. Raising `replicas` above the
+tenant cluster's schedulable node count leaves the extra pods `Pending`
+instead of running, so check node count before raising `replicas` past it.
+
+### Run a node-proportional autoscaler
+
+For tenant clusters where node count changes over time, such as
+autoscaling GPU node pools, keep the CoreDNS replica count proportional to
+node count. Don't rely on a fixed value. Start from upstream CoreDNS's own
+[cluster-proportional-autoscaler](https://github.com/kubernetes-sigs/cluster-proportional-autoscaler)
+convention of one replica per 16 nodes, then tighten it against your own
+measured query volume. One deployment on a small number of very large
+bare-metal GPU nodes tightened its ratio to 1:8. Its per-node core count was
+high enough that core-based scaling alone under-provisioned.
+
+The `coredns` Deployment in `kube-system` is a native object
+inside the tenant cluster, not a synced mirror of something on the control
+plane cluster. Run the autoscaler directly against the tenant cluster's own
+API server. It watches the tenant cluster's node count and scales `coredns`
+directly. The tenant cluster's own controller manager reconciles the change,
+and the resulting pods sync to the control plane cluster automatically.
+
+Apply the following to the tenant cluster, not the control plane cluster:
+
+```yaml title="coredns-autoscaler.yaml — apply inside the tenant cluster"
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: coredns-autoscaler
+  namespace: kube-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: coredns-autoscaler-nodes
+rules:
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: coredns-autoscaler-nodes
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: coredns-autoscaler-nodes
+subjects:
+  - kind: ServiceAccount
+    name: coredns-autoscaler
+    namespace: kube-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: coredns-autoscaler
+  namespace: kube-system
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments/scale"]
+    resourceNames: ["coredns"]
+    verbs: ["get", "update"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: coredns-autoscaler
+  namespace: kube-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: coredns-autoscaler
+subjects:
+  - kind: ServiceAccount
+    name: coredns-autoscaler
+    namespace: kube-system
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: coredns-autoscaler
+  namespace: kube-system
+data:
+  linear: |-
+    {"nodesPerReplica": 16, "min": 1, "preventSinglePointFailure": true}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: coredns-autoscaler
+  namespace: kube-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      k8s-app: coredns-autoscaler
+  template:
+    metadata:
+      labels:
+        k8s-app: coredns-autoscaler
+    spec:
+      serviceAccountName: coredns-autoscaler
+      containers:
+        - name: autoscaler
+          # check the project's releases page for the current tag
+          image: registry.k8s.io/cpa/cluster-proportional-autoscaler:v1.10.3
+          command:
+            - /cluster-proportional-autoscaler
+            - --namespace=kube-system
+            - --configmap=coredns-autoscaler
+            - --target=deployment/coredns
+            - --logtostderr=true
+            - --v=2
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+```
+
+The `linear` mode config's `nodesPerReplica: 16` reproduces upstream's
+node-based convention. Tighten it, for example to 8, once your own measured
+query volume tells you a node needs more headroom than that.
+
+### Settings to avoid
+
+Upstream offers a `coresPerReplica` companion ratio (256 cores per replica). Avoid it unless
+[`sync.fromHost.nodes.enabled`](../../configure/vcluster-yaml/sync/from-host/nodes.mdx)
+is `true`. With the default `sync.fromHost.nodes.enabled: false`, the tenant
+cluster's API server only has Node objects for nodes actually running tenant
+pods. Those synthesized nodes report a fixed 16 CPU allocatable regardless of
+the real node's CPU count, which breaks core-based scaling. That same default
+also means the autoscaler's node count lags real fleet size. A node the
+physical cluster just added doesn't show up in the tenant cluster until a
+tenant pod actually lands on it.
+
+`preventSinglePointFailure: true` doesn't override `min`. It raises the
+node-derived replica count to 2 once the tenant cluster has more than one
+schedulable Ready node. It can also override `max` if `max` is set below 2.
+Below that threshold, or with a single schedulable node, `min` still governs.
+
+## What to watch
+
+Monitor CoreDNS alongside the [control-plane conditions](./sizing-and-performance.mdx#operational-guidance),
+using CoreDNS's own Prometheus metrics
+([CoreDNS metrics reference](https://coredns.io/plugins/metrics/)). vCluster's
+control-plane load-testing framework doesn't model DNS load today. Its
+existing KWOK and kube-burner workloads don't generate DNS traffic, so there's
+no vCluster-published SLO threshold for these signals yet. Establish your own
+baseline against your fleet's real query volume and pod density instead of
+borrowing a threshold from a workload that isn't yours.
+
+### Request latency (p99)
+
+```promql
+histogram_quantile(0.99,
+  sum(rate(coredns_dns_request_duration_seconds_bucket[5m])) by (le)
+)
+```
+
+**Why:** Tail DNS resolution latency over a 5-minute rate window. Validating a
+real boundary needs a sustained query rate matching your target pod density
+and churn.
+
+### Error rate
+
+```promql
+sum(rate(coredns_dns_responses_total{rcode="SERVFAIL"}[5m]))
+```
+
+**Why:** `SERVFAIL` over a 5-minute window is the reliable overload signal,
+unlike `NXDOMAIN`. See
+[What an overloaded CoreDNS looks like](../../understand/coredns-bottlenecks.mdx#what-an-overloaded-coredns-looks-like)
+for why `NXDOMAIN` alone isn't reliable. Validating a real boundary needs
+induced upstream or API server latency to trigger genuine failures, not just
+query volume.
+
+### Request throughput
+
+```promql
+sum(rate(coredns_dns_requests_total[5m]))
+```
+
+**Why:** Total query rate over a 5-minute window. This is informational for
+capacity planning, not an alerting signal on its own.
+
+### Replica CPU saturation
+
+**Why:** CoreDNS container CPU usage against the default 1 CPU limit signals
+when a replica is approaching the ceiling described in
+[Why does CoreDNS become a DNS bottleneck?](../../understand/coredns-bottlenecks.mdx).
+The Control Plane team's existing container CPU dashboards should already
+have a query for this; validating a real boundary needs the same dedicated
+DNS workload as the other signals above.
+
+### Replica memory saturation
+
+**Why:** CoreDNS's default memory limit is 170Mi per replica, independent of
+the CPU limit and independent of replica count. An OOMKilled CoreDNS pod
+produces the same symptoms as a CPU-saturated one, DNS timeouts and
+`SERVFAIL`. Adding replicas doesn't help. Each new replica gets the same
+170Mi ceiling, not a larger share of memory. Check container restart reason
+before attributing a DNS incident to query volume.
+
+For control-plane sizing and alert thresholds unrelated to DNS, see
+[Sizing and performance](./sizing-and-performance.mdx).
