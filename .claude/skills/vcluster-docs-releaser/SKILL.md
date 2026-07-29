@@ -154,11 +154,12 @@ AI performs:
 4. ✅ Default k8s version fragment updated if version changed (`vcluster/_fragments/default-k8s-version.mdx`)
 5. ✅ All config changes applied
 6. ✅ Version is hidden from dropdown (in `vclusterHiddenVersions` array in `versionConfig.js`)
+7. ✅ Default Kubernetes Version column verified in `docs/_partials/vcluster_supported_versions.mdx` (added in [DOC-1658](https://linear.app/loft/issue/DOC-1658)): if the new release's row already exists, confirm the value matches the distro/version pinned in `chart/values.yaml` of the vcluster OSS repo at this tag (same source of truth as item 4); if the row doesn't exist yet, flag it for the User step below
 
 User performs:
 1. Build check: `npm run build` (not AI's responsibility)
 2. Review enterprise/pro tags (manual)
-3. Update support dates in `vcluster/manage/upgrade/supported_versions.mdx`
+3. Update support dates AND the Default Kubernetes Version column in `vcluster/manage/upgrade/supported_versions.mdx` (`docs/_partials/vcluster_supported_versions.mdx`)
 4. Update compatibility matrix in same file
 5. Verify partials PR merged (automated PR)
 6. Run hurl tests after PR deployed
@@ -262,6 +263,7 @@ This PR is small, reviewable, and safe to merge by anyone with merge rights.
 | `src/config/docsearch.js` | Update `stableVersion` to new stable version string | Release day |
 | `netlify.toml` | Add redirect for new lastVersion; remove redirect for previous lastVersion | Release day |
 | `hack/test-vcluster-0.XX.hurl` | New file | Release day |
+| `docs/_partials/vcluster_supported_versions.mdx` | Add new release row incl. Default Kubernetes Version column | rc-1 (User adds, AI verifies) |
 
 ## Division of Responsibilities
 
@@ -271,12 +273,13 @@ This PR is small, reviewable, and safe to merge by anyone with merge rights.
 - ✅ **Verify CLI commands** - Check files exist
 - ✅ **Create hurl test** - Create new test file
 - ✅ **Update search stable version** - `src/config/docsearch.js` `stableVersion` field (release day only)
+- ✅ **Verify Default Kubernetes Version column** - Check the new row in `vcluster_supported_versions.mdx` matches `default-k8s-version.mdx` / `chart/values.yaml` ([DOC-1658](https://linear.app/loft/issue/DOC-1658))
 
 ### User Handles (Items 1, 6-9):
 - **Create versioned docs** - `npm run docusaurus docs:version:vcluster X.Y.Z`
 - **Review enterprise/pro tags** - Manual review of `<ProAdmonition>` tags
 - **Partials PR** - Verify automation ran
-- **Update support dates** - Edit `vcluster/manage/upgrade/supported_versions.mdx`
+- **Update support dates** - Edit `vcluster/manage/upgrade/supported_versions.mdx` (dates + Default Kubernetes Version column)
 - **Update compatibility matrix** - Edit same file
 - **Run build** - `npm run build`
 - **Run hurl tests** - After PR deployed
