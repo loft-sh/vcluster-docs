@@ -47,6 +47,12 @@ Some tokens will never match because their text is generated at runtime or the f
 | `<Label>Argo CD Application ID</Label>` | `integrations/argocd/deploy-applications.mdx` | Same — built from `entityTypeName` in `ArgoCDApplicationConfigForm.tsx` |
 | `<Button>Create Namespace Constraints</Button>` | `_partials/space-constraints/create-ui.mdx`, `use-platform/namespaces/_partials/space-constraints/create-ui.mdx` | Feature exists (breadcrumb in `breadcumbsTransforms.ts`) but has no dedicated UI component files in source |
 | `<Label>Enforce Namespace Constraints</Label>` | `use-platform/namespaces/_partials/space-constraints/enforce-ui.mdx` | Same — no component file to grep |
+| `<Label>Fleet Observability: Cluster Collector</Label>` | `maintenance/observability/configure-edge-collectors.mdx` | Argo CD Application Template name, rendered from `ManagementV1ArgoCDApplicationTemplate` resources in `ArgoCDApplicationTemplateSelect.tsx` — not a literal string |
+| `<Label>Fleet Observability: Prometheus</Label>` | `maintenance/observability/install-observability-gateway.mdx` | Same — template name from the same dynamic select |
+| `<Label>Fleet Observability: Grafana</Label>` | `maintenance/observability/query-fleet-metrics.mdx` | Same |
+| `<Label>NVSentinel</Label>` | `maintenance/observability/nvsentinel-gpu-observability.mdx` | Same |
+| `<Label>destinationNamespace</Label>` | `maintenance/observability/configure-edge-collectors.mdx`, `maintenance/observability/install-observability-gateway.mdx` | Argo CD Application Template parameter name, rendered from `selectedTemplate.spec.parameters` in `TemplateParametersSection.tsx` — not a literal string |
+| `<Label>platformHost</Label>` | `maintenance/observability/query-fleet-metrics.mdx` | Same — template parameter name |
 
 **Common false negatives (real drift the script misses):**
 
@@ -189,9 +195,11 @@ Common warnings triggered by drift fixes:
 - Title-case headings → sentence case
 - `via` → `using`
 
-## Drift baseline (as of 2026-06-26)
+## Drift baseline (as of 2026-07-28)
 
-After the DOC-1574 sweep, the report stands at 4 unmatched tokens (all in the "known expected" table above) and 0 instruction phrases. Any new findings above this baseline represent genuine drift introduced since that date.
+After the fleet observability sweep, the report stands at 10 unmatched tokens (all in the "known expected" table above) and 0 instruction phrases. Any new findings above this baseline represent genuine drift introduced since that date.
+
+Previously (2026-06-26, after the DOC-1574 sweep): 4 unmatched tokens, 0 instruction phrases. The six fleet observability tokens added since then are all Argo CD Application Template names/parameters (dynamic content, not literal UI strings) — see the known-expected table. One genuine drift item from that sweep, a stale `<Label>Deploy to vCluster</Label>` in `configure-edge-collectors.mdx` that should have read `Deploy to tenant cluster`, was found and fixed rather than added to the known-expected list.
 
 ## Release checklist use
 

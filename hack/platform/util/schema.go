@@ -312,6 +312,16 @@ func GenerateObjectOverview(information *ObjectInformation) {
 	}
 	relPath = strings.TrimSuffix(relPath, "/")
 
+	extraContentBeforeDescription := information.ExtraContentBeforeDescription
+	if notice := TypeDeprecationNotice(information.Object); notice != "" {
+		admonition := DeprecationAdmonition(notice)
+		if extraContentBeforeDescription != "" {
+			extraContentBeforeDescription = admonition + "\n\n" + extraContentBeforeDescription
+		} else {
+			extraContentBeforeDescription = admonition
+		}
+	}
+
 	// write overview
 	writeTemplate(TemplateObjectOverview, information.File, ObjectOverviewValues{
 		Title:        information.Title,
@@ -323,7 +333,7 @@ func GenerateObjectOverview(information *ObjectInformation) {
 		YAMLObject:   string(out),
 
 		ExtraImports:                  information.ExtraImports,
-		ExtraContentBeforeDescription: information.ExtraContentBeforeDescription,
+		ExtraContentBeforeDescription: extraContentBeforeDescription,
 		ExtraContentBeforeExample:     information.ExtraContentBeforeExample,
 		ExtraContentAfterExample:      information.ExtraContentAfterExample,
 

@@ -49,6 +49,22 @@ EOF
 ]
 EOF
 
+    # go.mod pins the loft-sh/api line the platform generator compiles against.
+    # The fixture's current line is 4.9 (matches highest frozen), so a
+    # platform-released event on an older line (4.5-4.8) must classify as skip
+    # while a 4.9 patch still regenerates. classify-version reads only the
+    # api/v4 pin from this file for the platform stale-line guard.
+    cat >"$FIXTURE/go.mod" <<EOF
+module github.com/loft-sh/vcluster-docs
+
+go 1.26
+
+require (
+	github.com/loft-sh/agentapi/v4 v4.9.0
+	github.com/loft-sh/api/v4 v4.9.0
+)
+EOF
+
     export REPO_ROOT="$FIXTURE"
 }
 
@@ -190,14 +206,36 @@ get() {
     [ "$(get target_folder)" = "vcluster_versioned_docs/version-0.34.0" ]
 }
 
-@test "platform: stable patch on frozen minor → versioned folder" {
-    VERSION=v4.6.5 EVENT_TYPE=platform-released run "$SCRIPT"
+@test "platform: stable patch on the current (generator) minor → versioned folder" {
+    # go.mod pins api to 4.9, so 4.9 is the line the platform generator compiles
+    # against. A patch on it regenerates into its versioned folder.
+    VERSION=v4.9.5 EVENT_TYPE=platform-released run "$SCRIPT"
     [ "$(get skip)" = "false" ]
-    [ "$(get target_folder)" = "platform_versioned_docs/version-4.6.0" ]
+    [ "$(get target_folder)" = "platform_versioned_docs/version-4.9.0" ]
     [ "$(get channel)" = "stable" ]
 }
 
+@test "platform: stable patch on a line older than the generator → skip (stale-line)" {
+    # 4.6 < the go.mod api line (4.9). The platform generator can't compile
+    # against the older api pin (types moved/added at minor boundaries), so the
+    # receiver must skip rather than fail. Folder version-4.6.0 exists, proving
+    # the guard fires before folder-based routing. See DEVOPS-1168.
+    VERSION=v4.6.5 EVENT_TYPE=platform-released run "$SCRIPT"
+    [ "$(get skip)" = "true" ]
+    [ "$(get target_folder)" = "" ]
+    [ "$(get channel)" = "stale-line" ]
+}
+
+@test "platform: rc on a line older than the generator → skip (stale-line)" {
+    VERSION=v4.8.0-rc.1 EVENT_TYPE=platform-released run "$SCRIPT"
+    [ "$(get skip)" = "true" ]
+    [ "$(get target_folder)" = "" ]
+    [ "$(get channel)" = "stale-line" ]
+}
+
 @test "platform: release of next minor → current docs folder" {
+    # 4.10 is newer than the highest frozen line (4.9): it routes to the current
+    # docs root and is never subject to the older-line guard.
     VERSION=v4.10.0 EVENT_TYPE=platform-released run "$SCRIPT"
     [ "$(get skip)" = "false" ]
     [ "$(get target_folder)" = "platform" ]
