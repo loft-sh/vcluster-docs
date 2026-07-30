@@ -76,10 +76,11 @@ Once the agent has connected at least once, `status.reason` narrows down to a sp
 | `NoOnlinePeers` | The agent registered at least once, but none of its tunnel sessions currently respond. | The agent pod likely crashed or restarted after registering. Check the agent pod's status and logs in its namespace. |
 | `FindOnlineNetworkPeer` or `PeerHealthCheck` | The platform itself hit an error listing or health-checking agent tunnel sessions. | Check the vCluster Platform pod's own logs. This is a platform-side error, not an agent-side one. |
 | `InitializeCluster` | Installing the agent's RBAC or CRDs on the connected cluster failed. `status.message` carries the underlying error, often a Kubernetes `Forbidden` response. | Read `status.message` for the specific missing permission or object, then grant it. For a direct-kubeconfig cluster (`spec.config`), this is the credential the platform itself uses. For an agent-connected cluster, it's the agent's own install step. |
-| `DeployProxyOnlyAgent` | The temporary bridge agent deployed during an agent version upgrade failed to come up. | See [Agent stuck mid-upgrade](#agent-stuck-mid-upgrade). |
+| `DeployProxyOnlyAgent` | Deploying or refreshing the temporary bridge agent used during an agent version upgrade hit an actual error, for example building or creating the bridge deployment, or listing agent tunnel sessions. This is different from the bridge simply waiting to come online, which doesn't set a reason. | See [Agent stuck mid-upgrade](#agent-stuck-mid-upgrade). |
 | `ClusterUID` | Same duplicate or mismatched agent token condition described in the previous section, detected on a later reconcile instead of at first connect. | See the `ClusterUID` row in [Failures before the first connection](#failures-before-the-first-connection). |
-| `HealthCheckCluster` | The agent's own pod isn't healthy. `status.message` carries the pod condition, for example `NotFound`, `Pending`, `Terminating`, `NotReady`, or a container-waiting reason such as `CrashLoopBackOff` or `ImagePullBackOff`. | Treat this as a standard pod health issue. Check events and logs for the agent pod in its namespace, and resolve the underlying scheduling, image, or crash cause. |
-| `LocalClient` | Only applies to the cluster the platform itself runs on (`spec.local: true`). Its local client is unavailable. | Check the vCluster Platform pod itself. This indicates the platform can't reach its own cluster's API server. |
+| `HealthCheckCluster` | The platform failed to even query the agent pod's status, for example an error listing pods in the agent namespace. `status.phase` becomes `Failed` in this case. | Read `status.message` for the underlying error, then check whether the platform can still reach the connected cluster's API. |
+| A pod condition such as `NotFound`, `Pending`, `Terminating`, `NotReady`, `CrashLoopBackOff`, or `ImagePullBackOff` | The agent pod health check itself succeeded but found the pod unhealthy, and that condition is reported directly as `status.reason`. `status.phase` reverts to its initial empty state while this persists, rather than `Failed`. | Treat this as a standard pod health issue. Check events and logs for the agent pod in its namespace, and resolve the underlying scheduling, image, or crash cause. |
+| `LocalClient` | The platform's own local tailscale control-plane client, used to reach the agent tunnel mesh, is unavailable. This only surfaces for regular connected clusters (`spec.local: false`); for the cluster the platform itself runs on, the same failure is retried silently instead. | Check the vCluster Platform pod's own health and logs. This is a platform-side problem, not something wrong with the connected cluster. |
 
 ## Connection loss after a successful connect
 
@@ -93,7 +94,7 @@ A connected cluster that already reported `Initialized` can still go offline or 
 
 ## Agent stuck mid-upgrade
 
-When the platform upgrades an agent, it first deploys a temporary bridge deployment so the connected cluster's API server stays reachable while the primary agent restarts. If this stalls, the cluster's `status.reason` reports `DeployProxyOnlyAgent`, and the connected cluster's agent namespace has an extra deployment alongside the regular agent:
+When the platform upgrades an agent, it first deploys a temporary bridge deployment, `proxy-only-agent`, so the connected cluster's API server stays reachable while the primary agent restarts. The common stall, the bridge waiting for its own tunnel session to register or come online, requeues silently. `status.reason` stays empty and `status.phase` is unaffected, so a lingering `proxy-only-agent` deployment in the agent namespace is the real signal to check for, not the `Cluster` resource's status:
 
 <InterpolatedCodeBlock
   code={
@@ -104,26 +105,34 @@ When the platform upgrades an agent, it first deploys a temporary bridge deploym
 
 | Signal | Cause | Resolution |
 | --- | --- | --- |
+| `proxy-only-agent` deployment exists, but `status.reason` never changes | This is the common, non-error stall described above. | Give it a few minutes. If it doesn't clear, check the bridge deployment's own pod status and the agent tunnel path in [Enable verbose agent and platform logs](#enable-verbose-agent-and-platform-logs). |
 | `proxy-only-agent` deployment never becomes ready | The bridge deployment reuses the primary agent's service account and image, so it fails for the same reasons the primary agent would. Common causes are insufficient resources in the namespace or a service account missing required permissions. | Check `proxy-only-agent`'s pod events and logs the same way you would the primary agent. |
+| `status.reason` is `DeployProxyOnlyAgent` | Deploying or refreshing the bridge hit an actual error, rather than just waiting for it to come online. | Read `status.message` for the underlying error and resolve it directly. |
 | The upgrade seems to loop indefinitely, repeatedly trying to reinstall the agent | The agent's chart version must match the platform's own version exactly, not just meet a minimum. A stuck or partially applied Helm release, or hand-edited agent Helm values that differ from what the platform expects, can make every reconcile decide an upgrade is still needed. | Check the agent's Helm release history and values in its namespace for a stuck `pending-upgrade` state or drifted values, and avoid manually editing values the platform manages (`token`, `url`, chart version). |
 | The upgrade loops specifically with errors about a Helm release that doesn't exist | `spec.managementNamespace` on the `Cluster` object doesn't match the namespace the agent actually runs in, often after manually moving the agent from the legacy `loft` namespace to `vcluster-platform`. | Update `spec.managementNamespace` to match where the agent deployment actually runs. |
 
 ## Enable verbose agent and platform logs
 
-If the tables above don't explain what you're seeing, turn on debug logging for the tunnel and relay components. Add these to the platform's `values.yaml` for the platform side. For the agent side, go to **Infrastructure > Control Plane Clusters**, click **Edit** for the cluster, open the **Agent** tab, and add them under **Extra Agent Values**. See [Set agent values using the UI](../administer/clusters/advanced/agent-config.mdx#set-agent-values-using-the-ui).
+If the tables above don't explain what you're seeing, turn on verbose TSNet logging. The platform and the agent each read their own environment, so set the variable on whichever side you're debugging.
 
-```yaml
+For the platform side, add to `values.yaml`:
+
+```yaml title="Platform values.yaml"
 env:
   LOFT_LOG_TSNET_CONTROL_PLANE: true
-  LOFT_LOG_TSNET_KUBEAPI: true
-  LOFT_LOG_DERP: true
-  LOFT_LOG_DERP_MESH: true
 
 logging:
   level: debug
 ```
 
-`LOFT_LOG_TSNET_CONTROL_PLANE` and `LOFT_LOG_TSNET_KUBEAPI` log the tunnel components on whichever side you set them. `LOFT_LOG_DERP` and `LOFT_LOG_DERP_MESH` log the relay server and its mesh between platform replicas. If the agent's DERP probe fails specifically because of WebSocket-upgrade interference from an ingress controller or proxy in front of the platform, the same direct-connection workaround used for tenant cluster TSNet issues applies here too. See [Resolve vCluster TSNet connection failures](./tsnet-connectivity.mdx#solution) for that setting.
+For the agent side, go to **Infrastructure > Control Plane Clusters**, click **Edit** for the cluster, open the **Agent** tab, and add under **Extra Agent Values**. See [Set agent values using the UI](../administer/clusters/advanced/agent-config.mdx#set-agent-values-using-the-ui).
+
+```yaml title="Agent extra values"
+env:
+  LOFT_LOG_TSNET_AGENT: true
+```
+
+`LOFT_LOG_TSNET_CONTROL_PLANE` turns on verbose logging for the platform's TSNet control-plane component, and for its DERP relay and mesh traffic, since all three share the same toggle. `LOFT_LOG_TSNET_AGENT` turns on the equivalent verbose logging for the agent's own TSNet client. If the agent's DERP probe fails specifically because of WebSocket-upgrade interference from an ingress controller or proxy in front of the platform, the same direct-connection workaround used for tenant cluster TSNet issues applies here too. See [Resolve vCluster TSNet connection failures](./tsnet-connectivity.mdx#solution) for that setting.
 
 ## Prevent repeat failures
 
