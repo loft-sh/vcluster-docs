@@ -24,26 +24,26 @@ Start by reading the `Cluster` resource's status:
   language="bash"
 />
 
-`status.phase` is one of three values: 
+`status.phase` is one of three values:
 
 - empty (still initializing)
-- `Initialized` (connected and healthy)
-- `Failed` 
+- `Initialized` (the reconcile loop completed a pass without a hard error)
+- `Failed` (the reconcile loop hit a hard error)
 
-There is no separate `Ready` phase. `status.reason` holds a short machine-readable code, and `status.message` carries the underlying error, if any. The tables on this page are keyed off that `reason` value.
+There is no separate `Ready` phase, and `Initialized` doesn't necessarily mean healthy. A reconcile pass that finds the agent pod unhealthy still completes without a hard error, so `status.phase` becomes `Initialized` with a non-empty `status.reason` describing the pod problem. Always read `status.reason` alongside `status.phase` rather than treating `Initialized` alone as a clean bill of health. `status.reason` holds a short machine-readable code, and `status.message` carries the underlying error, if any. The tables on this page are keyed off that `reason` value.
 
 The platform UI's Host Clusters view also reports an `Online` state for the cluster. That state only reflects reality for clusters connected through the agent's network tunnel (`spec.networkPeer: true`). It has no meaning for a cluster registered with a direct kubeconfig secret (`spec.config`) or for the cluster the platform itself runs on (`spec.local: true`), so don't rely on it in those two cases.
 
 ## Where the failure happens
 
 1. **Before the agent ever connects**: the `Cluster` resource stays in its initial, empty phase, or the agent chart itself fails to install. Go to [Failures before the first connection](#failures-before-the-first-connection).
-2. **During reconciliation**, after at least one successful connection: `status.phase` is `Failed`, or stays empty longer than expected, with a specific `status.reason`. Go to [Failures during reconciliation](#failures-during-reconciliation) and match the reason.
+2. **During reconciliation**, after at least one successful connection: `status.phase` is `Failed`, stays empty longer than expected, or is `Initialized` with a non-empty `status.reason` describing a pod health problem. Go to [Failures during reconciliation](#failures-during-reconciliation) and match the reason.
 3. **After a successful connection**: the cluster was `Initialized`, then goes offline or its connection flaps. Go to [Connection loss after a successful connect](#connection-loss-after-a-successful-connect).
 4. **During an agent version upgrade**: the cluster is stuck reporting an upgrade is in progress. Go to [Agent stuck mid-upgrade](#agent-stuck-mid-upgrade).
 
 ## Failures before the first connection
 
-These happen before the platform ever sees the agent register, so `status.reason` is often still empty (`Offline`) or the chart install itself never completed. Check the agent pod directly:
+These happen before the platform ever sees the agent register. `status.phase` stays empty throughout this wait. `status.reason` itself is also blank during the earliest part of the wait, then becomes `Offline` once the platform can confirm there's no online agent tunnel yet. Either is expected briefly for a new cluster; the chart install itself never completing is the case to check for if it persists. Check the agent pod directly:
 
 <InterpolatedCodeBlock
   code={
@@ -79,7 +79,7 @@ Once the agent has connected at least once, `status.reason` narrows down to a sp
 | `DeployProxyOnlyAgent` | Deploying or refreshing the temporary bridge agent used during an agent version upgrade hit an actual error, for example building or creating the bridge deployment, or listing agent tunnel sessions. This is different from the bridge simply waiting to come online, which doesn't set a reason. | See [Agent stuck mid-upgrade](#agent-stuck-mid-upgrade). |
 | `ClusterUID` | Same duplicate or mismatched agent token condition described in the previous section, detected on a later reconcile instead of at first connect. | See the `ClusterUID` row in [Failures before the first connection](#failures-before-the-first-connection). |
 | `HealthCheckCluster` | The platform failed to even query the agent pod's status, for example an error listing pods in the agent namespace. `status.phase` becomes `Failed` in this case. | Read `status.message` for the underlying error, then check whether the platform can still reach the connected cluster's API. |
-| A pod condition such as `NotFound`, `Pending`, `Terminating`, `NotReady`, `CrashLoopBackOff`, or `ImagePullBackOff` | The agent pod health check itself succeeded but found the pod unhealthy, and that condition is reported directly as `status.reason`. `status.phase` reverts to its initial empty state while this persists, rather than `Failed`. | Treat this as a standard pod health issue. Check events and logs for the agent pod in its namespace, and resolve the underlying scheduling, image, or crash cause. |
+| A pod condition such as `NotFound`, `Pending`, `Terminating`, `NotReady`, `CrashLoopBackOff`, or `ImagePullBackOff` | The agent pod health check itself succeeded but found the pod unhealthy, and that condition is reported directly as `status.reason`. `status.phase` still shows `Initialized` in this case. Checking the pod condition through `status.reason` is what tells you it's not actually healthy. | Treat this as a standard pod health issue. Check events and logs for the agent pod in its namespace, and resolve the underlying scheduling, image, or crash cause. |
 | `LocalClient` | The platform's own local tailscale control-plane client, used to reach the agent tunnel mesh, is unavailable. This only surfaces for regular connected clusters (`spec.local: false`); for the cluster the platform itself runs on, the same failure is retried silently instead. | Check the vCluster Platform pod's own health and logs. This is a platform-side problem, not something wrong with the connected cluster. |
 
 ## Connection loss after a successful connect
