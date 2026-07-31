@@ -136,11 +136,27 @@ kubectl get pod -n vcluster-platform <pod> -o jsonpath='{.status.message}'
 The fix depends on which failure you see:
 
 - `OOMKilled`: the container exceeded its memory limit, or the node ran out of memory.
-  Measure actual usage with `kubectl top pod -n vcluster-platform` and set or raise the
-  memory limit accordingly. A limit that is too low causes this on its own.
-- `Evicted` under memory or CPU pressure: set memory and CPU requests so the kubelet
-  ranks the pod above pods that exceed their requests. The status message names the
-  pressure signal that triggered the eviction.
+  `kubectl top pod -n vcluster-platform <pod> --containers` only shows current per-container
+  usage. A restarted container resets to a fresh baseline, so it won't show the memory spike
+  that preceded the restart. Check historical usage instead. The bundled [golden signals
+  queries](../monitoring/fleet-monitoring-otel.mdx#golden-signals-queries) filter on tenant
+  workload labels that these platform pods don't carry, so query the platform namespace
+  directly in the bundled Prometheus or Grafana. Scope the query to the specific container
+  the resource parameter targets, since a pod can run more than one:
+
+  ```promql
+  max(max_over_time(container_memory_working_set_bytes{namespace="vcluster-platform", pod="<pod>", container="<container>"}[1h]))
+  ```
+
+  Use the peak this returns to size a limit that covers it. A limit that is too low causes
+  this on its own.
+- `Evicted` under memory pressure: set memory requests so the kubelet ranks the pod above
+  pods that exceed their requests. The status message names the pressure signal that
+  triggered the eviction. CPU pressure isn't one of the eviction signals. The kubelet
+  handles CPU contention through throttling, not eviction, so a CPU request affects
+  scheduling but won't prevent an eviction. `DiskPressure` and
+  `PIDPressure` evictions need the underlying node condition resolved (free disk space or
+  process count), not a requests or limits change on this pod.
 
 Set requests and limits on the affected template:
 

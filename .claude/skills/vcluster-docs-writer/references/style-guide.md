@@ -78,14 +78,18 @@ Kubernetes object or the infrastructure behind it.
 Pick the verb based on what's actually being destroyed:
 
 - **"delete"** for a Kubernetes API object, matching the literal `kubectl delete` verb:
-  deleting a pod, PVC, namespace, or other resource. The object's `status.phase` becomes
-  `Terminating` while it's being removed. That's Kubernetes' own field/status name, not a
-  style choice, so leave it as-is even though it contains "terminat-".
+  deleting a pod, PVC, namespace, or other resource. kubectl displays `Terminating` for an
+  object once its `metadata.deletionTimestamp` is set and removal is pending. That's not an
+  actual `status.phase` value (Pod phases are `Pending`, `Running`, `Succeeded`, `Failed`, or
+  `Unknown`), but it's still Kubernetes' own display convention, not a style choice, so
+  leave `Terminating` as-is even though it contains "terminat-".
 - **"terminate"** for a controller or component destroying the underlying cloud instance or
   VM behind a node, for example a cloud autoscaler or a remediation controller calling a
-  provider API (`ec2:TerminateInstances`, `compute.instances.reset`). Don't substitute
-  "delete" here: it blurs the distinction from `kubectl delete`, and it doesn't match the
-  actual API being described.
+  provider API that actually destroys the instance, like `ec2:TerminateInstances`. Don't use
+  it for a reboot-only API such as `compute.instances.reset`, which restarts the VM without
+  destroying it. Call that a reboot, not a termination. Don't substitute "delete" for a real
+  termination either: it blurs the distinction from `kubectl delete`, and it doesn't match
+  the actual API being described.
 
 If a page's prose legitimately needs "terminate" in the cloud-instance sense throughout and
 Vale keeps flagging it, don't hand-edit around individual warnings; scope `Google.WordList
