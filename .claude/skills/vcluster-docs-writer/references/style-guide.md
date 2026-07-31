@@ -68,6 +68,31 @@ Do not delete the vCluster pod.
 :::
 ```
 
+## Word Choice: "delete" vs. "terminate"
+
+Google.WordList flags "terminate" (along with "kill" and "abort") and suggests "stop",
+"exit", "cancel", or "end" instead. That rule assumes "terminate" means ending a session,
+process, or request. It doesn't hold for the other sense of the word: destroying a
+Kubernetes object or the infrastructure behind it.
+
+Pick the verb based on what's actually being destroyed:
+
+- **"delete"** for a Kubernetes API object, matching the literal `kubectl delete` verb:
+  deleting a pod, PVC, namespace, or other resource. The object's `status.phase` becomes
+  `Terminating` while it's being removed. That's Kubernetes' own field/status name, not a
+  style choice, so leave it as-is even though it contains "terminat-".
+- **"terminate"** for a controller or component destroying the underlying cloud instance or
+  VM behind a node, for example a cloud autoscaler or a remediation controller calling a
+  provider API (`ec2:TerminateInstances`, `compute.instances.reset`). Don't substitute
+  "delete" here: it blurs the distinction from `kubectl delete`, and it doesn't match the
+  actual API being described.
+
+If a page's prose legitimately needs "terminate" in the cloud-instance sense throughout and
+Vale keeps flagging it, don't hand-edit around individual warnings; scope `Google.WordList
+= NO` for that page in `.vale.ini` instead, with a comment explaining why. Double-check the
+glob matches the file's **current** name: a page rename after the override was added leaves
+a dead glob that silently stops applying, and the warnings resurface with no obvious cause.
+
 ## Oxford Comma
 
 Use the Oxford comma (serial comma) before the last item when listing 3 or more items in a sentence.
