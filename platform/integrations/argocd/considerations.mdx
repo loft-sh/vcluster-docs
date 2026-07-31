@@ -1,0 +1,85 @@
+---
+title: Feature support and limitations
+sidebar_label: Feature support and limitations
+sidebar_position: 5
+sidebar_class_name: pro
+---
+
+This page covers what the Argo CD integration passes through unmodified, what it doesn't model, operational limitations to plan around, and common patterns for using it at scale.
+
+## Feature support
+
+### Passed through as a standard Argo CD ApplicationSpec
+
+`ArgoCDApplication.spec.template.spec` and `ArgoCDApplicationTemplate.spec.template.spec` embed a vendored copy of Argo CD's own `ApplicationSpec` type, not a redefined subset. Fields that type supports pass through unmodified, including:
+
+- Helm, Kustomize, and directory/Jsonnet sources
+- Config management plugins
+- Multiple sources (`sources`)
+- `syncPolicy`, including `automated.selfHeal` and `automated.prune`
+- `ignoreDifferences`
+
+Platform only touches `spec.destination` (to route to the correct tenant cluster or control plane cluster) and defaults an empty `spec.project` to `default`. Everything else reaches Argo CD as written.
+
+Actual compatibility still depends on your connected Argo CD server. The vendored type is pinned to whatever Argo CD API version Platform was built against, so a field that type doesn't yet have, or one your Argo CD server's version doesn't support, won't work even if it's otherwise valid syntax. Config management plugins also need matching plugin configuration on the Argo CD server itself. The integration doesn't set that up for you. See the [ArgoCDApplication](../../api/resources/argocdapplication.mdx) and [ArgoCDApplicationTemplate](../../api/resources/argocdapplicationtemplate.mdx) API references for the full field list.
+
+### Not modeled by the integration
+
+- **ApplicationSets**: there's no ApplicationSet resource or generator support. Each `ArgoCDApplication` is a single Argo CD Application.
+- **App-of-apps automation**: not modeled or automated by the integration. Platform overwrites `spec.destination.server` and `spec.destination.name` to the tenant cluster or control plane cluster you registered, but leaves `spec.destination.namespace` exactly as you set it. The usual blocker isn't the namespace, since you control that fully. It's the cluster. Argo CD only picks up child Application manifests it finds on the cluster hosting its own controller, and the registered destination is rarely that cluster. One narrow exception exists. If you register the control plane cluster your self-hosted Argo CD instance itself runs on with `target: host`, and set `destination.namespace` to Argo CD's own watched namespace, a parent Application can deploy child Application manifests there. The integration doesn't set this up or manage it either way.
+- **Cluster-label targeting**: destinations reference a tenant cluster or control plane cluster by name only. There's no label-selector targeting like an ApplicationSet cluster generator provides.
+- **Per-application AppProject guardrails**: see [Limitations](#no-per-application-appproject-guardrails) below.
+
+## Limitations
+
+### Self-hosted Argo CD depends on the Platform proxy
+
+When you register a cluster with a standard (self-hosted) Argo CD connector, Platform sets the Argo CD destination server to the Platform proxy endpoint, not the tenant cluster's or control plane cluster's real API server. There's no direct or air-gapped path around this for the standard connector.
+
+The Platform proxy is Argo CD's only path to that cluster's API, so if Platform, or your connectivity to it, is unavailable, Argo CD loses all access to any cluster registered under that connector, not just sync and apply, but live-state comparison, health assessment, pruning, and resource hooks too. Existing workloads keep running during that window. Only Argo CD's view into and control over the cluster pauses, until Platform is reachable again. See [Platform communication and connectivity](../../understand/platform_communication.mdx) and [What happens during control plane outages?](../../understand/control-plane-outages.mdx) for the full blast-radius model.
+
+Akuity isn't affected by this at steady state, but only for cluster-side reconciliation. Argo CD's connection to the destination cluster's API, for live-state diffing, health checks, and applying resources, goes through the agent's outbound tunnel instead of Platform. Platform itself stays equally involved for both connector types at the application level: it upserts the Argo CD Application, processes refresh and sync requests, and copies status back onto the CR regardless of whether the connector is standard or Akuity. For Akuity specifically, Platform also installs the agent and repairs its manifest on drift.
+
+### Read `status.application` for real Argo CD state
+
+The `Synced` condition on `ArgoCDApplication.status.conditions` only reflects whether Platform successfully reconciled the Application through the Argo CD API, whether or not that reconciliation actually changed anything. It can show `True` while the application itself is `OutOfSync` or unhealthy in Argo CD.
+
+For the application's actual state, read `status.application.sync.status` and `status.application.health.status` instead. These mirror Argo CD's own Application status verbatim.
+
+```yaml title="ArgoCDApplication status (abbreviated)"
+status:
+  conditions:
+    - type: Synced # Platform reconciled successfully. Not Argo CD's own sync state.
+      status: "True"
+  application:
+    sync:
+      status: OutOfSync # Argo CD's real sync state
+    health:
+      status: Degraded # Argo CD's real health state
+```
+
+### No per-application AppProject guardrails
+
+The integration doesn't create or manage Argo CD AppProjects on your behalf. Every `ArgoCDApplication` uses Argo CD's `default` project unless `spec.project` names a project you've already created directly in Argo CD. There's no built-in way to scope repo allow-lists, destination allow-lists, sync windows, or project-level RBAC per application.
+
+If you need per-project AppProject guardrails managed by Platform, see the [legacy Argo CD integration](./legacy.mdx), which creates an AppProject per vCluster Platform project. That integration is deprecated and covers project-level registration only, not individual `ArgoCDApplication` resources.
+
+### The integration deletes managed apps when disabled
+
+Disabling the Argo CD integration on a tenant cluster or control plane cluster removes it from Argo CD and deletes every `ArgoCDApplication` object Platform generated for it from `deploy.argoCD.applications`. Standalone `ArgoCDApplication` objects you created directly, for example applications targeting a control plane cluster, aren't deleted. Their remote Argo CD Application is removed along with the cluster's registration, and the CR's `Synced` condition turns `False` until the cluster registers again. See [Disabling the integration](./connect-argocd.mdx#step-2-enable-the-connector-on-a-cluster) for details.
+
+## Common patterns
+
+### Fan out an application fleet with a tenant cluster template
+
+Declare `deploy.argoCD.applications` and reference an `ArgoCDApplicationTemplate` from a tenant cluster template instead of an individual tenant cluster's `vcluster.yaml`. Every tenant cluster created from that template gets the same Argo CD Application declaration.
+
+Whether a template update then rolls out to existing tenant clusters depends on template versioning. Only tenant clusters using a wildcard version, for example `1.X.X`, pick up a new compatible version automatically. Tenant clusters pinned to an exact version, or created without versioning enabled, need a manual update. See [Deploy applications](./deploy-applications.mdx), [Templates](../../administer/templates/overview.mdx), and [Versioning templates](../../administer/templates/versioning.mdx#template-version-strings).
+
+### Segment across Argo CD instances with multiple connectors
+
+A connector is just a named Secret, and clusters reference connectors by name. Create multiple connectors, for example one per environment tier, business unit, or region, and point different tenant cluster templates at different connectors. This keeps unrelated teams' Applications on separate Argo CD (or Akuity) instances without any additional integration logic.
+
+### Progressive delivery with Argo Rollouts
+
+The integration doesn't configure progressive delivery for you, but nothing blocks it either. Since `source` is pass-through, point it at manifests or a Helm chart that install Argo Rollouts alongside `Rollout` and `AnalysisTemplate` objects. Rollout mechanics run entirely inside the tenant cluster and the Argo CD Application, independent of the integration itself.
