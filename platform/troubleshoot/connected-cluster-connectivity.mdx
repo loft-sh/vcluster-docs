@@ -14,7 +14,7 @@ This is a different mechanism from the TSNet tunnel a <GlossaryTerm term="tenant
 
 For how a connected cluster's agent communicates with the platform, see [Platform communication and connectivity](../understand/platform_communication.mdx).
 
-Start by reading the `Cluster` resource's status:
+Start by reading the `Cluster` resource's status. Run this against a kubectl context for Platform's management API, such as one created with `vcluster platform connect management`, not the connected cluster's own context:
 
 <InterpolatedCodeBlock
   code={
@@ -32,18 +32,18 @@ Start by reading the `Cluster` resource's status:
 
 There is no separate `Ready` phase, and `Initialized` doesn't necessarily mean healthy. A reconcile pass that finds the agent pod unhealthy still completes without a hard error, so `status.phase` becomes `Initialized` with a non-empty `status.reason` describing the pod problem. Always read `status.reason` alongside `status.phase` rather than treating `Initialized` alone as a clean bill of health. `status.reason` holds a short machine-readable code, and `status.message` carries the underlying error, if any. The tables on this page are keyed off that `reason` value.
 
-The platform UI's Host Clusters view also reports an `Online` state for the cluster. That state only reflects reality for clusters connected through the agent's network tunnel (`spec.networkPeer: true`). It has no meaning for a cluster registered with a direct kubeconfig secret (`spec.config`) or for the cluster the platform itself runs on (`spec.local: true`), so don't rely on it in those two cases.
+The platform UI's **Infrastructure > Control Plane Clusters** view also reports an `Online` state for the cluster. That state only reflects reality for clusters connected through the agent's network tunnel (`spec.networkPeer: true`). It has no meaning for a cluster registered with a direct kubeconfig secret (`spec.config`) or for the cluster the platform itself runs on (`spec.local: true`), so don't rely on it in those two cases.
 
 ## Where the failure happens
 
 1. **Before the agent ever connects**: the `Cluster` resource stays in its initial, empty phase, or the agent chart itself fails to install. Go to [Failures before the first connection](#failures-before-the-first-connection).
-2. **During reconciliation**, after at least one successful connection: `status.phase` is `Failed`, stays empty longer than expected, or is `Initialized` with a non-empty `status.reason` describing a pod health problem. Go to [Failures during reconciliation](#failures-during-reconciliation) and match the reason.
+2. **The `Cluster` resource already has a `status.reason`**, whether or not the agent has ever connected: `status.phase` is `Failed`, or `Initialized` with a non-empty `status.reason` describing a pod health or reconcile problem. Go to [Failures during reconciliation](#failures-during-reconciliation) and match the reason.
 3. **After a successful connection**: the cluster was `Initialized`, then goes offline or its connection flaps. Go to [Connection loss after a successful connect](#connection-loss-after-a-successful-connect).
 4. **During an agent version upgrade**: the cluster is stuck reporting an upgrade is in progress. Go to [Agent stuck mid-upgrade](#agent-stuck-mid-upgrade).
 
 ## Failures before the first connection
 
-These happen before the platform ever sees the agent register. `status.phase` stays empty throughout this wait. `status.reason` itself is also blank during the earliest part of the wait, then becomes `Offline` once the platform can confirm there's no online agent tunnel yet. Either is expected briefly for a new cluster; the chart install itself never completing is the case to check for if it persists. Check the agent pod directly:
+These happen before the platform ever sees the agent register. `status.phase` stays empty throughout this wait. `status.reason` itself is also blank during the earliest part of the wait, then becomes `Offline` once the platform can confirm there's no online agent tunnel yet. Either is expected briefly for a new cluster; the chart install itself never completing is the case to check for if it persists. Check the agent pod directly. This targets the connected cluster's own API server, not Platform's, so switch `kubectl` context (or add `--context`) before running it:
 
 <InterpolatedCodeBlock
   code={
@@ -64,20 +64,19 @@ The agent namespace defaults to `vcluster-platform` (older installs used `loft`)
 | `Cluster` creation is rejected for missing a connection mode | The `Cluster` object was created directly (for example, applied by hand or by automation) without `spec.config`, `spec.local`, or `spec.networkPeer` set. | Use the platform UI, CLI, or the generated Helm command to create the `Cluster` object, which sets `spec.networkPeer: true` for agent-based connections. |
 | `Cluster` creation is rejected for a second `spec.local` cluster | Something tried to mark a second cluster as the one the platform itself runs on, and only one `Cluster` object may have `spec.local: true`. | Remove `spec.local` from the new object. Use `spec.networkPeer: true` instead. |
 | `Cluster` creation is rejected for exceeding the license limit | Connecting this cluster would exceed the license's connected-cluster limit. | Disconnect an unused cluster, or contact vCluster Labs to adjust the license. |
-| `status.reason` is `ClusterUID` | The token installed on this cluster was copied from a different cluster's install command, or the same physical cluster was connected twice under two different `Cluster` names. Each cluster tracks the target's `kube-system` namespace UID, and the platform refuses to let two `Cluster` objects share one underlying cluster. | Use a unique, freshly generated connect command per physical cluster. If the same cluster was connected twice by accident, delete the duplicate `Cluster` object rather than reusing its token. |
 
 ## Failures during reconciliation
 
-Once the agent has connected at least once, `status.reason` narrows down to a specific step in the reconcile loop.
+This table covers every `status.reason` the reconcile loop can set. Most describe a step that only runs after the agent has connected at least once, but `Offline` and `LocalClient` are checked on every pass and can appear before the first connection too.
 
 | `status.reason` | Cause | Resolution |
 | --- | --- | --- |
 | `Offline` | No online agent tunnel and no direct kubeconfig secret configured. This is expected briefly while a new cluster waits for its first connection. It's only a problem if it persists. | If this persists, work through [Failures before the first connection](#failures-before-the-first-connection) above. |
 | `NoOnlinePeers` | The agent registered at least once, but none of its tunnel sessions currently respond. | The agent pod likely crashed or restarted after registering. Check the agent pod's status and logs in its namespace. |
-| `FindOnlineNetworkPeer` or `PeerHealthCheck` | The platform itself hit an error listing or health-checking agent tunnel sessions. | Check the vCluster Platform pod's own logs. This is a platform-side error, not an agent-side one. |
-| `InitializeCluster` | Installing the agent's RBAC or CRDs on the connected cluster failed. `status.message` carries the underlying error, often a Kubernetes `Forbidden` response. | Read `status.message` for the specific missing permission or object, then grant it. For a direct-kubeconfig cluster (`spec.config`), this is the credential the platform itself uses. For an agent-connected cluster, it's the agent's own install step. |
+| `PeerHealthCheck` | The platform hit an error health-checking the connected cluster's agent tunnel sessions. | Check the vCluster Platform pod's own logs. This is a platform-side error, not an agent-side one. |
+| `InitializeCluster` | Covers several distinct steps that all share this reason: building a client to reach the connected cluster, creating Platform's management namespace on it, installing or upgrading the agent's CRDs and Helm release, and installing its RBAC roles. `status.message` is the only way to tell which step actually failed. | Read `status.message` first to identify the failing step. A client-build failure usually means the connected cluster's API server is unreachable or its credentials are invalid. A namespace, CRD, Helm, or RBAC failure usually means a permissions problem, often a Kubernetes `Forbidden` response. For a direct-kubeconfig cluster (`spec.config`), the client-build case is the credential the platform itself holds. |
 | `DeployProxyOnlyAgent` | Deploying or refreshing the temporary bridge agent used during an agent version upgrade hit an actual error, for example building or creating the bridge deployment, or listing agent tunnel sessions. This is different from the bridge simply waiting to come online, which doesn't set a reason. | See [Agent stuck mid-upgrade](#agent-stuck-mid-upgrade). |
-| `ClusterUID` | Same duplicate or mismatched agent token condition described in the previous section, detected on a later reconcile instead of at first connect. | See the `ClusterUID` row in [Failures before the first connection](#failures-before-the-first-connection). |
+| `ClusterUID` | The token installed on this cluster was copied from a different cluster's install command, or the same physical cluster was connected twice under two different `Cluster` names. The platform reads the target's `kube-system` namespace UID once it has a working connection to the cluster, and refuses to let two `Cluster` objects share one underlying cluster. For an agent-connected cluster, this can only be detected once the tunnel is online, so it never appears before the first connection. | Use a unique, freshly generated connect command per physical cluster. If the same cluster was connected twice by accident, delete the duplicate `Cluster` object rather than reusing its token. |
 | `HealthCheckCluster` | The platform failed to even query the agent pod's status, for example an error listing pods in the agent namespace. `status.phase` becomes `Failed` in this case. | Read `status.message` for the underlying error, then check whether the platform can still reach the connected cluster's API. |
 | A pod condition such as `NotFound`, `Pending`, `Terminating`, `NotReady`, `CrashLoopBackOff`, or `ImagePullBackOff` | The agent pod health check itself succeeded but found the pod unhealthy, and that condition is reported directly as `status.reason`. `status.phase` still shows `Initialized` in this case. Checking the pod condition through `status.reason` is what tells you it's not actually healthy. | Treat this as a standard pod health issue. Check events and logs for the agent pod in its namespace, and resolve the underlying scheduling, image, or crash cause. |
 | `LocalClient` | The platform's own local tailscale control-plane client, used to reach the agent tunnel mesh, is unavailable. This only surfaces for regular connected clusters (`spec.local: false`); for the cluster the platform itself runs on, the same failure is retried silently instead. | Check the vCluster Platform pod's own health and logs. This is a platform-side problem, not something wrong with the connected cluster. |
@@ -94,7 +93,7 @@ A connected cluster that already reported `Initialized` can still go offline or 
 
 ## Agent stuck mid-upgrade
 
-When the platform upgrades an agent, it first deploys a temporary bridge deployment, `proxy-only-agent`, so the connected cluster's API server stays reachable while the primary agent restarts. The common stall, the bridge waiting for its own tunnel session to register or come online, requeues silently. `status.reason` stays empty and `status.phase` is unaffected, so a lingering `proxy-only-agent` deployment in the agent namespace is the real signal to check for, not the `Cluster` resource's status:
+When the platform upgrades an agent, it first deploys a temporary bridge deployment, `proxy-only-agent`, so the connected cluster's API server stays reachable while the primary agent restarts. The common stall, the bridge waiting for its own tunnel session to register or come online, requeues silently. `status.reason` stays empty and `status.phase` is unaffected, so a lingering `proxy-only-agent` deployment in the agent namespace is the real signal to check for, not the `Cluster` resource's status. As with the pod check above, this runs against the connected cluster's own context:
 
 <InterpolatedCodeBlock
   code={
@@ -132,7 +131,7 @@ env:
   LOFT_LOG_TSNET_AGENT: true
 ```
 
-`LOFT_LOG_TSNET_CONTROL_PLANE` turns on verbose logging for the platform's TSNet control-plane component, and for its DERP relay and mesh traffic, since all three share the same toggle. `LOFT_LOG_TSNET_AGENT` turns on the equivalent verbose logging for the agent's own TSNet client. If the agent's DERP probe fails specifically because of WebSocket-upgrade interference from an ingress controller or proxy in front of the platform, the same direct-connection workaround used for tenant cluster TSNet issues applies here too. See [Resolve vCluster TSNet connection failures](./tsnet-connectivity.mdx#solution) for that setting.
+`LOFT_LOG_TSNET_CONTROL_PLANE` turns on verbose logging for the platform's TSNet control-plane component, and for its DERP relay and mesh traffic, since all three share the same toggle. `LOFT_LOG_TSNET_AGENT` turns on the equivalent verbose logging for the agent's own TSNet client.
 
 ## Prevent repeat failures
 
