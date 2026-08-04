@@ -7,7 +7,7 @@ import { usePageVariables } from '../PageVariables/PageVariablesContext';
 // Latest versions - fallback if not in versioned docs context
 const LATEST_VERSIONS = {
   platform: '4.11.0',
-  vcluster: '0.36.0',
+  vcluster: '0.36.1',
 };
 
 /**
