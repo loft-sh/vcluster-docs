@@ -1,0 +1,131 @@
+---
+title: Troubleshoot template sync failures
+sidebar_label: Template Sync Failures
+description: Diagnose why a tenant cluster or namespace isn't picking up its template configuration, and resolve the underlying cause.
+---
+
+import InterpolatedCodeBlock from "@site/src/components/InterpolatedCodeBlock";
+
+"Template sync" here means the process that resolves a [template](../understand/what-are-templates.mdx), and for versioned templates a specific version, into the configuration applied to a <GlossaryTerm term="tenant-cluster">tenant cluster</GlossaryTerm> or namespace. It also covers keeping that configuration up to date as the template changes. This is a different mechanism from the <GlossaryTerm term="vcluster">vCluster</GlossaryTerm> resource syncer (`sync.toHost`/`sync.fromHost` in `vcluster.yaml`), which moves individual Kubernetes objects between the tenant cluster and the <GlossaryTerm term="control-plane-cluster">control plane cluster</GlossaryTerm>. See the [vCluster sync configuration reference](/docs/vcluster/configure/vcluster-yaml/sync) for that mechanism. If you're chasing a missing or duplicated Kubernetes object rather than a template not applying, you likely want that page instead.
+
+This runbook covers VirtualClusterInstance and SpaceInstance, which report sync state through `TemplateResolved`/`TemplateSynced` conditions. App instances (AppInstance) use a separate reconciler with different conditions (`Synced`, `Deployed`) and reasons such as `AppNotFound` and `DeployFailed`, and aren't covered here.
+
+Use this runbook when a tenant cluster or namespace created from a template fails to come up or shows an outdated configuration. It also covers a template edit that doesn't reach a resource the way you expected. Every table below follows the same layout: **Signal** is what you observe, **Cause** is why it happens, **Resolution** is what to do about it.
+
+## Where the failure happens
+
+Template sync failures show up in three different places, depending on when the failure occurs. Find the one that matches what you're seeing, then jump to that section.
+
+1. **At creation or update time**: `kubectl apply` or the platform UI rejects the request outright. Nothing is created or changed. Go to [Failures at creation or update time](#failures-at-creation-or-update-time).
+2. **After creation, during reconciliation**: the instance exists, but its status conditions show the template never resolved, or resolved but never synced. Go to [Failures during reconciliation](#failures-during-reconciliation) and match the condition reason.
+3. **Inside the tenant cluster itself**: both status conditions report healthy, but the resulting `vcluster.yaml` fails validation or requests a feature the license doesn't cover, so the <GlossaryTerm term="control-plane">control plane</GlossaryTerm> pod never starts. Go to [Failures inside the tenant cluster](#failures-inside-the-tenant-cluster).
+
+For case 2, check the instance's status conditions first to confirm which reason it's reporting:
+
+<InterpolatedCodeBlock
+  code={
+'kubectl -n [[VAR:PROJECT_NAMESPACE:loft-p-my-project]] get virtualclusterinstance [[VAR:VCLUSTER_INSTANCE_NAME:my-vcluster]] -o yaml\n' +
+'kubectl -n [[VAR:PROJECT_NAMESPACE:loft-p-my-project]] get spaceinstance [[VAR:SPACE_INSTANCE_NAME:my-space]] -o yaml'
+  }
+  language="bash"
+/>
+
+## Failures at creation or update time
+
+These are rejected before any object is created or changed, so there's no instance to inspect. The error text comes back directly from the `kubectl apply`, `helm` command, or platform UI action.
+
+| Signal | Cause | Resolution |
+| --- | --- | --- |
+| Template not allowed in project | The referenced template isn't in the project's [allowed templates](../administer/projects/allowed/templates.mdx) list. | Add the template to the project's allowed list, or reference an already-allowed template. |
+| `spec.templateRef.name` must not be blank unless authorized | The request omits a template, but the project's `requireTemplate` setting blocks template-less creation for this user. | Select an allowed template, or have a project/platform admin create the resource, or disable `requireTemplate` for the project (see [security considerations](../use-platform/virtual-clusters/create/create-no-template.mdx#create-without-template)). |
+| Both `spec.template` and `spec.templateRef` set, request `Forbidden` | An instance can use an inline template or a template reference, not both. | Remove one of the two fields. |
+| `cluster`, `namespace`, or `virtualCluster` field is immutable | An update tried to change which connected cluster or namespace hosts the instance, or which tenant cluster it's bound to. | Create a new instance instead of trying to move an existing one. |
+| Chart version is required and must be valid semantic versioning | The template (or an inline template) has an empty or malformed `helmRelease.chart.version`. This only checks the version string's format, not whether that chart version is actually published. | Set `helmRelease.chart.version` to a properly formatted version string. If the version is well-formed but doesn't exist, the failure happens later, when the platform tries to resolve the chart, not here. |
+| `clusterrole is required` | An inline template's `access.rules` has an entry with no `clusterRole` set. | Set `clusterRole` on that rule. |
+| Proxy target access rejected | An inline template's `helmRelease.values` references a resource proxy target the caller isn't authorized to use. This is checked separately from `access.rules`, and only applies to inline templates. | Adjust the proxy target configuration in the template's values, or have someone with access to that proxy target make the change. |
+| `virtualclusterinstances` (or similar) quota would be exceeded, triggered by a template change | Switching an instance to a different template pushed usage over a project quota. | See [Troubleshoot quota and admission denials](./quota-admission.mdx). |
+
+## Failures during reconciliation
+
+Once an instance exists, template sync state lives in two status conditions: `TemplateResolved` and `TemplateSynced`. `TemplateSynced` never controls readiness. Use its reason and severity to judge whether it needs action, rather than treating `False` as a failure on its own.
+
+`TemplateResolved` is the hard gate, but its effect on readiness differs by resource type. A namespace (SpaceInstance) always needs `TemplateResolved=True` to report `Ready`. A tenant cluster (VirtualClusterInstance) only needs it while the tenant cluster hasn't finished its initial deployment. Once deployed, a template failure (for example, the template being deleted afterward) no longer flips an already-`Ready` tenant cluster to not-ready. It keeps running its last-applied configuration.
+
+<InterpolatedCodeBlock
+  code={
+'kubectl -n [[VAR:PROJECT_NAMESPACE:loft-p-my-project]] get virtualclusterinstance [[VAR:VCLUSTER_INSTANCE_NAME:my-vcluster]] \\\n' +
+'  -o jsonpath=\'{range .status.conditions[?(@.type=="TemplateResolved")]}{.status}{" "}{.reason}{" "}{.message}{"\\n"}{end}\''
+  }
+  language="bash"
+/>
+
+### `TemplateResolved` reasons
+
+| Signal | Cause | Resolution |
+| --- | --- | --- |
+| `TemplateNotFound` | Neither `spec.template` nor `spec.templateRef` is set, or `spec.templateRef.name` doesn't resolve to an existing template. Usually the template was renamed or deleted. Deleting a template doesn't check for instances still referencing it, so this is a common way to end up here. | Recreate the template under the same name, or update `spec.templateRef.name` on the instance to point at an existing template. |
+| `VersionError` | `spec.templateRef.version` doesn't have exactly three dot-separated components (`MAJOR.MINOR.PATCH`). This only checks the component count, not that each component is numeric or `X`/`x`. | Fix the version string on the instance so it has three dot-separated components, each numeric or `X`/`x`. |
+| `VersionNotFound` | The version string has three components, but no version on the template matches it. This also covers a component that isn't numeric or `X`/`x` (for example, `1.foo.3`), an exact pin to a version that was never created, or a major-version pattern with no matching major version. | Use a numeric or `X`/`x` component in the version pattern, add the missing version to the template, or point the instance at a version that exists. See [Template versioning](../administer/templates/versioning.mdx#template-version-strings). |
+| `ErrorSyncingParameters` (tenant clusters only) | A parameter value failed validation against the template's declared parameters: a missing required value, a regular expression mismatch, an out-of-range number, or the wrong type. Also covers malformed `spec.parameters` YAML and failures applying updated parameter defaults to the instance. SpaceInstance doesn't emit this reason; rendering errors in its supplied parameter data surface as `ErrorRenderingTemplate` instead. | Check the condition message for the specific parameter, then fix the instance's `spec.parameters` or the template's parameter definition. See [Template parameters](../administer/templates/parameters.mdx#parameter-validation-and-error-handling). |
+| `ErrorRenderingTemplate` | The Go/Helm template failed to execute, for example a syntax error, an explicit `fail` call in the template, or the rendered output couldn't be decoded. | Check the condition message for the templating error, then fix the template. |
+| `ErrorModifyingTemplate` | The rendered configuration's platform-managed settings failed validation, for example an invalid sleep schedule or timezone, an incomplete snapshot storage configuration, a malformed auto-deletion duration, or an inconsistent Argo CD deploy configuration. | Check the condition message for which setting failed, then fix it in the template or the instance's parameter overrides. |
+
+### `TemplateSynced` reasons
+
+The first two reasons cover template-change notifications every tenant cluster and namespace can report. The rest are scoped to narrower cases, noted alongside each one.
+
+| Signal | Cause | Resolution |
+| --- | --- | --- |
+| `NewTemplateVersionAvailable` | A newer version exists on the template than the one matching this instance's version pattern (for example, the instance pins `1.2.0` exactly, and the template now has `1.3.0` too). | No action needed unless you want the instance on the newer version. Widen the version pattern (or update it directly) to pick it up. |
+| `TemplateChangesAvailable` | The template's rendered configuration has changed, but the instance hasn't picked it up. This happens for **unversioned** templates whose version string isn't exactly `x.x.x` and whose `syncOnce` isn't set. | See [How template changes propagate to existing resources](../administer/templates/versioning.mdx#how-template-changes-propagate-to-existing-resources) to trigger the sync. |
+| `GetPlatformConfigError` (tenant clusters with `spec.external: true`) | The platform couldn't read the platform-managed settings out of the tenant cluster's existing Helm release. | Check the condition message for the underlying error. |
+| `PlatformConfigValidationError` (tenant clusters with `spec.external: true`) | The tenant cluster's platform-managed settings (sleep, snapshots, deletion, Argo CD) failed validation. | Check the condition message for which setting failed, then fix it on the tenant cluster. |
+| `ClusterNotReady` (platform-deployed tenant clusters scheduled to a connected cluster, not standalone ones) | The connected cluster this instance is scheduled to isn't initialized yet, so its configuration may not be synced. | Wait for the connected cluster to finish initializing. |
+
+## Failures inside the tenant cluster
+
+Both status conditions can report healthy and the tenant cluster still fails to start, because the template resolved into a `vcluster.yaml` that the running vCluster instance rejects. These failures show up as a crashing or never-ready control plane pod, not as a condition on the instance.
+
+The commands earlier in this runbook run against the platform management API. The control plane pod itself runs on the connected cluster the tenant cluster is scheduled to, so look up that cluster and its resolved namespace from the instance first, then switch your kubeconfig context there before checking the pod:
+
+<InterpolatedCodeBlock
+  code={
+'kubectl -n [[VAR:PROJECT_NAMESPACE:loft-p-my-project]] get virtualclusterinstance [[VAR:VCLUSTER_INSTANCE_NAME:my-vcluster]] \\\n' +
+'  -o jsonpath=\'{.spec.clusterRef.cluster}{"\\n"}{.spec.clusterRef.namespace}{"\\n"}\''
+  }
+  language="bash"
+/>
+
+<InterpolatedCodeBlock
+  code={
+'kubectl --context [[VAR:CONNECTED_CLUSTER_CONTEXT:my-connected-cluster]] -n [[VAR:HOST_NAMESPACE:loft-my-project-v-my-vcluster]] get pods -l app=vcluster\n' +
+'kubectl --context [[VAR:CONNECTED_CLUSTER_CONTEXT:my-connected-cluster]] -n [[VAR:HOST_NAMESPACE:loft-my-project-v-my-vcluster]] logs [[VAR:CONTROL_PLANE_POD:my-vcluster-0]] -c syncer'
+  }
+  language="bash"
+/>
+
+| Signal | Cause | Resolution |
+| --- | --- | --- |
+| Log mentions a vCluster pro feature not available in the open source build or disabled in your license | The template enables a Pro-only feature (for example, embedded <GlossaryTerm term="etcd">etcd</GlossaryTerm>, patches, central admission), but the tenant cluster's license doesn't grant it. | Remove the feature from the template, or use a license that includes it. |
+| Error unmarshaling JSON, unknown field | The rendered `vcluster.yaml` has a field the running vCluster version doesn't recognize, usually because the template's chart version and the field it sets are out of sync. | Align the template's `helmRelease.chart.version` with the fields used in its `values`, referencing the [vCluster configuration reference](/docs/vcluster/configure/vcluster-yaml/) for that version. |
+| A specific semantic validation message, for example about conflicting `sync.fromHost`/`sync.toHost` settings for the same resource type | The rendered `vcluster.yaml` sets two mutually exclusive options. | Fix the conflicting settings in the template. |
+
+A chart schema rejection can happen before a pod is ever scheduled. If the pod isn't crashing but the values were rejected upfront, check the platform's own Helm release status and events for the instance, in addition to the pod logs.
+
+## Prevent repeat failures
+
+### Know whether your template auto-propagates before relying on it
+
+Versioned templates re-apply matching version changes automatically. An unversioned template needs either a persistent `x.x.x` version string, which keeps auto-syncing every edit, or `syncOnce` to pick up a single edit on demand. Unlike the `X`/`x` wildcards on a versioned template, `x.x.x` on an unversioned one is matched exactly and is case-sensitive: `X.X.X` doesn't work. See [How template changes propagate to existing resources](../administer/templates/versioning.mdx#how-template-changes-propagate-to-existing-resources).
+
+### Don't delete a template while instances still reference it
+
+Deleting a template doesn't check for referencing instances first. Any instance still pointing at it starts reporting `TemplateNotFound` on its next reconcile, and its last-applied configuration is frozen in place rather than cleared. Point instances at a replacement template, or confirm none exist, before deleting.
+
+### Match a template's Pro features to the license the tenant clusters will run under
+
+A template that enables a Pro-only feature works fine until it's used with a license or image that doesn't cover that feature. At that point, every tenant cluster created from it fails the same way. Verify feature availability against the target license before rolling out a template change broadly.
+
+### Test template edits on one instance before a fleet-wide rollout
+
+Template sync applies automatically for versioned templates. A bad edit to a version that many instances already match propagates to all of them on their next reconcile. Validate a new version against a single instance first, using an exact version pin, before widening other instances' version patterns to include it.
