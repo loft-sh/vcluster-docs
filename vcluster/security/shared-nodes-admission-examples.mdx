@@ -145,17 +145,20 @@ spec:
 
 Replace `dedicated`/`tenant-workloads` with your own tenant-pool taint key and value. Remove controller-added entries for workload kinds you prohibit, and add any other tolerations your approved controllers or admission plugins inject. Kyverno's pattern matching only asserts on the fields you list, so the node-condition entries match regardless of whatever `tolerationSeconds` value Kubernetes attaches.
 
-## Allowlist NetworkPolicy `ipBlock` peers on the control plane cluster
+## Restrict NetworkPolicy peers on the control plane cluster
 
-This runs on a vCluster-synced NetworkPolicy. The `vcluster.loft.sh/managed-by` selector keeps it from affecting unrelated control plane cluster policies. It denies the resource if any `ipBlock.cidr` in `spec.ingress[].from[]` or `spec.egress[].to[]` isn't an exact string in the allowed list. Peers using `podSelector` or `namespaceSelector` instead of `ipBlock` are skipped, since the per-entry precondition only evaluates peers that carry an `ipBlock.cidr`.
+This runs on a vCluster-synced NetworkPolicy. The `vcluster.loft.sh/managed-by` selector keeps it from affecting unrelated control plane cluster policies. It covers two separate bypasses, since a tenant doesn't need `ipBlock` at all to reopen the platform default-deny:
+
+- **Disallowed `ipBlock` values.** Denies the resource if any `ipBlock.cidr` in `spec.ingress[].from[]` or `spec.egress[].to[]` isn't an exact string in the allowed list. Peers using `podSelector` or `namespaceSelector` instead of `ipBlock` are skipped, since the per-entry precondition only evaluates peers that carry an `ipBlock.cidr`.
+- **Unrestricted rules.** Kubernetes treats a missing or empty `from`/`to` as matching every source or destination. vCluster's translator preserves that unchanged, so a bare `ingress: [{}]` or `egress: [{}]` reopens the boundary without ever touching `ipBlock`. Denies any ingress rule with no `from` entries, or egress rule with no `to` entries.
 
 The example uses documentation-only addresses that don't route to real services. Replace them with narrow approved destinations. Never allow the control plane cluster's Pod, Service, node, control-plane, storage, management, or metadata CIDRs here, since doing so would reopen the boundary this policy protects:
 
-```yaml title="restrict-networkpolicy-ipblock-cidrs.yaml"
+```yaml title="restrict-networkpolicy-peers.yaml"
 apiVersion: kyverno.io/v1
 kind: ClusterPolicy
 metadata:
-  name: restrict-networkpolicy-ipblock-cidrs
+  name: restrict-networkpolicy-peers
 spec:
   background: true
   rules:
@@ -197,6 +200,34 @@ spec:
                   - key: "{{ contains(['203.0.113.10/32', '2001:db8::10/128'], element.ipBlock.cidr) }}"
                     operator: Equals
                     value: false
+    - name: deny-unrestricted-peers
+      match:
+        any:
+          - resources:
+              kinds:
+                - NetworkPolicy
+              selector:
+                matchExpressions:
+                  - key: vcluster.loft.sh/managed-by
+                    operator: Exists
+      validate:
+        failureAction: Audit
+        message: "Rule has no peer selector, which Kubernetes treats as matching every source or destination."
+        foreach:
+          - list: "request.object.spec.ingress"
+            deny:
+              conditions:
+                any:
+                  - key: "{{ length(element.from || `[]`) }}"
+                    operator: Equals
+                    value: 0
+          - list: "request.object.spec.egress"
+            deny:
+              conditions:
+                any:
+                  - key: "{{ length(element.to || `[]`) }}"
+                    operator: Equals
+                    value: 0
 ```
 
 This policy compares CIDR strings exactly. It doesn't treat an allowed supernet as implicitly allowing every subnet within it. List every CIDR form tenants may use, or use a policy engine with tested CIDR-containment functions if you need range containment.

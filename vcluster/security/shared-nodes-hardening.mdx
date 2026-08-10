@@ -25,7 +25,7 @@ A provider that exposes its own models or services behind an API, with no tenant
 
 Confirm these before applying this guide:
 
-- A control plane cluster CNI that enforces NetworkPolicy. If you plan to sync tenant NetworkPolicies, you also need either AdminNetworkPolicy or an equivalent CNI-specific tiered policy. A control plane cluster admission policy that constrains translated `ipBlock` peers works too.
+- A control plane cluster CNI that enforces NetworkPolicy. If you plan to sync tenant NetworkPolicies, you also need either AdminNetworkPolicy or an equivalent CNI-specific tiered policy. A control plane cluster admission policy that constrains translated `ipBlock` peers and rejects rules with no peer list works too.
 - The ability to deploy your own admission control, such as Kyverno or OPA Gatekeeper, on the control plane cluster, outside vCluster. Several controls in this guide depend on it.
 - The ability to enforce admission inside every tenant cluster, for example through centrally configured admission webhooks locked into the VirtualClusterTemplate with `policies.centralAdmission`. The toleration controls in this guide need this specifically, since only tenant-cluster admission sees a Pod before `enforceTolerations` injection.
 - [VirtualClusterTemplate](/platform/administer/templates/create-templates) enforcement through vCluster Platform, so tenants can't loosen the baseline.
@@ -200,11 +200,11 @@ This same field-absence pattern applies directly to the device-node `hostPath` c
 
 NetworkPolicy enforcement depends entirely on the control plane cluster's CNI. Some CNIs accept NetworkPolicy resources without enforcing them, so confirm enforcement directly rather than assuming it from the presence of a CNI that supports the API. Deploy a platform-level default-deny so isolation doesn't depend on a tenant choosing to author their own NetworkPolicy. `policies.networkPolicy` and `sync.toHost.networkPolicies` only enforce policies that exist, not the absence of one.
 
-Kubernetes NetworkPolicies are additive. A pod governed by several policies gets the union of everything each one allows, not the narrowest one. A platform default-deny and a tenant's own permissive policy don't combine into a tighter boundary. They combine into whichever is more open. If [`sync.toHost.networkPolicies`](../configure/vcluster-yaml/sync/to-host/networking/network-policies.mdx) is enabled, vCluster's translator keeps a tenant-authored `ipBlock` peer and its ports unchanged. A tenant can sync an egress or ingress rule that reopens traffic the platform default-deny was meant to close.
+Kubernetes NetworkPolicies are additive. A pod governed by several policies gets the union of everything each one allows, not the narrowest one. A platform default-deny and a tenant's own permissive policy don't combine into a tighter boundary. They combine into whichever is more open. If [`sync.toHost.networkPolicies`](../configure/vcluster-yaml/sync/to-host/networking/network-policies.mdx) is enabled, vCluster's translator keeps a tenant-authored `ipBlock` peer and its ports unchanged. It preserves a rule with no peers at all the same way. Kubernetes treats a missing or empty `from` or `to` as matching every source or destination. A tenant can sync an egress or ingress rule, with or without `ipBlock`, that reopens traffic the platform default-deny was meant to close. A bare `egress: [{}]` rule needs no `ipBlock` field to do this.
 
-Label-based peers don't have this problem the same way. vCluster adds a namespace and vcluster marker label to a tenant's `podSelector` and label-based peers. A tenant can only select or target pods in their own translated namespace, never another tenant's. `ipBlock` peers carry no tenant identity for vCluster to constrain, so they pass through as written.
+Label-based peers don't have this problem the same way. vCluster adds a namespace and vcluster marker label to a tenant's `podSelector` and label-based peers. A tenant can only select or target pods in their own translated namespace, never another tenant's. `ipBlock` peers carry no tenant identity for vCluster to constrain, so they pass through as written. A rule with no peers at all has even less for vCluster to scope, since there's no peer object there to begin with.
 
-**Only sync tenant NetworkPolicies where the platform boundary itself sits at a precedence a tenant's own NetworkPolicy can't override.** Otherwise, leave `sync.toHost.networkPolicies` disabled, or add control plane cluster admission that denies synced NetworkPolicies with an `ipBlock` peer outside an explicit allowlist. See [Allowlist NetworkPolicy `ipBlock` peers on the control plane cluster](./shared-nodes-admission-examples.mdx#allowlist-networkpolicy-ipblock-peers-on-the-control-plane-cluster) for a worked example.
+**Only sync tenant NetworkPolicies where the platform boundary itself sits at a precedence a tenant's own NetworkPolicy can't override.** Otherwise, leave `sync.toHost.networkPolicies` disabled, or add control plane cluster admission that denies synced NetworkPolicies with an `ipBlock` peer outside an explicit allowlist, or with an ingress or egress rule that omits its peer list entirely. See [Restrict NetworkPolicy peers on the control plane cluster](./shared-nodes-admission-examples.mdx#restrict-networkpolicy-peers-on-the-control-plane-cluster) for a worked example.
 
 | Control | Qualifies? | Why |
 | --- | --- | --- |
@@ -329,6 +329,7 @@ Test a representative sample of these controls before onboarding tenants, and ex
 | hostPath PV creation, PV sync enabled | Create a PersistentVolume with `spec.hostPath` set | Denied by control plane cluster admission |
 | StorageClass selection | Create PersistentVolumeClaims naming a class reserved for another tenant and omitting `storageClassName` | The named class is left unsynced with a `SyncWarning` or denied by admission; the classless claim receives only a tenant-safe default or is denied |
 | Namespace-sync quota coverage, namespace sync enabled | Exceed CPU or memory limits, or create excess objects, in a namespace-sync-mapped namespace | Denied or capped by a ResourceQuota and LimitRange provisioned for that mapped namespace |
+| Unrestricted NetworkPolicy rule, NetworkPolicy sync enabled | Create an egress or ingress rule with no peer list, such as `egress: [{}]` | Denied by control plane cluster admission |
 | Wildcard toleration | Create a Pod with an empty-key, `Exists` toleration | Denied by tenant-cluster admission |
 | Cross-tenant Ingress claim | Create an Ingress naming another tenant's hostname or IngressClass | Denied, or served only by that tenant's own controller |
 
@@ -354,7 +355,7 @@ Before onboarding trusted tenants onto shared nodes, confirm each group below.
 
 - [ ] `policies.networkPolicy` is enabled, and the control plane cluster CNI is confirmed to enforce NetworkPolicy.
 - [ ] `policies.networkPolicy.workload.publicEgress` is disabled, or scoped to an explicit CIDR that excludes link-local addresses (`169.254.0.0/16`) and any other management or metadata endpoints.
-- [ ] `sync.toHost.networkPolicies` is disabled, or enabled only where a tenant's own NetworkPolicy can't widen the platform network boundary (a higher-precedence control, or host admission constraining synced `ipBlock` peers).
+- [ ] `sync.toHost.networkPolicies` is disabled, or enabled only where a tenant's own NetworkPolicy can't widen the platform network boundary (a higher-precedence control, or host admission constraining synced `ipBlock` peers and rejecting rules with no peer list).
 - [ ] Multus namespace isolation, per-tenant NAD ownership, and admission allowlisting are in place if secondary networks are reachable.
 - [ ] LoadBalancer address pools are scoped per tenant, and public IP exposure is an explicit opt-in.
 - [ ] Tenant Ingress hostname claims can't collide across tenants, through namespace-scoped per-tenant controllers, or host admission that covers `spec.ingressClassName`, the legacy `kubernetes.io/ingress.class` annotation, and classless Ingresses on a shared controller. Gateway API sync, where used, has an `allowedRoutes` hostname allowlist configured on the imported Gateway.
@@ -381,7 +382,7 @@ Before onboarding trusted tenants onto shared nodes, confirm each group below.
 
 ## Related pages
 
-- [Shared-node admission policy examples](./shared-nodes-admission-examples.mdx) for worked Kyverno policies covering the toleration and NetworkPolicy `ipBlock` controls above.
+- [Shared-node admission policy examples](./shared-nodes-admission-examples.mdx) for worked Kyverno policies covering the toleration and NetworkPolicy peer controls above.
 - [Secure vCluster deployments](./README.mdx) for the general security baseline and control plane hardening.
 - [GPU and accelerator support](../introduction/gpu-and-accelerator-support.mdx) for how vCluster syncs device resources between tenant and control plane clusters.
 - [CIS hardening guide](../deploy/control-plane/kubernetes-pod/security/hardening-guide/overview.mdx) for control plane component and API server benchmark hardening.
