@@ -18,6 +18,16 @@ Hardening doesn't change the trust boundary. Shared nodes give each tenant contr
 A provider that exposes its own models or services behind an API, with no tenant Kubernetes access, isn't in scope here. That's application-level tenancy, not Kubernetes tenant isolation, so it doesn't need private nodes for that reason alone. Ordinary application and infrastructure hardening still applies.
 :::
 
+## Prerequisites
+
+Confirm these before applying this guide:
+
+- A control plane cluster CNI that enforces NetworkPolicy. If you plan to sync tenant NetworkPolicies, you also need either AdminNetworkPolicy or an equivalent CNI-specific tiered policy. A control plane cluster admission policy that constrains translated `ipBlock` peers works too.
+- The ability to deploy your own admission control, such as Kyverno or OPA Gatekeeper, on the control plane cluster, outside vCluster. Several controls in this guide depend on it.
+- The ability to enforce admission inside every tenant cluster, for example through centrally configured admission webhooks locked into the VirtualClusterTemplate with `policies.centralAdmission`. The toleration controls in this guide need this specifically, since only tenant-cluster admission sees a Pod before `enforceTolerations` injection.
+- [VirtualClusterTemplate](/platform/administer/templates/create-templates) enforcement through vCluster Platform, so tenants can't loosen the baseline.
+- vCluster v0.34.0 or later. Earlier versions don't scope kubelet-proxy pod-listing and container-log responses to the tenant's own pods.
+
 ## Threat model and responsibility matrix
 
 Shared nodes give each tenant cluster its own API server, namespaces, and RBAC. They don't give each tenant its own kernel, kubelet, node filesystem, scheduler, host network, CNI, CSI, or device plugins. Every tenant workload that reaches the node shares those components with every other tenant on that node.
@@ -47,8 +57,11 @@ policies:
     enabled: true
   networkPolicy:
     enabled: true
+    workload:
+      publicEgress:
+        enabled: false
   # centralAdmission: configure with your policy engine's actual webhooks,
-  # see the table below. There's no standalone enable flag.
+  # see the explanation below. There's no standalone enable flag.
 
 sync:
   toHost:
@@ -83,10 +96,13 @@ This baseline sets the following foundation:
   vCluster enforces no Pod Security Standard unless you set one. `restricted` requires containers to run as non-root and blocks privilege escalation. It doesn't reliably stop reads or writes to a mounted host path reached through a PVC. Kubernetes permits PVC volumes under `restricted`, and file permissions, `fsGroup`, and supplemental groups still govern access. The control plane cluster admission described in [Storage breakout prevention](#storage-breakout-prevention) is the actual mitigation. Use `baseline` only where a workload genuinely can't run under `restricted`, and treat that as a documented compatibility tradeoff, not a default.
 - **`policies.resourceQuota`, `policies.limitRange`**. Default: `auto`
 
-  Enabling one automatically enables the other. Both apply to the control plane cluster namespace where the tenant's synced objects land, capping CPU, memory, and object counts there. They don't cap what a tenant stores in the tenant cluster's own [backing store](../configure/vcluster-yaml/control-plane/components/backing-store/README.mdx). A tenant creating large numbers of ConfigMaps, Secrets, or custom resources that never sync to the host can still exhaust that backing store's capacity. Constrain that separately with quotas inside the tenant cluster itself and with backing-store-level storage and object-count limits.
+  Enabling one automatically enables the other. Both apply to the control plane cluster namespace where the tenant's synced objects land, capping CPU, memory, and object counts there. They don't cap what a tenant stores in the tenant cluster's own [backing store](../configure/vcluster-yaml/control-plane/components/backing-store/README.mdx). A tenant creating large numbers of ConfigMaps, Secrets, or custom resources that never sync to the host can still exhaust that backing store's capacity. Constrain that separately with quotas inside the tenant cluster itself and with backing-store-level storage and object-count limits. Enabling either setting also activates the chart's default values, for example a 10 CPU request cap, a 20-pod limit, and one allowed LoadBalancer Service. Review and set these explicitly for your tenant's actual sizing tier rather than accepting the defaults as a generic security switch.
 - **`policies.networkPolicy`**. Default: `false`.
 
   Creates NetworkPolicies for the vCluster control plane and workload traffic in the control plane cluster namespace. Requires an enforcing CNI, see [Network and endpoint isolation](#network-and-endpoint-isolation).
+- **`policies.networkPolicy.workload.publicEgress.enabled: false`**. Default: `true` once `networkPolicy` is enabled.
+
+  Enabling `networkPolicy` alone pulls in a permissive default egress rule allowing `0.0.0.0/0`, excepting only a handful of private ranges. That exception list doesn't include link-local addresses, so cloud metadata endpoints such as `169.254.169.254` stay reachable. Disable public egress by default, and treat enabling it as an explicit, scoped opt-in per tenant cluster, not per workload. `workload.publicEgress` generates one rule covering every workload this vCluster instance syncs. Granular per-workload exceptions need separately managed host-side NetworkPolicy objects with narrower selectors.
 - **`policies.centralAdmission`**. No default.
 
   There's no enable flag to begin with. Configure `mutatingWebhooks` or `validatingWebhooks` pointing at a reachable policy engine. The webhook plumbing alone enforces nothing, see [Admission and policy coverage](#admission-and-policy-coverage).
@@ -114,6 +130,16 @@ This baseline sets the following foundation:
 
 Enforce this configuration through required [VirtualClusterTemplates](/platform/administer/templates/create-templates) so tenants can't loosen it. A tenant with unrestricted `vcluster.yaml` access can undo every setting in this list.
 
+## Rollout sequence
+
+Apply this baseline in stages, not as a single cutover:
+
+1. **Audit first.** Deploy admission policies in `Audit` mode, for example Kyverno's per-rule `failureAction: Audit`, where your policy engine supports it. Standard Kubernetes NetworkPolicy has no built-in audit mode. Staged or audit enforcement for network policy is CNI-specific, for example Calico's staged policies or Cilium's audit mode. Confirm what would be denied before anything is actually denied.
+2. **Fix exceptions.** Work through genuine denials with the workload owner, not by loosening the policy. A workload that needs a wildcard toleration or a broad egress rule usually needs a narrower one, not an exemption.
+3. **Enforce the policy.** Switch each policy's own enforcement setting, such as Kyverno's `failureAction`, from `Audit` to `Enforce`, once the audit period surfaces no unexpected denials.
+4. **Then harden the webhook.** Separately, move the admission webhook's own `failurePolicy` from `Ignore` to `Fail` once you've validated the webhook is reliably reachable. `failurePolicy` governs what happens if the webhook itself is unavailable, a different concern from whether the policy denies a violation. A misconfigured fail-closed webhook can block all workload creation, so validate readiness and rollback behavior before this step.
+5. **Re-verify after every change.** A CNI upgrade, a new admission policy version, or a vCluster upgrade can silently change enforcement behavior. Repeat the audit step after any of them.
+
 ## Storage breakout prevention
 
 [Pod Security Standards](../configure/vcluster-yaml/policies/pod-security-standard.mdx) evaluate the Pod spec. `restricted` rejects a Pod that mounts a `hostPath` volume directly. It has no way to inspect what a PersistentVolume's `spec.hostPath` points at. From the Pod's perspective, that volume is a `persistentVolumeClaim`, not a `hostPath` volume.
@@ -126,6 +152,36 @@ If [`sync.toHost.persistentVolumes`](../configure/vcluster-yaml/sync/to-host/sto
 - Apply the same "can this create host-side capability indirectly" review to any other cluster-scoped or custom resource you sync to the control plane cluster. A resource that looks tenant-scoped from inside the tenant cluster can still resolve to a host-side object once synced.
 - The same admission should deny `hostPath` volumes targeting device nodes under `/dev`, such as `/dev/nvidia0`. See [GPU and device isolation](#gpu-and-device-isolation).
 
+A Kyverno `ClusterPolicy` for the PersistentVolume denial looks like this. The `vcluster.loft.sh/managed-by` selector scopes it to PersistentVolumes vCluster translated from a tenant cluster. It doesn't affect unrelated hostPath or local PVs that already exist on the control plane cluster for other platform workloads. Start with `Audit`, confirm no legitimate PersistentVolume gets flagged, then switch to `Enforce` per the [Rollout sequence](#rollout-sequence):
+
+```yaml title="deny-hostpath-pv.yaml"
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: deny-hostpath-persistentvolumes
+spec:
+  background: true
+  rules:
+    - name: deny-hostpath-pv
+      match:
+        any:
+          - resources:
+              kinds:
+                - PersistentVolume
+              selector:
+                matchExpressions:
+                  - key: vcluster.loft.sh/managed-by
+                    operator: Exists
+      validate:
+        failureAction: Audit
+        message: "PersistentVolumes with spec.hostPath are not permitted on shared nodes."
+        pattern:
+          spec:
+            X(hostPath): "null"
+```
+
+This same field-absence pattern applies directly to the device-node `hostPath` case in [GPU and device isolation](#gpu-and-device-isolation), since it's the same kind of PersistentVolume object. The `ipBlock` allowlist and wildcard-toleration checks elsewhere in this guide need different Kyverno constructs. They check specific field values and traverse a list, rather than test whether one field is present. Write and test those separately.
+
 ## Network and endpoint isolation
 
 ### Primary pod network
@@ -136,7 +192,14 @@ Kubernetes NetworkPolicies are additive. A pod governed by several policies gets
 
 Label-based peers don't have this problem the same way. vCluster adds a namespace and vcluster marker label to a tenant's `podSelector` and label-based peers. A tenant can only select or target pods in their own translated namespace, never another tenant's. `ipBlock` peers carry no tenant identity for vCluster to constrain, so they pass through as written.
 
-Only sync tenant NetworkPolicies where the platform boundary itself sits at a precedence a tenant's own NetworkPolicy can't override. Kubernetes' AdminNetworkPolicy is built for this, since a `Deny` action there takes effect regardless of any NetworkPolicy. `BaselineAdminNetworkPolicy` doesn't qualify. It's evaluated after NetworkPolicy and is designed to be overridden by it, so it can't protect this boundary. CNI-specific tiered policies can also work, but only if they're configured with genuine precedence over NetworkPolicy. A Calico `GlobalNetworkPolicy` with a `Deny` action and a lower `order` than tenant policies qualifies. For Cilium, an ordinary `CiliumClusterwideNetworkPolicy` allow rule doesn't. Its allow rules are additive with NetworkPolicy, just like `BaselineAdminNetworkPolicy`. Only an explicit `ingressDeny` or `egressDeny` rule takes precedence over any allow rule, regardless of source. Otherwise, leave `sync.toHost.networkPolicies` disabled, or add control plane cluster admission that denies synced NetworkPolicies with an `ipBlock` peer outside an explicit allowlist.
+**Only sync tenant NetworkPolicies where the platform boundary itself sits at a precedence a tenant's own NetworkPolicy can't override.** Otherwise, leave `sync.toHost.networkPolicies` disabled, or add control plane cluster admission that denies synced NetworkPolicies with an `ipBlock` peer outside an explicit allowlist.
+
+| Control | Qualifies? | Why |
+| --- | --- | --- |
+| Kubernetes `AdminNetworkPolicy` | Yes | A `Deny` action there takes effect regardless of any NetworkPolicy. |
+| Kubernetes `BaselineAdminNetworkPolicy` | No | Evaluated after NetworkPolicy, and designed to be overridden by it. |
+| Calico `GlobalNetworkPolicy` | Yes, if configured for it | Needs a `Deny` action and a lower `order` than tenant policies. |
+| Cilium `CiliumClusterwideNetworkPolicy` | No, unless using deny rules | Ordinary allow rules are additive with NetworkPolicy, same as `BaselineAdminNetworkPolicy`. Only an explicit `ingressDeny` or `egressDeny` rule takes precedence over any allow rule, regardless of source. |
 
 NetworkPolicy governs the primary pod network interface, including a VM's primary interface through its `virt-launcher` Pod. It doesn't cover Multus secondary interfaces or direct underlay network attachments. Host-network Pod traffic is undefined in the Kubernetes NetworkPolicy spec and CNI-dependent. Most CNIs ignore it, but confirm your CNI's actual behavior rather than assuming either way.
 
@@ -172,7 +235,12 @@ Scope LoadBalancer address pools (for example, MetalLB `IPAddressPool`) with nam
 
 vCluster syncs a tenant's [Ingress](../configure/vcluster-yaml/sync/to-host/networking/ingresses.mdx) `spec.rules[].host` unchanged. Nothing scopes a tenant's hostname claim to their own tenant cluster. A tenant can claim a hostname that belongs to another tenant or to platform infrastructure. If multiple tenant clusters share the control plane cluster's ingress controller, that controller decides which tenant's rule wins. That's the controller's own conflict-resolution behavior, not a Kubernetes-enforced boundary.
 
-A dedicated per-tenant IngressClass alone doesn't isolate tenants, since vCluster preserves a tenant's `spec.ingressClassName` unchanged and a tenant can still name another tenant's class. A per-tenant IngressClass paired with a controller instance that only watches that tenant's own host namespace closes this regardless of which class a tenant names. [`sync.fromHost.ingressClasses`](../configure/vcluster-yaml/sync/from-host/ingress-classes.mdx) with a selector only helps partially. It skips the check entirely when `spec.ingressClassName` is empty, or when a tenant uses the legacy `kubernetes.io/ingress.class` annotation instead. If you rely on it, pair it with control plane cluster admission that also constrains those two paths and any classless Ingress that would fall through to a default class. If tenants must share one controller, add control plane cluster admission that restricts which hostnames a given tenant namespace's Ingress can claim. Confirm your specific ingress controller's own behavior on cross-namespace hostname collisions rather than assuming isolation.
+A dedicated per-tenant IngressClass alone doesn't isolate tenants, since vCluster preserves a tenant's `spec.ingressClassName` unchanged and a tenant can still name another tenant's class. Isolate tenants one of two ways:
+
+- **Namespace-scoped controller.** Pair a per-tenant IngressClass with a controller instance that only watches that tenant's own host namespace. This closes the gap regardless of which class a tenant names.
+- **Enforced class selection.** Enable [`sync.fromHost.ingressClasses`](../configure/vcluster-yaml/sync/from-host/ingress-classes.mdx) with a selector, and pair it with control plane cluster admission. The selector alone only helps partially. It skips the check when `spec.ingressClassName` is empty, and it doesn't inspect the legacy `kubernetes.io/ingress.class` annotation. Admission needs to cover both of those paths, plus any classless Ingress that would fall through to a default class.
+
+If tenants must share one controller, add control plane cluster admission that restricts which hostnames a given tenant namespace's Ingress can claim. Confirm your specific ingress controller's own behavior on cross-namespace hostname collisions rather than assuming isolation.
 
 [Gateway API sync](../configure/vcluster-yaml/sync/to-host/networking/gateway-api.mdx) is the safer default for new workloads. vCluster validates a tenant's HTTPRoute or TLSRoute against the imported Gateway's `allowedRoutes` hostname overrides before sync, when the platform operator configures one. Configure that allowlist. Enabling Gateway API sync alone doesn't create it. Tenant-created Gateways synced through `sync.toHost.gatewayApi.gateways` reintroduce the same hostname claim problem, since the tenant then owns the listener hostname directly.
 
@@ -187,7 +255,10 @@ vCluster's [node selector](../configure/vcluster-yaml/sync/from-host/nodes.mdx) 
 
 Blocking those tolerations has to run at two different layers, because vCluster injects the tenant-pool toleration during sync, after the tenant-authored Pod has already passed tenant-cluster admission:
 
-- **Tenant-cluster admission** sees the tenant-authored Pod before that injection happens. It can deny any tenant-authored toleration capable of matching a protected infrastructure taint without ever seeing the toleration `enforceTolerations` adds later. Match the full Kubernetes toleration semantics, not just an exact key comparison. An empty key with `operator: Exists` matches every taint key. `operator: Exists` alone matches every value for its key. An empty effect matches every effect for its key.
+- **Tenant-cluster admission** sees the tenant-authored Pod before that injection happens. Deny any tenant-authored toleration capable of matching a protected infrastructure taint, without ever seeing the toleration `enforceTolerations` adds later. Match the full Kubernetes toleration semantics, not just an exact key comparison:
+  - An empty key with `operator: Exists` matches every taint key.
+  - `operator: Exists` alone matches every value for its key.
+  - An empty effect matches every effect for its key.
 - **Host-side admission** sees the translated Pod after injection, so it can't distinguish a tenant-supplied toleration from an injected one. Permit the exact tenant-pool toleration and the Kubernetes node-condition tolerations your workloads require, including the automatically added `node.kubernetes.io/not-ready` and `node.kubernetes.io/unreachable` tolerations. Deny every other toleration capable of matching a protected infrastructure taint, including wildcard key, value, or effect combinations.
 
 ## GPU and device isolation
@@ -206,15 +277,31 @@ A device node under `/dev`, for example `/dev/nvidia0`, can be mounted through a
 
 Tenant-cluster admission and control plane cluster admission see different objects. Tenant admission never sees translated and synced objects. Tenant admission also doesn't see workloads that a host-side controller generates from a tenant custom resource, such as a `virt-launcher` pod from a VM. Host-side admission is required to cover those. Apply a consistent Pod Security or admission floor across every tenant namespace on the control plane cluster, not just the ones you remembered to configure.
 
-Roll out `failurePolicy: Fail` only after testing readiness and failure behavior, since a misconfigured fail-closed webhook can block all workload creation. Scope any exemptions narrowly to vCluster's own system components, not broadly to entire namespaces.
+See [Rollout sequence](#rollout-sequence) before enabling `failurePolicy: Fail`. Scope any exemptions narrowly to vCluster's own system components, not broadly to entire namespaces.
 
 ## Availability, disclosure, and lifecycle
 
 - **PriorityClass sync.** [`sync.toHost.priorityClasses`](../configure/vcluster-yaml/sync/to-host/advanced/priority-classes.mdx) lets a tenant's PriorityClass affect scheduling on shared nodes. Leave it disabled, or constrain synced values through control plane cluster admission, so one tenant can't preempt another tenant's workloads.
 - **Quotas and limits.** Apply `resourceQuota` and `limitRange` for Pods, and equivalent limits for storage, Services, and VM or VM-pool expansion where KubeVirt is in use. Without them, one tenant can exhaust capacity for every tenant on the same nodes.
-- **Node and kubelet disclosure.** [`networking.advanced.proxyKubelets`](../configure/vcluster-yaml/networking/advanced.mdx) mediates a kubelet proxy behind metrics scraping and `kubectl top node`. On vCluster v0.34.0 and later, its pod-listing and container-log paths are scoped to the tenant's own pods. Container log access is also validated against pod and container ownership. `kubectl logs` and `exec` are unaffected regardless of version, since they use an independent, ownership-validated path. Node-level metric samples without a pod or PVC label aren't scoped by any of this and remain visible to any tenant with the proxy enabled. Disable `proxyKubelets` unless you need the metrics workflow, both to close that remaining gap and as a safeguard on any version older than v0.34.0. When [`sync.fromHost.nodes`](../configure/vcluster-yaml/sync/from-host/nodes.mdx) is enabled, pair it with `clearImageStatus: true`. Require kubelet authentication and authorization, and disable the kubelet read-only port on every shared node regardless of these settings.
+- **Node and kubelet disclosure.** Disable [`networking.advanced.proxyKubelets`](../configure/vcluster-yaml/networking/advanced.mdx) unless you need the metrics workflow it backs (`kubectl top node` and kubelet metrics scraping). Node-level metric samples without a pod or PVC label aren't scoped to the tenant and remain visible whenever the proxy is enabled, regardless of vCluster version. On vCluster v0.34.0 and later, its pod-listing and container-log paths are scoped to the tenant's own pods. Disabling `proxyKubelets` is a safeguard mainly for versions older than that. `kubectl logs` and `exec` are unaffected either way, since they use an independent, ownership-validated path. When [`sync.fromHost.nodes`](../configure/vcluster-yaml/sync/from-host/nodes.mdx) is enabled, pair it with `clearImageStatus: true`. Require kubelet authentication and authorization, and disable the kubelet read-only port on every shared node regardless of these settings.
 - **Patching.** Keep the control plane cluster, node OS, node kernel, container runtime, CNI, CSI, KubeVirt, Multus, and vCluster itself on supported, security-patched versions. A container-escape-class kernel vulnerability turns any workload-level gap in this guide into full node compromise.
-- **Verify, don't just declare.** Periodically validate the effective controls on shared nodes, not only the `vcluster.yaml` and templates that are supposed to produce them. [Audit logs](../manage/logging.mdx#audit-logs) from the tenant cluster, [audit logging](/platform/configure/platform-configs/audit) on the control plane cluster, and [monitoring](/platform/maintenance/monitoring/overview) on both sides catch drift between declared and effective configuration.
+- **Verify, don't just declare.** Periodically validate the effective controls on shared nodes, not only the `vcluster.yaml` and templates that are supposed to produce them. [Audit logs](../manage/logging.mdx#audit-logs) from the tenant cluster, [audit logging](/platform/configure/platform-configs/audit) on the control plane cluster, and [monitoring](/platform/maintenance/monitoring/overview) on both sides catch drift between declared and effective configuration. See [Validate the baseline](#validate-the-baseline) for the launch-gate tests to run before the first tenant, and repeat periodically.
+- **Tenant offboarding.** Deprovisioning a tenant is a separate control from onboarding it. Revoke the tenant's Platform and RBAC credentials first. Normal vCluster deletion removes the resources it synced or created on the control plane cluster, so most cleanup is automatic. Imported host resources, such as a referenced DeviceClass or NetworkAttachmentDefinition, correctly remain, since the tenant never owned them. Verify storage cleanup separately. A PersistentVolume with `reclaimPolicy: Retain` survives deletion by design, and that's the storage class's decision to preserve data, not a vCluster gap. Confirm no synced or controller-generated objects remain in the control plane cluster after deletion. This includes `virt-launcher` Pods and other host-side objects a controller generated from the tenant's custom resources.
+
+## Validate the baseline
+
+Test a representative sample of these controls before onboarding tenants, and extend the same pattern to every item in the checklist below.
+
+| Test | Attempt, as a tenant | Expected result |
+| --- | --- | --- |
+| Cross-tenant network reachability | Reach another tenant's Pod IP or Service directly | Denied by the platform default-deny NetworkPolicy |
+| Cloud metadata endpoint | Reach `169.254.169.254` from a workload Pod | Denied, once `workload.publicEgress` is scoped |
+| hostPath PV creation, default baseline | Create a PersistentVolume with `spec.hostPath` set | No host-side PV or `hostPath` mount is created, since `sync.toHost.persistentVolumes` is disabled |
+| hostPath PV creation, PV sync enabled | Create a PersistentVolume with `spec.hostPath` set | Denied by control plane cluster admission |
+| Wildcard toleration | Create a Pod with an empty-key, `Exists` toleration | Denied by tenant-cluster admission |
+| Cross-tenant Ingress claim | Create an Ingress naming another tenant's hostname or IngressClass | Denied, or served only by that tenant's own controller |
+
+Include a positive test alongside each denial. A tenant's own DNS resolution, API access, and approved workload-to-workload traffic should keep working. A baseline that blocks legitimate traffic is as much a rollout failure as one that permits an attack path.
 
 ## Shared-node hardening checklist
 
@@ -233,6 +320,7 @@ Before onboarding trusted tenants onto shared nodes, confirm each group below.
 **Network and endpoint isolation**
 
 - [ ] `policies.networkPolicy` is enabled, and the control plane cluster CNI is confirmed to enforce NetworkPolicy.
+- [ ] `policies.networkPolicy.workload.publicEgress` is disabled, or scoped to an explicit CIDR that excludes link-local addresses (`169.254.0.0/16`) and any other management or metadata endpoints.
 - [ ] `sync.toHost.networkPolicies` is disabled, or enabled only where a tenant's own NetworkPolicy can't widen the platform network boundary (a higher-precedence control, or host admission constraining synced `ipBlock` peers).
 - [ ] Multus namespace isolation, per-tenant NAD ownership, and admission allowlisting are in place if secondary networks are reachable.
 - [ ] LoadBalancer address pools are scoped per tenant, and public IP exposure is an explicit opt-in.
@@ -255,6 +343,7 @@ Before onboarding trusted tenants onto shared nodes, confirm each group below.
 **Enforcement**
 
 - [ ] All of the above is enforced through required Platform templates, not left to individual tenant-cluster configuration.
+- [ ] The [validation tests](#validate-the-baseline) above have been run against this tenant's actual deployment, not just declared in `vcluster.yaml`.
 
 ## Related pages
 
