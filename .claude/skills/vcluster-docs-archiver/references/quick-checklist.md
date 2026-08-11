@@ -79,6 +79,16 @@ Common patterns to fix:
 }
 ```
 
+**File:** `netlify.toml` (this repo — separate from the vcluster.com redirects in step 7)
+- [ ] Add a row to the "Removed vCluster versions — redirect to latest" block, in ascending version order:
+```toml
+[[redirects]]
+  from = "/docs/vcluster/0.XX.0/*"
+  to = "/docs/vcluster/:splat"
+  status = 301
+```
+- [ ] Without this, the long-form `/docs/vcluster/0.XX.0/*` URL 404s instead of falling back to latest — deleting the versioned folder in this step removes the build path, but doesn't redirect it.
+
 ## Verification
 - [ ] EOL branch builds successfully with only its version
 - [ ] Netlify deployment is accessible
@@ -86,6 +96,7 @@ Common patterns to fix:
 - [ ] A live response contains an `X-Robots-Tag` header with `noindex`
 - [ ] Redirects from vcluster.com work correctly
 - [ ] Version appears in main docs dropdown and redirects properly
+- [ ] Long-form URL `vcluster.com/docs/vcluster/0.XX.0/*` redirects to latest (not a 404)
 
 ## Notes
 - Each EOL branch is self-contained with only its version documentation
