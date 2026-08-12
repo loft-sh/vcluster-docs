@@ -67,7 +67,9 @@ Once an instance exists, template sync state lives in two status conditions: `Te
 <InterpolatedCodeBlock
   code={
 'kubectl -n [[VAR:PROJECT_NAMESPACE:loft-p-my-project]] get virtualclusterinstance [[VAR:VCLUSTER_INSTANCE_NAME:my-vcluster]] \\\n' +
-'  -o jsonpath=\'{range .status.conditions[?(@.type=="TemplateResolved")]}{.status}{" "}{.reason}{" "}{.message}{"\\n"}{end}\''
+'  -o jsonpath=\'{range .status.conditions[?(@.type=="TemplateResolved")]}{.type}{" "}{.status}{" "}{.reason}{" "}{.severity}{" "}{.message}{"\\n"}{end}{range .status.conditions[?(@.type=="TemplateSynced")]}{.type}{" "}{.status}{" "}{.reason}{" "}{.severity}{" "}{.message}{"\\n"}{end}\'\n' +
+'kubectl -n [[VAR:PROJECT_NAMESPACE:loft-p-my-project]] get spaceinstance [[VAR:SPACE_INSTANCE_NAME:my-space]] \\\n' +
+'  -o jsonpath=\'{range .status.conditions[?(@.type=="TemplateResolved")]}{.type}{" "}{.status}{" "}{.reason}{" "}{.severity}{" "}{.message}{"\\n"}{end}{range .status.conditions[?(@.type=="TemplateSynced")]}{.type}{" "}{.status}{" "}{.reason}{" "}{.severity}{" "}{.message}{"\\n"}{end}\''
   }
   language="bash"
 />
@@ -211,7 +213,26 @@ A ref that omits `key` only resolves automatically when the secret has exactly o
 
 An `ArgoCDApplicationTemplate` is a reusable Argo CD `ApplicationSpec`, referenced from `deploy.argoCD.applications` in a tenant cluster's `vcluster.yaml`. See [Deploy applications](../integrations/argocd/deploy-applications.mdx). The platform renders each reference into an `ArgoCDApplication` object and reconciles that onto the connected Argo CD instance, a third mechanism with its own `Synced` condition and reasons, independent from both template sync and App sync.
 
-A tenant cluster's own `Ready` condition doesn't reflect the health of its Argo CD-deployed applications. A VirtualClusterInstance aggregates any of its `ArgoCDApplication` objects reporting an error-severity `Synced: False` into its own `ArgoCDIntegrationSynced` condition, reason `ArgoCDApplicationFailed`, but that condition isn't part of the `Ready` summary. A tenant cluster can report `Ready` while an application it deploys through Argo CD is failing. Check `ArgoCDIntegrationSynced` explicitly, then inspect the named `ArgoCDApplication` object's own `Synced` condition and message for the root cause.
+A tenant cluster's own `Ready` condition doesn't reflect the health of its Argo CD-deployed applications. A VirtualClusterInstance aggregates any of its `ArgoCDApplication` objects reporting an error-severity `Synced: False` into its own `ArgoCDIntegrationSynced` condition, reason `ArgoCDApplicationFailed`, but that condition isn't part of the `Ready` summary. It also only reflects error-severity failures. An info-severity issue like `ClusterRegistrationPending` never flips it, so a healthy `ArgoCDIntegrationSynced` doesn't rule out that case. Check `ArgoCDIntegrationSynced` first for error-severity failures, then check each application directly regardless of what it reports.
+
+<InterpolatedCodeBlock
+  code={
+'kubectl -n [[VAR:PROJECT_NAMESPACE:loft-p-my-project]] get virtualclusterinstance [[VAR:VCLUSTER_INSTANCE_NAME:my-vcluster]] \\\n' +
+'  -o jsonpath=\'{range .status.conditions[?(@.type=="ArgoCDIntegrationSynced")]}{.status}{" "}{.reason}{" "}{.message}{"\\n"}{end}\''
+  }
+  language="bash"
+/>
+
+The `ArgoCDApplication` resource name can be platform-generated and differ from the application's `displayName` (see [Application naming](../integrations/argocd/deploy-applications.mdx#application-naming)), so list this tenant cluster's applications before inspecting one by name:
+
+<InterpolatedCodeBlock
+  code={
+'kubectl -n [[VAR:PROJECT_NAMESPACE:loft-p-my-project]] get argocdapplication -l loft.sh/vcluster-instance-name=[[VAR:VCLUSTER_INSTANCE_NAME:my-vcluster]]'
+  }
+  language="bash"
+/>
+
+Then inspect the one that's failing:
 
 <InterpolatedCodeBlock
   code={
@@ -239,4 +260,4 @@ Or get the full object:
 | `Synced` condition `False`, reason `InvalidSyncAnnotation` | An annotation on the application that controls Argo CD sync behavior is malformed. | Check the condition message for which annotation, then fix it in the template or application spec. |
 | `Synced` condition `False`, reason `BuildApplicationFailed`, `GetClusterFailed`, `GetApplicationFailed`, `RefreshApplicationFailed`, `UpsertApplicationFailed`, `SyncApplicationFailed`, or `DeleteApplicationFailed` | The platform failed to build, read, or write the application against the Argo CD API itself. | Check the condition message for the underlying API error. |
 
-To confirm a fix worked, re-run the command above and check that `Synced` reads `True`, then confirm `ArgoCDIntegrationSynced` clears on the tenant cluster too.
+To confirm a fix worked, re-run the command above and check that `Synced` reads `True`. On a managed integration, `ArgoCDIntegrationSynced` on the tenant cluster reads `True` once every application is healthy again. It doesn't disappear. Absence there is only expected if the Argo CD integration itself is no longer managed.
