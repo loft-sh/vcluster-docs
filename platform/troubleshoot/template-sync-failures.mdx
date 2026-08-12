@@ -1,20 +1,33 @@
 ---
-title: Troubleshoot template sync failures
-sidebar_label: Template Sync Failures
-description: Diagnose why a tenant cluster or namespace isn't picking up its template configuration, and resolve the underlying cause.
+title: Troubleshoot template and app sync failures
+sidebar_label: Template & App Sync Failures
+description: Diagnose why a tenant cluster, namespace, or app instance isn't picking up its template configuration, and resolve the underlying cause.
 ---
 
 import InterpolatedCodeBlock from "@site/src/components/InterpolatedCodeBlock";
 
-"Template sync" here means the process that resolves a [template](../understand/what-are-templates.mdx), and for versioned templates a specific version, into the configuration applied to a <GlossaryTerm term="tenant-cluster">tenant cluster</GlossaryTerm> or namespace. It also covers keeping that configuration up to date as the template changes. This is a different mechanism from the <GlossaryTerm term="vcluster">vCluster</GlossaryTerm> resource syncer (`sync.toHost`/`sync.fromHost` in `vcluster.yaml`), which moves individual Kubernetes objects between the tenant cluster and the <GlossaryTerm term="control-plane-cluster">control plane cluster</GlossaryTerm>. See the [vCluster sync configuration reference](/docs/vcluster/configure/vcluster-yaml/sync) for that mechanism. If you're chasing a missing or duplicated Kubernetes object rather than a template not applying, you likely want that page instead.
+This runbook covers three separate sync mechanisms, each with its own status conditions and its own section below. Use it when a <GlossaryTerm term="tenant-cluster">tenant cluster</GlossaryTerm>, namespace, or app instance created from a template fails to come up, shows an outdated configuration, or doesn't pick up a template edit the way you expected.
 
-This runbook covers VirtualClusterInstance and SpaceInstance, which report sync state through `TemplateResolved`/`TemplateSynced` conditions. App instances (AppInstance) use a separate reconciler with different conditions (`Synced`, `Deployed`) and reasons such as `AppNotFound` and `DeployFailed`, and aren't covered here.
+1. **VirtualClusterInstance and SpaceInstance template sync**, reported through `TemplateResolved`/`TemplateSynced` conditions. Covered in [Template sync failures](#template-sync-failures).
 
-Use this runbook when a tenant cluster or namespace created from a template fails to come up or shows an outdated configuration. It also covers a template edit that doesn't reach a resource the way you expected. Every table below follows the same layout: **Signal** is what you observe, **Cause** is why it happens, **Resolution** is what to do about it.
+   "Template sync" means the process that resolves a [template](../understand/what-are-templates.mdx), and for versioned templates a specific version, into the configuration applied to a tenant cluster or namespace. It also covers keeping that configuration up to date as the template changes.
+2. **[Apps](../understand/what-are-apps.mdx)** (AppInstance), which report `Synced`/`Deployed` conditions with reasons like `AppNotFound` and `DeployFailed`. Covered in [App sync failures](#app-sync-failures).
+3. **Argo CD-deployed applications** (ArgoCDApplication/ArgoCDApplicationTemplate, declared through `deploy.argoCD.applications` in `vcluster.yaml`), which report their own `Synced` condition. A tenant cluster's `Ready` condition doesn't reflect this condition's health. Covered in [Argo CD ApplicationTemplate sync failures](#argo-cd-applicationtemplate-sync-failures).
 
-## Where the failure happens
+A healthy tenant cluster or namespace doesn't mean every app or Argo CD deployment it hosts is healthy too. Each mechanism's conditions are independent, and a failure in one doesn't necessarily surface in another. Every table below follows the same layout: **Signal** is what you observe, **Cause** is why it happens, **Resolution** is what to do about it.
 
-Template sync failures show up in three different places, depending on when the failure occurs. Find the one that matches what you're seeing, then jump to that section.
+
+:::note
+This is a different mechanism from the <GlossaryTerm term="vcluster">vCluster</GlossaryTerm> resource syncer (`sync.toHost`/`sync.fromHost` in `vcluster.yaml`), which moves individual Kubernetes objects between the tenant cluster and the <GlossaryTerm term="control-plane-cluster">control plane cluster</GlossaryTerm>. See the [vCluster sync configuration reference](/docs/vcluster/configure/vcluster-yaml/sync) for that mechanism. If you're chasing a missing or duplicated Kubernetes object rather than a template not applying, you likely want that page instead.
+:::
+
+## Template sync failures
+
+VirtualClusterInstance and SpaceInstance report template sync state through `TemplateResolved` and `TemplateSynced` conditions. A failure shows up in three different places, depending on when it occurs.
+
+### Where the failure happens
+
+Find the case that matches what you're seeing, then jump to that section. If you're troubleshooting an app instance instead, skip to [App sync failures](#app-sync-failures). For an application deployed through the Argo CD integration, see [Argo CD ApplicationTemplate sync failures](#argo-cd-applicationtemplate-sync-failures).
 
 1. **At creation or update time**: `kubectl apply` or the platform UI rejects the request outright. Nothing is created or changed. Go to [Failures at creation or update time](#failures-at-creation-or-update-time).
 2. **After creation, during reconciliation**: the instance exists, but its status conditions show the template never resolved, or resolved but never synced. Go to [Failures during reconciliation](#failures-during-reconciliation) and match the condition reason.
@@ -30,7 +43,7 @@ For case 2, check the instance's status conditions first to confirm which reason
   language="bash"
 />
 
-## Failures at creation or update time
+### Failures at creation or update time
 
 These are rejected before any object is created or changed, so there's no instance to inspect. The error text comes back directly from the `kubectl apply`, `helm` command, or platform UI action.
 
@@ -45,7 +58,7 @@ These are rejected before any object is created or changed, so there's no instan
 | Proxy target access rejected | An inline template's `helmRelease.values` references a resource proxy target the caller isn't authorized to use. This is checked separately from `access.rules`, and only applies to inline templates. | Adjust the proxy target configuration in the template's values, or have someone with access to that proxy target make the change. |
 | `virtualclusterinstances` (or similar) quota would be exceeded, triggered by a template change | Switching an instance to a different template pushed usage over a project quota. | See [Troubleshoot quota and admission denials](./quota-admission.mdx). |
 
-## Failures during reconciliation
+### Failures during reconciliation
 
 Once an instance exists, template sync state lives in two status conditions: `TemplateResolved` and `TemplateSynced`. `TemplateSynced` never controls readiness. Use its reason and severity to judge whether it needs action, rather than treating `False` as a failure on its own.
 
@@ -59,7 +72,7 @@ Once an instance exists, template sync state lives in two status conditions: `Te
   language="bash"
 />
 
-### `TemplateResolved` reasons
+#### `TemplateResolved` reasons
 
 | Signal | Cause | Resolution |
 | --- | --- | --- |
@@ -70,7 +83,7 @@ Once an instance exists, template sync state lives in two status conditions: `Te
 | `ErrorRenderingTemplate` | The Go/Helm template failed to execute, for example a syntax error, an explicit `fail` call in the template, or the rendered output couldn't be decoded. | Check the condition message for the templating error, then fix the template. |
 | `ErrorModifyingTemplate` | The rendered configuration's platform-managed settings failed validation, for example an invalid sleep schedule or timezone, an incomplete snapshot storage configuration, a malformed auto-deletion duration, or an inconsistent Argo CD deploy configuration. | Check the condition message for which setting failed, then fix it in the template or the instance's parameter overrides. |
 
-### `TemplateSynced` reasons
+#### `TemplateSynced` reasons
 
 The first two reasons cover template-change notifications every tenant cluster and namespace can report. The rest are scoped to narrower cases, noted alongside each one.
 
@@ -82,7 +95,7 @@ The first two reasons cover template-change notifications every tenant cluster a
 | `PlatformConfigValidationError` (tenant clusters with `spec.external: true`) | The tenant cluster's platform-managed settings (sleep, snapshots, deletion, Argo CD) failed validation. | Check the condition message for which setting failed, then fix it on the tenant cluster. |
 | `ClusterNotReady` (platform-deployed tenant clusters scheduled to a connected cluster, not standalone ones) | The connected cluster this instance is scheduled to isn't initialized yet, so its configuration may not be synced. | Wait for the connected cluster to finish initializing. |
 
-## Failures inside the tenant cluster
+### Failures inside the tenant cluster
 
 Both status conditions can report healthy and the tenant cluster still fails to start, because the template resolved into a `vcluster.yaml` that the running vCluster instance rejects. These failures show up as a crashing or never-ready control plane pod, not as a condition on the instance.
 
@@ -112,20 +125,82 @@ The commands earlier in this runbook run against the platform management API. Th
 
 A chart schema rejection can happen before a pod is ever scheduled. If the pod isn't crashing but the values were rejected upfront, check the platform's own Helm release status and events for the instance, in addition to the pod logs.
 
-## Prevent repeat failures
+### Prevent repeat template sync failures
 
-### Know whether your template auto-propagates before relying on it
+**Know whether your template auto-propagates before relying on it.** Versioned templates re-apply matching version changes automatically. An unversioned template needs either a persistent `x.x.x` version string, which keeps auto-syncing every edit, or `syncOnce` to pick up a single edit on demand. Unlike the `X`/`x` wildcards on a versioned template, `x.x.x` on an unversioned one is matched exactly and is case-sensitive: `X.X.X` doesn't work. See [How template changes propagate to existing resources](../administer/templates/versioning.mdx#how-template-changes-propagate-to-existing-resources).
 
-Versioned templates re-apply matching version changes automatically. An unversioned template needs either a persistent `x.x.x` version string, which keeps auto-syncing every edit, or `syncOnce` to pick up a single edit on demand. Unlike the `X`/`x` wildcards on a versioned template, `x.x.x` on an unversioned one is matched exactly and is case-sensitive: `X.X.X` doesn't work. See [How template changes propagate to existing resources](../administer/templates/versioning.mdx#how-template-changes-propagate-to-existing-resources).
+**Don't delete a template while instances still reference it.** Deleting a template doesn't check for referencing instances first. Any instance still pointing at it starts reporting `TemplateNotFound` on its next reconcile, and its last-applied configuration is frozen in place rather than cleared. Point instances at a replacement template, or confirm none exist, before deleting.
 
-### Don't delete a template while instances still reference it
+**Match a template's Pro features to the license the tenant clusters will run under.** A template that enables a Pro-only feature works fine until it's used with a license or image that doesn't cover that feature. At that point, every tenant cluster created from it fails the same way. Verify feature availability against the target license before rolling out a template change broadly.
 
-Deleting a template doesn't check for referencing instances first. Any instance still pointing at it starts reporting `TemplateNotFound` on its next reconcile, and its last-applied configuration is frozen in place rather than cleared. Point instances at a replacement template, or confirm none exist, before deleting.
+**Test template edits on one instance before a fleet-wide rollout.** Template sync applies automatically for versioned templates. A bad edit to a version that many instances already match propagates to all of them on their next reconcile. Validate a new version against a single instance first, using an exact version pin, before widening other instances' version patterns to include it.
 
-### Match a template's Pro features to the license the tenant clusters will run under
+## App sync failures
 
-A template that enables a Pro-only feature works fine until it's used with a license or image that doesn't cover that feature. At that point, every tenant cluster created from it fails the same way. Verify feature availability against the target license before rolling out a template change broadly.
+[Apps](../understand/what-are-apps.mdx), a Helm chart, Kubernetes manifest, or bash script packaged for reuse, deploy into a cluster, namespace, or tenant cluster through an AppInstance. AppInstance uses a separate reconciler from VirtualClusterInstance and SpaceInstance, with its own conditions, `Synced` and `Deployed`. `Status.phase` (`Pending`, `Failed`, or `Ready`) and `Status.reason` summarize the same state more directly than the conditions do, and the table below is organized around them.
 
-### Test template edits on one instance before a fleet-wide rollout
+<InterpolatedCodeBlock
+  code={
+'kubectl -n [[VAR:PROJECT_NAMESPACE:loft-p-my-project]] get appinstance [[VAR:APP_INSTANCE_NAME:my-app]] -o yaml'
+  }
+  language="bash"
+/>
 
-Template sync applies automatically for versioned templates. A bad edit to a version that many instances already match propagates to all of them on their next reconcile. Validate a new version against a single instance first, using an exact version pin, before widening other instances' version patterns to include it.
+| Signal | Cause | Resolution |
+| --- | --- | --- |
+| `Status.phase: Failed`, reason `MissingOwner` | The instance has no owner, so the platform has no identity to mint the access key a deploy runs under. This normally only happens to an instance created outside the platform UI, for example applied directly with `kubectl`. | Set an owner on the instance, or recreate it through a path that assigns one automatically. |
+| `Status.phase: Pending`, reason `AppNotFound` | `spec.templateRef.name` doesn't resolve to an existing App yet. This is expected, and resolves on its own, when the App and the instance were applied together (for example `kubectl apply -f` on a directory) and the App simply hasn't landed yet. | Confirm the referenced App exists. If both were just applied together, wait for the App to appear. |
+| `Deployed` condition `False`, reason `UnresolvableVersion` | The instance's `spec.templateRef.version` no longer matches any version on the referenced App, usually because that version was removed from the App after the instance started using it. The instance keeps running its last successful release. | Point the instance at a version that still exists on the App, or re-add the missing version to the App. |
+| `Status.phase: Pending`, reason `DestinationNotFound` | The instance's destination, the cluster, namespace, or tenant cluster it deploys into, doesn't exist. | Create the destination, or fix the destination reference on the instance. |
+| `Status.phase: Pending`, reason `DestinationNotReady` | The destination exists but can't take a deploy yet, for example it's still coming up or being deleted. | Wait for the destination to become ready. This resolves on its own once it does. |
+| `Status.phase: Failed`, reason `DeployFailed` | The Helm install/upgrade, manifest apply, or bash script itself failed. The condition message carries the underlying error. | Check the condition message for the specific error. See [Secret and credential resolution failures](#secret-and-credential-resolution-failures) if it mentions a project secret. |
+
+A `DeployFailed` instance retries automatically a bounded number of times with backoff, without any action needed. Once the condition message says no retries are left, only a change to the App or a `spec` change to the instance, including its destination reference, triggers another attempt. The destination merely becoming ready on its own doesn't revive an exhausted instance.
+
+### App parameter failures
+
+An App declares parameters (`spec.parameters`, each with a `type`, `options`, `min`/`max`, and `required`) that the platform UI renders as a form. See [Use Parameters with Apps](../use-platform/apps/use-parameters.mdx). Unlike a tenant cluster template's parameters, this schema isn't enforced against an AppInstance's own `spec.parameters` values when deploying. A missing required value, wrong type, or out-of-range number doesn't produce a dedicated validation error, the value just flows straight into the deploy.
+
+`spec.parameters` on the instance is parsed as YAML, then used to render the App's Helm values before merging back in. Any failure in that process surfaces as `DeployFailed`, with the message wrapped as `apply parameters: ...`:
+
+| Signal (in the `DeployFailed` message) | Cause | Resolution |
+| --- | --- | --- |
+| `apply parameters:` wrapping a YAML syntax error, no `unmarshal` in the message | `spec.parameters` on the instance isn't valid YAML. | Fix the YAML syntax in `spec.parameters`. |
+| `apply parameters:` wrapping a template execution error | The App's Helm values template references a parameter (for example `.Values.foo.bar`) in a way the supplied `spec.parameters` can't satisfy. | Check the condition message for the specific path, then fix `spec.parameters` or the App's values template. |
+| `apply parameters:` message that also contains `unmarshal` | The App's values template rendered into text that isn't valid YAML, often because a parameter value's substituted text broke the YAML structure. | Check the rendered content in the condition message, then adjust the parameter value or the values template. |
+
+### Secret and credential resolution failures
+
+An App, or an inline `AppInstance.spec.template`, can reference Helm repository credentials as a project secret (`usernameRef`/`passwordRef`, each a `projectSecretRef`) instead of supplying them inline. See [Private Helm Repositories for Apps](../administer/templates/external-credentials.mdx). Resolving that reference happens as part of the deploy, so a bad reference surfaces as `DeployFailed`, with the message describing exactly which check failed:
+
+| Signal (literal substring in the `DeployFailed` message) | Cause | Resolution |
+| --- | --- | --- |
+| `project is empty in app project secret ref` or `project secret name is empty in app project secret ref` | The `projectSecretRef` is missing its `project` or `name` field. | Set both fields on the `projectSecretRef`. |
+| `retrieve project secret <project>/<name>` followed by a not-found error | No secret with that name exists in the referenced project's namespace. | Create the secret, or fix the `project`/`name` on the ref. |
+| `project secret <project>/<name> is empty` | The secret exists but has no data keys at all. | Add the credential data to the secret. |
+| `project secret <project>/<name> has multiple values, but no key was specified` | The ref omits `key`, but the secret has more than one data key, so there's nothing to pick automatically. | Set `key` on the `projectSecretRef` to the specific data key to use. |
+| `project secret <project>/<name> key <key> is empty` | The ref's `key` doesn't exist in the secret's data, or its value is empty. | Add that key to the secret, or point `key` at one that exists. |
+
+A ref that omits `key` only resolves automatically when the secret has exactly one data key.
+
+## Argo CD ApplicationTemplate sync failures
+
+An `ArgoCDApplicationTemplate` is a reusable Argo CD `ApplicationSpec`, referenced from `deploy.argoCD.applications` in a tenant cluster's `vcluster.yaml`. See [Deploy applications](../integrations/argocd/deploy-applications.mdx). The platform renders each reference into an `ArgoCDApplication` object and reconciles that onto the connected Argo CD instance, a third mechanism with its own `Synced` condition and reasons, independent from both template sync and App sync.
+
+A tenant cluster's own `Ready` condition doesn't reflect the health of its Argo CD-deployed applications. A VirtualClusterInstance aggregates any of its `ArgoCDApplication` objects reporting an error-severity `Synced: False` into its own `ArgoCDIntegrationSynced` condition, reason `ArgoCDApplicationFailed`, but that condition isn't part of the `Ready` summary. A tenant cluster can report `Ready` while an application it deploys through Argo CD is failing. Check `ArgoCDIntegrationSynced` explicitly, then inspect the named `ArgoCDApplication` object's own `Synced` condition and message for the root cause.
+
+<InterpolatedCodeBlock
+  code={
+'kubectl -n [[VAR:PROJECT_NAMESPACE:loft-p-my-project]] get argocdapplication -o yaml'
+  }
+  language="bash"
+/>
+
+| Signal | Cause | Resolution |
+| --- | --- | --- |
+| `Synced` condition `False`, reason `TemplateNotFound` | The `ArgoCDApplication`'s `templateRef.name` doesn't resolve to an existing `ArgoCDApplicationTemplate`. | Fix the template name in `deploy.argoCD.applications`, or create the missing `ArgoCDApplicationTemplate`. |
+| `Synced` condition `False`, reason `InvalidConnector` | The application's destination couldn't be resolved, or the named connector doesn't exist or failed to load. | Check the condition message, then fix the connector reference or its configuration. See [Connect to Argo CD](../integrations/argocd/connect-argocd.mdx) or [Connect to Akuity](../integrations/argocd/connect-akuity.mdx). |
+| `Synced` condition `False`, reason `CreateArgoClientFailed` | The platform couldn't create an API client from the connector's configuration, usually bad credentials or an unreachable endpoint. | Check the condition message, then fix the connector. See [Connect to Argo CD](../integrations/argocd/connect-argocd.mdx) or [Connect to Akuity](../integrations/argocd/connect-akuity.mdx). |
+| `Synced` condition `False`, reason `ClusterRegistrationPending`, severity Info | The target cluster's registration with Argo CD hasn't finished yet. | Wait for the connected cluster to finish registering. This resolves on its own. |
+| `Synced` condition `False`, reason `InvalidSyncAnnotation` | An annotation on the application that controls Argo CD sync behavior is malformed. | Check the condition message for which annotation, then fix it in the template or application spec. |
+| `Synced` condition `False`, reason `BuildApplicationFailed`, `GetClusterFailed`, `GetApplicationFailed`, `RefreshApplicationFailed`, `UpsertApplicationFailed`, `SyncApplicationFailed`, or `DeleteApplicationFailed` | The platform failed to build, read, or write the application against the Argo CD API itself. | Check the condition message for the underlying API error. |
