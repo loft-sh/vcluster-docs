@@ -72,6 +72,10 @@ Once an instance exists, template sync state lives in two status conditions: `Te
   language="bash"
 />
 
+:::warning
+Several resolutions below mean editing the template or its version. For a versioned template, that change propagates immediately to every other instance whose version pattern also matches, not just the one you're fixing. Validate a fix against a single instance first, using an exact version pin. See [Prevent repeat template sync failures](#prevent-repeat-template-sync-failures).
+:::
+
 #### `TemplateResolved` reasons
 
 | Signal | Cause | Resolution |
@@ -94,6 +98,8 @@ The first two reasons cover template-change notifications every tenant cluster a
 | `GetPlatformConfigError` (tenant clusters with `spec.external: true`) | The platform couldn't read the platform-managed settings out of the tenant cluster's existing Helm release. | Check the condition message for the underlying error. |
 | `PlatformConfigValidationError` (tenant clusters with `spec.external: true`) | The tenant cluster's platform-managed settings (sleep, snapshots, deletion, Argo CD) failed validation. | Check the condition message for which setting failed, then fix it on the tenant cluster. |
 | `ClusterNotReady` (platform-deployed tenant clusters scheduled to a connected cluster, not standalone ones) | The connected cluster this instance is scheduled to isn't initialized yet, so its configuration may not be synced. | Wait for the connected cluster to finish initializing. |
+
+To confirm a fix worked, re-run the condition check above: `TemplateResolved` should read `True`, and `TemplateSynced` should read `True` or a reason that isn't an error.
 
 ### Failures inside the tenant cluster
 
@@ -125,6 +131,8 @@ The commands earlier in this runbook run against the platform management API. Th
 
 A chart schema rejection can happen before a pod is ever scheduled. If the pod isn't crashing but the values were rejected upfront, check the platform's own Helm release status and events for the instance, in addition to the pod logs.
 
+To confirm a fix worked, re-run the pod command above and check that the control plane pod reaches `Running` and `Ready`.
+
 ### Prevent repeat template sync failures
 
 **Know whether your template auto-propagates before relying on it.** Versioned templates re-apply matching version changes automatically. An unversioned template needs either a persistent `x.x.x` version string, which keeps auto-syncing every edit, or `syncOnce` to pick up a single edit on demand. Unlike the `X`/`x` wildcards on a versioned template, `x.x.x` on an unversioned one is matched exactly and is case-sensitive: `X.X.X` doesn't work. See [How template changes propagate to existing resources](../administer/templates/versioning.mdx#how-template-changes-propagate-to-existing-resources).
@@ -138,6 +146,20 @@ A chart schema rejection can happen before a pod is ever scheduled. If the pod i
 ## App sync failures
 
 [Apps](../understand/what-are-apps.mdx), a Helm chart, Kubernetes manifest, or bash script packaged for reuse, deploy into a cluster, namespace, or tenant cluster through an AppInstance. AppInstance uses a separate reconciler from VirtualClusterInstance and SpaceInstance, with its own conditions, `Synced` and `Deployed`. `status.phase` (`Pending`, `Failed`, or `Ready`) and `status.reason` summarize the same state more directly than the conditions do, and the table below is organized around them.
+
+Check `status.phase`/`status.reason` first, then the conditions for a reason like `UnresolvableVersion` that only appears on `Deployed`:
+
+<InterpolatedCodeBlock
+  code={
+'kubectl -n [[VAR:PROJECT_NAMESPACE:loft-p-my-project]] get appinstance [[VAR:APP_INSTANCE_NAME:my-app]] \\\n' +
+'  -o jsonpath=\'{.status.phase}{" "}{.status.reason}{" "}{.status.message}{"\\n"}\'\n' +
+'kubectl -n [[VAR:PROJECT_NAMESPACE:loft-p-my-project]] get appinstance [[VAR:APP_INSTANCE_NAME:my-app]] \\\n' +
+'  -o jsonpath=\'{range .status.conditions[*]}{.type}{" "}{.status}{" "}{.reason}{" "}{.message}{"\\n"}{end}\''
+  }
+  language="bash"
+/>
+
+Or get the full object, including `status.app` and `status.releaseName`:
 
 <InterpolatedCodeBlock
   code={
@@ -156,6 +178,8 @@ A chart schema rejection can happen before a pod is ever scheduled. If the pod i
 | `status.phase: Failed`, reason `DeployFailed` | The Helm install/upgrade, manifest apply, or bash script itself failed. The condition message carries the underlying error. | Check the condition message for the specific error. See [Secret and credential resolution failures](#secret-and-credential-resolution-failures) if it mentions a project secret. |
 
 A `DeployFailed` instance retries automatically a bounded number of times with backoff, without any action needed. Once the condition message says no retries are left, only a change to the App or a `spec` change to the instance, including its destination reference, triggers another attempt. The destination merely becoming ready on its own doesn't revive an exhausted instance.
+
+To confirm a fix worked, re-run the command above: `status.phase` should read `Ready`, with `Synced` and `Deployed` both `True`.
 
 ### App parameter failures
 
@@ -191,7 +215,17 @@ A tenant cluster's own `Ready` condition doesn't reflect the health of its Argo 
 
 <InterpolatedCodeBlock
   code={
-'kubectl -n [[VAR:PROJECT_NAMESPACE:loft-p-my-project]] get argocdapplication -o yaml'
+'kubectl -n [[VAR:PROJECT_NAMESPACE:loft-p-my-project]] get argocdapplication [[VAR:ARGOCD_APPLICATION_NAME:my-app]] \\\n' +
+'  -o jsonpath=\'{range .status.conditions[?(@.type=="Synced")]}{.status}{" "}{.reason}{" "}{.message}{"\\n"}{end}\''
+  }
+  language="bash"
+/>
+
+Or get the full object:
+
+<InterpolatedCodeBlock
+  code={
+'kubectl -n [[VAR:PROJECT_NAMESPACE:loft-p-my-project]] get argocdapplication [[VAR:ARGOCD_APPLICATION_NAME:my-app]] -o yaml'
   }
   language="bash"
 />
@@ -204,3 +238,5 @@ A tenant cluster's own `Ready` condition doesn't reflect the health of its Argo 
 | `Synced` condition `False`, reason `ClusterRegistrationPending`, severity Info | The target cluster's registration with Argo CD hasn't finished yet. | Wait for the connected cluster to finish registering. This resolves on its own. |
 | `Synced` condition `False`, reason `InvalidSyncAnnotation` | An annotation on the application that controls Argo CD sync behavior is malformed. | Check the condition message for which annotation, then fix it in the template or application spec. |
 | `Synced` condition `False`, reason `BuildApplicationFailed`, `GetClusterFailed`, `GetApplicationFailed`, `RefreshApplicationFailed`, `UpsertApplicationFailed`, `SyncApplicationFailed`, or `DeleteApplicationFailed` | The platform failed to build, read, or write the application against the Argo CD API itself. | Check the condition message for the underlying API error. |
+
+To confirm a fix worked, re-run the command above and check that `Synced` reads `True`, then confirm `ArgoCDIntegrationSynced` clears on the tenant cluster too.
