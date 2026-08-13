@@ -1,42 +1,70 @@
 ---
-title: Deploy vind in an air-gapped environment
-sidebar_label: Air-gapped
+title: Deploy vind with restricted network access
+sidebar_label: Restricted networks
 sidebar_position: 2
 sidebar_class_name: standalone docker
-description: Configure vind for environments without internet access, covering registry mirrors, image overrides, and the vm-container bootstrap.
+description: Configure vind for restricted networks by using a forward proxy, registry mirrors, and image overrides.
 ---
 
 import InterpolatedCodeBlock from '@site/src/components/InterpolatedCodeBlock';
 import PageVariables from '@site/src/components/PageVariables';
-import Flow, { Step } from '@site/src/components/Flow';
 
 <PageVariables
-  VCLUSTER_VERSION="0.34.0"
   REGISTRY="your-registry.internal"
+  PROXY_URL="http://proxy.internal:3128"
+  NO_PROXY="localhost,127.0.0.1,your-registry.internal"
 />
 
-vind makes five distinct network calls during cluster creation and operation. In an air-gapped environment where Docker containers cannot reach public registries or GitHub, each one must be handled separately.
+vind requires outbound HTTPS access during tenant cluster creation. Use a forward proxy and an internal registry to run vind in a restricted network.
+
+:::warning Fully disconnected environments aren't supported
+vind can't create a tenant cluster from an empty local cache without outbound access. The CLI downloads artifacts from GitHub and `ghcr.io` through hardcoded URLs.
+
+A custom vm-container image doesn't bypass these downloads. Use a forward proxy that can reach the public endpoints listed on this page.
+:::
 
 ## How vind uses the network
 
-| Step | When | What vind contacts | Configurable? |
-|------|------|--------------------|---------------|
-| 1 | Before `vcluster create` | Pulls `alpine` on the Docker host for pre-creation checks | No — pre-pull required |
-| 2 | Inside the vm-container at bootstrap | Downloads `install-standalone.sh` from GitHub | No — custom image or bridge proxy required |
-| 3 | During vCluster startup | Pulls internal vCluster images (Kubernetes control plane, CoreDNS, syncer) | Yes — `controlPlane.advanced.defaultImageRegistry` |
-| 4 | When workloads run | Pulls workload container images | Yes — pre-load images into the host Docker store (served by the registry proxy) |
-| 5 | For StatefulSet pods | Pulls `alpine` for the rewriteHosts init container | Yes — `sync.toHost.pods.rewriteHosts.initContainer.image` |
+| When | What vind contacts | How to provide access |
+|------|--------------------|-----------------------|
+| Host pre-creation checks | `alpine` on Docker Hub | Pre-pull and tag the image on the Docker host |
+| CLI artifact staging | `ghcr.io/loft-sh/vcluster-pro:<version>` | Configure the forward proxy on the host |
+| CLI artifact staging | `ghcr.io/loft-sh/kubernetes:<version>-full` | Configure the forward proxy on the host |
+| vm-container creation | `ghcr.io/loft-sh/vm-container` | Mirror the image and set `experimental.docker.image` |
+| Inside the vm-container at bootstrap | `install-standalone.sh` on GitHub | Configure the forward proxy inside the vm-container |
+| Tenant cluster startup | Internal vCluster images | Set `controlPlane.advanced.defaultImageRegistry` |
+| Workload startup | Images referenced by workloads | Pre-load images into the host Docker store |
+| StatefulSet pod startup | The rewriteHosts init container image | Set `sync.toHost.pods.rewriteHosts.initContainer.image` |
 
-Steps 1 and 2 have no native config override. The sections below cover each step with its workaround.
+The proxy must support the HTTP `CONNECT` method for HTTPS traffic. A static file server, including `python3 -m http.server`, can't act as this proxy.
 
 ## Prerequisites
 
 - Docker installed and running with access to your internal registry
 - vCluster CLI installed — see [Deployment basics](./basics.mdx#step-1-install-vcluster-cli)
-- `install-standalone.sh` and the `vcluster-linux-<arch>-standalone` binary downloaded from the [vCluster releases page](https://github.com/loft-sh/vcluster/releases) on an internet-connected machine
+- A forward proxy that can reach `github.com` and `ghcr.io`
+- The proxy is reachable from both the Docker host and the vind vm-container
 - Required images mirrored to your internal registry (`images.txt` is listed under [vCluster release assets](https://github.com/loft-sh/vcluster/releases))
 
-## Step 1: Pre-pull Alpine on the Docker host
+## Step 1: Configure the host proxy
+
+The `vcluster` CLI pulls two artifacts directly from `ghcr.io`. These downloads happen on the host before the CLI starts the vm-container:
+
+- `ghcr.io/loft-sh/vcluster-pro:<version>` provides the vCluster binary.
+- `ghcr.io/loft-sh/kubernetes:<version>-full` provides the Kubernetes binaries and bundle.
+
+Set the proxy environment variables in the shell where you run `vcluster create`:
+
+<InterpolatedCodeBlock
+  code={`export HTTP_PROXY=[[GLOBAL:PROXY_URL]]
+export HTTPS_PROXY=[[GLOBAL:PROXY_URL]]
+export NO_PROXY=[[GLOBAL:NO_PROXY]]`}
+  language="bash"
+/>
+
+`controlPlane.advanced.defaultImageRegistry` doesn't change these two artifact sources. The host proxy must allow access to `ghcr.io`.
+
+## Step 2: Pre-pull Alpine on the Docker host
 
 Before `vcluster create` runs, vind pulls `alpine` directly on the host for pre-creation checks including port availability, containerd socket detection, and network reachability. There is no config flag to override this image name.
 
@@ -48,114 +76,54 @@ docker tag [[GLOBAL:REGISTRY]]/library/alpine:latest alpine:latest`}
   language="bash"
 />
 
-vind's registry proxy (enabled by default) then serves this image from the host Docker cache for all subsequent pulls inside the cluster, so the network is not contacted again.
+vind's registry proxy is enabled by default. It serves this image from the host Docker cache for subsequent pulls inside the tenant cluster.
 
-## Step 2: Provide the vm-container bootstrap assets
+## Step 3: Configure the vm-container and bootstrap proxy
 
-After the vm-container starts, the vCluster binary inside it downloads `install-standalone.sh` from GitHub. This URL is hardcoded in the CLI binary. Choose one of the following workarounds.
+Mirror `ghcr.io/loft-sh/vm-container` to your internal registry. Then configure vind to use the mirrored image and pass the proxy settings into the container:
 
-### Option A: Build a custom vm-container image (recommended)
+<InterpolatedCodeBlock
+  code={"experimental:\n" +
+    "  docker:\n" +
+    "    # Pull the vm-container image from the internal registry.\n" +
+    "    image: [[GLOBAL:REGISTRY]]/loft-sh/vm-container:latest\n" +
+    "    # Route the bootstrap script download through the forward proxy.\n" +
+    "    env:\n" +
+    "      - HTTP_PROXY=[[GLOBAL:PROXY_URL]]\n" +
+    "      - HTTPS_PROXY=[[GLOBAL:PROXY_URL]]\n" +
+    "      - NO_PROXY=[[GLOBAL:NO_PROXY]]"}
+  language="yaml"
+/>
 
-<Flow>
-  <Step>
-    On an internet-connected machine, create an empty directory and add a plain text file named `Dockerfile` (no extension) with the following content. Replace `amd64` with `arm64` if building on Apple Silicon.
+After the vm-container starts, the CLI downloads `install-standalone.sh` from GitHub. The URL is hardcoded, so the proxy must allow access to `github.com`.
 
-    <InterpolatedCodeBlock
-      code={`FROM ghcr.io/loft-sh/vm-container:latest
-RUN mkdir -p /vcluster-install && \\
-    curl -sfL https://github.com/loft-sh/vcluster/releases/download/v[[GLOBAL:VCLUSTER_VERSION]]/install-standalone.sh \\
-      -o /vcluster-install/install-standalone.sh && \\
-    curl -sfL https://github.com/loft-sh/vcluster/releases/download/v[[GLOBAL:VCLUSTER_VERSION]]/vcluster-linux-amd64-standalone \\
-      -o /vcluster-install/vcluster && \\
-    chmod +x /vcluster-install/vcluster`}
-      language="dockerfile"
-    />
-  </Step>
-  <Step>
-    From that same directory, build, and push the image to your registry:
+If the proxy runs on the Docker host, bind it to an interface reachable from the Docker network. Don't bind it only to loopback (`127.0.0.1`).
 
-    <InterpolatedCodeBlock
-      code={`docker build -t [[GLOBAL:REGISTRY]]/vind:v[[GLOBAL:VCLUSTER_VERSION]]-airgapped .
-docker push [[GLOBAL:REGISTRY]]/vind:v[[GLOBAL:VCLUSTER_VERSION]]-airgapped`}
-      language="bash"
-    />
-  </Step>
-  <Step>
-    Create a `vcluster.yaml` file and add the following. You will add more settings to this file in Steps 3–5, then pass it to `vcluster create` at the end.
-
-    <InterpolatedCodeBlock
-      code={"experimental:\n" +
-        "  docker:\n" +
-        "    image: [[GLOBAL:REGISTRY]]/vind:v[[GLOBAL:VCLUSTER_VERSION]]-airgapped"}
-      language="yaml"
-    />
-  </Step>
-</Flow>
-
-### Option B: Serve the assets from the Docker bridge network
-
-If you cannot build a custom image, run a file server on the Docker host that is reachable from inside the vind containers.
-
-<Flow>
-  <Step>
-    Find the Docker bridge gateway IP:
-
-    ```bash
-    docker network inspect bridge | grep Gateway
-    ```
-
-    Note the IP address — this is usually `172.17.0.1`. You will use it in Step 3.
-  </Step>
-  <Step>
-    Run the following commands to create a directory structure that mirrors the GitHub URL path, copy the assets into it, and start a local file server:
-
-    <InterpolatedCodeBlock
-      code={`mkdir -p /tmp/vind-mirror/loft-sh/vcluster/releases/download/v[[GLOBAL:VCLUSTER_VERSION]]
-cp install-standalone.sh vcluster-linux-amd64-standalone \\
-  /tmp/vind-mirror/loft-sh/vcluster/releases/download/v[[GLOBAL:VCLUSTER_VERSION]]/
-cd /tmp/vind-mirror && python3 -m http.server 9999 --bind 0.0.0.0`}
-      language="bash"
-    />
-  </Step>
-  <Step>
-    Create a `vcluster.yaml` file and add the following, substituting the gateway IP from Step 1. You will add more settings to this file in Steps 3–5, then pass it to `vcluster create` at the end.
-
-    <InterpolatedCodeBlock
-      code={"experimental:\n" +
-        "  docker:\n" +
-        "    env:\n" +
-        "      - HTTPS_PROXY=http://[[VAR:GATEWAY_IP:172.17.0.1]]:9999"}
-      language="yaml"
-    />
-
-:::warning
-The proxy must listen on the Docker bridge interface, not loopback (`127.0.0.1`). A proxy bound to loopback on the host is not reachable from inside the vm-container.
-:::
-  </Step>
-</Flow>
-
-## Step 3: Redirect internal vCluster images
+## Step 4: Redirect internal vCluster images
 
 `controlPlane.advanced.defaultImageRegistry` prepends a registry prefix to all images vCluster deploys internally, including the Kubernetes control plane, CoreDNS, syncer, etcd, and backing store images. It does not affect workload images.
 
 Mirror all images listed in `images.txt` from the [vCluster release assets](https://github.com/loft-sh/vcluster/releases) into your registry at the same repository path, then add the following to your `vcluster.yaml`:
 
 <InterpolatedCodeBlock
-  code={"controlPlane:\n" +
+  code={"# Pull images deployed by vCluster from the internal registry.\n" +
+    "controlPlane:\n" +
     "  advanced:\n" +
     "    defaultImageRegistry: [[GLOBAL:REGISTRY]]/vcluster/"}
   language="yaml"
 />
 
 :::note
-Steps 4 and 5 are not required for a basic air-gapped cluster. Complete the remaining steps only if your environment needs them.
+Steps 5 and 6 aren't required for a basic tenant cluster. Complete them when your workloads need the described images.
 :::
 
-## Step 4: Make workload images available through the registry proxy
+## Step 5: Make workload images available through the registry proxy
 
-Complete this step if your workloads pull images from public registries like `docker.io` or `ghcr.io`. Without it, workload containers fail to start in an air-gapped environment.
+Complete this step if your workloads reference images from public registries such as `docker.io` or `ghcr.io`.
 
-vind enables a registry proxy by default. Rather than reaching public registries, the cluster pulls workload images from the host Docker daemon's image store through this proxy. In an air-gapped environment, make each workload image available on the host under the name your manifests reference, and the proxy serves it to the cluster without contacting the network. This is the same pattern used for Alpine in Step 1.
+vind enables a registry proxy by default. The tenant cluster pulls workload images from the host Docker daemon's image store through this proxy.
+
+Make each workload image available on the host under the name used in your manifests. The registry proxy then serves it without contacting the public registry. This is the same pattern used for Alpine in Step 2.
 
 :::note Requirement
 The registry proxy serves local images only when the host Docker daemon uses the containerd image store. Verify with `docker info`, which should report `driver-type io.containerd.snapshotter.v1`. See the [Docker containerd image store guide](https://docs.docker.com/engine/storage/containerd/) to enable it.
@@ -169,16 +137,19 @@ docker tag [[GLOBAL:REGISTRY]]/library/nginx:1.27 nginx:1.27`}
   language="bash"
 />
 
-Repeat for every workload image, including any `ghcr.io` images, tagging each to the exact name your manifests request. The registry proxy then serves them from the host store for all pulls inside the cluster.
+Repeat for every workload image, including any `ghcr.io` images. Tag each image with the exact name used in your manifests.
 
-## Step 5: Override the rewriteHosts init container image
+The registry proxy serves the images from the host store for pulls inside the tenant cluster.
 
-Complete this step if you are running StatefulSets inside the cluster. vCluster pulls `mirror.gcr.io/library/alpine:3.20` to rewrite FQDNs for StatefulSet pods. Without this override, that pull will fail in an air-gapped environment.
+## Step 6: Override the rewriteHosts init container image
+
+Complete this step if you run StatefulSets inside the tenant cluster. vCluster pulls `mirror.gcr.io/library/alpine:3.20` to rewrite fully qualified domain names for StatefulSet pods.
 
 Add the following to your `vcluster.yaml`:
 
 <InterpolatedCodeBlock
-  code={"sync:\n" +
+  code={"# Pull the rewriteHosts init container from the internal registry.\n" +
+    "sync:\n" +
     "  toHost:\n" +
     "    pods:\n" +
     "      rewriteHosts:\n" +
@@ -192,9 +163,9 @@ Add the following to your `vcluster.yaml`:
 
 The `image` field takes `registry`, `repository`, and `tag` sub-fields, not a plain string. This format was introduced in v0.27.0.
 
-## Step 6: Create the cluster
+## Step 7: Create the tenant cluster
 
-After preparing the host (Steps 1 and 2), switch to the Docker driver and create the cluster:
+After configuring network access and images, switch to the Docker driver and create the tenant cluster:
 
 ```bash
 vcluster use driver docker
@@ -204,6 +175,16 @@ vcluster create my-cluster --values vcluster.yaml
 For next steps, see the [Docker (vind) Quick Start](../../../quick-start/docker.mdx) to verify your cluster is working and explore pause/resume, LoadBalancer services, and worker nodes.
 
 ## Troubleshoot
+
+### Bootstrap fails with exit status 6
+
+```text
+fatal failed to start vCluster standalone: exit status 6
+```
+
+This error indicates that the vm-container couldn't reach GitHub. Confirm that `experimental.docker.env` contains the proxy variables and that the proxy is reachable from the Docker network.
+
+The proxy must support HTTPS connections through the HTTP `CONNECT` method. A static file server returns `501 Unsupported method ('CONNECT')` and can't serve this request.
 
 ### Cluster creation times out due to unreachable kubectl context
 
@@ -255,17 +236,25 @@ vcluster create my-cluster --values vcluster.yaml
 
 ## Example complete vcluster.yaml
 
-The following combines all configurable layers. Replace registry, version, and path values for your environment.
+The following example combines the configurable layers:
 
 <InterpolatedCodeBlock
-  code={"controlPlane:\n" +
+  code={"# Pull images deployed by vCluster from the internal registry.\n" +
+    "controlPlane:\n" +
     "  advanced:\n" +
     "    defaultImageRegistry: [[GLOBAL:REGISTRY]]/vcluster/\n" +
     "\n" +
     "experimental:\n" +
     "  docker:\n" +
-    "    image: [[GLOBAL:REGISTRY]]/vind:v[[GLOBAL:VCLUSTER_VERSION]]-airgapped\n" +
+    "    # Pull the vm-container image from the internal registry.\n" +
+    "    image: [[GLOBAL:REGISTRY]]/loft-sh/vm-container:latest\n" +
+    "    # Route the bootstrap script download through the forward proxy.\n" +
+    "    env:\n" +
+    "      - HTTP_PROXY=[[GLOBAL:PROXY_URL]]\n" +
+    "      - HTTPS_PROXY=[[GLOBAL:PROXY_URL]]\n" +
+    "      - NO_PROXY=[[GLOBAL:NO_PROXY]]\n" +
     "\n" +
+    "# Pull the rewriteHosts init container from the internal registry.\n" +
     "sync:\n" +
     "  toHost:\n" +
     "    pods:\n" +
@@ -277,3 +266,10 @@ The following combines all configurable layers. Replace registry, version, and p
     '            tag: "3.20"'}
   language="yaml"
 />
+
+## Known limitations
+
+- vind doesn't support tenant cluster creation from an empty cache without outbound access.
+- The CLI doesn't provide registry overrides for the vCluster and Kubernetes artifacts that it stages on the host.
+- The CLI doesn't provide a local path or URL override for `install-standalone.sh`.
+- Baking `install-standalone.sh` into a custom vm-container image doesn't prevent the CLI from downloading the script from GitHub.
