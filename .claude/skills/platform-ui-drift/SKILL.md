@@ -85,16 +85,34 @@ cat ../loft-enterprise/ui/src/Layout/Sidebar/config/sections.tsx
 cat ../loft-enterprise/ui/src/views/Clusters/hooks/useClusterTabs.tsx
 ```
 
-**Current sidebar structure (as of 2026-06):**
+**Current sidebar structure (as of 2026-08-13):**
 
 | Section label | Key items |
 |---|---|
-| Infrastructure | Infra Providers, Control Plane Clusters, Connectors, Bare Metal Servers |
-| Tenant Management | Cluster Templates, Namespace Templates, Argo CD Templates, Apps |
-| Access & Secrets | Users & Roles, SSH Keys, Global Secrets |
-| Platform | Logs & Activity, Cost Control, Platform Config |
+| Infrastructure | Nodes & Providers, Control Plane Clusters, Connectors, Bare Metal Servers, KubeVirt, Operating System, VPN |
+| Management | Templates, Apps |
+| Access & Secrets | Users & Roles, Global Secrets |
+| Platform | Fleet Observability, Logs & Activity, Cost Control, Platform Config |
 
 Control Plane Clusters sub-tabs: Host Clusters, Cluster Access, Cluster Roles, VPN.
+
+The `Tenant Management` section was renamed `Management` and consolidated: the
+old `Cluster Templates`/`Namespace Templates`/`Argo CD Templates` nav items no
+longer exist as separate entries. Instead:
+
+- `Templates` (`ui/src/views/Templates/TemplatesPageLayout.tsx`) has two tabs:
+  `Tenant Clusters` and `Namespaces`.
+- `Apps` (`ui/src/views/Templates/AppsPageLayout.tsx`) has two tabs: `ArgoCD Apps`
+  (literally no space, unlike the "Argo CD" prose spelling elsewhere) and
+  `Helm Apps`.
+
+So `Go to <NavStep>Tenant Management > Cluster Templates</NavStep>` becomes
+`Go to <NavStep>Management > Templates</NavStep> and click the
+<Label>Tenant Clusters</Label> tab`, and similarly for Namespaces and
+Argo CD Templates/Apps. This is a **common false negative**: the script
+matched `Tenant Management > *` paths for years because "tenant" and
+"management" each exist elsewhere in the UI source, not because the section
+still exists. Multi-part `NavStep` matches are leads, not proof — see above.
 
 ### Button and label text
 
@@ -179,7 +197,12 @@ In the configuration sheet that opens, click the <Label>Agent</Label> tab.
 
 ### Argo CD
 
-The UI uses a space: "Argo CD" not "ArgoCD". The script normalizes this so it matches, but fix prose spelling when you touch the file.
+The UI generally uses a space: "Argo CD" not "ArgoCD". The script normalizes this so it matches, but fix prose spelling when you touch the file.
+
+Exception: the `Apps` page tab is literally labeled `ArgoCD Apps` (no space) in
+`AppsPageLayout.tsx`. When a `<Label>` or `<NavStep>` represents that exact tab
+text, keep it as `ArgoCD Apps` — changing it to `Argo CD Apps` would itself be
+drift, since it wouldn't match what the tab says on screen.
 
 ## After fixing: Vale
 
@@ -195,11 +218,13 @@ Common warnings triggered by drift fixes:
 - Title-case headings → sentence case
 - `via` → `using`
 
-## Drift baseline (as of 2026-07-28)
+## Drift baseline (as of 2026-08-13)
 
-After the fleet observability sweep, the report stands at 10 unmatched tokens (all in the "known expected" table above) and 0 instruction phrases. Any new findings above this baseline represent genuine drift introduced since that date.
+After the Management/Templates/Apps sidebar restructuring sweep, the report stands at 10 unmatched tokens (all in the "known expected" table above) and 0 instruction phrases. Any new findings above this baseline represent genuine drift introduced since that date.
 
-Previously (2026-06-26, after the DOC-1574 sweep): 4 unmatched tokens, 0 instruction phrases. The six fleet observability tokens added since then are all Argo CD Application Template names/parameters (dynamic content, not literal UI strings) — see the known-expected table. One genuine drift item from that sweep, a stale `<Label>Deploy to vCluster</Label>` in `configure-edge-collectors.mdx` that should have read `Deploy to tenant cluster`, was found and fixed rather than added to the known-expected list.
+This sweep found a real restructuring the script's multi-part `NavStep` matching had masked for some time: `Tenant Management` was renamed `Management`, and the `Cluster Templates`/`Namespace Templates`/`Argo CD Templates` nav items were merged into two items (`Templates` with `Tenant Clusters`/`Namespaces` tabs, and `Apps` with `ArgoCD Apps`/`Helm Apps` tabs). Fixed across `_partials/namespace-template/create-ui.mdx`, `administer/templates/create-templates.mdx`, `administer/templates/versioning.mdx`, `integrations/argocd/deploy-applications.mdx`, `use-platform/apps/use-in-templates.mdx`, and `use-platform/apps/use-parameters.mdx`. Also fixed along the way: a stale `<Button>Add App</Button>` (now `Create App Template`), a stale bold `**Add Namespace Template**` (now the `<Button>` component with the correct `Create Namespace Template` text), and a stale `<Label>Recommended App</Label>` (the UI label is `Recommend App`, no "-ed").
+
+Previously (2026-07-28, after the fleet observability sweep): 10 unmatched tokens, 0 instruction phrases. Previously (2026-06-26, after the DOC-1574 sweep): 4 unmatched tokens, 0 instruction phrases. The six fleet observability tokens added since then are all Argo CD Application Template names/parameters (dynamic content, not literal UI strings) — see the known-expected table. One genuine drift item from that sweep, a stale `<Label>Deploy to vCluster</Label>` in `configure-edge-collectors.mdx` that should have read `Deploy to tenant cluster`, was found and fixed rather than added to the known-expected list.
 
 ## Release checklist use
 
