@@ -122,12 +122,14 @@ Check the default k8s version for this release. The source of truth is `controlP
 If the tag changed from the previous release, update the fragment:
 
 ```mdx
+export const DEFAULT_K8S_VERSION = 'vX.YY.Z';
+
 :::note
-vCluster deploys Kubernetes **vX.YY.Z** by default. To use a different version, set `controlPlane.distro.k8s.image.tag` in your `vcluster.yaml`.
+vCluster deploys Kubernetes <strong>{DEFAULT_K8S_VERSION}</strong> by default. To use a different version, set `controlPlane.distro.k8s.image.tag` in your `vcluster.yaml`.
 :::
 ```
 
-This fragment is used on quick-start and deploy pages. Because it lives in `vcluster/_fragments/`, the versioning command snapshots it into the new versioned docs folder automatically — older docs retain their pinned version.
+Import `DEFAULT_K8S_VERSION` from this fragment in prose, output examples, and `PageVariables` instead of hardcoding the default. Because the fragment lives in `vcluster/_fragments/`, the versioning command snapshots it into the new versioned docs folder automatically — older docs retain their pinned version.
 
 #### 3. Update `src/config/versionConfig.js` — hide from dropdown
 
@@ -151,10 +153,15 @@ AI performs:
 1. ✅ Verify versioned docs exist: `ls -la vcluster_versioned_docs/version-0.XX.0/`
 2. ✅ Count CLI docs: `ls vcluster_versioned_docs/version-0.XX.0/cli/*.md | wc -l` (expect 90+)
 3. ✅ Check vcluster_versions.json includes new version
-4. ✅ Default k8s version fragment updated if version changed (`vcluster/_fragments/default-k8s-version.mdx`)
+4. ✅ Default Kubernetes version is consistent across all release-scoped sources:
+   - `DEFAULT_K8S_VERSION` in `vcluster/_fragments/default-k8s-version.mdx` exactly matches `controlPlane.distro.k8s.image.tag` in the source release's `config/values.yaml`.
+   - The generated default in `vcluster_versioned_docs/version-0.XX.0/_partials/config/controlPlane/distro/k8s.mdx` exactly matches the fragment, including the patch version.
+   - The Default Kubernetes Version column in `docs/_partials/vcluster_supported_versions.mdx` matches the fragment's major and minor version.
+   - Default-version prose and examples import `DEFAULT_K8S_VERSION`; they don't hardcode another Kubernetes version.
+   Treat any mismatch as a release blocker. Correct the current fragment before versioning, or correct both the new version snapshot and current fragment if versioning has already run.
 5. ✅ All config changes applied
 6. ✅ Version is hidden from dropdown (in `vclusterHiddenVersions` array in `versionConfig.js`)
-7. ✅ Default Kubernetes Version column verified in `docs/_partials/vcluster_supported_versions.mdx` (added in [DOC-1658](https://linear.app/loft/issue/DOC-1658)): if the new release's row already exists, confirm the value matches the distro/version pinned in `chart/values.yaml` of the vcluster OSS repo at this tag (same source of truth as item 4); if the row doesn't exist yet, flag it for the User step below
+7. ✅ Default Kubernetes Version column verified as part of item 4. If the new release's row doesn't exist yet, flag it for the User step below.
 
 User performs:
 1. Build check: `npm run build` (not AI's responsibility)
@@ -273,7 +280,7 @@ This PR is small, reviewable, and safe to merge by anyone with merge rights.
 - ✅ **Verify CLI commands** - Check files exist
 - ✅ **Create hurl test** - Create new test file
 - ✅ **Update search stable version** - `src/config/docsearch.js` `stableVersion` field (release day only)
-- ✅ **Verify Default Kubernetes Version column** - Check the new row in `vcluster_supported_versions.mdx` matches `default-k8s-version.mdx` / `chart/values.yaml` ([DOC-1658](https://linear.app/loft/issue/DOC-1658))
+- ✅ **Verify default Kubernetes version consistency** - Check the source release, generated config partial, release-scoped fragment, support table, and default-version examples agree ([DOC-1658](https://linear.app/loft/issue/DOC-1658), [DOC-1677](https://linear.app/loft/issue/DOC-1677))
 
 ### User Handles (Items 1, 6-9):
 - **Create versioned docs** - `npm run docusaurus docs:version:vcluster X.Y.Z`
