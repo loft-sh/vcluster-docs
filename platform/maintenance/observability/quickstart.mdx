@@ -6,6 +6,8 @@ description: Deploy the default Fleet Observability pipeline end to end with Arg
 ---
 
 import InterpolatedCodeBlock from "@site/src/components/InterpolatedCodeBlock";
+import Tabs from "@theme/Tabs";
+import TabItem from "@theme/TabItem";
 
 This walks through the default, out-of-the-box path. It deploys the bundled Prometheus
 backend and edge collectors with Argo CD to one tenant cluster, using YAML and `kubectl`
@@ -16,7 +18,8 @@ backend or targeting a control plane cluster.
 ## Prerequisites
 
 - The [Argo CD integration](../../integrations/argocd/overview.mdx) is enabled, with a
-  connector registered on the target cluster. See
+  connector registered on both the cluster where Platform is installed and the tenant
+  cluster you collect from. See
   [Connect to Argo CD](../../integrations/argocd/connect-argocd.mdx).
 - A vCluster Platform license that includes Fleet Observability.
 - `kubectl` access to a project namespace.
@@ -56,7 +59,8 @@ For other backends, the Platform UI, and the full parameter list, see
 ## 2. Create the connector and deploy the gateway
 
 Create the observability connector Secret. These endpoints match the backend's default
-namespace from step 1:
+namespace from step 1. The Secret below also configures the connector for the bundled
+Grafana deployed in step 6, using that template's default certificate Secret name:
 
 ```yaml title="fleet-observability-connector.yaml"
 apiVersion: v1
@@ -72,6 +76,9 @@ stringData:
   metricsBackendOtlpEndpoint: https://prom-prometheus-server.vcluster-platform.svc.cluster.local/api/v1/otlp
   metricsBackendPromQLEndpoint: https://prom-prometheus-server.vcluster-platform.svc.cluster.local
   metricsBackendCertSecretName: metrics-backend-mtls
+  grafanaUrl: https://grafana.vcluster-platform.svc.cluster.local
+  grafanaCertSecretName: grafana-server-tls
+  fleetObservabilityDashboardUid: vcluster-fleet-observability
 ```
 
 ```bash
@@ -128,7 +135,13 @@ For control plane cluster keys, reader keys, and rotation, see
 
 ## 4. Deploy edge collectors
 
-Store the token from step 3 in a Secret in the collector namespace:
+The token from step 3 goes into a Secret inside the tenant cluster, in the namespace the
+collectors run in. Switch your `kubectl` context to the tenant cluster, then create the
+namespace and the Secret:
+
+```bash
+kubectl create namespace observability
+```
 
 ```yaml title="otel-otlp-auth.yaml"
 apiVersion: v1
@@ -145,13 +158,45 @@ stringData:
 kubectl apply -f otel-otlp-auth.yaml
 ```
 
-Then deploy the collector to your tenant cluster:
+Then deploy the collector to your tenant cluster. Edge collectors run inside the tenant
+cluster, which resolves DNS in its own zone, so `otlpEndpoint` needs to point somewhere
+the tenant cluster can actually reach. Which value to use depends on where the tenant
+cluster runs:
+
+<Tabs
+  defaultValue="same"
+  values={[
+    { label: "Same cluster as Platform", value: "same" },
+    { label: "A different cluster", value: "different" },
+  ]}
+>
+<TabItem value="same">
+
+If the tenant cluster runs on the same control plane cluster as Platform, map the
+gateway Service into the tenant cluster's DNS instead of exposing it externally. This
+requires shared nodes tenancy. Add this to the tenant cluster's `vcluster.yaml`:
+
+```yaml
+controlPlane:
+  coredns:
+    enabled: true
+    embedded: true
+networking:
+  resolveDNS:
+    - service: vcluster-platform/gateway-fleet-observability
+      target:
+        hostService: vcluster-platform/gateway-fleet-observability
+```
+
+See [Resolve DNS](/docs/vcluster/configure/vcluster-yaml/networking/resolve-dns) for how
+to apply `vcluster.yaml` changes and the full option reference. `otlpEndpoint` keeps using
+the gateway's in-cluster Service name:
 
 ```yaml title="fleet-edge-collectors.yaml"
 apiVersion: management.loft.sh/v1
 kind: ArgoCDApplication
 metadata:
-  name: fleet-edge-collectors
+  name: fleet-edge-collectors-my-vcluster   # include the tenant cluster name for uniqueness
   namespace: p-my-project          # replace with your project namespace
 spec:
   displayName: "Fleet edge collectors"
@@ -164,8 +209,57 @@ spec:
   parameters:
     destinationNamespace: observability
     otlpEndpoint: https://gateway-fleet-observability.vcluster-platform.svc.cluster.local:4318
+    otlpInsecureSkipVerify: "true"
     project: default
 ```
+
+</TabItem>
+<TabItem value="different">
+
+If the tenant cluster runs on a different cluster than Platform, it can't resolve or
+route to the gateway's in-cluster Service name. Expose the gateway with a `LoadBalancer`
+Service instead: add `serviceType: LoadBalancer` to the connector Secret from step 2 and
+reapply it, then retrieve the assigned address:
+
+```bash
+kubectl get svc -n vcluster-platform gateway-fleet-observability \
+  -o jsonpath='{range .status.loadBalancer.ingress[*]}{.hostname}{.ip}{"\n"}{end}'
+```
+
+The cloud provider assigns the address asynchronously, so wait until it's populated, then
+use it as `otlpEndpoint`:
+
+```yaml title="fleet-edge-collectors.yaml"
+apiVersion: management.loft.sh/v1
+kind: ArgoCDApplication
+metadata:
+  name: fleet-edge-collectors-my-vcluster   # include the tenant cluster name for uniqueness
+  namespace: p-my-project          # replace with your project namespace
+spec:
+  displayName: "Fleet edge collectors"
+  destination:
+    virtualCluster:
+      name: my-vcluster            # replace with your tenant cluster name
+      target: vCluster             # deploy into the tenant cluster
+  templateRef:
+    name: cluster-collector
+  parameters:
+    destinationNamespace: observability
+    otlpEndpoint: https://REPLACE_WITH_LOADBALANCER_ADDRESS:4318
+    otlpInsecureSkipVerify: "true"
+    project: default
+```
+
+See [Expose the gateway with a LoadBalancer](./install-observability-gateway.mdx#expose-the-gateway-with-a-loadbalancer)
+for certificate and Service annotation details.
+
+</TabItem>
+</Tabs>
+
+Both branches keep `otlpInsecureSkipVerify: "true"` to accept the gateway's self-signed
+certificate for this quickstart. For a production setup, distribute the gateway's
+`ca.crt` instead, as described in
+[Customize the gateway serving certificate](./install-observability-gateway.mdx#customize-the-gateway-serving-certificate).
 
 ```bash
 kubectl apply -f fleet-edge-collectors.yaml
@@ -176,13 +270,34 @@ parameter list, see [Configure edge collectors](./configure-edge-collectors.mdx)
 
 ## 5. Verify
 
-Check that metrics are reaching the gateway:
+Check that metrics are reaching the gateway. Run the port-forward in the background;
+without the trailing `&` it blocks the shell and `curl` never runs:
 
 ```bash
 GATEWAY_POD=$(kubectl get pod -n vcluster-platform -l app.kubernetes.io/name=gateway,app.kubernetes.io/instance=fleet-observability -o jsonpath='{.items[0].metadata.name}')
-kubectl port-forward -n vcluster-platform pod/$GATEWAY_POD 8889:8889
+kubectl port-forward -n vcluster-platform pod/$GATEWAY_POD 8889:8889 &
 curl http://127.0.0.1:8889/metrics
+kill %1
 ```
+
+Gateway metrics only confirm a write request arrived, not that it reached the backend.
+Create a `metrics-reader` key scoped to the same tenant cluster, as described in
+[Create a reader key](./configure-metrics-access.mdx#create-a-reader-key), then query the
+Query Proxy for your first metric:
+
+```bash
+GATEWAY_POD=$(kubectl get pod -n vcluster-platform -l app.kubernetes.io/name=gateway,app.kubernetes.io/instance=fleet-observability -o jsonpath='{.items[0].metadata.name}')
+kubectl port-forward -n vcluster-platform pod/$GATEWAY_POD 8081:8081 &
+curl -k -G \
+  -H "Authorization: Bearer $METRICS_READER_TOKEN" \
+  -H "X-Vcluster-Platform-Project: $PROJECT" \
+  -H "X-Vcluster-Platform-Instance: $TENANT_CLUSTER" \
+  --data-urlencode 'query=up' \
+  https://127.0.0.1:8081/api/v1/query
+kill %1
+```
+
+A non-empty `result` array confirms the write reached the backend and is queryable.
 
 If writes aren't showing up, see [Troubleshooting](./troubleshooting.mdx).
 
@@ -213,7 +328,10 @@ spec:
 kubectl apply -f fleet-grafana.yaml
 ```
 
-For the connector settings Grafana needs and how to sign in, see
+Once the Grafana pod is running, sign in at `https://<platform-host>/grafana/` with
+Platform SSO to see the pre-provisioned Fleet Observability, Cluster Metrics, and GPU
+Overview dashboards. For the connector settings Grafana needs and the full dashboard
+list, see
 [Deploy the bundled Grafana with Argo CD](./query-fleet-metrics.mdx#deploy-the-bundled-grafana-with-argo-cd).
 
 ## Next steps
