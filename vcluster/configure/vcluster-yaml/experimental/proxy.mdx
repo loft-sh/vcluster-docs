@@ -138,7 +138,7 @@ The proxy discovers the target's control plane pods as peers on the platform net
 
 - A single dial attempt times out after **5 seconds**.
 - After **3 consecutive dial failures**, a peer is **quarantined for 20 seconds**, then given a single trial dial. Requests fail fast instead of hanging while a peer is quarantined.
-- If the peer list cannot be refreshed for more than **60 seconds**, the proxy treats it as stale and fails requests with 503 rather than trusting it.
+- If the peer watch subscription drops and stays down for more than **60 seconds**, the proxy treats the cached peer list as stale and fails requests with 503 rather than trusting it. The window starts when the subscription drops, not when the list was last published, and a successful publication resets it.
 - Non-watch requests are capped at **60 seconds** end to end. Watches stream indefinitely.
 
 ### Behavior when the target is unreachable {#degraded-behavior}
@@ -821,22 +821,46 @@ Most series are proxy-side equivalents of standard Kubernetes API server metrics
 
 | Metric | Type | Labels | What it tells you |
 |--------|------|--------|-------------------|
-| `vcluster_proxy_request_total` | counter | `group_version`, `verb`, `code`, `reason` | Traffic and error rate. The `reason` label separates proxy-generated failures (`no_peer`, `stale_peers`, `all_quarantined`, `ownership_masked`, `namespace_missing`, `deadline`) from `upstream` responses, so a 503 spike is attributable without log access. |
-| `vcluster_proxy_request_duration_seconds` | histogram | `verb` | Latency distribution, with buckets up to the 60-second request deadline. Fast 503s point at proxy-side degradation. Creeping p99 points at a slow target or a relayed network path. |
-| `vcluster_proxy_request_terminations_total` | counter | `reason` | Requests the proxy itself terminated, such as hitting the 60-second deadline or a rejected connection upgrade, as distinct from target-side errors. |
-| `vcluster_proxy_inflight_requests` | gauge | | Concurrent proxied requests, for saturation tracking. |
+| `vcluster_proxy_request_total` | counter | `group_version`, `verb`, `code`, `reason` | Traffic and error rate. The `reason` label attributes every outcome, so a 503 spike is attributable without log access. See [Outcome reasons](#outcome-reasons). |
+| `vcluster_proxy_request_duration_seconds` | histogram | `verb` | Latency distribution for non-watch requests, with buckets up to the 60-second request deadline. Watches are excluded, because their lifetime would swamp the distribution. Fast 503s point at proxy-side degradation. Creeping p99 points at a slow target or a relayed network path. |
+| `vcluster_proxy_request_terminations_total` | counter | `reason` | Requests the proxy itself terminated, as distinct from target-side errors: `deadline` (the 60-second cap expired) or `upgrade_rejected` (a rejected connection upgrade). |
+| `vcluster_proxy_inflight_requests` | gauge | | Non-watch requests currently being served, for saturation tracking. Watch streams are counted by `vcluster_proxy_active_watches` instead. |
+| `vcluster_proxy_discovery_fallbacks_total` | counter | `group_version`, `reason` | Discovery requests answered from the [local fallback document](#degraded-behavior) instead of the target. Callers see a `200`, so this counter is the only signal that discovery is degraded. See [Discovery lists resources with only a get verb, or an empty list](#discovery-fallback). |
+
+#### Outcome reasons {#outcome-reasons}
+
+The `reason` label carries the same vocabulary across `vcluster_proxy_request_total`, `vcluster_proxy_request_terminations_total`, `vcluster_proxy_peer_dial_failures_total`, and `vcluster_proxy_discovery_fallbacks_total`. A request failed by a dial carries that dial's reason, and a discovery request answered from the fallback carries that fallback's reason, so the same event is correlatable across series.
+
+| Reason | Meaning | Also on |
+|--------|---------|---------|
+| `upstream` | Default. The outcome came from the target, not from the proxy. | |
+| `no_peer` | No peer host was available: no peer list has arrived since startup, or the list is empty. | `peer_dial_failures_total`, `discovery_fallbacks_total` |
+| `stale_peers` | The peer watch subscription has been down longer than the 60-second staleness tolerance, so the cached peer list is no longer trusted. | `peer_dial_failures_total`, `discovery_fallbacks_total` |
+| `all_quarantined` | Every peer host is quarantined, or the only candidate is mid-trial. | `peer_dial_failures_total`, `discovery_fallbacks_total` |
+| `timeout` | The 5-second peer dial timeout expired. | `peer_dial_failures_total` |
+| `deadline` | A deadline the proxy set expired, usually the 60-second non-watch cap. | `request_terminations_total`, `peer_dial_failures_total` |
+| `canceled` | The caller's own context ended, for example the client disconnected. Not a proxy fault. | `peer_dial_failures_total` |
+| `peer_departed` | The peer left the peer list mid-dial. | `peer_dial_failures_total` |
+| `ts_server_unavailable` | The local platform network server or the license failed before any peer was contacted. | `peer_dial_failures_total` |
+| `error` | Any other dial error. | `peer_dial_failures_total` |
+| `ownership_masked` | `accessResources: owned` hid an object the client does not own. Tenant isolation working as intended. See [404 on resources that exist in the target](#resources-not-appearing). | |
+| `ownership_check_failed` | The proxy could not complete the ownership check and masked the response defensively. Unlike `ownership_masked`, this is a proxy-side failure, not isolation working. | |
+| `namespace_missing` | A write targeted a namespace that does not exist in the client tenant cluster. | |
+| `upgrade_rejected` | A connection upgrade verb was rejected. See [501: connection upgrades are not supported](#connection-upgrades). | `request_terminations_total` |
+| `upstream_error` | The target answered discovery with 401, 404, or 5xx, so the fallback document was served. | `discovery_fallbacks_total` |
 
 #### Peer health metrics {#peer-health-metrics}
 
 | Metric | Type | Labels | What it tells you |
 |--------|------|--------|-------------------|
-| `vcluster_proxy_peers` | gauge | `state` | Current peer count per state: `healthy`, `quarantined`, or `half_open`. No healthy peers means requests to that target fail right now. Unlike the transition counters, this also catches a pod that starts already degraded. |
-| `vcluster_proxy_peer_list_age_seconds` | gauge | | Freshness of the peer list. Values approaching the 60-second staleness tolerance predict 503s before they happen. |
+| `vcluster_proxy_peers` | gauge | `group_version`, `state` | Current peer count per state: `healthy`, `quarantined`, or `half_open`. Computed at scrape time, so expired quarantines are already reflected. No healthy peers means requests to that target fail right now. Unlike the transition counters, this also catches a pod that starts already degraded. |
+| `vcluster_proxy_peer_cache_synced` | gauge | `group_version` | Whether the proxy holds a usable peer snapshot (`1`). At `0`, every request to that target fails fast with 503. This is the single most direct "is this proxy able to serve at all" signal: it covers both a peer list that has never arrived and one that aged out after the subscription dropped. |
+| `vcluster_proxy_peer_list_age_seconds` | gauge | `group_version` | Seconds since the last peer list was published. Absent before the first publication. Publication is event-driven, so a high value on its own does not mean anything is wrong, and it is not what triggers the staleness cutoff. See the caveat under [Alert starting points](#alerts). |
 | `vcluster_proxy_peer_quarantines_total` | counter | | A target endpoint was quarantined after 3 consecutive dial failures. A steady increase over tens of minutes means a dead or stale endpoint is re-quarantined every cycle, or the target is flapping. |
 | `vcluster_proxy_target_all_peers_quarantined_total` | counter | | Every endpoint for a target became quarantined at once. Requests to that target fail fast with 503, so any increase means callers are seeing errors. |
 | `vcluster_proxy_peer_recoveries_total` | counter | | A previously failing or quarantined endpoint recovered on a successful dial. No increases while quarantines keep increasing means nothing is recovering. |
-| `vcluster_proxy_peer_dial_failures_total` | counter | `reason` | Every failed dial, not only the third consecutive failure that triggers quarantine. |
-| `vcluster_proxy_peer_dial_duration_seconds` | histogram | | Dial latency, with buckets up to the 5-second dial timeout. Creep here is the earliest signal of network path degradation. |
+| `vcluster_proxy_peer_dial_failures_total` | counter | `reason` | Every failed dial, not only the third consecutive failure that triggers quarantine. Also counts rejections that never reach a peer (`no_peer`, `stale_peers`, `all_quarantined`, `peer_departed`), which have no matching duration observation. See [Outcome reasons](#outcome-reasons). |
+| `vcluster_proxy_peer_dial_duration_seconds` | histogram | | Latency of dials that were actually attempted, successful or not, with buckets up to the 5-second dial timeout. Creep here is the earliest signal of network path degradation. |
 
 #### Watch metrics {#watch-metrics}
 
@@ -847,14 +871,27 @@ Most series are proxy-side equivalents of standard Kubernetes API server metrics
 
 ### Alert starting points {#alerts}
 
+On the `== 0` gauge rules, do not aggregate away `group_version` or the scrape target's own pod label. Each group and version keeps its own peer cache, and in an HA deployment so does each replica, so a `sum` lets one healthy series hide a degraded one. Aggregating a `rate` and testing `> 0` is safe, because a non-negative sum cannot mask a positive member.
+
 ```yaml title="Prometheus alert rules"
 # A target has no healthy peers: requests are failing with 503 right now.
 - alert: ResourceProxyNoHealthyPeers
-  expr: sum by (target) (vcluster_proxy_peers{state="healthy"}) == 0
+  expr: vcluster_proxy_peers{state="healthy"} == 0
   for: 2m
   labels: {severity: critical}
   annotations:
-    summary: 'Resource proxy target {{ $labels.target }}: no healthy peers, requests fail with 503'
+    summary: 'Resource proxy target {{ $labels.target }} ({{ $labels.group_version }}): no healthy peers, requests fail with 503'
+
+# No usable peer snapshot at all: every request to this target fails fast with
+# 503. Covers both "no peer list has ever arrived" (platform connectivity or
+# license) and "the peer watch subscription dropped and the cached list aged
+# out past the 60-second tolerance".
+- alert: ResourceProxyPeerCacheUnsynced
+  expr: vcluster_proxy_peer_cache_synced == 0
+  for: 2m
+  labels: {severity: critical}
+  annotations:
+    summary: 'Resource proxy target {{ $labels.target }} ({{ $labels.group_version }}): no usable peer snapshot, requests fail with 503'
 
 # All peers for a target became quarantined at once within the window.
 # Warning, not critical: a target rolling restart quarantines every old endpoint
@@ -877,14 +914,24 @@ Most series are proxy-side equivalents of standard Kubernetes API server metrics
   annotations:
     summary: 'Resource proxy target {{ $labels.target }}: peers repeatedly quarantined without recovery'
 
-# Peer list going stale. This is the one leading indicator: 503s start once the
-# age crosses the 60-second staleness tolerance.
-- alert: ResourceProxyPeerListStale
-  expr: vcluster_proxy_peer_list_age_seconds > 45
-  for: 2m
+# Peer list has not been refreshed in a long time. Informational, not a
+# predictor: see the caveat below the rules. Baseline the gauge on a healthy
+# cluster before picking a threshold; 900s is a placeholder, not a default.
+- alert: ResourceProxyPeerListNotRefreshed
+  expr: vcluster_proxy_peer_list_age_seconds > 900
+  for: 10m
+  labels: {severity: info}
+  annotations:
+    summary: 'Resource proxy target {{ $labels.target }} ({{ $labels.group_version }}): peer list not refreshed for {{ $value }}s'
+
+# Discovery is being served from the local fallback: callers see a 200 and a
+# healthy APIService while real requests fail. Any sustained rate is degraded.
+- alert: ResourceProxyDiscoveryDegraded
+  expr: sum by (target, group_version) (rate(vcluster_proxy_discovery_fallbacks_total[5m])) > 0
+  for: 5m
   labels: {severity: warning}
   annotations:
-    summary: 'Resource proxy target {{ $labels.target }}: peer list age {{ $value }}s, 503s start at 60s'
+    summary: 'Resource proxy target {{ $labels.target }} ({{ $labels.group_version }}): serving fallback discovery, real requests are likely failing'
 
 # Watches are open but no events are flowing: a half-dead stream.
 # Tune the window to how often your proxied resources actually change, or drop
@@ -898,6 +945,10 @@ Most series are proxy-side equivalents of standard Kubernetes API server metrics
   annotations:
     summary: 'Resource proxy target {{ $labels.target }}: watches open but no events for an hour'
 ```
+
+:::warning Peer list age is not a leading indicator
+It is tempting to alert on `vcluster_proxy_peer_list_age_seconds` crossing the 60-second staleness tolerance, but the two are not measured from the same instant. The gauge measures time since the last peer list publication, which is event-driven: on a cluster with no peer churn, nothing publishes and the age grows with the proxy perfectly healthy. The 60-second tolerance is measured from the moment the peer watch subscription drops, and a successful publication resets that clock. Alert on `vcluster_proxy_peer_cache_synced == 0` for the condition that actually fails requests, and treat a sustained high age as a hint to check platform connectivity.
+:::
 
 Complementary signals worth having:
 
@@ -1027,7 +1078,7 @@ Then read the verdict from this table:
 |-------------|-------------------------------|---------|
 | Not `Ready` | Anything | The target is down. Fix the target. The proxy recovers on its own once a peer is dialable. |
 | `Ready` | `vcluster_proxy_peers` shows no `healthy` peers, `vcluster_proxy_target_all_peers_quarantined_total` increased recently, quarantine log lines | Proxy-side degradation: the peer list points at dead or stale endpoints. See [503 errors persist after a target restart or upgrade](#stale-peers). |
-| `Ready` | `peer cache did not sync in time for the startup probe` or `peer watch subscription is down` in logs | The client cannot reach the platform because of a license, network, or platform issue. The target is fine. The path to it is not. |
+| `Ready` | `vcluster_proxy_peer_cache_synced` is `0`, with `peer cache did not sync in time for the startup probe` or `peer watch subscription is down` in logs | The client cannot reach the platform because of a license, network, or platform issue. The target is fine. The path to it is not. |
 | `Ready` | No quarantine activity, requests still return 503 | The target API server is returning 5xx through the proxy. Check the target's own API server health and logs. |
 | `Ready` | Requests hang about 60 seconds, then fail without a fast 503 | The first dial failures are still counting toward quarantine, or the target is accepting connections and responding slowly. See [Requests hang for about 60 seconds, then fail](#requests-hang). |
 
@@ -1115,6 +1166,12 @@ This is the locally served fallback discovery document, which means the target i
 - With explicit resource keys, the fallback lists your configured resources with a single `get` verb.
 - With a wildcard key (`*.<group>/<version>`), the fallback is an empty resource list, because the proxy cannot enumerate resources without the target. `kubectl api-resources` and other discovery-based commands return no resource kinds for that group and version during the outage.
 
+`vcluster_proxy_discovery_fallbacks_total` confirms it without having to eyeball the discovery document, and its `reason` label gives the cause directly: `no_peer`, `stale_peers`, and `all_quarantined` mean the proxy could not reach a peer, while `upstream_error` means the target answered discovery with 401, 404, or 5xx.
+
+```bash title="Check whether discovery is being served from the fallback"
+kubectl get --raw /metrics/syncer | grep vcluster_proxy_discovery_fallbacks_total
+```
+
 Full, accurate discovery returns automatically once the target is reachable. Treat fallback-shaped discovery as a symptom, and triage it with the [503 playbook](#target-unavailable).
 
 ### 501: connection upgrades are not supported {#connection-upgrades}
@@ -1192,7 +1249,7 @@ The proxy's timing behavior is fixed and not configurable:
 | Peer dial timeout | 5s | Converts hanging dials into countable failures. |
 | Quarantine threshold | 3 consecutive dial failures | The endpoint leaves rotation. |
 | Quarantine duration | 20s | Then a single trial dial. |
-| Peer list staleness tolerance | 60s | Older peer data is discarded, and requests return 503. |
+| Peer list staleness tolerance | 60s | Measured from the moment the peer watch subscription drops, not from the last publication. Past it the cached peer data is discarded and requests return 503. |
 | `Retry-After` on 503 | 1s | Caller backoff hint. |
 | Proxy ports | 9100 and up | One per group and version, alphabetical, identical across replicas. |
 
