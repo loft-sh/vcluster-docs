@@ -106,6 +106,12 @@ longer exist as separate entries. Instead:
   (literally no space, unlike the "Argo CD" prose spelling elsewhere) and
   `Helm Apps`.
 
+Both layouts hide the tab bar entirely when only one of the two sibling
+features is enabled (`tabs: visibleTabs.length > 1 ? visibleTabs : undefined`)
+and redirect straight to the single remaining page instead — no tab bar
+renders, so there's nothing to click. Never write a bare "click the X tab"
+for these two pages; see "Conditionally hidden tabs" under Fix patterns below.
+
 So `Go to <NavStep>Tenant Management > Cluster Templates</NavStep>` becomes
 `Go to <NavStep>Management > Templates</NavStep> and click the
 <Label>Tenant Clusters</Label> tab`, and similarly for Namespaces and
@@ -204,6 +210,33 @@ Exception: the `Apps` page tab is literally labeled `ArgoCD Apps` (no space) in
 text, keep it as `ArgoCD Apps` — changing it to `Argo CD Apps` would itself be
 drift, since it wouldn't match what the tab says on screen.
 
+### Conditionally hidden tabs (Templates/Apps)
+
+`TemplatesPageLayout.tsx` and `AppsPageLayout.tsx` only render a tab bar when
+both sibling features are enabled; with just one enabled, the page redirects
+straight there and no tab exists to click. Any instruction that tells a user
+to click `Tenant Clusters`/`Namespaces` (Templates) or `ArgoCD Apps`/`Helm Apps`
+(Apps) needs the click to be conditional:
+
+```mdx
+<!-- Before -->
+Go to <NavStep>Management > Templates</NavStep> and click the
+<Label>Tenant Clusters</Label> tab.
+
+<!-- After -->
+Go to <NavStep>Management > Templates</NavStep> and, if shown, click the
+<Label>Tenant Clusters</Label> tab.
+```
+
+For a step that references both tabs of a page in one sentence (for example
+a shared "find your template" step spanning Templates and Apps), use "If a
+tab bar is shown, click the tab for..." instead of stapling "if shown" onto
+each label individually.
+
+Check for this same collapse-to-redirect pattern on any other page layout
+gated by two mutually exclusive feature flags — look for a `.length > 1 ? ... : undefined`
+guard on the `tabs:` prop before writing a bare tab-click instruction.
+
 ## After fixing: Vale
 
 Run Vale on every file you touch and fix all warnings — not just the drift-related lines.
@@ -223,6 +256,8 @@ Common warnings triggered by drift fixes:
 After the Management/Templates/Apps sidebar restructuring sweep, the report stands at 10 unmatched tokens (all in the "known expected" table above) and 0 instruction phrases. Any new findings above this baseline represent genuine drift introduced since that date.
 
 This sweep found a real restructuring the script's multi-part `NavStep` matching had masked for some time: `Tenant Management` was renamed `Management`, and the `Cluster Templates`/`Namespace Templates`/`Argo CD Templates` nav items were merged into two items (`Templates` with `Tenant Clusters`/`Namespaces` tabs, and `Apps` with `ArgoCD Apps`/`Helm Apps` tabs). Fixed across `_partials/namespace-template/create-ui.mdx`, `administer/templates/create-templates.mdx`, `administer/templates/versioning.mdx`, `integrations/argocd/deploy-applications.mdx`, `use-platform/apps/use-in-templates.mdx`, and `use-platform/apps/use-parameters.mdx`. Also fixed along the way: a stale `<Button>Add App</Button>` (now `Create App Template`), a stale bold `**Add Namespace Template**` (now the `<Button>` component with the correct `Create Namespace Template` text), and a stale `<Label>Recommended App</Label>` (the UI label is `Recommend App`, no "-ed").
+
+A PR review on the same sweep caught a further issue the drift script can't detect at all: the `Templates`/`Apps` tab-click steps assumed the tab bar always renders, but it collapses away when only one sibling feature is enabled (see "Conditionally hidden tabs" under Fix patterns). Reworded all 8 affected steps across the same six files to make the click conditional.
 
 Previously (2026-07-28, after the fleet observability sweep): 10 unmatched tokens, 0 instruction phrases. Previously (2026-06-26, after the DOC-1574 sweep): 4 unmatched tokens, 0 instruction phrases. The six fleet observability tokens added since then are all Argo CD Application Template names/parameters (dynamic content, not literal UI strings) — see the known-expected table. One genuine drift item from that sweep, a stale `<Label>Deploy to vCluster</Label>` in `configure-edge-collectors.mdx` that should have read `Deploy to tenant cluster`, was found and fixed rather than added to the known-expected list.
 
