@@ -158,6 +158,10 @@ stringData:
 kubectl apply -f otel-otlp-auth.yaml
 ```
 
+Switch your `kubectl` context back to the cluster where Platform runs before continuing.
+The `ArgoCDApplication` you apply next, and its project namespace, are Platform custom
+resources that only exist on that cluster, not on the tenant cluster.
+
 Then deploy the collector to your tenant cluster. Edge collectors run inside the tenant
 cluster, which resolves DNS in its own zone, so `otlpEndpoint` needs to point somewhere
 the tenant cluster can actually reach. Which value to use depends on where the tenant
@@ -270,31 +274,57 @@ parameter list, see [Configure edge collectors](./configure-edge-collectors.mdx)
 
 ## 5. Verify
 
-Check that metrics are reaching the gateway. Run the port-forward in the background;
-without the trailing `&` it blocks the shell and `curl` never runs:
+Check that metrics are reaching the gateway. Run the port-forward in the background and
+capture its PID with `$!`; `--retry-connrefused` makes `curl` wait for the tunnel instead
+of racing it:
 
 ```bash
 GATEWAY_POD=$(kubectl get pod -n vcluster-platform -l app.kubernetes.io/name=gateway,app.kubernetes.io/instance=fleet-observability -o jsonpath='{.items[0].metadata.name}')
 kubectl port-forward -n vcluster-platform pod/$GATEWAY_POD 8889:8889 &
-curl http://127.0.0.1:8889/metrics
-kill %1
+PF_PID=$!
+curl --retry 5 --retry-connrefused --retry-delay 1 http://127.0.0.1:8889/metrics
+kill $PF_PID
 ```
 
 Gateway metrics only confirm a write request arrived, not that it reached the backend.
-Create a `metrics-reader` key scoped to the same tenant cluster, as described in
-[Create a reader key](./configure-metrics-access.mdx#create-a-reader-key), then query the
-Query Proxy for your first metric:
+Create a `metrics-reader` key scoped to the same tenant cluster and query the Query Proxy
+for your first metric. Match `PROJECT` and `TENANT_CLUSTER` to the values you used in step
+3; see [Create a reader key](./configure-metrics-access.mdx#create-a-reader-key) for the
+full parameter list:
 
 ```bash
+PROJECT=default
+TENANT_CLUSTER=my-vcluster
+METRICS_READER_TOKEN=$(head -c 20 /dev/urandom | od -An -tx1 | tr -d ' \n')
+kubectl apply -f - <<EOF
+apiVersion: storage.loft.sh/v1
+kind: AccessKey
+metadata:
+  name: "loft-metrics-reader-p-${PROJECT}-${TENANT_CLUSTER}"
+spec:
+  type: Other
+  key: "${METRICS_READER_TOKEN}"
+  subject: "loft:metrics-reader:p-${PROJECT}:${TENANT_CLUSTER}"
+  groups:
+    - loft:system:metrics-readers
+  scope:
+    roles:
+      - role: metrics-reader
+    virtualClusters:
+      - project: ${PROJECT}
+        virtualCluster: "${TENANT_CLUSTER}"
+EOF
+
 GATEWAY_POD=$(kubectl get pod -n vcluster-platform -l app.kubernetes.io/name=gateway,app.kubernetes.io/instance=fleet-observability -o jsonpath='{.items[0].metadata.name}')
 kubectl port-forward -n vcluster-platform pod/$GATEWAY_POD 8081:8081 &
-curl -k -G \
+PF_PID=$!
+curl -k -G --retry 5 --retry-connrefused --retry-delay 1 \
   -H "Authorization: Bearer $METRICS_READER_TOKEN" \
   -H "X-Vcluster-Platform-Project: $PROJECT" \
   -H "X-Vcluster-Platform-Instance: $TENANT_CLUSTER" \
   --data-urlencode 'query=up' \
   https://127.0.0.1:8081/api/v1/query
-kill %1
+kill $PF_PID
 ```
 
 A non-empty `result` array confirms the write reached the backend and is queryable.
