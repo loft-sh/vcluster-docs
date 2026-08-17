@@ -1,0 +1,255 @@
+---
+title: Shared-node admission policy examples
+sidebar_label: Admission Policy Examples
+sidebar_position: 2
+sidebar_class_name: host-nodes
+description: Worked Kyverno ClusterPolicy examples for the admission gaps identified in the shared-node hardening guide.
+---
+
+import TenancySupport from '../_fragments/tenancy-support.mdx';
+
+<TenancySupport hostNodes="true" />
+
+These policies apply through your own policy engine, not vCluster, so the YAML itself doesn't depend on a vCluster edition. The first one's documented delivery path does. It needs [`policies.centralAdmission`](./shared-nodes-hardening.mdx#prerequisites), an Enterprise feature, for the tamper-resistant delivery this guide assumes. [Manually mapping a host policy service into the tenant cluster](../configure/vcluster-yaml/policies/admission-control.mdx), or installing a webhook directly inside it, reaches the tenant cluster too, without that dependency. You then have to protect that setup from tenant modification yourself.
+
+Where they run also differs. The first evaluates Pods inside each tenant cluster, reached through that centralAdmission webhook wiring, before vCluster ever syncs the Pod to the control plane cluster. The other two evaluate objects natively on the control plane cluster, after translation.
+
+Kyverno registers native admission webhooks for the control plane cluster automatically, for any installed `ClusterPolicy` that matches a resource kind. That happens regardless of which cluster you intend the policy to serve. Running this policy on a separate Kyverno deployment doesn't prevent that instance from also registering its own native webhook and evaluating the control plane cluster's own Pods.
+
+Add a precondition instead, requiring the [`request.options.vCluster.name`](../configure/vcluster-yaml/policies/admission-control.mdx#access-tenant-identifiers-in-webhooks) field vCluster's proxy adds to a tenant-routed request. A control plane cluster's own native Pods never carry that field, so the precondition alone keeps this policy from evaluating anything but tenant-routed admission. `background: false` is still worth setting, since background scans have no admission request to check the precondition against, but the precondition is what actually isolates the rule.
+
+This page is a companion to [Shared-node security hardening](./shared-nodes-hardening.mdx). It provides Kyverno examples for three admission controls from that guide, the two toleration controls from [Node scheduling and isolation](./shared-nodes-hardening.mdx#node-scheduling-and-isolation), and the NetworkPolicy peer restrictions from [Primary pod network](./shared-nodes-hardening.mdx#primary-pod-network).
+
+:::note Kyverno version and policy kind
+These examples need Kyverno 1.13 or later, since they set enforcement through the per-rule `validate.failureAction` field. Earlier versions use `spec.validationFailureAction` instead and reject these manifests during validation.
+
+They also use the classic `ClusterPolicy` kind for consistency with the PV example in the main guide. Kyverno's own docs now list `ClusterPolicy` as deprecated in favor of the CEL-based `ValidatingPolicy` kind. `ClusterPolicy` still works, but check your Kyverno version's support window and adapt these examples if you're on the newer kind.
+:::
+
+Apply each of these through the same [Rollout sequence](./shared-nodes-hardening.mdx#rollout-sequence) as the rest of the guide: start in `Audit`, confirm no legitimate workload gets flagged, then switch to `Enforce`.
+
+## Deny tolerations for a protected infrastructure taint in the tenant cluster
+
+This runs as [tenant-cluster admission](./shared-nodes-hardening.mdx#node-scheduling-and-isolation), so it sees the tenant Pod before vCluster's `enforceTolerations` injects the tenant-pool toleration. Kubernetes admission may already have added its standard node-condition tolerations at this point, so a safe policy can't reject every `Exists` operator or empty value indiscriminately.
+
+This example protects the infrastructure taint `dedicated=platform-infrastructure:NoSchedule`. One rule catches `Exists` tolerations whose key and effect can match that taint. The other catches `Equal` tolerations that match its complete key, value, and effect. Replace that tuple with each infrastructure taint you protect, using another pair of rules for every tuple:
+
+```yaml title="deny-protected-infrastructure-tolerations.yaml"
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: deny-protected-infrastructure-tolerations
+spec:
+  background: false
+  rules:
+    - name: deny-protected-key-exists
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      preconditions:
+        all:
+          - key: "{{ request.options.vCluster.name || '' }}"
+            operator: NotEquals
+            value: ""
+      validate:
+        failureAction: Audit
+        message: "Toleration can match the protected infrastructure taint dedicated=platform-infrastructure:NoSchedule."
+        foreach:
+          - list: "request.object.spec.tolerations"
+            deny:
+              conditions:
+                all:
+                  - key: "{{ contains(['', 'dedicated'], element.key || '') }}"
+                    operator: Equals
+                    value: true
+                  - key: "{{ element.operator || '' }}"
+                    operator: Equals
+                    value: "Exists"
+                  - key: "{{ contains(['', 'NoSchedule'], element.effect || '') }}"
+                    operator: Equals
+                    value: true
+    - name: deny-protected-key-value-equal
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      preconditions:
+        all:
+          - key: "{{ request.options.vCluster.name || '' }}"
+            operator: NotEquals
+            value: ""
+      validate:
+        failureAction: Audit
+        message: "Toleration can match the protected infrastructure taint dedicated=platform-infrastructure:NoSchedule."
+        foreach:
+          - list: "request.object.spec.tolerations"
+            deny:
+              conditions:
+                all:
+                  - key: "{{ element.key || '' }}"
+                    operator: Equals
+                    value: "dedicated"
+                  - key: "{{ contains(['', 'Equal'], element.operator || '') }}"
+                    operator: Equals
+                    value: true
+                  - key: "{{ element.value || '' }}"
+                    operator: Equals
+                    value: "platform-infrastructure"
+                  - key: "{{ contains(['', 'NoSchedule'], element.effect || '') }}"
+                    operator: Equals
+                    value: true
+```
+
+## Allowlist exact tolerations on the control plane cluster
+
+This runs as host-side admission on the translated Pod, after vCluster has injected the tenant-pool toleration and Kubernetes has added any automatic tolerations. It can't distinguish a tenant-supplied toleration from an injected one, so it allowlists the exact set instead of denying specific patterns. The `vcluster.loft.sh/managed-by` selector keeps the policy from affecting unrelated control plane cluster Pods.
+
+This example allows the tenant-pool toleration, the two default `NoExecute` tolerations, and the `NoSchedule` tolerations Kubernetes can add to DaemonSet Pods. It denies anything else:
+
+```yaml title="allow-only-known-tolerations.yaml"
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: allow-only-known-tolerations
+spec:
+  background: true
+  rules:
+    - name: allow-only-known-tolerations
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+              selector:
+                matchExpressions:
+                  - key: vcluster.loft.sh/managed-by
+                    operator: Exists
+      validate:
+        failureAction: Audit
+        message: "Toleration does not match an allowed entry."
+        foreach:
+          - list: "request.object.spec.tolerations"
+            anyPattern:
+              - key: dedicated
+                operator: Equal
+                value: tenant-workloads
+                effect: NoSchedule
+              - key: node.kubernetes.io/not-ready
+                operator: Exists
+                effect: NoExecute
+              - key: node.kubernetes.io/unreachable
+                operator: Exists
+                effect: NoExecute
+              - key: node.kubernetes.io/disk-pressure
+                operator: Exists
+                effect: NoSchedule
+              - key: node.kubernetes.io/memory-pressure
+                operator: Exists
+                effect: NoSchedule
+              - key: node.kubernetes.io/pid-pressure
+                operator: Exists
+                effect: NoSchedule
+              - key: node.kubernetes.io/unschedulable
+                operator: Exists
+                effect: NoSchedule
+              - key: node.kubernetes.io/network-unavailable
+                operator: Exists
+                effect: NoSchedule
+```
+
+Replace `dedicated`/`tenant-workloads` with your own tenant-pool taint key and value. Remove controller-added entries for workload kinds you prohibit, and add any other tolerations your approved controllers or admission plugins inject. Kyverno's pattern matching only asserts on the fields you list, so the node-condition entries match regardless of whatever `tolerationSeconds` value Kubernetes attaches.
+
+## Restrict NetworkPolicy peers on the control plane cluster
+
+This runs on a vCluster-synced NetworkPolicy. The `vcluster.loft.sh/managed-by` selector keeps it from affecting unrelated control plane cluster policies. It covers two separate bypasses, since a tenant doesn't need `ipBlock` at all to reopen the platform default-deny:
+
+- **Disallowed `ipBlock` values.** Denies the resource if any `ipBlock.cidr` in `spec.ingress[].from[]` or `spec.egress[].to[]` isn't an exact string in the allowed list. Peers using `podSelector` or `namespaceSelector` instead of `ipBlock` are skipped, since the per-entry precondition only evaluates peers that carry an `ipBlock.cidr`.
+- **Unrestricted rules.** Kubernetes treats a missing or empty `from`/`to` as matching every source or destination. vCluster's translator preserves that unchanged, so a bare `ingress: [{}]` or `egress: [{}]` reopens the boundary without ever touching `ipBlock`. Denies any ingress rule with no `from` entries, or egress rule with no `to` entries.
+
+The example uses documentation-only addresses that don't route to real services. Replace them with narrow approved destinations. Never allow the control plane cluster's Pod, Service, node, control-plane, storage, management, or metadata CIDRs here, since doing so would reopen the boundary this policy protects:
+
+```yaml title="restrict-networkpolicy-peers.yaml"
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: restrict-networkpolicy-peers
+spec:
+  background: true
+  rules:
+    - name: restrict-ipblock-cidrs
+      match:
+        any:
+          - resources:
+              kinds:
+                - NetworkPolicy
+              selector:
+                matchExpressions:
+                  - key: vcluster.loft.sh/managed-by
+                    operator: Exists
+      validate:
+        failureAction: Audit
+        message: "ipBlock.cidr is not in the allowed CIDR list."
+        foreach:
+          - list: "request.object.spec.ingress[].from[]"
+            preconditions:
+              all:
+                - key: "{{ element.ipBlock.cidr || '' }}"
+                  operator: NotEquals
+                  value: ""
+            deny:
+              conditions:
+                any:
+                  - key: "{{ contains(['203.0.113.10/32', '2001:db8::10/128'], element.ipBlock.cidr) }}"
+                    operator: Equals
+                    value: false
+          - list: "request.object.spec.egress[].to[]"
+            preconditions:
+              all:
+                - key: "{{ element.ipBlock.cidr || '' }}"
+                  operator: NotEquals
+                  value: ""
+            deny:
+              conditions:
+                any:
+                  - key: "{{ contains(['203.0.113.10/32', '2001:db8::10/128'], element.ipBlock.cidr) }}"
+                    operator: Equals
+                    value: false
+    - name: deny-unrestricted-peers
+      match:
+        any:
+          - resources:
+              kinds:
+                - NetworkPolicy
+              selector:
+                matchExpressions:
+                  - key: vcluster.loft.sh/managed-by
+                    operator: Exists
+      validate:
+        failureAction: Audit
+        message: "Rule has no peer selector, which Kubernetes treats as matching every source or destination."
+        foreach:
+          - list: "request.object.spec.ingress"
+            deny:
+              conditions:
+                any:
+                  - key: "{{ length(element.from || `[]`) }}"
+                    operator: Equals
+                    value: 0
+          - list: "request.object.spec.egress"
+            deny:
+              conditions:
+                any:
+                  - key: "{{ length(element.to || `[]`) }}"
+                    operator: Equals
+                    value: 0
+```
+
+This policy compares CIDR strings exactly. It doesn't treat an allowed supernet as implicitly allowing every subnet within it. List every CIDR form tenants may use, or use a policy engine with tested CIDR-containment functions if you need range containment.
+
+## Related pages
+
+- [Shared-node security hardening](./shared-nodes-hardening.mdx) for the full threat model, baseline, and checklist these examples support.
+- [Secure vCluster deployments](./README.mdx) for the general security baseline and control plane hardening.
