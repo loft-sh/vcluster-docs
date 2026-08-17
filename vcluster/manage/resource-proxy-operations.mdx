@@ -14,11 +14,11 @@ import ProAdmonition from '../_partials/admonitions/pro-admonition.mdx'
 This feature requires [vCluster Platform](/docs/platform). Both the client and target tenant clusters must be managed as [VirtualClusterInstance](/docs/platform/api/resources/virtualclusterinstance) within the platform.
 :::
 
-The resource proxy lets a client tenant cluster transparently forward custom resource requests to a target tenant cluster, which stores the objects and can run controllers against them. For how it works and how to set it up, see [How the resource proxy works](../understand/resource-proxy.mdx) and [Set up the resource proxy](../learn-how-to/resource-proxy-setup.mdx).
+The resource proxy lets a client <GlossaryTerm term="tenant-cluster">tenant cluster</GlossaryTerm> transparently forward custom resource requests to a target tenant cluster, which stores the objects and can run controllers against them. For how it works and how to set it up, see [How the resource proxy works](../understand/resource-proxy.mdx) and [Set up the resource proxy](../learn-how-to/resource-proxy-setup.mdx).
 
 Once it's running, there are two ongoing operational concerns. Keep proxy traffic off the DERP relay, and monitor the proxy so degradation surfaces before callers notice.
 
-Keep the client, the target, and the platform on current versions. Peer staleness fixes span both vCluster and the platform's stale peer cleanup, and running a new client against an old platform keeps the degradation risk alive.
+Keep the client, the target, and the platform on current versions. Peer staleness fixes span both <GlossaryTerm term="vcluster">vCluster</GlossaryTerm> and the platform's stale peer cleanup, and running a new client against an old platform keeps the degradation risk alive.
 
 ## Prefer direct connections over the DERP relay {#direct-connections}
 
@@ -28,13 +28,13 @@ To keep connections direct:
 
 - Open the paths that WireGuard hole punching needs. Allow outbound UDP to the peer endpoints advertised by the platform, outbound UDP to the configured Session Traversal Utilities for NAT (STUN) endpoints on their configured ports, and outbound TCP to ports `80` and `443`. The embedded `tsnet` server doesn't configure a fixed UDP source port. A peer endpoint can be a pod, node, load balancer, or public network address after Network Address Translation (NAT), so don't restrict both UDP rules to the peer pod addresses. Scope the peer rule to the endpoint CIDRs your environment advertises when possible, and scope the STUN rule separately. Environments that only allow TCP `443` egress force everything through the relay.
 - Review the NAT topology. Symmetric NAT between the clusters defeats hole punching. Clusters in the same VPC or in peered VPCs typically connect directly without special work.
-- Check NetworkPolicies and security groups applied to the vCluster control plane pods. They must not block the direct path that the platform negotiates.
+- Check NetworkPolicies and security groups applied to the vCluster <GlossaryTerm term="control-plane">control plane</GlossaryTerm> pods. They must not block the direct path that the platform negotiates.
 
 <!-- vale Vale.Terms = NO -->
 ### NetworkPolicy exceptions for a direct path {#direct-connections-networkpolicy}
 <!-- vale Vale.Terms = YES -->
 
-The NetworkPolicies that vCluster generates for [`policies.networkPolicy.enabled: true`](../configure/vcluster-yaml/policies/network-policy.mdx) allow control plane egress on TCP `443`, `8443`, and `6443`, scoped to the platform pods, the <GlossaryTerm term="control-plane-cluster">control plane cluster</GlossaryTerm>'s DNS pods, and the tenant cluster's own pods. They allow no other UDP egress and no path to another tenant cluster's control plane pods, and the ingress side is symmetric. With the generated policies alone, every proxied request falls back to the DERP relay.
+The NetworkPolicies that vCluster generates for [`policies.networkPolicy.enabled: true`](../configure/vcluster-yaml/policies/network-policy.mdx) allow control plane egress on TCP `443`, `8443`, and `6443` to any destination. Separate rules allow egress to the <GlossaryTerm term="control-plane-cluster">control plane cluster</GlossaryTerm>'s DNS pods, the tenant cluster's own pods, and the platform pods. The generated policies don't allow the UDP path to another tenant cluster's control plane peers that direct WireGuard connectivity requires. Their ingress rules also don't allow that peer UDP traffic. With the generated policies alone, proxied requests therefore fall back to the DERP relay.
 
 For a client and a target on the same control plane cluster, add a rule on each end. Both are required, because one alone still leaves you on the relay.
 
@@ -49,7 +49,7 @@ policies:
         - to:
             - namespaceSelector:
                 matchLabels:
-                  kubernetes.io/metadata.name: vcluster-<target-namespace>
+                  kubernetes.io/metadata.name: <target-namespace>
               podSelector:
                 matchLabels:
                   release: <target-release-name>
@@ -64,7 +64,7 @@ policies:
         - from:
             - namespaceSelector:
                 matchLabels:
-                  kubernetes.io/metadata.name: vcluster-<client-namespace>
+                  kubernetes.io/metadata.name: <client-namespace>
               podSelector:
                 matchLabels:
                   release: <client-release-name>
@@ -86,7 +86,7 @@ The proxy exposes Prometheus metrics on the client tenant cluster. Scrape them, 
 
 ### Scrape proxy metrics {#scrape-metrics}
 
-The client tenant cluster exposes proxy metrics at the `/metrics/syncer` path of its API server, using the same delegated authentication as the other metrics paths. The caller needs `get` on the non-resource URL `/metrics/syncer` inside the tenant cluster.
+The client tenant cluster exposes proxy metrics at the `/metrics/syncer` path of its <GlossaryTerm term="api-server">API server</GlossaryTerm>, using the same delegated authentication as the other metrics paths. The caller needs `get` on the non-resource URL `/metrics/syncer` inside the tenant cluster.
 
 ```bash title="Check proxy metrics manually"
 kubectl get --raw /metrics/syncer | grep vcluster_proxy
@@ -144,7 +144,7 @@ Traffic and error rate. The `reason` label attributes recognized proxy failure p
 
 **Labels:** `verb`
 
-Latency distribution for non-watch requests, with buckets up to the 60-second request deadline. Watches are excluded, because their lifetime would swamp the distribution. Fast 503s point at proxy-side degradation. Creeping p99 points at a slow target or a relayed network path.
+Latency distribution for non-watch requests, with buckets up to the 60-second request deadline. Watches are excluded, because their lifetime would swamp the distribution. Fast 503s with a peer-availability or dial `reason` point at proxy-path degradation; a prompt target-side 5xx can also produce a fast 503. Creeping p99 points at a slow target or a relayed network path.
 
 ##### vcluster_proxy_request_terminations_total {#vcluster-proxy-request-terminations-total}
 
@@ -166,7 +166,7 @@ Non-watch requests currently being served, for saturation tracking. Watch stream
 
 **Labels:** `group_version`, `reason`
 
-Discovery requests answered from the [local fallback document](../understand/resource-proxy.mdx#degraded-behavior) instead of the target. Callers see a `200`, so this counter is the only signal that discovery is degraded. See [Discovery lists resources with only a get verb, or an empty list](../troubleshoot/resource-proxy.mdx#discovery-fallback).
+Discovery requests answered from the [local fallback document](../understand/resource-proxy.mdx#degraded-behavior) instead of the target. Callers see a `200`, so this is the dedicated counter for degraded discovery. The matching `vcluster_proxy_request_total` series also carries the fallback reason. See [Discovery lists resources with only a get verb, or an empty list](../troubleshoot/resource-proxy.mdx#discovery-fallback).
 
 #### Outcome reasons {#outcome-reasons}
 
@@ -184,9 +184,9 @@ The `reason` label reuses a shared vocabulary across `vcluster_proxy_request_tot
 | `peer_departed` | The peer left the peer list mid-dial. | `peer_dial_failures_total` |
 | `ts_server_unavailable` | The local platform network server or the license failed before any peer was contacted. | `peer_dial_failures_total` |
 | `error` | Any other dial error. | `peer_dial_failures_total` |
-| `ownership_masked` | `accessResources: owned` hid an object the client doesn't own. Tenant isolation working as intended. See [404 on resources that exist in the target](../troubleshoot/resource-proxy.mdx#resources-not-appearing). | |
-| `ownership_check_failed` | The proxy could not complete the ownership check and masked the response defensively. Unlike `ownership_masked`, this is a proxy-side failure, not isolation working. | |
-| `namespace_missing` | A write targeted a namespace that doesn't exist in the client tenant cluster. | |
+| `ownership_masked` | `accessResources: owned` returned 404 because an object lacked the client's ownership labels. It can also mean the preliminary ownership GET returned a non-5xx status other than 200 or 404, such as 401 or an RBAC 403. Usually tenant isolation working as intended; if unexpected, check target `get` permission. See [404 on resources that exist in the target](../troubleshoot/resource-proxy.mdx#resources-not-appearing). | |
+| `ownership_check_failed` | The proxy couldn't complete the ownership check. A named GET whose response can't be decoded is masked as 404; a named PUT, PATCH, or DELETE whose preliminary GET returns 5xx fails with a retryable 503. Unlike `ownership_masked`, this indicates an operational failure during the check, not isolation working. | |
+| `namespace_missing` | A namespaced POST, PUT, or PATCH targeted a namespace that doesn't exist in the client tenant cluster. | |
 | `upgrade_rejected` | A connection upgrade verb was rejected. See [501: connection upgrades aren't supported](../troubleshoot/resource-proxy.mdx#connection-upgrades). | `request_terminations_total` |
 | `upstream_error` | A proxied discovery attempt returned 401, 404, or 5xx after the initial peer check, so the fallback document was served. The response can come from the target or from a transport failure converted to 5xx by the proxy path. | `discovery_fallbacks_total` |
 
@@ -206,7 +206,7 @@ Current peer count per state: `healthy`, `quarantined`, or `half_open`. Computed
 
 **Labels:** `group_version`
 
-Whether the proxy holds a usable peer snapshot (`1`). At `0`, resource requests to that target fail fast with 503, while discovery uses the local fallback. This covers both a peer list that has never arrived and one that aged out after the subscription dropped.
+Whether the proxy holds a current, trusted peer snapshot (`1`). A fresh empty snapshot still reports `1`, so this metric doesn't guarantee that an endpoint is available; check `vcluster_proxy_peers{state="healthy"}` as well. At `0`, resource requests to that target fail fast with 503, while discovery uses the local fallback. This covers both a peer list that has never arrived and one that aged out after the subscription dropped.
 
 ##### vcluster_proxy_peer_list_age_seconds {#vcluster-proxy-peer-list-age-seconds}
 
@@ -260,14 +260,14 @@ Open watch streams. Watches are long-running and bypass the 60-second request de
 
 **Type:** Counter
 
-Events flowing per target. A connected but silent watch, such as a half-dead connection, shows up only here.
+Events flowing per target for uncompressed JSON watch streams and CBOR sequence watch streams. Compressed watch responses and other content types aren't counted. For supported formats, an open watch whose counter stops increasing can indicate a stalled stream, but an unchanged counter doesn't prove that every watch is silent.
 
 <!-- vale Vale.Terms = YES -->
 <!-- vale Google.Headings = YES -->
 
 ### Alert starting points {#alerts}
 
-On the `== 0` gauge rules, don't aggregate away `group_version` or the scrape target's own pod label. Each group and version keeps its own peer cache, and in an HA deployment so does each replica. A `sum` therefore lets one healthy series hide a degraded one. Aggregating a `rate` and testing `> 0` is safe, because a non-negative sum can't mask a positive member.
+On the per-group/version `== 0` gauge rules, don't aggregate away `group_version` or the scrape target's own pod label. Each group and version keeps its own peer cache, and in an HA deployment so does each replica. A `sum` therefore lets one healthy series hide a degraded one. The target-wide `ResourceProxyPeerChurn` rule is the exception. It uses `max without (group_version, state)` because it intentionally requires every group/version proxy for that target to have zero healthy peers. Aggregating a `rate` and testing `> 0` is safe, because a non-negative sum can't mask a positive member.
 
 ```yaml title="Prometheus alert rules"
 # A target has had no fully healthy peers for two minutes. Requests are failing
@@ -279,7 +279,7 @@ On the `== 0` gauge rules, don't aggregate away `group_version` or the scrape ta
   annotations:
     summary: 'Resource proxy target {{ $labels.target }} ({{ $labels.group_version }}): no fully healthy peers'
 
-# No usable peer snapshot at all: resource requests to this target fail fast
+# No current, trusted peer snapshot: resource requests to this target fail fast
 # with 503, while discovery uses the local fallback. Covers both "no peer list
 # has ever arrived" (platform connectivity or license) and "the peer watch
 # subscription dropped and the cached list aged out past the 60-second
@@ -301,14 +301,14 @@ On the `== 0` gauge rules, don't aggregate away `group_version` or the scrape ta
   annotations:
     summary: 'Resource proxy target {{ $labels.target }}: quarantine left no selectable peer'
 
-# Sustained quarantine churn and no currently healthy peer: stale peers or a
-# flapping target. Match all scrape labels while ignoring only the labels that
-# exist solely on the peer gauge.
+# Sustained quarantine churn and no currently healthy peer across any of the
+# target's group/version proxies: stale peers or a flapping target. Preserve
+# scrape labels while aggregating the labels that exist only on the peer gauge.
 - alert: ResourceProxyPeerChurn
   expr: >
     increase(vcluster_proxy_peer_quarantines_total[30m]) > 5
-    and ignoring(group_version, state)
-    vcluster_proxy_peers{state="healthy"} == 0
+    and
+    max without (group_version, state) (vcluster_proxy_peers{state="healthy"}) == 0
   labels: {severity: warning}
   annotations:
     summary: 'Resource proxy target {{ $labels.target }}: peers repeatedly quarantined without recovery'
@@ -325,6 +325,8 @@ On the `== 0` gauge rules, don't aggregate away `group_version` or the scrape ta
 # Watches are open but no events are flowing: a half-dead stream.
 # Tune the window to how often your proxied resources actually change, or drop
 # this rule if they are normally idle for an hour at a time.
+# Use this rule only when clients use uncompressed JSON or CBOR sequence watch
+# streams. Other response formats aren't counted and can cause false alerts.
 - alert: ResourceProxyWatchesSilent
   expr: >
     vcluster_proxy_active_watches > 0

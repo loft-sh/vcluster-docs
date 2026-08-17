@@ -16,15 +16,15 @@ import ResourceProxyMultiClientIsolation from '@site/static/media/diagrams/resou
 This feature requires [vCluster Platform](/docs/platform). Both the client and target tenant clusters must be managed as [VirtualClusterInstance](/docs/platform/api/resources/virtualclusterinstance) within the platform.
 :::
 
-The Resource Proxy feature enables <GlossaryTerm term="vcluster">vCluster</GlossaryTerm> to proxy custom resource (CRD) requests to other tenant clusters. When enabled, the client <GlossaryTerm term="tenant-cluster">tenant cluster</GlossaryTerm> transparently forwards resource operations to a target tenant cluster. The objects are stored there, where controllers running on the target can manage them. This enables cross-cluster communication patterns, centralized resource management, and multi-tenant architectures.
+The Resource Proxy feature enables <GlossaryTerm term="vcluster">vCluster</GlossaryTerm> to proxy requests for custom resources defined by CustomResourceDefinitions (CRDs) to other tenant clusters. When enabled, the client <GlossaryTerm term="tenant-cluster">tenant cluster</GlossaryTerm> transparently forwards resource operations to a target tenant cluster. The objects are stored there, where controllers running on the target can manage them. This enables cross-cluster communication patterns, centralized resource management, and tenant-isolated architectures.
 
 To configure the proxy, see [Configure the resource proxy](../configure/vcluster-yaml/experimental/proxy.mdx). To set one up end to end, see [Set up the resource proxy](../learn-how-to/resource-proxy-setup.mdx).
 
 ## Key capabilities {#key-capabilities}
 
 - **Transparent access**: Users interact with custom resources as if they were local to their tenant cluster.
-- **Centralized storage**: A dedicated target tenant cluster stores all resources.
-- **Multi-tenant isolation**: Each client tenant cluster only sees its own resources by default.
+- **Centralized storage**: A target tenant cluster stores the custom resources routed to it.
+- **<GlossaryTerm term="multi-tenancy">Tenant isolation</GlossaryTerm>**: Each client tenant cluster only sees objects with its ownership labels by default.
 - **RBAC enforcement**: The target tenant cluster enforces its own RBAC policies on proxied requests.
 
 ## How it works {#how-it-works}
@@ -38,8 +38,8 @@ When you configure a client tenant cluster to proxy custom resources, vCluster i
 
 The proxy performs several key functions:
 
-1. **Request interception**: The client's Kubernetes <GlossaryTerm term="api-server">API server</GlossaryTerm> intercepts requests for configured custom resources and routes them to the proxy.
-2. **Authentication**: The proxy authenticates to the target using the client's vCluster Platform identity (`loft:vcluster:p-<project>:<name>`).
+1. **Request interception**: The client's Kubernetes <GlossaryTerm term="api-server">API server</GlossaryTerm> intercepts requests for configured API groups and versions and routes them to the proxy. One enabled resource entry activates routing for its entire group and version; target RBAC restricts access to individual resource kinds.
+2. **Authentication**: The proxy authenticates to the target using the client's vCluster Platform identity. Its format is `loft:vcluster:<client-project-namespace>:<name>`, for example `loft:vcluster:p-default:client` when the project namespace is `p-default`.
 3. **Owner labeling**: On create and update operations, the proxy attempts to add owner labels that identify the client responsible for each resource.
 4. **Visibility filtering**: For `owned` access, the proxy filters lists and watches and masks named GET, PUT, PATCH, and DELETE requests for objects that the client doesn't own. The `all` mode disables this filtering.
 5. **Namespace synchronization**: Before a namespaced POST, PUT, or PATCH request, the proxy verifies that the namespace exists in the client tenant cluster and creates it in the target if needed.
@@ -48,7 +48,7 @@ Mutual proxying is supported. Two tenant clusters can proxy resources from each 
 
 ### Multi-client isolation {#multi-client-isolation-overview}
 
-When multiple client tenant clusters proxy to the same target, each client only sees resources it created by default. The proxy achieves this through owner labels and label selector injection.
+When multiple client tenant clusters proxy to the same target, each client only sees objects with its ownership labels by default. The proxy normally adds those labels when the client writes an object and injects a matching label selector on lists and watches.
 
 <figure>
   <ResourceProxyMultiClientIsolation style={{width: '100%', height: 'auto'}} role="img" aria-label="Two client tenant clusters proxying to one target while owner labels isolate each client's resources" />
@@ -64,10 +64,10 @@ The proxy wires itself into the client's Kubernetes aggregation layer. The [trou
 <!-- vale Vale.Terms = NO -->
 | What | Where | Notes |
 |------|-------|-------|
-| APIService `v<version>.<group>` | Client tenant cluster | Registered by the elected leader replica. `kubectl get apiservice` is the first health signal. |
+| APIService `<version>.<group>` | Client tenant cluster | Registered by the elected leader replica. For example, `example.com/v1` uses `v1.example.com`. `kubectl get apiservice` is the first health signal. |
 | Service `proxy-<group>-<version>` | `kube-system` namespace in the client tenant cluster | ExternalName Service pointing to `localhost`. Dots in the group become dashes, and long names are shortened with a hash suffix. |
 | Proxy port | `localhost:9100+n` inside the vCluster control plane pod | One proxy per group and version, sorted alphabetically so all replicas agree on port assignment. Not reachable from outside the pod. |
-| Ownership labels | Objects in the target tenant cluster | `vcluster.com/owner-vcluster=<client-name>` and `vcluster.com/owner-project=<project>`. The proxy attempts to inject them into POST, PUT, and PATCH bodies. If injection fails, the request continues without them. |
+| Ownership labels | Objects in the target tenant cluster | `vcluster.com/owner-vcluster=<client-name>` and `vcluster.com/owner-project=<client-project-name>`. The project label uses the Platform project name, not its Kubernetes namespace. The proxy attempts to inject both labels into POST, PUT, and PATCH bodies. If injection fails, the request continues without them. |
 | Deletion protection | Client tenant cluster | The APIService and proxy Service carry the `vcluster.loft.sh/protected=resource-proxy` label, and a ValidatingAdmissionPolicy denies deleting them. See [Deletion of the proxy APIService or Service is denied](../troubleshoot/resource-proxy.mdx#deletion-denied). |
 <!-- vale Vale.Terms = YES -->
 
