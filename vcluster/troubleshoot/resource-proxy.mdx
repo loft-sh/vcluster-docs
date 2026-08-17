@@ -3,6 +3,7 @@ title: Troubleshoot the resource proxy
 sidebar_label: Resource proxy
 sidebar_class_name: pro host-nodes private-nodes standalone
 description: Triage resource proxy symptoms, from 503s and stale peers to RBAC errors and discovery fallback, with a log message reference.
+toc_max_heading_level: 2
 ---
 
 import ProAdmonition from '../_partials/admonitions/pro-admonition.mdx'
@@ -55,44 +56,92 @@ Then read the verdict from this table:
 
 Don't classify an immediate 503 by latency alone. A peer precheck can fail immediately, but the target can also return a 5xx immediately; use the request's `reason` label to distinguish them. Failures near the 5-second dial timeout point to the peer path. Failures near the 60-second request deadline point to a slow target response path.
 
-## 503: target tenant cluster is unavailable {#target-unavailable}
+## Target tenant cluster returns 503 unavailable {#target-unavailable}
 
-Requests fail with `target tenant cluster "<name>" for <group>/<version> is unavailable`. This is the generic degraded-path error. Causes, most common first:
+### Symptoms
+
+Requests fail with `target tenant cluster "<name>" for <group>/<version> is unavailable`. This is the generic degraded-path error. The proxy sets `Retry-After: 1` on unavailability.
+
+### Cause
+
+The proxy uses the same retryable 503 status for five conditions, most common first:
+
+1. **Target down or restarting.** No target peer accepts a connection.
+2. **No peer available.** The client hasn't received a peer list from the platform since startup, or the latest list is empty.
+3. **All peers quarantined.** Every known endpoint failed 3 consecutive dials.
+4. **Peer list stale.** The platform peer subscription is down and the client's last peer list has expired.
+5. **Target returned 5xx.** The proxy maps upstream 5xx responses to 503.
+
+### Resolution
+
+Prechecks and upstream 5xx responses use the generic unavailable text. Transport failures can include the underlying dial error. Use the `reason` label on `vcluster_proxy_request_total` or the logs to identify the cause, then take the matching action:
 
 1. **Target down or restarting.** Verify the target pods. No action is needed on the client. Recovery is automatic when a peer accepts a dial.
-2. **No peer available.** Either the client hasn't received a peer list from the platform since startup, or the latest list is empty. Check `vcluster_proxy_peer_cache_synced`. A value of `0` means no current, trusted snapshot, while `1` with zero peers means the platform published a fresh list with no target endpoint. Check that the vCluster has platform connectivity and a valid license, and that the platform is reachable from the client pod. Also check that the target's control plane peers are registered. The cold-start case logs `peer cache did not sync in time for the startup probe, requests fail with 503 until the first netmap arrives`.
-3. **All peers quarantined.** Every known endpoint failed 3 consecutive dials. Log: `all peer hosts for the proxy target are quarantined; requests fail fast with 503 until a peer becomes dialable`. If the target pods are `Ready` at the same time, its advertised endpoints may be stale or the client-to-target path may be blocked. Check peer publication, NetworkPolicies, firewall rules, and DERP reachability. See [503 errors persist after a target restart or upgrade](#stale-peers).
-4. **Peer list stale.** Log: `peer watch subscription is down and no fresh netmap is available; requests to the target fail with 503 until it recovers`, including a `lastNetmapAge` field. This points at client-to-platform connectivity, not the target.
-5. **Target returned 5xx.** The proxy maps upstream 5xx responses to 503. Check the target <GlossaryTerm term="api-server">API server</GlossaryTerm> itself, including its backing store, webhooks, and load.
+2. **No peer available.** Check `vcluster_proxy_peer_cache_synced`. A value of `0` means no current, trusted snapshot, while `1` with zero peers means the platform published a fresh list with no target endpoint. Check that the vCluster has platform connectivity and a valid license, that the platform is reachable from the client pod, and that the target's control plane peers are registered. The cold-start case logs `peer cache did not sync in time for the startup probe, requests fail with 503 until the first netmap arrives`.
+3. **All peers quarantined.** Look for `all peer hosts for the proxy target are quarantined; requests fail fast with 503 until a peer becomes dialable`. If the target pods are `Ready`, check peer publication, NetworkPolicies, firewall rules, and DERP reachability. See [503 errors persist after a target restart or upgrade](#stale-peers).
+4. **Peer list stale.** Look for `peer watch subscription is down and no fresh netmap is available; requests to the target fail with 503 until it recovers`, including a `lastNetmapAge` field. Restore client-to-platform connectivity.
+5. **Target returned 5xx.** Check the target <GlossaryTerm term="api-server">API server</GlossaryTerm>, including its backing store, webhooks, and load.
 
-All five cases have the same retryable 503 status, but the response text can differ. Prechecks and upstream 5xx responses use the generic unavailable text. Transport failures can include the underlying dial error. Use the `reason` label on `vcluster_proxy_request_total` or the log lines above to distinguish `no_peer`, `all_quarantined`, `stale_peers`, `upstream`, and classified failures such as `timeout`, `deadline`, `peer_departed`, `ts_server_unavailable`, `error`, or `ownership_check_failed`. See the [outcome reasons reference](../manage/resource-proxy-operations.mdx#outcome-reasons) for what each one means.
+The `reason` label distinguishes `no_peer`, `all_quarantined`, `stale_peers`, `upstream`, and classified failures such as `timeout`, `deadline`, `peer_departed`, `ts_server_unavailable`, `error`, or `ownership_check_failed`. See the [outcome reasons reference](../manage/resource-proxy-operations.mdx#outcome-reasons) for what each one means.
 
 Callers, especially controllers, should back off on 503 responses instead of retrying in a tight loop. The proxy always sets `Retry-After: 1` on unavailability, and honoring it avoids adding load to an already-degraded target.
 
 ## 503 errors persist after a target restart or upgrade {#stale-peers}
 
-When the target restarts or upgrades, its control plane pods come back as new peers. If the client keeps dialing the old endpoints, requests keep failing even though the target is `Ready`.
+### Symptoms
+
+Requests keep returning 503 after the target's control plane pods become `Ready`.
+
+### Cause
+
+When the target restarts or upgrades, its control plane pods come back as new peers. The client can keep dialing old endpoints until the platform publishes the replacements.
+
+### Resolution
 
 The sequence is self-healing when the platform publishes the replacement peers and the client can reach them. Stale endpoints are quarantined (`vcluster_proxy_peer_quarantines_total` increases), requests fail fast instead of hanging, and a fresh peer list replaces stale endpoints with healthy ones. Confirm recovery with `vcluster_proxy_peers{state="healthy"}` and a successful resource request. `vcluster_proxy_peer_recoveries_total` increases only when the same tracked endpoint succeeds after failures. A new replacement endpoint doesn't increment it. If the proxy doesn't recover, check both peer publication and network reachability: platform health, client-to-platform connectivity, NetworkPolicies, firewall rules, and DERP availability.
 
 ## Requests time out after about 60 seconds {#requests-hang}
 
-Non-watch requests are hard-capped at 60 seconds. A peer dial has its own 5-second timeout. A request that consistently reaches the 60-second cap normally connected to the target but didn't receive a complete response in time.
+### Symptoms
+
+A non-watch request consistently fails after about 60 seconds. Failures near 5 seconds are a different symptom and normally indicate a peer dial failure.
+
+### Cause
+
+Non-watch requests are hard-capped at 60 seconds. A peer dial has its own 5-second timeout. A request that reaches the 60-second cap normally connected to the target but didn't receive a complete response in time.
+
+### Resolution
 
 - Check the target API server, its backing store, and admission webhooks for latency.
 - Compare `vcluster_proxy_request_duration_seconds` with `vcluster_proxy_peer_dial_duration_seconds`. A request near 60 seconds with a short peer dial isolates the delay to the target response path.
 - Treat repeated failures near 5 seconds as dial failures instead. After 3 consecutive failed dials to an endpoint, the proxy quarantines it and subsequent requests fail fast while it remains quarantined.
 
-## 401: `auth failed` {#auth-failed}
+## Requests return 401 `auth failed` {#auth-failed}
 
-The target rejected the client's platform access key. This is a platform trust issue, not a Kubernetes RBAC issue:
+### Symptoms
+
+A proxied request returns 401 with `auth failed`.
+
+### Cause
+
+The target rejected the client's platform access key. This is a platform trust issue, not a Kubernetes RBAC issue.
+
+### Resolution
 
 - Confirm both the client and the target are connected to the same platform and the project pairing is correct. `targetVirtualCluster.project` defaults to the client's own project when unset.
 - Restart the client's vCluster control plane pod to refresh the platform connection if the access key was rotated.
 
-## 403: permission denied errors {#permission-denied}
+## Requests return 403 permission denied {#permission-denied}
 
-An active proxied resource request receives a 403 from Kubernetes RBAC in the target tenant cluster. vCluster Platform target access is separate and checked with the submitting user's identity during client creation or update, then with the client tenant cluster's identity during registration.
+### Symptoms
+
+An active proxied resource request returns 403, or vCluster Platform rejects the proxy target during configuration or registration.
+
+### Cause
+
+Kubernetes RBAC in the target tenant cluster governs active proxied requests. vCluster Platform target access is separate and checked with the submitting user's identity during client creation or update, then with the client tenant cluster's identity during registration.
+
+### Resolution
 
 The checks below that use `--as` require the current credentials to impersonate users in the cluster being queried. Run them with administrative credentials that have that permission; otherwise an impersonation denial tests the caller, not the client identity.
 
@@ -120,25 +169,32 @@ The checks below that use `--as` require the current credentials to impersonate 
      --context <platform-context>
    ```
 
-## 404 on resources that exist in the target {#resources-not-appearing}
+## Existing target resources return 404 {#resources-not-appearing}
+
+### Symptoms
+
+A named request returns `404 resource not found` even though the object exists on the target, or a list or watch omits objects that exist there.
+
+### Cause
 
 With `accessResources: owned` (the default), the proxy hides anything it didn't create:
 
 - Named GET, PUT, PATCH, and DELETE requests for objects without both ownership labels return `404 resource not found` by design, even though the object exists on the target. Create requests are forwarded to the target, so a name collision normally returns 409.
 - Lists and watches are silently filtered to owned objects through an injected label selector.
 
-Fixes, depending on intent:
+- **Ownership GET denied.** In `owned` mode, the proxy performs a target GET before a named PUT, PATCH, or DELETE to verify ownership. A 401 or 403 from that GET is masked as a 404.
+- **Namespace missing on the client.** Namespaced POST, PUT, and PATCH requests require the namespace to exist in the client tenant cluster first. For these requests, a namespace missing on the client returns 404.
+- **Genuine 404 from the target.** The object or the CustomResourceDefinition is truly absent, for example when the CRD isn't installed on the target.
+
+### Resolution
 
 <!-- vale Vale.Terms = NO -->
 - If the client should manage pre-existing objects, label them on the target with `vcluster.com/owner-vcluster=<client-name>` and `vcluster.com/owner-project=<client-project-name>`. Use the Platform project name for the second value, not the project namespace used in the client's authentication identity. These are plain labels, not an access-controlled boundary. Setting them grants the named client proxied management of the object, so restrict who can label objects on the target the same way you restrict other privileged operations there.
 <!-- vale Vale.Terms = YES -->
 - If the client should see everything, set `accessResources: all` for that entry. Understand the blast radius first. `all` allows mutating objects owned by other tenant clusters.
-
-Two more causes of 404 look similar:
-
-- **Ownership GET denied.** In `owned` mode, the proxy performs a target GET before a named PUT, PATCH, or DELETE to verify ownership. A 401 or 403 from that GET is masked as a 404. Grant target RBAC `get` together with the mutation verbs. If `get` is already allowed, check the platform access key as described in [401: `auth failed`](#auth-failed).
-- **Namespace missing on the client.** Namespaced POST, PUT, and PATCH requests require the namespace to exist in the client tenant cluster first. The proxy then creates it on the target on demand (log: `creating namespace on target cluster`). For these requests, a namespace missing on the client returns 404.
-- **Genuine 404 from the target.** The object or the CustomResourceDefinition is truly absent, for example when the CRD isn't installed on the target. Verify it exists:
+- If the ownership GET is denied, grant target RBAC `get` together with the mutation verbs. If `get` is already allowed, check the platform access key as described in [Requests return 401 `auth failed`](#auth-failed).
+- If the namespace is missing on the client, create it there and retry the request. The proxy then creates it on the target on demand (log: `creating namespace on target cluster`).
+- For a genuine target 404, verify that the CustomResourceDefinition exists:
 
 ```bash title="Check CustomResourceDefinition in target"
 vcluster connect <target> --driver platform --project <target-project> -- kubectl get crd <resource>.<group>
@@ -146,12 +202,20 @@ vcluster connect <target> --driver platform --project <target-project> -- kubect
 
 ## Discovery lists resources with only a get verb, or an empty list {#discovery-fallback}
 
+### Symptoms
+
+Discovery lists configured resources with only a `get` verb, or it returns an empty resource list for a wildcard entry.
+
+### Cause
+
 This is the locally served fallback discovery document, which means the target is unreachable, or answered discovery with an error, right now:
 
 - With explicit resource keys, the fallback lists your configured resources with a single `get` verb.
 - With a wildcard key (`*.<group>/<version>`), the fallback is an empty resource list, because the proxy can't enumerate resources without the target. `kubectl api-resources` and other discovery-based commands return no resource kinds for that group and version during the outage.
 
-`vcluster_proxy_discovery_fallbacks_total` confirms it without having to eyeball the discovery document. Its `reason` label identifies where fallback began. `no_peer`, `stale_peers`, and `all_quarantined` mean the initial peer check failed, while `upstream_error` means the subsequent proxied discovery attempt returned 401, 404, or 5xx. That 5xx can be a target response or a transport failure converted to 5xx after the initial check.
+### Resolution
+
+`vcluster_proxy_discovery_fallbacks_total` confirms fallback without having to inspect the discovery document. Its `reason` label identifies where fallback began. `no_peer`, `stale_peers`, and `all_quarantined` mean the initial peer check failed, while `upstream_error` means the subsequent proxied discovery attempt returned 401, 404, or 5xx. That 5xx can be a target response or a transport failure converted to 5xx after the initial check.
 
 ```bash title="Check whether discovery is being served from the fallback"
 kubectl get --raw /metrics/syncer | grep vcluster_proxy_discovery_fallbacks_total
@@ -159,11 +223,27 @@ kubectl get --raw /metrics/syncer | grep vcluster_proxy_discovery_fallbacks_tota
 
 Full, accurate discovery returns automatically once the target is reachable. Treat fallback-shaped discovery as a symptom, and triage it with the [503 playbook](#target-unavailable).
 
-## 501: connection upgrades aren't supported {#connection-upgrades}
+## Connection upgrades return 501 {#connection-upgrades}
 
-`exec`, `attach`, `port-forward`, and other upgrade-based verbs aren't supported through the resource proxy, by design. The proxy rejects them with `resource proxy does not support connection upgrades`. Access the target directly for those operations.
+### Symptoms
+
+`exec`, `attach`, `port-forward`, or another upgrade-based request returns 501 with `resource proxy does not support connection upgrades`.
+
+### Cause
+
+The resource proxy doesn't support connection upgrades by design.
+
+### Resolution
+
+Access the target directly for those operations.
 
 ## The proxy doesn't start {#proxy-does-not-start}
+
+### Symptoms
+
+The configured proxy routes aren't available, and the client logs don't show the expected startup sequence for their group and version.
+
+### Cause
 
 Check the client's vCluster control plane pod logs from startup:
 
@@ -171,9 +251,13 @@ Check the client's vCluster control plane pod logs from startup:
 - **Configuration rejected**: Invalid `experimental.proxy.customResources` entries fail validation at startup. The key format is `<resource>.<group>/<version>` or `*.<group>/<version>`, a group is required, `targetVirtualCluster.name` is required, and all entries for the same group and version must agree on target and access mode.
 - **Nothing enabled**: Entries with `enabled: false` don't produce proxy routes. They must still pass per-entry validation, including specifying `targetVirtualCluster.name`. If every entry is disabled, the proxy doesn't start.
 
-For each group and version, healthy startup logs show `Starting proxy server`, then `Starting target transport`, and at verbose log level `Connected to target` once the first probe succeeds.
+### Resolution
 
-## Deletion of the proxy APIService or Service is denied {#deletion-denied}
+Correct the license, platform connection, validation error, or disabled configuration identified in the logs, then apply the updated configuration. For each group and version, healthy startup logs show `Starting proxy server`, then `Starting target transport`, and at verbose log level `Connected to target` once the first probe succeeds.
+
+## Deleting the proxy APIService or Service is denied {#deletion-denied}
+
+### Symptoms
 
 Attempts to delete the proxy's APIService or its `kube-system` Service inside the client tenant cluster fail with:
 
@@ -182,7 +266,11 @@ deletion of vCluster-protected resources is denied; remove the corresponding
 entry from your vCluster configuration
 ```
 
-This is intentional. Both objects are labeled `vcluster.loft.sh/protected=resource-proxy`, and a ValidatingAdmissionPolicy (`vcluster-protected-apiservices`, binding `vcluster-protected-resource-proxy`) denies DELETE requests on labeled objects. Deleting the APIService by hand doesn't fix proxy problems anyway. It only breaks discovery for the group and version until the leader re-registers it.
+### Cause
+
+Both objects are labeled `vcluster.loft.sh/protected=resource-proxy`, and a ValidatingAdmissionPolicy (`vcluster-protected-apiservices`, binding `vcluster-protected-resource-proxy`) intentionally denies DELETE requests on labeled objects. Deleting the APIService by hand doesn't fix proxy problems anyway. It only breaks discovery for the group and version until the leader re-registers it.
+
+### Resolution
 
 To decommission a proxied API group and version on purpose:
 
