@@ -1,0 +1,106 @@
+---
+title: How the resource proxy works
+sidebar_label: Resource proxy
+sidebar_position: 5
+sidebar_class_name: pro host-nodes private-nodes standalone
+description: How vCluster's resource proxy routes, authenticates, and isolates custom resource requests between tenant clusters.
+---
+
+import ProAdmonition from '../_partials/admonitions/pro-admonition.mdx'
+import ResourceProxyRequestFlow from '@site/static/media/diagrams/resource-proxy-request-flow.svg';
+import ResourceProxyMultiClientIsolation from '@site/static/media/diagrams/resource-proxy-multi-client-isolation.svg';
+
+<ProAdmonition/>
+
+:::note vCluster Platform required
+This feature requires [vCluster Platform](/docs/platform). Both the client and target tenant clusters must be managed as [VirtualClusterInstance](/docs/platform/api/resources/virtualclusterinstance) within the platform.
+:::
+
+The Resource Proxy feature enables <GlossaryTerm term="vcluster">vCluster</GlossaryTerm> to proxy custom resource (CRD) requests to other tenant clusters. When enabled, the client <GlossaryTerm term="tenant-cluster">tenant cluster</GlossaryTerm> transparently forwards resource operations to a target tenant cluster. The objects are stored there, where controllers running on the target can manage them. This enables cross-cluster communication patterns, centralized resource management, and multi-tenant architectures.
+
+To configure the proxy, see [Configure the resource proxy](../configure/vcluster-yaml/experimental/proxy.mdx). To set one up end to end, see [Set up the resource proxy](../learn-how-to/resource-proxy-setup.mdx).
+
+## Key capabilities {#key-capabilities}
+
+- **Transparent access**: Users interact with custom resources as if they were local to their tenant cluster.
+- **Centralized storage**: A dedicated target tenant cluster stores all resources.
+- **Multi-tenant isolation**: Each client tenant cluster only sees its own resources by default.
+- **RBAC enforcement**: The target tenant cluster enforces its own RBAC policies on proxied requests.
+
+## How it works {#how-it-works}
+
+When you configure a client tenant cluster to proxy custom resources, vCluster intercepts API requests for those resources. It forwards them to the target tenant cluster through vCluster Platform.
+
+<figure>
+  <ResourceProxyRequestFlow style={{width: '100%', height: 'auto'}} role="img" aria-label="Resource proxy request flow from callers through the client API server and resource proxy to custom resource objects in a target tenant cluster" />
+  <figcaption>Resource requests cross the vCluster Platform network from the client aggregation layer to the target API and custom resource</figcaption>
+</figure>
+
+The proxy performs several key functions:
+
+1. **Request interception**: The client's Kubernetes <GlossaryTerm term="api-server">API server</GlossaryTerm> intercepts requests for configured custom resources and routes them to the proxy.
+2. **Authentication**: The proxy authenticates to the target using the client's vCluster Platform identity (`loft:vcluster:p-<project>:<name>`).
+3. **Owner labeling**: On create and update operations, the proxy attempts to add owner labels that identify the client responsible for each resource.
+4. **Visibility filtering**: For `owned` access, the proxy filters lists and watches and masks named GET, PUT, PATCH, and DELETE requests for objects that the client doesn't own. The `all` mode disables this filtering.
+5. **Namespace synchronization**: Before a namespaced POST, PUT, or PATCH request, the proxy verifies that the namespace exists in the client tenant cluster and creates it in the target if needed.
+
+Mutual proxying is supported. Two tenant clusters can proxy resources from each other, each acting as the client in one direction and the target in the other. The two directions are independent, and the `target` metric label distinguishes them. See [Monitor the proxy](../manage/resource-proxy-operations.mdx#monitoring).
+
+### Multi-client isolation {#multi-client-isolation-overview}
+
+When multiple client tenant clusters proxy to the same target, each client only sees resources it created by default. The proxy achieves this through owner labels and label selector injection.
+
+<figure>
+  <ResourceProxyMultiClientIsolation style={{width: '100%', height: 'auto'}} role="img" aria-label="Two client tenant clusters proxying to one target while owner labels isolate each client's resources" />
+  <figcaption>Owner labels and selector injection give each client a filtered view of resources stored in the shared target</figcaption>
+</figure>
+
+To set this up, see [Set up multi-client isolation](../learn-how-to/resource-proxy-setup.mdx#multi-client).
+
+### Proxy objects in the client tenant cluster {#proxy-objects}
+
+The proxy wires itself into the client's Kubernetes aggregation layer. The [troubleshooting guide](../troubleshoot/resource-proxy.mdx) references these objects and conventions:
+
+<!-- vale Vale.Terms = NO -->
+| What | Where | Notes |
+|------|-------|-------|
+| APIService `v<version>.<group>` | Client tenant cluster | Registered by the elected leader replica. `kubectl get apiservice` is the first health signal. |
+| Service `proxy-<group>-<version>` | `kube-system` namespace in the client tenant cluster | ExternalName Service pointing to `localhost`. Dots in the group become dashes, and long names are shortened with a hash suffix. |
+| Proxy port | `localhost:9100+n` inside the vCluster control plane pod | One proxy per group and version, sorted alphabetically so all replicas agree on port assignment. Not reachable from outside the pod. |
+| Ownership labels | Objects in the target tenant cluster | `vcluster.com/owner-vcluster=<client-name>` and `vcluster.com/owner-project=<project>`. The proxy attempts to inject them into POST, PUT, and PATCH bodies. If injection fails, the request continues without them. |
+| Deletion protection | Client tenant cluster | The APIService and proxy Service carry the `vcluster.loft.sh/protected=resource-proxy` label, and a ValidatingAdmissionPolicy denies deleting them. See [Deletion of the proxy APIService or Service is denied](../troubleshoot/resource-proxy.mdx#deletion-denied). |
+<!-- vale Vale.Terms = YES -->
+
+### Connection path and peer health {#connection-path}
+
+A **caller** is anything that talks to the client tenant cluster's API server: `kubectl`, a controller, or a CI job. A proxied request travels this path:
+
+1. The caller sends a request to the client tenant cluster's API server.
+2. The APIService registration routes the request through the `proxy-<group>-<version>` Service to the resource proxy, which listens on a local port inside the client's vCluster <GlossaryTerm term="control-plane">control plane</GlossaryTerm> pod.
+3. The proxy forwards the request over the platform network, using a direct WireGuard peer-to-peer connection where possible and the vCluster Platform DERP relay as a fallback. See [Prefer direct connections over the DERP relay](../manage/resource-proxy-operations.mdx#direct-connections).
+4. The target tenant cluster's API server serves the request.
+
+The proxy discovers the target's control plane pods as peers on the platform network and distributes requests across them round-robin. Peer health is tracked per host.
+
+#### Fixed thresholds {#fixed-thresholds}
+
+This timing is fixed and not configurable:
+
+| Constant | Value | Effect |
+|----------|-------|--------|
+| Peer dial timeout | 5s | A single dial attempt gives up after this long, converting a hanging dial into a countable failure. |
+| Quarantine threshold | 3 consecutive dial failures | The endpoint leaves rotation. |
+| Quarantine duration | 20s | Then a single trial dial. Requests fail fast instead of hanging while a peer is quarantined. |
+| Peer list staleness tolerance | 60s | Measured from the moment the peer watch subscription drops, not from the last publication. A successful publication resets the clock. Past the tolerance, the proxy treats the cached peer list as stale and fails requests with 503 rather than trusting it. |
+| Non-watch request timeout | 60s | Hard cap on any single proxied request and response, end to end. Watches stream indefinitely and are exempt. |
+| `Retry-After` on 503 | 1s | Caller backoff hint. |
+| Proxy ports | 9100 and up | One per group and version, alphabetical, identical across replicas. |
+
+### Behavior when the target is unreachable {#degraded-behavior}
+
+Two design decisions explain most confusing symptoms:
+
+1. **Discovery stays available during common target failures.** When the target is unreachable, or answers discovery with 401, 404, or 5xx, the proxy serves discovery requests locally so the APIService stays `Available` and the client tenant cluster's API server keeps functioning. `kubectl api-resources` can therefore look healthy while every non-discovery request fails with 503. Use [metrics](../manage/resource-proxy-operations.mdx#monitoring) and [logs](../troubleshoot/resource-proxy.mdx#log-reference), not discovery, to judge proxy health.
+2. **Non-watch resource failures degrade to 503 with `Retry-After: 1`.** Peer discovery problems, quarantined peers, a stale peer list, and target-side 5xx responses for non-watch resource requests surface as `503 Service Unavailable`. The discovery statuses listed above use the local fallback, and watch responses stream directly from the target. The cause of a non-watch 503 is distinguishable from logs and metrics, not from the error the caller sees.
+
+If you're chasing a specific symptom rather than reading up on the mechanism, start at the [troubleshooting guide](../troubleshoot/resource-proxy.mdx) instead.

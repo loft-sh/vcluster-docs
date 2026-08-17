@@ -1,0 +1,451 @@
+---
+title: Operate the resource proxy
+sidebar_label: Resource proxy operations
+sidebar_position: 8
+sidebar_class_name: pro host-nodes private-nodes standalone
+description: Keep resource proxy connections direct and monitor the proxy with Prometheus metrics, alerts, and a synthetic probe.
+---
+
+import ProAdmonition from '../_partials/admonitions/pro-admonition.mdx'
+
+<ProAdmonition/>
+
+:::note vCluster Platform required
+This feature requires [vCluster Platform](/docs/platform). Both the client and target tenant clusters must be managed as [VirtualClusterInstance](/docs/platform/api/resources/virtualclusterinstance) within the platform.
+:::
+
+The resource proxy lets a client tenant cluster transparently forward custom resource requests to a target tenant cluster, which stores the objects and can run controllers against them. For how it works and how to set it up, see [How the resource proxy works](../understand/resource-proxy.mdx) and [Set up the resource proxy](../learn-how-to/resource-proxy-setup.mdx).
+
+Once it's running, there are two ongoing operational concerns. Keep proxy traffic off the DERP relay, and monitor the proxy so degradation surfaces before callers notice.
+
+Keep the client, the target, and the platform on current versions. Peer staleness fixes span both vCluster and the platform's stale peer cleanup, and running a new client against an old platform keeps the degradation risk alive.
+
+## Prefer direct connections over the DERP relay {#direct-connections}
+
+Proxy traffic between tenant clusters flows over the platform network. Peers first try a direct connection and fall back to relaying through the vCluster Platform DERP server when no direct path can be established. The relay keeps traffic flowing, but it doesn't carry it well. Relayed traffic adds latency and routes all proxy bandwidth through the vCluster Platform deployment. That makes the platform a throughput bottleneck and a shared failure domain for otherwise independent tenant clusters. Adding a connected cluster as a [self-hosted DERP relay](/docs/platform/administer/clusters/advanced/derp-relay) shortens the relayed path, but a direct path is still better.
+
+To keep connections direct:
+
+- Open the paths that WireGuard hole punching needs. Allow outbound UDP to the peer endpoints advertised by the platform, outbound UDP to the configured Session Traversal Utilities for NAT (STUN) endpoints on their configured ports, and outbound TCP to ports `80` and `443`. The embedded `tsnet` server doesn't configure a fixed UDP source port. A peer endpoint can be a pod, node, load balancer, or public network address after Network Address Translation (NAT), so don't restrict both UDP rules to the peer pod addresses. Scope the peer rule to the endpoint CIDRs your environment advertises when possible, and scope the STUN rule separately. Environments that only allow TCP `443` egress force everything through the relay.
+- Review the NAT topology. Symmetric NAT between the clusters defeats hole punching. Clusters in the same VPC or in peered VPCs typically connect directly without special work.
+- Check NetworkPolicies and security groups applied to the vCluster control plane pods. They must not block the direct path that the platform negotiates.
+
+<!-- vale Vale.Terms = NO -->
+### NetworkPolicy exceptions for a direct path {#direct-connections-networkpolicy}
+<!-- vale Vale.Terms = YES -->
+
+The NetworkPolicies that vCluster generates for [`policies.networkPolicy.enabled: true`](../configure/vcluster-yaml/policies/network-policy.mdx) allow control plane egress on TCP `443`, `8443`, and `6443`, scoped to the platform pods, the <GlossaryTerm term="control-plane-cluster">control plane cluster</GlossaryTerm>'s DNS pods, and the tenant cluster's own pods. They allow no other UDP egress and no path to another tenant cluster's control plane pods, and the ingress side is symmetric. With the generated policies alone, every proxied request falls back to the DERP relay.
+
+For a client and a target on the same control plane cluster, add a rule on each end. Both are required, because one alone still leaves you on the relay.
+
+```yaml title="vcluster.yaml - client tenant cluster"
+policies:
+  networkPolicy:
+    enabled: true
+    controlPlane:
+      egress:
+        # Let the resource proxy dial the target's control plane pods directly
+        # instead of falling back to the DERP relay.
+        - to:
+            - namespaceSelector:
+                matchLabels:
+                  kubernetes.io/metadata.name: vcluster-<target-namespace>
+              podSelector:
+                matchLabels:
+                  release: <target-release-name>
+```
+
+```yaml title="vcluster.yaml - target tenant cluster"
+policies:
+  networkPolicy:
+    enabled: true
+    controlPlane:
+      ingress:
+        - from:
+            - namespaceSelector:
+                matchLabels:
+                  kubernetes.io/metadata.name: vcluster-<client-namespace>
+              podSelector:
+                matchLabels:
+                  release: <client-release-name>
+```
+
+Both rules omit `ports`, so they are narrow by peer and open by port. That keeps them working regardless of which UDP port the direct path negotiates. For tenant clusters on different control plane clusters, replace the selectors with an `ipBlock` that covers the endpoint addresses the platform advertises for the peer. Add a separate egress rule for the configured STUN endpoints and ports, and open the firewall paths listed above.
+
+### Confirm which path you are on {#confirm-connection-path}
+
+No proxy metric distinguishes a direct path from a relayed one. Three indirect signals:
+
+- Compare the p99 of `vcluster_proxy_request_duration_seconds` on the client against the same request issued directly against the target. A relayed path shows a consistent latency floor that a direct path doesn't.
+- Watch `vcluster_proxy_peer_dial_duration_seconds`. Relayed traffic adds a hop, so dial latency on a relayed path is typically higher than on a direct path between the same two clusters. A step change here with no corresponding change on the target is consistent with a fallback to the relay.
+- Enable `LOFT_LOG_DERP` on the platform agent for relay-level debug logging. See [Agent troubleshooting](/docs/platform/configure/agent-settings/troubleshooting).
+
+## Monitor the proxy {#monitoring}
+
+The proxy exposes Prometheus metrics on the client tenant cluster. Scrape them, alert on the starting points below, pair them with a [synthetic probe](#synthetic-probe), and [verify that all three work](#verify-monitoring) before you depend on them during an incident.
+
+### Scrape proxy metrics {#scrape-metrics}
+
+The client tenant cluster exposes proxy metrics at the `/metrics/syncer` path of its API server, using the same delegated authentication as the other metrics paths. The caller needs `get` on the non-resource URL `/metrics/syncer` inside the tenant cluster.
+
+```bash title="Check proxy metrics manually"
+kubectl get --raw /metrics/syncer | grep vcluster_proxy
+```
+
+Run this against the client tenant cluster API.
+
+```yaml title="RBAC for a metrics scraper - apply inside the client tenant cluster"
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: metrics-syncer-reader
+rules:
+- nonResourceURLs: ["/metrics/syncer"]
+  verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: metrics-syncer-reader
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: metrics-syncer-reader
+subjects:
+- kind: ServiceAccount
+  name: <scraper-service-account>
+  namespace: <scraper-namespace>
+```
+
+With the Prometheus Operator, setting `controlPlane.serviceMonitor.enabled: true` in the client's `vcluster.yaml` adds a [ServiceMonitor](../configure/vcluster-yaml/control-plane/deployment/service-monitor.mdx) that scrapes `/metrics/syncer` alongside the other control plane endpoints. The ServiceMonitor authenticates with the TLS client certificate from the `vc-<release>` secret, so it needs no extra RBAC. The ClusterRole above is only for scrapers you wire up yourself.
+
+### Metrics reference {#metrics-reference}
+
+Every series is labeled `target="<project>/<name>"`, and the tables list only additional labels. No series carries per-peer-host labels, because peer hostnames churn with target restarts. Counter series only appear after their first event, so don't alert on counter absence. A missing counter means the event has never happened since the pod started.
+
+Most series are proxy-side equivalents of standard Kubernetes API server metrics, so existing `apiserver_*` dashboards and alert patterns translate directly.
+
+<!-- vale Vale.Terms = NO -->
+<!-- vale Google.Headings = NO -->
+
+#### Request metrics {#request-metrics}
+
+##### vcluster_proxy_request_total {#vcluster-proxy-request-total}
+
+**Type:** Counter
+
+**Labels:** `group_version`, `verb`, `code`, `reason`
+
+Traffic and error rate. The `reason` label attributes recognized proxy failure paths, so most 503 spikes are attributable without log access. See [Outcome reasons](#outcome-reasons).
+
+##### vcluster_proxy_request_duration_seconds {#vcluster-proxy-request-duration-seconds}
+
+**Type:** Histogram
+
+**Labels:** `verb`
+
+Latency distribution for non-watch requests, with buckets up to the 60-second request deadline. Watches are excluded, because their lifetime would swamp the distribution. Fast 503s point at proxy-side degradation. Creeping p99 points at a slow target or a relayed network path.
+
+##### vcluster_proxy_request_terminations_total {#vcluster-proxy-request-terminations-total}
+
+**Type:** Counter
+
+**Labels:** `reason`
+
+Requests the proxy itself terminated, as distinct from target-side errors: `deadline` (the 60-second cap expired) or `upgrade_rejected` (a rejected connection upgrade).
+
+##### vcluster_proxy_inflight_requests {#vcluster-proxy-inflight-requests}
+
+**Type:** Gauge
+
+Non-watch requests currently being served, for saturation tracking. Watch streams are counted by `vcluster_proxy_active_watches` instead.
+
+##### vcluster_proxy_discovery_fallbacks_total {#vcluster-proxy-discovery-fallbacks-total}
+
+**Type:** Counter
+
+**Labels:** `group_version`, `reason`
+
+Discovery requests answered from the [local fallback document](../understand/resource-proxy.mdx#degraded-behavior) instead of the target. Callers see a `200`, so this counter is the only signal that discovery is degraded. See [Discovery lists resources with only a get verb, or an empty list](../troubleshoot/resource-proxy.mdx#discovery-fallback).
+
+#### Outcome reasons {#outcome-reasons}
+
+The `reason` label reuses a shared vocabulary across `vcluster_proxy_request_total`, `vcluster_proxy_request_terminations_total`, `vcluster_proxy_peer_dial_failures_total`, and `vcluster_proxy_discovery_fallbacks_total`, but related series don't always carry the same reason. A request failed by a dial carries that dial's reason. A discovery fallback records the peer-availability reason when the initial check fails, or `upstream_error` when the proxied discovery attempt returns 401, 404, or 5xx. Because the first request reason wins, `request_total` preserves an earlier dial reason even when `discovery_fallbacks_total` records `upstream_error` for the same request.
+
+| Reason | Meaning | Also on |
+|--------|---------|---------|
+| `upstream` | Default or unattributed outcome. It normally means the target produced the response, but proxy-local failures without a more specific reason also use this value. | |
+| `no_peer` | No peer host was available: no peer list has arrived since startup, or the list is empty. | `peer_dial_failures_total`, `discovery_fallbacks_total` |
+| `stale_peers` | The peer watch subscription has been down longer than the 60-second staleness tolerance, so the cached peer list is no longer trusted. | `peer_dial_failures_total`, `discovery_fallbacks_total` |
+| `all_quarantined` | Every peer host is quarantined, or the only candidate is mid-trial. | `peer_dial_failures_total`, `discovery_fallbacks_total` |
+| `timeout` | The 5-second peer dial timeout expired. | `peer_dial_failures_total` |
+| `deadline` | A deadline the proxy set expired, usually the 60-second non-watch cap. | `request_terminations_total`, `peer_dial_failures_total` |
+| `canceled` | The caller's own context ended, for example the client disconnected. Not a proxy fault. | `peer_dial_failures_total` |
+| `peer_departed` | The peer left the peer list mid-dial. | `peer_dial_failures_total` |
+| `ts_server_unavailable` | The local platform network server or the license failed before any peer was contacted. | `peer_dial_failures_total` |
+| `error` | Any other dial error. | `peer_dial_failures_total` |
+| `ownership_masked` | `accessResources: owned` hid an object the client doesn't own. Tenant isolation working as intended. See [404 on resources that exist in the target](../troubleshoot/resource-proxy.mdx#resources-not-appearing). | |
+| `ownership_check_failed` | The proxy could not complete the ownership check and masked the response defensively. Unlike `ownership_masked`, this is a proxy-side failure, not isolation working. | |
+| `namespace_missing` | A write targeted a namespace that doesn't exist in the client tenant cluster. | |
+| `upgrade_rejected` | A connection upgrade verb was rejected. See [501: connection upgrades aren't supported](../troubleshoot/resource-proxy.mdx#connection-upgrades). | `request_terminations_total` |
+| `upstream_error` | A proxied discovery attempt returned 401, 404, or 5xx after the initial peer check, so the fallback document was served. The response can come from the target or from a transport failure converted to 5xx by the proxy path. | `discovery_fallbacks_total` |
+
+#### Peer health metrics {#peer-health-metrics}
+
+##### vcluster_proxy_peers {#vcluster-proxy-peers}
+
+**Type:** Gauge
+
+**Labels:** `group_version`, `state`
+
+Current peer count per state: `healthy`, `quarantined`, or `half_open`. Computed at scrape time, so expired quarantines are already reflected. With no healthy peers, the target is degraded: requests fail unless a `half_open` peer succeeds on its single trial dial. Unlike the transition counters, this also catches a pod that starts already degraded.
+
+##### vcluster_proxy_peer_cache_synced {#vcluster-proxy-peer-cache-synced}
+
+**Type:** Gauge
+
+**Labels:** `group_version`
+
+Whether the proxy holds a usable peer snapshot (`1`). At `0`, resource requests to that target fail fast with 503, while discovery uses the local fallback. This covers both a peer list that has never arrived and one that aged out after the subscription dropped.
+
+##### vcluster_proxy_peer_list_age_seconds {#vcluster-proxy-peer-list-age-seconds}
+
+**Type:** Gauge
+
+**Labels:** `group_version`
+
+Seconds since the last peer list was published. Absent before the first publication. Publication is event-driven, so a high value on its own doesn't mean anything is wrong, and it isn't what triggers the staleness cutoff. See the caveat under [Alert starting points](#alerts).
+
+##### vcluster_proxy_peer_quarantines_total {#vcluster-proxy-peer-quarantines-total}
+
+**Type:** Counter
+
+A target endpoint was quarantined after 3 consecutive dial failures. A steady increase over tens of minutes means a dead or stale endpoint is re-quarantined every cycle, or the target is flapping.
+
+##### vcluster_proxy_target_all_peers_quarantined_total {#vcluster-proxy-target-all-peers-quarantined-total}
+
+**Type:** Counter
+
+A quarantine transition left no endpoint selectable for new requests. Resource requests fail fast with 503 while that state persists; discovery uses the local fallback.
+
+##### vcluster_proxy_peer_recoveries_total {#vcluster-proxy-peer-recoveries-total}
+
+**Type:** Counter
+
+A previously failing or quarantined endpoint recovered on a successful dial. A replacement endpoint from a new peer list starts healthy and doesn't increment this counter.
+
+##### vcluster_proxy_peer_dial_failures_total {#vcluster-proxy-peer-dial-failures-total}
+
+**Type:** Counter
+
+**Labels:** `reason`
+
+Every failed dial, not only the third consecutive failure that triggers quarantine. Also counts rejections that never reach a peer (`no_peer`, `stale_peers`, `all_quarantined`, `peer_departed`), which have no matching duration observation. See [Outcome reasons](#outcome-reasons).
+
+##### vcluster_proxy_peer_dial_duration_seconds {#vcluster-proxy-peer-dial-duration-seconds}
+
+**Type:** Histogram
+
+Latency of dials that were actually attempted, whether successful or not, with buckets up to the 5-second dial timeout. Creep here is the earliest signal of network path degradation.
+
+#### Watch metrics {#watch-metrics}
+
+##### vcluster_proxy_active_watches {#vcluster-proxy-active-watches}
+
+**Type:** Gauge
+
+Open watch streams. Watches are long-running and bypass the 60-second request deadline.
+
+##### vcluster_proxy_watch_events_total {#vcluster-proxy-watch-events-total}
+
+**Type:** Counter
+
+Events flowing per target. A connected but silent watch, such as a half-dead connection, shows up only here.
+
+<!-- vale Vale.Terms = YES -->
+<!-- vale Google.Headings = YES -->
+
+### Alert starting points {#alerts}
+
+On the `== 0` gauge rules, don't aggregate away `group_version` or the scrape target's own pod label. Each group and version keeps its own peer cache, and in an HA deployment so does each replica. A `sum` therefore lets one healthy series hide a degraded one. Aggregating a `rate` and testing `> 0` is safe, because a non-negative sum can't mask a positive member.
+
+```yaml title="Prometheus alert rules"
+# A target has had no fully healthy peers for two minutes. Requests are failing
+# or are limited to single trial dials against half-open peers.
+- alert: ResourceProxyNoHealthyPeers
+  expr: vcluster_proxy_peers{state="healthy"} == 0
+  for: 2m
+  labels: {severity: critical}
+  annotations:
+    summary: 'Resource proxy target {{ $labels.target }} ({{ $labels.group_version }}): no fully healthy peers'
+
+# No usable peer snapshot at all: resource requests to this target fail fast
+# with 503, while discovery uses the local fallback. Covers both "no peer list
+# has ever arrived" (platform connectivity or license) and "the peer watch
+# subscription dropped and the cached list aged out past the 60-second
+# tolerance".
+- alert: ResourceProxyPeerCacheUnsynced
+  expr: vcluster_proxy_peer_cache_synced == 0
+  for: 2m
+  labels: {severity: critical}
+  annotations:
+    summary: 'Resource proxy target {{ $labels.target }} ({{ $labels.group_version }}): no usable peer snapshot, requests fail with 503'
+
+# A quarantine transition left no peer selectable within the window.
+# Warning, not critical: a target rolling restart quarantines every old endpoint
+# and self-heals within seconds. ResourceProxyNoHealthyPeers above is the paging
+# rule for resource requests that are still failing.
+- alert: ResourceProxyTargetUnavailable
+  expr: increase(vcluster_proxy_target_all_peers_quarantined_total[10m]) > 0
+  labels: {severity: warning}
+  annotations:
+    summary: 'Resource proxy target {{ $labels.target }}: quarantine left no selectable peer'
+
+# Sustained quarantine churn and no currently healthy peer: stale peers or a
+# flapping target. Match all scrape labels while ignoring only the labels that
+# exist solely on the peer gauge.
+- alert: ResourceProxyPeerChurn
+  expr: >
+    increase(vcluster_proxy_peer_quarantines_total[30m]) > 5
+    and ignoring(group_version, state)
+    vcluster_proxy_peers{state="healthy"} == 0
+  labels: {severity: warning}
+  annotations:
+    summary: 'Resource proxy target {{ $labels.target }}: peers repeatedly quarantined without recovery'
+
+# Discovery is being served from the local fallback: callers see a 200 and a
+# healthy APIService while real requests fail. Any sustained rate is degraded.
+- alert: ResourceProxyDiscoveryDegraded
+  expr: sum by (target, group_version) (rate(vcluster_proxy_discovery_fallbacks_total[5m])) > 0
+  for: 5m
+  labels: {severity: warning}
+  annotations:
+    summary: 'Resource proxy target {{ $labels.target }} ({{ $labels.group_version }}): serving fallback discovery, real requests are likely failing'
+
+# Watches are open but no events are flowing: a half-dead stream.
+# Tune the window to how often your proxied resources actually change, or drop
+# this rule if they are normally idle for an hour at a time.
+- alert: ResourceProxyWatchesSilent
+  expr: >
+    vcluster_proxy_active_watches > 0
+    unless increase(vcluster_proxy_watch_events_total[1h]) > 0
+  for: 30m
+  labels: {severity: warning}
+  annotations:
+    summary: 'Resource proxy target {{ $labels.target }}: watches open but no events for an hour'
+```
+
+:::warning Peer list age isn't a leading indicator
+It is tempting to alert on `vcluster_proxy_peer_list_age_seconds` crossing the 60-second staleness tolerance, but the two aren't measured from the same instant. The gauge measures time since the last peer list publication, which is event-driven. On a cluster with no peer churn, nothing publishes, and the age grows with the proxy perfectly healthy. The 60-second tolerance is measured from the moment the peer watch subscription drops, and a successful publication resets that clock. Alert on `vcluster_proxy_peer_cache_synced == 0` for the condition that actually fails requests, and treat a sustained high age as a hint to check platform connectivity.
+:::
+
+Complementary signals worth having:
+
+- Caller-observed errors from the client tenant cluster's own API server metrics: `apiserver_request_total{group="<your-group>",code=~"5.."}`.
+- APIService availability inside the client tenant cluster: `kube_apiservice_status_condition` if you run kube-state-metrics there, or a scheduled `kubectl get apiservice`.
+- A [synthetic probe](#synthetic-probe), because counters only move when traffic flows.
+
+### Synthetic probe {#synthetic-probe}
+
+Metrics report the proxy's own view. A synthetic request reports what callers experience, including the parts before the proxy, such as the APIService wiring and the aggregation layer. Run a probe like this on a schedule against the client tenant cluster:
+
+```yaml title="ConfigMap for the proxy probe - apply on the control plane cluster"
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: proxy-probe
+  namespace: vcluster-<name>
+data:
+  proxy-probe.sh: |
+    #!/bin/sh
+    # Probe one proxied group/version end to end. Exits non-zero on failure.
+    set -eu
+    GROUP_VERSION="example.com/v1"   # API group and version, adjust
+    RESOURCE="myresources"           # plural resource name, adjust
+    NAMESPACE="default"              # adjust
+
+    # --request-timeout keeps a degraded path from hanging the probe for 60s.
+    kubectl get --raw "/apis/${GROUP_VERSION}/namespaces/${NAMESPACE}/${RESOURCE}?limit=1" \
+      --request-timeout=15s > /dev/null
+```
+
+Do not alert on a single failed run. A 503 during a target rolling restart is expected and self-heals. Schedule the probe instead and alert on the age of its last success, which covers repeated failures without needing to count them across runs.
+
+Run the CronJob on the control plane cluster, in the client tenant cluster's namespace, so that the control plane cluster's kube-state-metrics observes it. The default `vc-<release>` kubeconfig points to `https://localhost:8443`, which is only reachable from the vCluster control plane pod. Export an [additional kubeconfig secret](../configure/vcluster-yaml/export-kube-config.mdx#export-additional-secrets) that uses the tenant cluster Service instead:
+
+```yaml title="vcluster.yaml"
+exportKubeConfig:
+  additionalSecrets:
+    - name: vc-<release>-proxy-probe
+      server: "https://<release>.vcluster-<name>.svc:443"
+```
+
+The generated secret holds the tenant cluster kubeconfig under the key `config`. If the release name or namespace differs from the example, update both the Service address and the CronJob placeholders.
+
+```yaml title="CronJob for the probe - apply on the control plane cluster"
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: proxy-probe
+  namespace: vcluster-<name>
+spec:
+  schedule: "*/5 * * * *"
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+          - name: probe
+            image: registry.k8s.io/kubectl:v1.34.0   # match your cluster's minor version
+            command: ["/bin/sh", "/scripts/proxy-probe.sh"]
+            env:
+            - name: KUBECONFIG
+              value: /kubeconfig/config
+            volumeMounts:
+            - name: kubeconfig
+              mountPath: /kubeconfig
+              readOnly: true
+            - name: script
+              mountPath: /scripts
+          volumes:
+          - name: kubeconfig
+            secret:
+              secretName: vc-<release>-proxy-probe
+          - name: script
+            configMap:
+              name: proxy-probe
+              defaultMode: 0755
+```
+
+```yaml title="Prometheus alert rule"
+# No successful probe run in three schedule intervals.
+- alert: ResourceProxyProbeFailing
+  expr: >
+    time() - kube_cronjob_status_last_successful_time{namespace="vcluster-<name>",cronjob="proxy-probe"} > 900
+    or
+    (
+      time() - kube_cronjob_created{namespace="vcluster-<name>",cronjob="proxy-probe"} > 900
+      unless on(namespace, cronjob)
+      kube_cronjob_status_last_successful_time{namespace="vcluster-<name>",cronjob="proxy-probe"}
+    )
+  labels: {severity: critical}
+  annotations:
+    summary: 'Resource proxy probe has not succeeded for {{ $value }}s'
+```
+
+If you use log-based alerts instead, match on recurring 503 request failures and on `context deadline exceeded` errors mentioning `.vcluster.invalid:443` hostnames in the client's vCluster control plane logs.
+
+### Verify the monitoring works {#verify-monitoring}
+
+All three pieces can silently no-op. A ServiceMonitor can be created without ever scraping the target, alert rules can fail to load, and a probe can be written but never scheduled. Check each one before you need it.
+
+```bash title="Confirm the metrics exist on the client"
+kubectl get --raw /metrics/syncer | grep vcluster_proxy_peers
+```
+
+- **Scraping works.** Query `up{job=~".*vcluster.*"}` in Prometheus and confirm the client tenant cluster's control plane target is present and `1`. An absent target is indistinguishable from a healthy proxy in every alert above.
+- **Rules load.** Run `promtool check rules <your-rules-file>.yaml`, then confirm the rules are loaded in the Prometheus UI under Status, Rules.
+- **The probe runs.** Confirm the CronJob has a recent successful run with `kubectl get cronjob proxy-probe -n vcluster-<name>`. Confirm `kube_cronjob_created` exists in Prometheus. The alert uses that series to detect a CronJob that has never succeeded; after the first success, it uses `kube_cronjob_status_last_successful_time`. If both series are absent, kube-state-metrics isn't exposing the CronJob and the alert can't evaluate it.
