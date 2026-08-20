@@ -26,9 +26,16 @@ stores the metrics backend endpoints and optional TLS settings.
 Before you create the connector, prepare:
 
 - A metrics backend that ingests OTLP metrics and serves the Prometheus HTTP API for
-  queries. Deploy the bundled Prometheus out of the box with the Argo CD integration, or
-  bring your own.
-- Network access from the Platform namespace to both backend endpoints.
+  queries. It doesn't need to run on the same cluster as Platform. It can run anywhere the
+  gateway can reach over the network. Deploy the bundled Prometheus out of the box with
+  the Argo CD integration, or bring your own.
+- A backend the connector can authenticate to with TLS or mTLS alone. TLS verifies the
+  backend's identity, and mTLS additionally gives the gateway a client identity the backend
+  can authenticate. There's no way to attach a bearer token, basic auth, or a static header,
+  and the Query Proxy strips the caller's own `Authorization` header before forwarding
+  reads, so backends that mandate bearer, basic, or API-key authentication aren't supported.
+- Network access from the Platform namespace to both backend endpoints, wherever the
+  backend runs.
 - A vCluster Platform license that includes Fleet Observability.
 - Optional custom gateway serving certificate or backend mTLS Secrets.
 
@@ -97,7 +104,7 @@ spec:
     From the <Label>Argo CD Application Template</Label> dropdown, select the <Label>Fleet Observability: Prometheus</Label> template.
   </Step>
   <Step>
-    Fill the <Label>Template Parameters</Label>. Keep <Label>destinationNamespace</Label> as `vcluster-platform`, and adjust the storage size or chart version if needed.
+    Fill the <Label>Template Parameters</Label>. Set <Label>destinationNamespace</Label> to the namespace Platform is installed in, which defaults to `vcluster-platform`, and adjust the storage size or chart version if needed.
   </Step>
   <Step>
     Click <Button>Create Argo CD Application</Button>.
@@ -145,11 +152,24 @@ The `/api/v1/otlp` path is required for OTLP ingestion. If you change
 `destinationNamespace`, replace `vcluster-platform` in both endpoints. If you supply
 `metricsBackendTLSSecret`, use that Secret name instead of `metrics-backend-mtls`.
 
+If `destinationNamespace` differs from the namespace where Platform is installed,
+Prometheus and the gateway no longer share a namespace, so the auto-generated mTLS Secret
+can't serve both sides on its own. See
+[Configure backend mTLS across namespaces or clusters](#configure-backend-mtls-across-namespaces-or-clusters).
+
 ## Create the connector Secret
 
-Create the Fleet Observability connector in the Platform namespace. The connector ID can be
-any valid Secret name. Platform derives the gateway resource name as `gateway-<connector-id>`.
-The examples use `fleet-observability`, which produces `gateway-fleet-observability`.
+Create the Fleet Observability connector in the Platform namespace. Use no more than 51
+lowercase letters, numbers, or hyphens for the connector ID, like the
+`fleet-observability` example. That keeps every name Platform derives from it predictable:
+the gateway resources as `gateway-<connector-id>`, the managed certificate Secret as
+`gateway-<connector-id>-tls` (see [Customize the gateway serving
+certificate](#customize-the-gateway-serving-certificate)), and the
+`app.kubernetes.io/instance` label as the connector ID itself.
+
+A longer or dotted connector ID is a technically valid Secret name, but Platform
+normalizes the derived names inconsistently, so they stop matching each other. Stick to a
+short, dot-free ID instead of working around this.
 
 The `loft.sh/connector-type: observability` label is required. Platform only recognizes and
 reconciles a Secret as an observability connector when this label is present.
@@ -234,7 +254,7 @@ Platform reconciles the following resources:
 | `metricsBackendOtlpEndpoint` | Yes | OTLP endpoint that receives metrics from the Write Gateway. Provide the base URL only; the gateway appends `/v1/metrics` (for example, `https://prom-prometheus-server.vcluster-platform/api/v1/otlp` receives writes at `/api/v1/otlp/v1/metrics`). |
 | `metricsBackendPromQLEndpoint` | Yes | Prometheus HTTP API endpoint queried by the Query Proxy. |
 | `metricsBackendInsecureSkipVerify` | No | Set to `"true"` only for test backends with unverifiable TLS. |
-| `metricsBackendServerName` | No | TLS server name override for the metrics backend. |
+| `metricsBackendServerName` | No | TLS server name override for the Query Proxy's PromQL reads. It doesn't affect OTLP writes; the OTLP endpoint's certificate must still match the endpoint hostname. |
 | `observabilityGatewayCertSecretName` | No | Custom Secret with `tls.crt` and `tls.key` for gateway serving TLS. Include `ca.crt` when clients must trust a private CA. Platform creates a self-signed serving certificate when this key is omitted. |
 | `metricsBackendCertSecretName` | No | Secret with `ca.crt`, `tls.crt`, and `tls.key` for mTLS to the backend. The gateway trusts the backend with `ca.crt` and presents the certificate and key as its client identity. |
 | `gatewayResources` | No | YAML `resources` block for the Write Gateway container. |
@@ -263,9 +283,18 @@ Grafana must:
 
 The gateway always serves OTLP and query traffic over TLS. When you don't specify a
 certificate Secret, Platform creates and manages a self-signed Secret named
-`gateway-<connector-id>-tls`.
+`gateway-<connector-id>-tls`. This only works for connector IDs of 51 characters or fewer;
+see [Create the connector Secret](#create-the-connector-secret) for why longer IDs need a
+custom certificate Secret instead.
 
-To use your own certificate, create a Secret in the Platform namespace:
+To use your own certificate, create a Secret in the Platform namespace. Platform never
+validates or modifies a custom certificate, so it must already cover every hostname a
+client connects to. At minimum, include the gateway's in-cluster Service hostname,
+`gateway-<connector-id>.<platform-namespace>.svc.cluster.local`, since Platform-generated
+Grafana datasources and any in-cluster collector always connect through it. If you expose
+the gateway with a `LoadBalancer` (see [Expose the gateway with a
+LoadBalancer](#expose-the-gateway-with-a-loadbalancer) below), also include its external
+hostname or IP as a SAN.
 
 ```yaml title="gateway-tls.yaml"
 apiVersion: v1
@@ -299,8 +328,9 @@ stringData:
 Edge collectors use HTTPS for OTLP HTTP or TLS for OTLP gRPC in both the managed and custom
 certificate cases. Distribute `ca.crt` to collectors that don't already trust the issuing
 CA. Grafana datasources generated by Platform trust the `ca.crt` from the gateway serving
-certificate Secret. If a custom certificate is signed by a public CA, `ca.crt` can be
-omitted and clients use their system trust stores.
+certificate Secret. A certificate signed by a public CA still needs to cover the hostnames
+above; once it does, `ca.crt` can be omitted, since clients already trust the public CA
+through their system trust stores.
 
 ## Expose the gateway with a LoadBalancer
 
@@ -316,11 +346,10 @@ stringData:
 ```
 
 For a Platform-managed certificate, the controller waits for the LoadBalancer address and
-adds it to the certificate as a subject alternative name before deploying the gateway. This
-means clients that verify TLS trust the address without extra configuration. For a
-self-signed certificate, distribute `ca.crt` as described in
-[Customize the gateway serving certificate](#customize-the-gateway-serving-certificate). A
-certificate signed by a public CA needs no extra trust configuration.
+adds it to the certificate as a subject alternative name before deploying the gateway. A
+custom certificate needs that same SAN added by hand, since Platform never modifies it. See
+[Customize the gateway serving certificate](#customize-the-gateway-serving-certificate) for
+how clients trust the resulting certificate either way.
 
 ### Retrieve the load balancer address
 
@@ -377,6 +406,52 @@ Reference it from the connector:
 stringData:
   metricsBackendCertSecretName: metrics-backend-client-tls
 ```
+
+### Configure backend mTLS across namespaces or clusters
+
+The bundled Prometheus template's default mTLS setup works because Prometheus and the
+gateway both mount the same Secret object. By default they share the namespace Platform
+itself is installed in (`vcluster-platform`, unless you renamed it), so
+`metricsBackendTLSSecret` (the Prometheus side) and `metricsBackendCertSecretName` (the
+connector side) both point at the same auto-generated `metrics-backend-mtls` Secret.
+
+That single-Secret shortcut only works when Prometheus and the gateway share a namespace
+and a cluster. What to do instead depends on where Prometheus runs.
+
+#### Different namespace, same cluster
+
+If you set `destinationNamespace` to a namespace other than the one Platform is installed
+in, Prometheus stays on the local cluster, so its bootstrap certificate still covers the
+right in-cluster hostname (`prom-prometheus-server.<destinationNamespace>.svc.cluster.local`).
+A single Secret object just can't be mounted in two namespaces at once, so copy it instead
+of sharing one object:
+
+- Leave `metricsBackendTLSSecret` empty so the Argo CD template bootstraps the shared
+  certificate for you, named `metrics-backend-mtls` in Prometheus's `destinationNamespace`.
+  See [Deploy the metrics backend with Argo
+  CD](#deploy-the-metrics-backend-with-argo-cd).
+- Once Prometheus reports ready, read that generated Secret and create an identical copy
+  in the Platform namespace, then reference it from the connector's
+  `metricsBackendCertSecretName`.
+
+Setting `metricsBackendTLSSecret` to a name of your own disables this bootstrap entirely,
+so only use it if you're supplying your own certificate material for both Secrets instead
+of copying the generated one.
+
+#### A different cluster, or a backend other than the bundled Prometheus
+
+The bundled workflow above deploys Prometheus to the local cluster, and its bootstrap
+certificate only covers in-cluster Service hostnames. Copying that Secret doesn't work
+once the gateway reaches the backend through an external hostname, because the
+certificate has no SAN for it. Create the gateway-side Secret as described in
+[Use backend mTLS](#use-backend-mtls) above, but with two differences:
+
+- The backend's server certificate must cover the hostname used in
+  `metricsBackendOtlpEndpoint` and `metricsBackendPromQLEndpoint`, not an in-cluster
+  Service name.
+- Configure the backend to trust the CA that issues the gateway's client certificate, the
+  same way the bundled Prometheus config trusts it through `client_ca_file`. Without this,
+  the backend rejects the gateway's mTLS handshake even if the gateway trusts the backend.
 
 ## Verify the gateway
 
