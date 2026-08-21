@@ -14,10 +14,6 @@ import InterpolatedCodeBlock from '@site/src/components/InterpolatedCodeBlock';
 
 There are multiple ways to back up and restore a tenant cluster. vCluster provides a built-in method to create and restore snapshots using its CLI.
 
-:::warning
-External databases such as MySQL or PostgreSQL running outside the vCluster namespace require a separate restore procedure. Refer to the relevant database documentation.
-:::
-
 A vCluster snapshot includes:
 
 - Backing store data (for example, etcd or SQLite)
@@ -146,6 +142,16 @@ You can also restore from any external storage backend:
   language="bash"
 />
 
+:::warning Service account tokens invalidated with embedded etcd
+Restoring a standalone vCluster that uses the embedded etcd backing store can invalidate service account tokens for running system pods, such as CoreDNS, kube-proxy, and the konnectivity agent. The restored etcd data predates any tokens issued after the snapshot was taken, so the API server rejects them on the UID check. `kubectl get pods` still reports these pods as `Running`, but in-pod DNS resolution stops working.
+
+To restore full capability, manually restart the vCluster control plane again after the automatic restart from `vcluster restore --standalone` completes:
+
+```bash
+systemctl restart vcluster
+```
+:::
+
 :::tip Cross-node recovery
 Restoring to a different machine leaves stale node details in etcd that require manual cleanup. To make the snapshot available on another node, use an external storage backend (OCI, S3, or Azure Blob Storage). Plan to manually remove stale node resources after restore.
 :::
@@ -211,7 +217,7 @@ vCluster certificates change when you create a tenant cluster with a new name or
 
 ## Migrate and override vCluster configuration options to create a new tenant cluster
 
-When upgrading tenant clusters, there are a couple of configuration options that aren't supported to change on an existing tenant cluster. For example, the backing store can't be changed. To change other options, migrate the tenant cluster by creating a new one from a snapshot and applying updated configuration.
+When upgrading tenant clusters, there are a couple of configuration options that aren't supported to change on an existing tenant cluster. For example, changing the backing store type isn't supported, including through snapshot and restore. See [Backing store](../../configure/vcluster-yaml/control-plane/components/backing-store/README.mdx) for details. To change other options, migrate the tenant cluster by creating a new one from a snapshot and applying updated configuration.
 
 When creating a new tenant cluster from a snapshot, it also restores all workloads in the tenant cluster.
 
@@ -230,19 +236,6 @@ vcluster create [[VAR:VCLUSTER_NAME:my-vcluster]] --upgrade -f vcluster.yaml --r
 vCluster certificates change when you create a tenant cluster with a new name or namespace. This is expected, as tenant clusters shouldn't share certificates.
 :::
 
-### Supported migration options
-
-vCluster supports migration paths based on your setup. The following migration options are available for Kubernetes distributions and backing stores.
-
-#### Change the backing store
-
-Change your data store to improve efficiency, scalability, and Kubernetes compatibility. You can migrate between the following data stores:
-
-- Embedded database (SQLite) -> Embedded database (etcd)
-- Embedded database (SQLite) -> External database
-
-vCluster overrides all other configuration options, similar to upgrading a tenant cluster and applying changes.
-
 ### Limitations
 
 When taking snapshots and restoring tenant clusters, there are limitations:
@@ -253,11 +246,15 @@ When taking snapshots and restoring tenant clusters, there are limitations:
 
 **Tenant clusters using an external database**
 
-- Tenant clusters with an external database handle backup and restore outside of vCluster. A database administrator must back up or restore the external database according to the database documentation. Avoid using the vCluster CLI backup and restore commands for clusters with an external database.
+- Restoring onto an external database deletes the existing data before replaying the snapshot, and vCluster does not back up or roll back the external database. Before running `vcluster restore`, the database owner or administrator must take a native database backup so that a native external database restore can be triggered if the restore fails.
 
 **vcluster.yaml configuration**
 
 - Although the vcluster.yaml configuration is backed up, it isn't automatically restored. After restoring a tenant cluster, you must manually reapply your vcluster.yaml configuration.
+
+**Standalone: service account tokens invalidated after restore**
+
+- Restoring a standalone vCluster that uses the embedded etcd backing store can invalidate service account tokens for system pods, breaking DNS resolution even though the affected pods report as `Running`. Manually restart the vCluster control plane after the restore completes. See [Restore a standalone vCluster](#restore-a-standalone-vcluster).
 
 **Standalone: restore to a new node**
 
