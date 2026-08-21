@@ -1,0 +1,181 @@
+---
+title: Sync a namespaced custom resource from the control plane cluster
+sidebar_label: Sync a custom resource from host
+sidebar_position: 6
+sidebar_class_name: host-nodes
+description: Walk through syncing a namespaced custom resource from the control plane cluster to a tenant cluster.
+---
+
+import Highlight from "@site/src/components/Highlight/Highlight";
+import Flow, { Step } from "@site/src/components/Flow";
+import TenancySupport from '../_fragments/tenancy-support.mdx';
+
+<TenancySupport hostNodes="true" />
+
+This guide walks through syncing a namespaced custom resource from the control plane cluster to a <GlossaryTerm term="tenant-cluster">tenant cluster</GlossaryTerm>, using an example CRD. For the config reference, see [Custom resources from the control plane cluster](../configure/vcluster-yaml/sync/from-host/custom-resources.mdx).
+
+### Set up cluster contexts
+
+Setting up the control plane and tenant cluster contexts makes it easier to switch between them.
+
+```bash title="set up kubectl contexts"
+export HOST_CTX="your-host-context"
+export VCLUSTER_CTX="vcluster-ctx"
+```
+
+Then, create a namespace in your <GlossaryTerm term="control-plane-cluster">control plane cluster</GlossaryTerm>. This example uses `foobar2`:
+
+```bash title="create namespace"
+kubectl --context="${HOST_CTX}" create namespace foobar2
+```
+
+:::tip
+You can find your contexts by running `kubectl config get-contexts`
+:::
+
+### Create a CustomResourceDefinition in the control plane cluster
+
+Save the following CustomResourceDefinition:
+
+```yaml title="example-crd.yaml"
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: examples.demo.loft.sh
+spec:
+  group: demo.loft.sh
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                image:
+                  type: string
+                replicas:
+                  type: integer
+      additionalPrinterColumns:
+      - name: Image
+        type: string
+        description: The image of an example
+        jsonPath: .spec.image
+      - name: Replicas
+        type: integer
+        description: The number of replicas in example
+        jsonPath: .spec.replicas
+  scope: Namespaced
+  names:
+    plural: examples
+    singular: example
+    kind: Example
+```
+
+Save this file locally and apply it to the control plane cluster:
+
+```bash title="Create Example CRD in the host"
+kubectl --context="${HOST_CTX}" create -f example-crd.yaml
+```
+
+### Enable from-host syncing for your custom resource
+
+Enable from-host syncing for `Example` custom resources in your tenant cluster configuration:
+
+```yaml title="Enable from host syncing for CustomResource"
+sync:
+  fromHost:
+    customResources:
+      examples.demo.loft.sh:
+        enabled: true
+        scope: Namespaced
+        mappings:
+          byName:
+            "foobar2/*": "default/*"
+```
+
+This configuration:
+
+- Enables from-host syncing of `examples.demo.loft.sh` from the `foobar2` namespace you created earlier.
+- Automatically configures RBAC permissions for <GlossaryTerm term="vcluster">vCluster</GlossaryTerm>, so it can get, watch, and list `Example` resources in the `foobar2` namespace.
+- Syncs all `Examples` from the `foobar2` namespace to the `default` namespace in the tenant cluster.
+
+:::tip create tenant cluster
+Create or update a tenant cluster following the [vCluster quick start guide](../quick-start/shared-nodes.mdx).
+:::
+
+### Sync a namespaced custom resource to the tenant cluster
+
+<Flow id="namespaced-custom-resources-from-host-example">
+  <Step>
+    First, create an example resource in the control plane cluster.
+
+    Copy this file and save it locally as `example-cr.yaml`:
+
+    ```yaml title=example-cr.yaml
+    apiVersion: demo.loft.sh/v1
+    kind: Example
+    metadata:
+      name: my-example
+      namespace: foobar2
+    spec:
+      image: "my-image:latest"
+      replicas: 2
+    ```
+
+    Then create the example in the control plane cluster:
+
+    ```bash title="Create example in the host"
+    kubectl --context="${HOST_CTX}" create -f example-cr.yaml
+    ```
+  </Step>
+
+  #### Ensure the custom resource synced to the tenant cluster
+
+  The custom resource should now be accessible in the tenant cluster. If you edit a field on the tenant object, it stays until the control plane cluster changes that same field, which then overwrites it.
+
+  <Step>
+    Check the custom resource in the tenant cluster:
+
+    ```bash title="Get synced CustomResource"
+    kubectl --context="${VCLUSTER_CTX}" get examples.demo.loft.sh --namespace default
+    ```
+
+    You should see similar output:
+
+    ```bash title="examples in vCluster"
+    NAME         IMAGE             REPLICAS
+    my-example   my-image:latest   2
+    ```
+  </Step>
+
+  #### Edit the custom resource in the control plane cluster
+
+  <Step>
+    Now edit the example in the control plane cluster and see that the change syncs to the tenant cluster. To set replicas to 4, run:
+
+    ```bash title="Patch Example CR"
+    kubectl --context="${HOST_CTX}" patch examples.demo.loft.sh my-example --type='json' -p='[{"op": "replace", "path": "/spec/replicas", "value": 4}]'  --namespace foobar2
+    ```
+  </Step>
+
+  #### Verify the tenant cluster copy updated
+
+  <Step>
+    <Highlight color="secondary">Tenant Cluster</Highlight> Check the number of replicas:
+
+    ```bash title="Check example"
+    kubectl --context="${VCLUSTER_CTX}" get --namespace default examples.demo.loft.sh
+    ```
+
+    You should see the number of replicas updated from the control plane cluster object:
+
+    ```bash title="Example updated in vCluster"
+    NAME         IMAGE             REPLICAS
+    my-example   my-image:latest   4
+    ```
+  </Step>
+</Flow>
