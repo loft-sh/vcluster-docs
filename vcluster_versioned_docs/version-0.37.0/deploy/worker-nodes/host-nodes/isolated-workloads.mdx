@@ -1,0 +1,115 @@
+---
+title: Deploy with isolated workloads
+sidebar_label: Isolated Workloads
+sidebar_position: 2
+sidebar_class_name: host-nodes
+---
+
+import TenancySupport from '../../../_fragments/tenancy-support.mdx';
+
+<TenancySupport hostNodes="true" />
+
+vCluster offers several different policies that reduce risk for tenant workloads sharing the control plane cluster's nodes. On shared nodes, these policies are risk-reduction controls, not a security boundary against an untrusted tenant. Review the [shared-node hardening guide](../../../security/shared-nodes-hardening.mdx) for the full threat model before onboarding trusted tenants, and the [policies documentation](../../../configure/vcluster-yaml/policies/README.mdx) for all options within each policy below.
+
+To reduce risk for workloads on a vCluster, enable a couple of configuration options:
+
+1. Set a [Pod Security Standard](https://kubernetes.io/docs/concepts/security/pod-security-standards/). If you enable either `baseline` or `restricted` policy, it follows the standards outlined in Kubernetes.
+For example, with `baseline` as a Pod Security Standard, pods that try to run as a privileged
+container are not synced to the control plane cluster. The same applies to pods that try to mount a host path directly. Pod Security Standards evaluate the Pod spec, so they don't inspect what a PersistentVolumeClaim's backing volume points at. If [`sync.toHost.persistentVolumes`](../../../configure/vcluster-yaml/sync/to-host/storage/persistent-volumes.mdx) is enabled, a `hostPath` PersistentVolume can still reach a Pod through an ordinary PVC mount. Though Pod Security Standard is a Kubernetes concept and only applicable
+to certain versions of Kubernetes, vCluster supports this regardless of Kubernetes version as this is directly implemented in vCluster. Rejected
+pods stay `Pending` in the vCluster and in newer Kubernetes version they are denied by the admission controller.
+2. Enable a [resource quota](https://kubernetes.io/docs/concepts/policy/resource-quotas/)
+as well as a [limit range](https://kubernetes.io/docs/concepts/policy/limit-range/). This allows restricting resource consumption of
+vCluster workloads. If enabled, sane defaults for those 2 resources are chosen.
+3. Enable a [network policy](https://kubernetes.io/docs/concepts/services-networking/network-policies/)
+that restricts access of vCluster workloads as well as the
+vCluster control plane to other pods in the control plane cluster. This only works if your control plane
+[cluster CNI supports network policies](https://kubernetes.io/docs/concepts/services-networking/network-policies/#prerequisites).
+
+
+```yaml title="Example of Workload Isolation YAML"
+policies:
+  # empty, baseline, restricted can be used here
+  podSecurityStandard: baseline
+
+  resourceQuota:
+    enabled: true
+
+  limitRange:
+    enabled: true
+
+  networkPolicy:
+    enabled: true
+```
+
+:::info
+When enabling resource quotas locally, add a `--expose-local=false`
+flag to your `vcluster create [...]` command, as by default the vCluster CLI
+tries to automatically expose the vCluster using NodePorts, when interacting
+with a local Kubernetes cluster.
+:::
+
+## Network only isolation
+
+By default, workloads created by vCluster are able to communicate with other workloads in
+the control plane cluster through their cluster IPs. This can be beneficial if
+you want to purposely access a control plane cluster service, which is a good method to
+share services between tenant clusters.
+
+If you do not want pods running inside one vCluster to have access to other workloads
+in the control plane cluster, then deploy a [network policy](https://kubernetes.io/docs/concepts/services-networking/network-policies/)
+for the specific namespace where vCluster is installed in.
+
+vCluster can automatically deploy this network policy in your control plane cluster.
+
+```yaml title="Example of enabling network policy"
+policies:
+  networkPolicy:
+    enabled: true
+```
+
+:::warning
+Network policies do not work in all Kubernetes clusters and need to be supported
+by the underlying CNI plugin.
+:::
+
+## Advanced Isolation
+
+Besides the basic workload isolation using Pod Security Standard and Resource Quotas, you could always set more advanced
+isolation methods.
+
+### Isolation with dedicated nodes
+
+You can use `sync.fromHost.nodes.selector.labels` to restrict a tenant cluster to a specific set of control plane cluster nodes. A node selector is a placement mechanism, not a security boundary. It only reduces cross-tenant exposure if the label it selects on is a dedicated tenant-workload label. A general-purpose label also applied to ingress, metrics, storage, VPN, or other infrastructure nodes doesn't provide that isolation.
+
+- Give tenant-workload nodes a label and taint that's dedicated to tenant compute, distinct from any label infrastructure nodes carry.
+- Taint infrastructure and control-plane nodes so they reject tenant workloads outright, rather than relying on tenants not targeting them.
+- Don't let a tenant's own node selectors or affinity rules broaden placement beyond the reserved node pool.
+
+See the [shared-node hardening guide](../../../security/shared-nodes-hardening.mdx#node-scheduling-and-isolation) for the full scheduling and node isolation model.
+
+ ### Isolation with private nodes
+
+Instead of using nodes from the shared control plane cluster, you can use [private nodes](../../worker-nodes/private-nodes/overview.mdx) for the tenant cluster.
+
+## Workload & Network Isolation within the vCluster
+
+Besides isolating workloads from one tenant cluster to another tenant cluster, normal workload isolation
+from within the vCluster can also be achieved by deploying resource quotas, limit ranges, admission controllers
+and network policies in the tenant cluster. To allow network policies to function correctly,
+you'll need to enable the same configuration options in the deployment of the tenant cluster through the `vcluster.yaml`.
+
+### Secret based Service Account tokens
+
+By default, vCluster creates a service account token for each pod and injects
+them as an annotation in the respective pod's metadata. If this doesn't comply
+with your security practices, this can be mitigated by enabling an option
+in the `vcluster.yaml` which creates separate secrets for each pod's
+service account token and mounts it accordingly using projected volumes.
+
+```yaml
+sync:
+  toHost:
+    pods:
+      useSecretsForSATokens: true
+```

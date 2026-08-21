@@ -1,0 +1,126 @@
+---
+title: Join Manually Provisioned Nodes
+sidebar_label: Join Manually Provisioned Nodes
+sidebar_position: 2
+sidebar_class_name: private-nodes
+---
+
+import TenancySupport from '../../../_fragments/tenancy-support.mdx';
+import Tabs from '@theme/Tabs'
+import TabItem from '@theme/TabItem'
+import Button from '@site/src/components/Button'
+import Label from '@site/src/components/Label'
+import { DEFAULT_K8S_VERSION } from '../../../_fragments/default-k8s-version.mdx';
+import InterpolatedCodeBlock from '@site/src/components/InterpolatedCodeBlock';
+
+<TenancySupport privateNodes="true" standalone="true"/>
+
+## Prerequisites
+
+- <GlossaryTerm term="vcluster">vCluster</GlossaryTerm> CLI installed on your local machine
+- vCluster <GlossaryTerm term="control-plane">control plane</GlossaryTerm> has to be running and in `Ready` state
+- A node that satisfies the [node requirements](./node-requirements.mdx)
+
+## Create token
+
+To join worker nodes, a token from the vCluster must be created to provide access and permissions. A single token
+can be used for any nodes to join, or if you wanted to, you could create a token for each node.
+
+By default, the token expires within 1 hour. The token is stored as a secret prefixed with `bootstrap-token-` in the `kube-system` namespace.
+The expiry timestamp is stored under the `expiration` key in the secret.
+
+<Tabs
+  defaultValue="as-container"
+  values={[
+    { label: 'Control-Plane As Container', value: 'as-container',},
+    { label: 'Control-Plane As Binary', value: 'as-binary',}
+  ]}>
+  <TabItem value="as-binary">
+    Make sure your kube context is set to vCluster Standalone.
+    ```bash title="Create a token for worker nodes"
+    # Create a token
+    vcluster token create --expires=1h
+    ```
+  </TabItem>
+  <TabItem value="as-container">
+    ```bash title="Create a token for worker nodes"
+    export VCLUSTER_NAME=my-vcluster
+
+    # Connect to your vcluster
+    vcluster connect $VCLUSTER_NAME
+
+    # Create a token
+    vcluster token create --expires=1h
+    ```
+  </TabItem>
+</Tabs>
+
+The output provides a command to run on your worker node:
+
+```bash title="Example output from creating a token"
+curl -sfLk https://<vcluster-endpoint>/node/join?token=<token> | sh -
+```
+
+## Join each worker node
+
+For each worker node that you want to join vCluster, run the command on the node.
+
+<InterpolatedCodeBlock
+  code={`Preparing node for Kubernetes installation...
+Kubernetes version: ${DEFAULT_K8S_VERSION}
+Installing Kubernetes binaries...
+Enabling containerd and kubelet...
+Created symlink /etc/systemd/system/multi-user.target.wants/containerd.service → /etc/systemd/system/containerd.service.
+Created symlink /etc/systemd/system/multi-user.target.wants/kubelet.service → /etc/systemd/system/kubelet.service.
+Starting containerd and kubelet...
+Installation successful!
+Joining node into cluster...
+[preflight] Running pre-flight checks
+[preflight] Reading configuration from the cluster...
+[preflight] FYI: You can look at this config file with 'kubectl -n kube-system get cm kubeadm-config -o yaml'
+[kubelet-start] Writing kubelet configuration to file "/var/lib/kubelet/config.yaml"
+[kubelet-start] Writing kubelet environment file with flags to file "/var/lib/kubelet/kubeadm-flags.env"
+[kubelet-start] Starting the kubelet
+[kubelet-start] Waiting for the kubelet to perform the TLS Bootstrap...
+
+This node has joined the cluster:
+* Certificate signing request was sent to apiserver and a response was received.
+* The kubelet was informed of the new secure connection details.
+
+Run 'kubectl get nodes' on the control-plane to see this node join the cluster.`}
+  language="bash"
+  title="Example output on worker node"
+/>
+
+## Join with a node profile
+
+If the <GlossaryTerm term="tenant-cluster">tenant cluster</GlossaryTerm> is connected to vCluster Platform, you can attach a [node profile](/docs/platform/administer/node-profiles/overview) to a node as part of the join. This saves you from joining the node bare and configuring it by hand afterward. Node profiles require vCluster 0.36 or later.
+
+1. Open the tenant cluster instance in the platform UI, go to the <Label>Status</Label> tab, and click <Button>Join Node...</Button>.
+2. In the dialog that opens, optionally select a profile from the <Label>Node Profile</Label> dropdown. It lists the profiles allowed in the project. If you don't select one, the node falls back to the tenant cluster's or project's default profile, when configured.
+3. Copy the returned curl command and run it on the target node, as described in [Join each worker node](#join-each-worker-node). Changing the selected profile regenerates the command.
+
+The node joins carrying the profile's labels and taints, plus a `vcluster.com/node-profile=<name>` back-reference label. From then on, the platform continuously reconciles the profile onto the node, so later edits to the profile converge automatically without rejoining the node. See [Assignment and precedence](/docs/platform/administer/node-profiles/overview#assignment-and-precedence) for how the fallback chain resolves.
+
+## Available flags to use in the script to join nodes
+
+The output of creating the token outputs a script to join the worker node to the vCluster. There are several flags available that can be added to the script.
+
+| Flag | Description | Default |
+| ---- | ----------- | ------- |
+| `--kubernetes-version` | Version of kubernetes node components | optional, defaults to the version of vCluster <GlossaryTerm term="k8s">k8s</GlossaryTerm> |
+| `--repository-url` | Specific vCluster version to install | optional, defaults to `/usr/local/bin` |
+| `--binaries-dir` | allows to customize target directory where k8s node components binaries are installed | optional, defaults to `/usr/local/bin |
+| `--cni-binaries-dir` | allows to customize target directory where CNI binaries are installed | optional, defaults to `/opt/cni/bin` |
+| `--skip-reset` | Skips uninstalling existing node components | optional, default to false (reset happens before install by default) |
+| `--bundle-path` | If set, skips downloading Kubernetes binaries and uses a local path. Expects a path to bundle in `.tar.gz` format | optional, empty by default |
+| `--reset-only` | only uninstall previously installed node components. Use this to cleanup the node | optional, defaults to `false` |
+| `--skip-join` | Installs all required components but skips joining node to the cluster. This can be useful if you want to update the kubeadm join config before joining the node to the cluster manually by executing `kubeadm join` | optional, defaults to `false` |
+| `--node-name` | Node name in the kubernetes cluster | optional, defaults to hostname |
+| `--force-join` | Force joining even when there is existing kubelet service running on the node.  | optional, defaults to `false` |
+
+These flags can be passed to the script by appending `--` and then the flag:
+
+```bash title="Run join script with flags"
+curl -sfLk https://<vcluster-endpoint>/node/join?token=<token> | sh -s -- --force-join
+```
