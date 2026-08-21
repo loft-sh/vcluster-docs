@@ -3,138 +3,24 @@ title: Resource Proxy
 sidebar_label: proxy
 sidebar_position: 8
 sidebar_class_name: pro host-nodes private-nodes standalone
-toc_max_heading_level: 3
+toc_max_heading_level: 4
 description: Configure vCluster to proxy custom resources to other tenant clusters.
 ---
 
 import ProAdmonition from '../../../_partials/admonitions/pro-admonition.mdx'
-import Flow, { Step } from '@site/src/components/Flow';
 import CodeBlock from '@theme/CodeBlock';
 import ProxyBasicConfig from '!!raw-loader!@site/vcluster/configure/vcluster-yaml/experimental/_code/proxy-basic-config.yaml'
-import ProxyMultiTargetConfig from '!!raw-loader!@site/vcluster/configure/vcluster-yaml/experimental/_code/proxy-multi-target-config.yaml'
 import ProxyAccessModesConfig from '!!raw-loader!@site/vcluster/configure/vcluster-yaml/experimental/_code/proxy-access-modes-config.yaml'
-import ProxyCrossProjectConfig from '!!raw-loader!@site/vcluster/configure/vcluster-yaml/experimental/_code/proxy-cross-project-config.yaml'
-import ProxyPlatformRbac from '!!raw-loader!@site/vcluster/configure/vcluster-yaml/experimental/_code/proxy-platform-rbac.yaml'
-import ProxyWildcardConfig from '!!raw-loader!@site/vcluster/configure/vcluster-yaml/experimental/_code/proxy-wildcard-config.yaml'
 
 <ProAdmonition/>
 
 :::note vCluster Platform required
-This feature requires [vCluster Platform][vcluster-platform]. Both the client and target tenant clusters must be managed as [VirtualClusterInstance][virtualclusterinstance-api] within the platform.
+This feature requires [vCluster Platform](/docs/platform). Both the client and target tenant clusters must be managed as [VirtualClusterInstance](/docs/platform/api/resources/virtualclusterinstance) within the platform.
 :::
 
-The Resource Proxy feature enables vCluster to proxy custom resource requests to other tenant clusters. When enabled, the client tenant cluster transparently stores resources in and delegates management to a target tenant cluster. This enables cross-cluster communication patterns, centralized resource management, and multi-tenant architectures.
+The Resource Proxy feature enables <GlossaryTerm term="vcluster">vCluster</GlossaryTerm> to proxy requests for custom resources defined by CustomResourceDefinitions (CRDs) to other tenant clusters. When enabled, the client <GlossaryTerm term="tenant-cluster">tenant cluster</GlossaryTerm> transparently forwards resource operations to a target tenant cluster, where the objects are stored and can be managed by controllers running there.
 
-## How it works {#how-it-works}
-
-When you configure a client tenant cluster to proxy custom resources, vCluster intercepts API requests for those resources and forwards them to the target tenant cluster through vCluster Platform.
-
-```mermaid
-%%{init: {'theme': 'base', 'themeVariables': {'edgeLabelBackground':'#F3E8FF','edgeLabelColor':'#111827'}, 'flowchart': {'curve': 'linear', 'htmlLabels': true}}}%%
-flowchart LR
-  subgraph platform["vCluster Platform"]
-    direction LR
-
-    subgraph client["client vCluster"]
-      direction LR
-      kubectl([kubectl])
-      workload([workload / controller])
-      api((API))
-      proxy([example.com/v1 Proxy])
-
-      kubectl --> api
-      workload --> api
-      api --> proxy
-    end
-
-    subgraph target["target vCluster"]
-      direction LR
-      tapi((API))
-      crd([example.com/v1<br/>MyResource resources])
-      ctrl([myresource-controller])
-
-      tapi --> crd
-      ctrl --> crd
-    end
-  end
-
-  proxy --> tapi
-
-  classDef node fill:#FFF3D6,stroke:#E6C98A,stroke-width:1px,rx:0,ry:0;
-  class kubectl,workload,api,proxy,tapi,crd,ctrl node;
-
-  style platform fill:#F5F7FF,stroke:#C7D2FE,stroke-width:1px,rx:0,ry:0;
-  style client fill:#F5F7FF,stroke:#C7D2FE,stroke-width:1px,rx:0,ry:0;
-  style target fill:#F5F7FF,stroke:#C7D2FE,stroke-width:1px,rx:0,ry:0;
-```
-
-The proxy performs several key functions:
-
-1. **Request interception**: The client's Kubernetes API server intercepts requests for configured custom resources and routes them to the proxy.
-2. **Authentication**: The proxy authenticates to the target using the client's vCluster Platform identity (`loft:vcluster:p-<project>:<name>`).
-3. **Owner labeling**: On create and update operations, the proxy adds owner labels to track which client created each resource.
-4. **Visibility filtering**: When listing resources, the proxy filters results based on the configured access mode (`owned` or `all`).
-5. **Namespace synchronization**: If a namespace doesn't exist on the target, the proxy creates it automatically.
-
-### Multi-client isolation {#multi-client-isolation-overview}
-
-When multiple client tenant clusters proxy to the same target, each client only sees resources it created by default. The proxy achieves this through owner labels and label selector injection.
-
-```mermaid
-%%{init: {'theme': 'base', 'flowchart': {'curve': 'linear', 'htmlLabels': 'true'}}}%%
-flowchart LR
-  subgraph team_a_vc["team-a vCluster"]
-    direction LR
-    a_kubectl([kubectl]) --> a_api((API)) --> a_proxy([example.com/v1 Proxy])
-  end
-
-  subgraph team_b_vc["team-b vCluster"]
-    direction LR
-    b_kubectl([kubectl]) --> b_api((API)) --> b_proxy([example.com/v1 Proxy])
-  end
-
-  subgraph target_vc["target vCluster"]
-    direction LR
-    t_api((API)) --> t_crd([MyResource resources])
-    t_crd --> wf_a["team-a-resource<br/>(owner: team-a)"]
-    t_crd --> wf_b["team-b-resource<br/>(owner: team-b)"]
-
-    %% vertical centering constraints (invisible)
-    wf_a ~~~ t_api
-    t_api ~~~ wf_b
-    wf_a ~~~ t_crd
-    t_crd ~~~ wf_b
-  end
-
-  a_proxy -->|proxy myresources| t_api
-  b_proxy -->|proxy myresources| t_api
-
-  a_proxy -.->|sees only| wf_a
-  b_proxy -.->|sees only| wf_b
-```
-
-## Key capabilities {#key-capabilities}
-
-- **Transparent access**: Users interact with custom resources as if they were local to their tenant cluster.
-- **Centralized storage**: A dedicated target tenant cluster stores all resources.
-- **Multi-tenant isolation**: Each client tenant cluster only sees its own resources by default.
-- **RBAC enforcement**: The target tenant cluster enforces its own RBAC policies on proxied requests.
-
-## Platform RBAC requirements {#platform-rbac}
-
-For the resource proxy to function, the client tenant cluster must be authorized to access the target tenant cluster through vCluster Platform. This requires RBAC configuration on the platform's management cluster.
-
-### Platform RBAC configuration {#platform-rbac-config}
-
-Create a Role and RoleBinding in the project namespace (`p-<project-name>`) on the platform's management cluster:
-
-<CodeBlock language="yaml" title="platform-proxy-rbac.yaml">{ProxyPlatformRbac}</CodeBlock>
-
-Apply this configuration to the platform's management cluster (not the tenant clusters):
-
-```bash title="Apply platform RBAC"
-kubectl apply -f platform-proxy-rbac.yaml --context <platform-context>
-```
+This page covers the `vcluster.yaml` fields. For the mechanism, see [How the resource proxy works](../../../understand/resource-proxy.mdx). To set one up, see [Set up the resource proxy](../../../learn-how-to/resource-proxy-setup.mdx). For ongoing operation and monitoring, see [Operate the resource proxy](../../../manage/resource-proxy-operations.mdx). If something's broken, see [Troubleshoot the resource proxy](../../../troubleshoot/resource-proxy.mdx).
 
 ## Configuration {#configuration}
 
@@ -144,609 +30,107 @@ To enable resource proxying, configure the `experimental.proxy.customResources` 
 
 ### Configuration options {#configuration-options}
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `enabled` | boolean | Enable or disable the proxy for this resource. |
-| `targetVirtualCluster` | object | Reference to the target [VirtualClusterInstance][virtualclusterinstance-api] to proxy requests to. |
-| `targetVirtualCluster.name` | string | Name of the target tenant cluster. Required when enabled. |
-| `targetVirtualCluster.project` | string | Project of the target tenant cluster. Defaults to the same project as the client vCluster. |
-| `accessResources` | string | Resource visibility mode: `owned` (default) or `all`. See [Access modes](#access-modes). |
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `customResources` | `map[string]CustomResourceProxy` | `{}` | Map of resource keys to proxy configuration. |
+| `customResources.<key>.enabled` | `boolean` | `false` | Enable the proxy for this resource. |
+| `customResources.<key>.targetVirtualCluster` | `VirtualClusterRef` | - | Reference to the target [VirtualClusterInstance](/docs/platform/api/resources/virtualclusterinstance) to proxy requests to. |
+| `customResources.<key>.targetVirtualCluster.name` | `string` | - | Name of the target tenant cluster. Required for every entry, including disabled entries. |
+| `customResources.<key>.targetVirtualCluster.project` | `string` | Same as client | Project of the target tenant cluster. Defaults to the same project as the client vCluster. |
+| `customResources.<key>.accessResources` | `string` | `"owned"` | Resource visibility mode: `owned` or `all`. See [Access modes](#access-modes). |
 
 ### Resource key format {#resource-key-format}
 
 The resource key follows the format `resource.apiGroup/version`:
 
-- `myresources.example.com/v1` - proxies MyResource resources from the `example.com` API group, version `v1`
-- `otherresources.test.io/v2` - proxies OtherResource resources from the `test.io` API group, version `v2`
-- `additionalresources.acme.org/v1alpha1` - proxies AdditionalResource resources from the `acme.org` API group, version `v1alpha1`
+- `myresources.example.com/v1` - enables the proxy for the `example.com/v1` group and version and advertises `myresources` in fallback discovery
+- `otherresources.test.io/v2` - enables the proxy for the `test.io/v2` group and version and advertises `otherresources` in fallback discovery
+- `additionalresources.acme.org/v1alpha1` - enables the proxy for the `acme.org/v1alpha1` group and version and advertises `additionalresources` in fallback discovery
 
-#### Wildcard kind matching {#wildcard-kind-matching}
+:::important Proxy registration is group/version-wide
+An enabled entry registers one Kubernetes APIService for the entry's entire API group and version. While the target is reachable, the proxy forwards discovery for that group and version to the target and can route requests for every resource the target advertises. The resource name in an explicit key doesn't restrict live requests to that resource.
 
-You can use `*` as the resource name to match all resource kinds in an API group and version:
+Use RBAC in the target tenant cluster to restrict the resource kinds and operations available to a client. All enabled entries for the same group and version must use the same target and access mode.
 
-- `*.example.com/v1` - proxies **all** resource kinds from the `example.com` API group, version `v1`
-- `*.test.io/v2` - proxies all resource kinds from the `test.io` API group, version `v2`
+For entries that share a group and version, write equivalent settings identically. Validation compares the configured values before applying defaults. Either omit `accessResources` from every entry or set the same explicit value on every entry. Likewise, either omit `targetVirtualCluster.project` from every entry or set the same explicit project on every entry. Mixing an omitted value with its explicit default is rejected.
+:::
 
-This is useful when a CRD API group has multiple kinds that all target the same cluster, so your `vcluster.yaml` does not need updating whenever a new kind is added to the group.
+#### Wildcard group and version entry {#wildcard-kind-matching}
+
+You can use `*` in place of an explicit resource name:
+
+- `*.example.com/v1` - enables the proxy for the `example.com/v1` group and version
+- `*.test.io/v2` - enables the proxy for the `test.io/v2` group and version
+
+Wildcard and explicit entries have the same group/version-wide behavior while the target is reachable. They differ when the target is unavailable. Explicit entries give the proxy resource names for its synthetic fallback discovery document, while a wildcard doesn't.
+
+Prefer explicit resource keys over wildcards where you can, and list each resource that clients depend on during an outage. With explicit keys such as `myresources.example.com/v1`, fallback discovery continues to advertise the configured resource names when the target is briefly unreachable. The fallback is synthetic. It reports resources as namespaced, derives singular names and kinds mechanically, and advertises only the `get` verb. Treat only the configured resource names as dependable. With `*.example.com/v1`, discovery degrades to an empty list, which some controllers and CLIs handle poorly. See [Discovery lists resources with only a get verb, or an empty list](../../../troubleshoot/resource-proxy.mdx#discovery-fallback).
 
 :::note Wildcard and explicit entries are mutually exclusive
 A wildcard key (for example `*.example.com/v1`) and an explicit key (for example `myresources.example.com/v1`) cannot both be enabled for the same group and version. vCluster rejects that combination at startup. A disabled explicit entry (`enabled: false`) does not conflict with a wildcard for the same group and version.
 :::
 
-## Example: Basic proxy setup {#basic-setup}
-
-This example demonstrates a simple two-cluster setup where a client tenant cluster proxies MyResource resources to a target tenant cluster.
-
-<Flow id="basic-proxy-setup">
-
-<Step>
-
-**Create the target tenant cluster**.
-
-Create a tenant cluster to serve as the target. The target doesn't need any proxy configuration - it just stores the resources and enforces RBAC:
-
-```bash title="Create target tenant cluster"
-vcluster create target
-```
-
-</Step>
-
-<Step>
-
-**Install the CustomResourceDefinition in the target tenant cluster**.
-
-The CustomResourceDefinition must exist in the target tenant cluster:
-
-```yaml title="myresource-crd.yaml"
-apiVersion: apiextensions.k8s.io/v1
-kind: CustomResourceDefinition
-metadata:
-  name: myresources.example.com
-spec:
-  group: example.com
-  names:
-    kind: MyResource
-    listKind: MyResourceList
-    plural: myresources
-    singular: myresource
-  scope: Namespaced
-  versions:
-    - name: v1
-      served: true
-      storage: true
-      schema:
-        openAPIV3Schema:
-          type: object
-          properties:
-            spec:
-              type: object
-              properties:
-                name:
-                  type: string
-                priority:
-                  type: string
-```
-
-Apply the CustomResourceDefinition to the target tenant cluster:
-
-```bash title="Apply CustomResourceDefinition to target"
-vcluster connect target -- kubectl apply -f myresource-crd.yaml
-```
-
-</Step>
-
-<Step>
-
-**Configure RBAC in the target tenant cluster**.
-
-Create RBAC rules to allow the client tenant cluster to access resources. The client tenant cluster authenticates using its vCluster Platform identity in the format `loft:vcluster:p-<project>:<name>`:
-
-```yaml title="target-rbac.yaml"
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: vcluster-proxy-client
-rules:
-  - apiGroups: ["example.com"]
-    resources: ["myresources"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  - apiGroups: ["example.com"]
-    resources: ["myresources/status"]
-    verbs: ["get", "update", "patch"]
-  - apiGroups: [""]
-    resources: ["namespaces"]
-    verbs: ["get", "list", "watch", "create"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: vcluster-proxy-client
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: vcluster-proxy-client
-subjects:
-  - kind: User
-    # vCluster identity format: loft:vcluster:p-<project>:<name>
-    name: "loft:vcluster:p-default:client"
-    apiGroup: rbac.authorization.k8s.io
-```
-
-Apply RBAC to the target tenant cluster:
-
-```bash title="Apply RBAC to target"
-vcluster connect target -- kubectl apply -f target-rbac.yaml
-```
-
-</Step>
-
-<Step>
-
-**Configure platform RBAC**.
-
-Grant the client tenant cluster permission to access the target through vCluster Platform. Apply this to the platform's management cluster:
-
-<CodeBlock language="yaml" title="platform-rbac.yaml">{ProxyPlatformRbac}</CodeBlock>
-
-Apply to the platform's management cluster:
-
-```bash title="Apply platform RBAC"
-kubectl apply -f platform-rbac.yaml --context <platform-context>
-```
-
-</Step>
-
-<Step>
-
-**Create the client tenant cluster with proxy configuration**.
-
-Configure the client tenant cluster to proxy MyResource resources to the target:
-
-```yaml title="client-vcluster.yaml"
-experimental:
-  proxy:
-    customResources:
-      myresources.example.com/v1:
-        enabled: true
-        targetVirtualCluster:
-          name: "target"
-```
-
-Deploy the client tenant cluster:
-
-```bash title="Deploy client tenant cluster"
-vcluster create client -f client-vcluster.yaml
-```
-
-</Step>
-
-<Step>
-
-**Test the proxy**.
-
-Create a MyResource in the client tenant cluster:
-
-```bash title="Create MyResource in client"
-vcluster connect client -- kubectl apply -f - <<EOF
-apiVersion: example.com/v1
-kind: MyResource
-metadata:
-  name: test-resource
-  namespace: default
-spec:
-  name: "Test Resource"
-  priority: "high"
-EOF
-```
-
-Verify the resource exists in both tenant clusters:
-
-```bash title="Verify resource in both clusters"
-# Check in client via proxy
-vcluster connect client -- kubectl get myresources
-
-# Check in target where resources are stored
-vcluster connect target -- kubectl get myresources
-```
-
-</Step>
-
-</Flow>
-
-## Example: Multi-target proxy {#multi-target}
-
-A single tenant cluster can proxy different resources to different target tenant clusters based on API group and version.
-
-```mermaid
-%%{init: {'theme': 'base', 'themeVariables': {'edgeLabelBackground':'#F3E8FF','edgeLabelColor':'#111827'}, 'flowchart': {'curve': 'linear', 'htmlLabels': true}}}%%
-flowchart LR
-  subgraph client["client vCluster"]
-    direction TB
-    p_example([example.com/v1 Proxy])
-    p_test([test.io/v2 Proxy])
-  end
-
-  subgraph target_b["target-b vCluster"]
-    direction LR
-    tb_api((API))
-    tb_exec([OtherResource resources])
-    tb_task([AdditionalResource resources])
-    tb_api --> tb_exec
-    tb_api --> tb_task
-  end
-
-  subgraph target_a["target-a vCluster"]
-    direction LR
-    ta_api((API))
-    ta_wf([MyResource resources])
-    ta_pipe([SecondaryResource resources])
-    ta_api --> ta_wf
-    ta_api --> ta_pipe
-  end
-
-  p_example --> ta_api
-  p_test --> tb_api
-
-  classDef node fill:#FFF3D6,stroke:#E6C98A,stroke-width:1px,rx:0,ry:0;
-  class p_example,p_test,ta_api,ta_wf,ta_pipe,tb_api,tb_exec,tb_task node;
-
-  style client fill:#F5F7FF,stroke:#C7D2FE,stroke-width:1px,rx:0,ry:0;
-  style target_a fill:#F5F7FF,stroke:#C7D2FE,stroke-width:1px,rx:0,ry:0;
-  style target_b fill:#F5F7FF,stroke:#C7D2FE,stroke-width:1px,rx:0,ry:0;
-```
-
-<CodeBlock language="yaml" title="client-multi-target.yaml">{ProxyMultiTargetConfig}</CodeBlock>
-
-In this configuration:
-- `target-a` stores MyResource and SecondaryResource resources from `example.com/v1`
-- `target-b` stores OtherResource and AdditionalResource resources from `test.io/v2`
-
-## Example: Wildcard kind proxy {#wildcard-kind}
-
-When an API group contains several resource kinds that all belong to the same target, use a wildcard key so you don't have to update the config each time a new kind is added.
-
-<CodeBlock language="yaml" title="client-wildcard.yaml">{ProxyWildcardConfig}</CodeBlock>
-
-Any resource kind served by the `example.com/v1` API group in the target tenant cluster is automatically proxied. You do not need to enumerate individual resource names.
-
-## Example: Cross-project proxy {#cross-project}
-
-By default, the target tenant cluster is assumed to be in the same project as the client. You can proxy to a tenant cluster in a different project by specifying the `project` field. This works across different control plane clusters connected to the same vCluster Platform.
-
-```mermaid
-%%{init: {'theme': 'base', 'themeVariables': {'edgeLabelBackground':'#F3E8FF','edgeLabelColor':'#111827'}, 'flowchart': {'curve': 'linear'}}}%%
-flowchart TB
-  subgraph platform["vCluster Platform"]
-    direction LR
-
-    subgraph project_a["project-a"]
-      direction TB
-      client_a([client vCluster])
-    end
-
-    subgraph project_b["project-b"]
-      direction TB
-      client_b([another-client vCluster])
-    end
-
-    subgraph other_project["other-project"]
-      direction TB
-      target(["target vCluster<br />(MyResource resources)"])
-    end
-  end
-
-  client_a -->|proxy to other-project/target| target
-  client_b -->|proxy to other-project/target| target
-
-  classDef node fill:#FFF3D6,stroke:#E6C98A,stroke-width:1px,rx:0,ry:0;
-  class client_a,client_b,target node;
-
-  style platform fill:#F5F7FF,stroke:#C7D2FE,stroke-width:1px,rx:0,ry:0;
-  style project_a fill:#F5F7FF,stroke:#C7D2FE,stroke-width:1px,rx:0,ry:0;
-  style project_b fill:#F5F7FF,stroke:#C7D2FE,stroke-width:1px,rx:0,ry:0;
-  style other_project fill:#F5F7FF,stroke:#C7D2FE,stroke-width:1px,rx:0,ry:0;
-```
-
-<CodeBlock language="yaml" title="client-cross-project.yaml">{ProxyCrossProjectConfig}</CodeBlock>
-
-This is useful for scenarios where:
-- A shared resource storage cluster exists in a centralized project
-- Teams in different projects need to access common resources
-- Tenant clusters across different control plane clusters need to share custom resources
-- CI/CD environments need access to centralized resource management
+For worked examples of this configuration, including multi-target and cross-project setups, see [Set up the resource proxy](../../../learn-how-to/resource-proxy-setup.mdx).
 
 ## Access modes {#access-modes}
 
-The `accessResources` field controls which resources a client tenant cluster can see in the target:
+The `accessResources` field controls which resources a client tenant cluster can see through the proxied API group and version:
 
 <CodeBlock language="yaml" title="Access modes configuration">{ProxyAccessModesConfig}</CodeBlock>
 
 ### `owned` mode - default {#owned-mode}
 
-Each client tenant cluster only sees resources it created. This enables tenant isolation where multiple client tenant clusters can share a target without seeing each other's resources.
+The proxy presents each client tenant cluster only objects with matching ownership labels. It normally adds those labels to objects the client creates. This enables <GlossaryTerm term="multi-tenancy">tenant isolation</GlossaryTerm> where multiple client tenant clusters can share a target without seeing each other's resources.
+
+Stay on `accessResources: owned` unless you have a reason not to. Each client sees and manages only objects with its ownership labels. The proxy normally adds those labels when the client writes an object. Lists and watches are filtered by an injected label selector, and named GET, PUT, PATCH, and DELETE requests for objects it doesn't own return 404. This is visibility isolation, not name allocation. Two clients creating the same object name in the same target namespace still collide, and the second create normally returns 409 from the target. Give each client its own namespace or its own name prefix.
 
 ### `all` mode {#all-mode}
 
-The client tenant cluster can see all resources in the target, regardless of who created them. This is useful for read-only observers, centralized dashboards, or admin access.
+The proxy doesn't filter objects by ownership. Target RBAC still determines which resource kinds and operations the client can access. This is useful for read-only observers, centralized dashboards, or admin access.
+
+Use `all` only when the client must manage objects it didn't create, and treat that client as privileged. The mode removes ownership filtering, so target RBAC can permit the client to read, mutate, and delete objects owned by other tenant clusters.
 
 :::tip Combine access modes with RBAC
 The `accessResources` mode controls **visibility** - what resources a tenant cluster can see. RBAC in the target tenant cluster controls **permissions** - what operations the tenant cluster can perform.
 
-For example, a tenant cluster with `accessResources: all` but read-only RBAC can see all resources but can't modify any.
+For example, a tenant cluster with `accessResources: all` but read-only RBAC can see all resources that its target RBAC permits but can't modify any.
 :::
 
-## Example: Multi-client isolation {#multi-client}
-
-This example demonstrates how multiple client tenant clusters can share a target while maintaining isolation.
-
-<Flow id="multi-client-setup">
-
-<Step>
-
-**Configure client tenant clusters**.
-
-Both clients proxy to the same target:
-
-```yaml title="team-a-vcluster.yaml"
-experimental:
-  proxy:
-    customResources:
-      myresources.example.com/v1:
-        enabled: true
-        targetVirtualCluster:
-          name: "orchestrator"
-        # Uses default accessResources: owned
-```
-
-```yaml title="team-b-vcluster.yaml"
-experimental:
-  proxy:
-    customResources:
-      myresources.example.com/v1:
-        enabled: true
-        targetVirtualCluster:
-          name: "orchestrator"
-        # Uses default accessResources: owned
-```
-
-</Step>
-
-<Step>
-
-**Configure target RBAC for multiple clients**.
-
-Configure RBAC in the target for both clients:
-
-```yaml title="multi-client-target-rbac.yaml"
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: vcluster-proxy-client
-rules:
-  - apiGroups: ["example.com"]
-    resources: ["myresources"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  - apiGroups: ["example.com"]
-    resources: ["myresources/status"]
-    verbs: ["get", "update", "patch"]
-  - apiGroups: [""]
-    resources: ["namespaces"]
-    verbs: ["get", "list", "watch", "create"]
----
-# Bind for team-a
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: vcluster-proxy-team-a
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: vcluster-proxy-client
-subjects:
-  - kind: User
-    name: "loft:vcluster:p-default:team-a"
-    apiGroup: rbac.authorization.k8s.io
----
-# Bind for team-b
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: vcluster-proxy-team-b
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: vcluster-proxy-client
-subjects:
-  - kind: User
-    name: "loft:vcluster:p-default:team-b"
-    apiGroup: rbac.authorization.k8s.io
-```
-
-Apply to the target tenant cluster:
-
-```bash title="Apply target RBAC"
-vcluster connect orchestrator -- kubectl apply -f multi-client-target-rbac.yaml
-```
-
-</Step>
-
-<Step>
-
-**Configure platform RBAC for multiple clients**.
-
-Grant both client tenant clusters permission to access the target through vCluster Platform:
-
-```yaml title="multi-client-platform-rbac.yaml"
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: vcluster-proxy-target-access
-  namespace: p-default
-rules:
-  - apiGroups: ["management.loft.sh"]
-    resources: ["virtualclusterinstances"]
-    resourceNames: ["orchestrator"]
-    verbs: ["use"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: team-a-vcluster-proxy-access
-  namespace: p-default
-subjects:
-  - kind: User
-    name: "loft:vcluster:p-default:team-a"
-    apiGroup: rbac.authorization.k8s.io
-roleRef:
-  kind: Role
-  name: vcluster-proxy-target-access
-  apiGroup: rbac.authorization.k8s.io
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: team-b-vcluster-proxy-access
-  namespace: p-default
-subjects:
-  - kind: User
-    name: "loft:vcluster:p-default:team-b"
-    apiGroup: rbac.authorization.k8s.io
-roleRef:
-  kind: Role
-  name: vcluster-proxy-target-access
-  apiGroup: rbac.authorization.k8s.io
-```
-
-Apply to the platform's management cluster:
-
-```bash title="Apply platform RBAC"
-kubectl apply -f multi-client-platform-rbac.yaml --context <platform-context>
-```
-
-</Step>
-
-<Step>
-
-**Test isolation**.
-
-```bash title="Test multi-client isolation"
-# Team A creates a resource
-vcluster connect team-a -- kubectl apply -f - <<EOF
-apiVersion: example.com/v1
-kind: MyResource
-metadata:
-  name: team-a-resource
-spec:
-  name: "Team A Data Resource"
-EOF
-
-# Team B creates a resource
-vcluster connect team-b -- kubectl apply -f - <<EOF
-apiVersion: example.com/v1
-kind: MyResource
-metadata:
-  name: team-b-resource
-spec:
-  name: "Team B ML Resource"
-EOF
-
-# Team A only sees their resource
-vcluster connect team-a -- kubectl get myresources
-# NAME              AGE
-# team-a-resource   1m
-
-# Team B only sees their resource
-vcluster connect team-b -- kubectl get myresources
-# NAME              AGE
-# team-b-resource   1m
-
-# Target orchestrator sees both
-vcluster connect orchestrator -- kubectl get myresources
-# NAME              AGE
-# team-a-resource   2m
-# team-b-resource   1m
-```
-
-</Step>
-
-</Flow>
+For a worked multi-client example, see [Set up the resource proxy](../../../learn-how-to/resource-proxy-setup.mdx#multi-client).
 
 ## Limitations {#limitations}
 
-- All `CustomResources` within the same API `GroupVersion` must use the same target tenant cluster.
+- All `CustomResources` within the same API `GroupVersion` must use the same target tenant cluster and access mode. Validation enforces that all entries for a group and version agree on `targetVirtualCluster` and `accessResources`. Split API groups if two targets must serve sibling resources.
+- An enabled API group can't appear in both `experimental.proxy.customResources` and either `sync.toHost.customResources` or `sync.fromHost.customResources`. Validation checks the entire API group, regardless of resource name or version. Disabled entries don't conflict.
+- Proxy routing is group/version-wide. An explicit resource key doesn't prevent access to sibling resources that the target advertises in that group and version. Restrict sibling resources with target RBAC.
+- In `owned` mode, named PUT, PATCH, and DELETE requests require target RBAC permission to `get` the resource as well as permission for the requested mutation. The proxy performs a GET first to verify ownership. If that GET is forbidden, the mutation is masked as a 404.
+- Connection upgrade verbs such as `exec`, `attach`, and `port-forward` aren't supported through the proxy. See [Connection upgrades return 501](../../../troubleshoot/resource-proxy.mdx#connection-upgrades).
 - When configuring RBAC for status updates, include permissions for the status subresource.
 
-## Troubleshoot {#troubleshoot}
+## Find content that moved off this page {#moved-content}
 
-### Resources not appearing {#resources-not-appearing}
+This page used to include the full explanation, setup walkthrough, monitoring guide, and troubleshooting steps for the resource proxy. That content moved to dedicated pages, so a bookmarked link to a section below may land here instead of on the section itself. Here's where things went:
 
-If resources don't appear after creation:
+<span id="how-it-works" /><span id="multi-client-isolation-overview" /><span id="proxy-objects" /><span id="connection-path" /><span id="fixed-thresholds" /><span id="degraded-behavior" /><span id="key-capabilities" />
 
-1. **Check RBAC configuration**: Ensure the client tenant cluster's identity has correct permissions in the target.
+- **How it works, key capabilities, connection path, and peer-health thresholds** → [How the resource proxy works](../../../understand/resource-proxy.mdx)
 
-2. **Verify the CustomResourceDefinition exists in target**:
+<span id="platform-rbac" /><span id="platform-rbac-config" /><span id="basic-setup" /><span id="multi-target" /><span id="wildcard-kind" /><span id="cross-project" /><span id="multi-client" />
 
-```bash title="Check CustomResourceDefinition in target"
-vcluster connect <target> -- kubectl get crd <resource>.<group>
-```
+- **Platform RBAC and the setup examples** → [Set up the resource proxy](../../../learn-how-to/resource-proxy-setup.mdx)
 
-3. **Check tenant cluster logs** for errors:
+<span id="direct-connections" /><span id="direct-connections-networkpolicy" /><span id="confirm-connection-path" /><span id="monitoring" /><span id="scrape-metrics" /><span id="metrics-reference" /><span id="request-metrics" /><span id="outcome-reasons" /><span id="peer-health-metrics" /><span id="watch-metrics" /><span id="alerts" /><span id="synthetic-probe" /><span id="verify-monitoring" />
 
-```bash title="Check tenant cluster logs"
-kubectl logs -n vcluster-<name> -l app=vcluster --tail=100
-```
+- **DERP relay tuning and the monitoring guide** → [Operate the resource proxy](../../../manage/resource-proxy-operations.mdx)
 
-### Permission denied errors {#permission-denied}
+<span id="troubleshoot" /><span id="quick-triage" /><span id="target-unavailable" /><span id="stale-peers" /><span id="requests-hang" /><span id="auth-failed" /><span id="permission-denied" /><span id="resources-not-appearing" /><span id="discovery-fallback" /><span id="connection-upgrades" /><span id="proxy-does-not-start" /><span id="deletion-denied" /><span id="reference" /><span id="log-reference" />
 
-Permission errors can occur at two levels: the platform level and the target tenant cluster level.
+- **Troubleshooting steps and the log reference** → [Troubleshoot the resource proxy](../../../troubleshoot/resource-proxy.mdx)
 
-1. **Check platform RBAC**: Ensure the client has "use" permission on the target VirtualClusterInstance:
+<span id="config-reference" /><span id="experimental-proxy" /><span id="custom-resource-proxy" /><span id="virtual-cluster-ref" />
 
-```bash title="Check platform RBAC"
-kubectl auth can-i use virtualclusterinstances/target \
-  --as="loft:vcluster:p-default:client" \
-  -n p-default \
-  --context <platform-context>
-```
+- **The typed config reference tables** → merged into [Configuration options](#configuration-options) above
 
-2. **Verify the tenant cluster identity format**: The identity follows `loft:vcluster:p-<project>:<name>`.
+<span id="best-practices" />
 
-3. **Test target RBAC directly**:
-
-```bash title="Test target RBAC permissions"
-vcluster connect <target> -- kubectl auth can-i create myresources.example.com \
-  --as="loft:vcluster:p-default:client"
-```
-
-### Target unavailable errors {#target-unavailable}
-
-Ensure the target tenant cluster is running and healthy. vCluster automatically attempts to reconnect when the target becomes available.
-
-For a wildcard proxy, `kubectl api-resources` and other discovery-based commands return no resource kinds for that group and version while the target is unavailable. This keeps the client's API service healthy but means kind discovery goes empty during an outage. Discovery resumes as soon as the target reconnects. Explicit (non-wildcard) entries are not affected. They continue to advertise their configured resource names during an outage.
-
-## Config reference {#config-reference}
-
-### `experimental.proxy` {#experimental-proxy}
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `customResources` | `map[string]CustomResourceProxy` | `{}` | Map of resource keys to proxy configuration. |
-
-### `CustomResourceProxy` {#custom-resource-proxy}
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `enabled` | `boolean` | `false` | Enable the proxy for this resource. |
-| `targetVirtualCluster` | `VirtualClusterRef` | - | Reference to the target tenant cluster. Required when enabled. |
-| `accessResources` | `string` | `"owned"` | Resource visibility mode: `owned` or `all`. |
-
-### `VirtualClusterRef` {#virtual-cluster-ref}
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `name` | `string` | - | Name of the target tenant cluster. Required. |
-| `project` | `string` | Same as source | Project of the target tenant cluster. |
-
-{/* Links */}
-[vcluster-platform]: /platform/
-[virtualclusterinstance-api]: /platform/api/resources/virtualclusterinstance
+- **Best practices** → distributed into the sections above: explicit resource keys under [Wildcard group and version entry](#wildcard-kind-matching), staying on `owned` mode under [Access modes](#access-modes), and the rest into [Operate the resource proxy](../../../manage/resource-proxy-operations.mdx) and [Troubleshoot the resource proxy](../../../troubleshoot/resource-proxy.mdx)
