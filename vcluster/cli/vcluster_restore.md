@@ -29,6 +29,8 @@ vcluster restore my-vcluster container:///data/my-local-snapshot.tar.gz
 vcluster restore my-vcluster ./my-snapshot.tar.gz --driver docker
 # Restore with a different name
 vcluster restore my-new-name ./my-snapshot.tar.gz --driver docker
+# Restore the standalone vCluster on this host (stops and restarts vcluster.service)
+vcluster restore --standalone s3://my-bucket/my-bucket-key
 #######################################################
 ```
 
