@@ -1,0 +1,528 @@
+---
+title: Inference serving stacks
+sidebar_label: Inference serving
+sidebar_position: 9
+sidebar_class_name: pro private-nodes
+description: Compose and deploy an inference serving stack in a tenant cluster and expose an inference endpoint.
+---
+
+import TenancySupport from '../_fragments/tenancy-support.mdx';
+
+<TenancySupport privateNodes="true" />
+
+An inference serving stack deploys inside the tenant cluster. vCluster provides the tenant Kubernetes API, GPU access, resource sync, and templates for installing the stack.
+
+The stack can contain an execution engine, a distributed serving system, and an inference control plane. These components work together instead of acting as interchangeable alternatives.
+
+This page uses vLLM for the direct engine pattern. It also shows how KServe manages a vLLM-backed endpoint through an `InferenceService` resource.
+
+Deliver the serving stack declaratively with the [Argo CD integration](/platform/integrations/argocd). Platform creates and manages the `ArgoCDApplication` object. Argo CD delivers the manifests from your Git repository into the tenant cluster. See [Build a direct engine template](#build-a-direct-engine-template) for the direct pattern.
+
+:::note
+This page focuses on the private-node endpoint pattern, where the tenant cluster owns its worker-node software stack. Provider-owned shared serving pools can also run behind a product API, but they need a different tenancy and routing design.
+:::
+
+## Integration map
+
+| Layer | Component |
+| --- | --- |
+| Tenant Kubernetes API, object lifecycle, and sync | vCluster |
+| GPU node provisioning and reclaim | Private Nodes, Auto Nodes, and optionally vMetal |
+| GPU driver, device plugin, GPU Operator, MIG, vGPU, or Dynamic Resource Allocation | Node image and vendor components |
+| Model execution and serving | vLLM, SGLang, NVIDIA Triton, or a provider-owned model server |
+| Distributed serving and request orchestration | [Ray Serve](https://docs.ray.io/en/latest/serve/llm/architecture/overview.html) or [NVIDIA Dynamo](https://docs.nvidia.com/dynamo/design-docs/overall-architecture) |
+| Kubernetes inference control plane | [KServe](https://kserve.github.io/website/docs/concepts/architecture/control-plane) or another controller that manages serving resources |
+| External endpoint routing | Gateway API, Ingress, Knative networking, a service mesh, or a provider traffic layer |
+| Product API and customer lifecycle | Your inference provider platform |
+
+The layer names describe each project's primary role. Some projects span more than one layer. For example, Ray Serve provides ingress, routing, and autoscaling around engines such as vLLM or SGLang.
+
+KServe manages the lifecycle of `InferenceService` and `LLMInferenceService` resources. Its data plane can use vLLM, NVIDIA Triton, or another supported model server.
+
+## Choose a deployment pattern
+
+Choose which component owns the generated workloads, routes, and autoscalers before you build the tenant cluster template.
+
+| Pattern | Resources you declare | Resources the serving system manages |
+| --- | --- | --- |
+| Direct engine | Deployment, Service, route, and autoscaler | The engine manages model execution inside its pods. |
+| Distributed serving | Resources required by Ray Serve, NVIDIA Dynamo, or another serving system | The serving system manages its workers, request routing, and distributed execution. |
+| KServe Standard mode | `InferenceService` or `LLMInferenceService` | KServe creates workloads, Services, routing resources, and configured autoscalers. |
+| KServe Knative mode | `InferenceService` | KServe and Knative manage revisions, request routing, activation, and request-driven autoscaling. |
+
+Production stacks often combine these patterns. Ray Serve can use vLLM or SGLang as its engine. NVIDIA Dynamo supports multiple execution backends. KServe can deploy a vLLM-backed `InferenceService`.
+
+## Prerequisites
+
+- A tenant cluster with [Private Nodes](../deploy/worker-nodes/private-nodes/overview.mdx) enabled.
+- At least one GPU node attached to the tenant cluster.
+- A vendor GPU Operator, device plugin, or Dynamic Resource Allocation driver installed where your GPU stack requires it.
+- An endpoint networking implementation. Direct deployments need a Gateway API controller, Ingress controller, or provider traffic layer. KServe needs the networking layer for its selected deployment mode.
+- A model source, registry credential, or object storage path your runtime can reach.
+- Enough local disk on each GPU node for the runtime image and model weights. Runtime images alone commonly run tens of GB once extracted, and model weights, engine caches, and any additional models you load later share that same disk.
+- For production delivery, an [Argo CD connector](/platform/integrations/argocd/connect-argocd) enabled on the tenant cluster and a Git repository holding your runtime manifests.
+
+For GPU setup details, see [GPU and accelerator support](../introduction/gpu-and-accelerator-support.mdx). For bare metal GPU node provisioning, see the [vMetal GPU Quickstart](https://www.vmetal.ai/docs/deploy/gpu-quickstart).
+
+## Preflight the tenant cluster
+
+Before installing the serving stack, confirm the tenant cluster can see GPU capacity and any routing resources your selected pattern expects.
+
+Check the GPU resource advertised by the private node:
+
+```bash
+kubectl get nodes -o 'custom-columns=NAME:.metadata.name,GPU:.status.allocatable.nvidia\.com/gpu'
+kubectl describe node <gpu-node-name> | grep -A5 Allocatable
+```
+
+For AMD or another accelerator vendor, replace `nvidia.com/gpu` with the resource name exposed by that vendor's device plugin or DRA driver.
+
+If you installed the NVIDIA GPU Operator, confirm its validator pod reached `Completed`. That means the driver stack reconciled:
+
+```bash
+kubectl get pods -n gpu-operator -l app=nvidia-cuda-validator
+```
+
+The smoke test below proves a real workload can actually use it. Surface-level driver checks can mask gaps that only show up under real inference traffic.
+
+For a direct deployment that uses an imported Gateway, confirm the tenant cluster can see it before creating routes:
+
+```bash
+kubectl get gateway -A
+kubectl describe gateway shared-inference -n shared-gateways
+```
+
+If the Gateway is missing, fix the tenant cluster template before deploying the runtime. For imported Gateways, the template must enable `sync.fromHost.gateways` and `sync.toHost.gatewayApi.httpRoutes`. For tenant-owned Gateways, the template must enable the Gateway API sync resources your controller requires.
+
+## Deploy a direct vLLM smoke test
+
+The following example shows the direct engine pattern. It uses a small vLLM Deployment and Service to validate GPU scheduling, model loading, and in-cluster serving.
+
+Treat it as a smoke test, not as a production endpoint template. For production delivery, see [Build a direct engine template](#build-a-direct-engine-template).
+
+```yaml title="vllm-inference.yaml"
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vllm-inference
+  namespace: inference
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: vllm-inference
+  template:
+    metadata:
+      labels:
+        app: vllm-inference
+    spec:
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: vllm
+          image: vllm/vllm-openai:v0.8.5
+          imagePullPolicy: IfNotPresent
+          args:
+            - --model
+            - facebook/opt-125m
+            - --host
+            - 0.0.0.0
+            - --port
+            - "8000"
+          env:
+            - name: HF_HOME
+              value: /models/cache
+          ports:
+            - name: http
+              containerPort: 8000
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+            failureThreshold: 60
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: "4"
+              memory: 16Gi
+            limits:
+              cpu: "8"
+              memory: 32Gi
+              nvidia.com/gpu: "1"
+          volumeMounts:
+            - name: model-cache
+              mountPath: /models/cache
+      volumes:
+        - name: model-cache
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm-inference
+  namespace: inference
+  labels:
+    app: vllm-inference
+spec:
+  selector:
+    app: vllm-inference
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+```
+
+Note the `--host 0.0.0.0` argument. The runtime's HTTP server must bind to all interfaces, not a loopback address, so the Service can reach it. vLLM defaults to this in its CLI. Adapting [Ray Serve](https://www.vcluster.com/blog/run-ray-serve-nvcf-function-vcluster-tenant-cluster) or another runtime to this pattern may require setting it explicitly.
+
+Apply the manifest inside the tenant cluster:
+
+```bash
+kubectl create namespace inference
+kubectl apply -f vllm-inference.yaml
+kubectl rollout status deployment/vllm-inference -n inference
+```
+
+Validate the Service from inside the tenant cluster:
+
+```bash
+kubectl port-forward svc/vllm-inference 8000:80 -n inference
+curl http://localhost:8000/v1/models
+```
+
+If something doesn't come up cleanly:
+
+- **Pod stays `Pending`:** check node capacity, GPU resource names, project quotas, allowed node types, node selectors, and taints.
+- **Pod stays in `ContainerCreating` for several minutes:** that's likely the first pull of a multi-gigabyte runtime image on a fresh node. Later pods on that same node start fast once the image is cached.
+- **Pod starts but the model does not load:** check model registry credentials, outbound network policy, model cache storage, and runtime logs.
+
+## Plan model storage
+
+Large models make storage and startup behavior part of the endpoint architecture. Decide where model weights live, how access credentials are managed, how weights are cached, and how endpoint readiness behaves while the runtime loads them.
+
+Common patterns include:
+
+| Pattern | Use when | Tradeoff |
+| --- | --- | --- |
+| Object storage, such as S3, GCS, Azure Blob, or MinIO | Models are shared across regions, endpoints, or customers and downloaded at startup. | Simple source of truth, but large models can make cold starts slow unless you add cache warming. |
+| PersistentVolume model cache | A tenant or endpoint repeatedly loads the same model. | Reduces repeated downloads, but requires capacity planning, cleanup, and access controls. |
+| Local NVMe or node image cache | You sell low-latency tiers for a small set of popular models. | Fastest startup after scheduling, but ties models to node images or node-local cache lifecycle. |
+| Shared filesystem, such as NFS or a parallel filesystem | Multiple replicas need a shared model store inside the same environment. | Avoids repeated downloads, but can become a throughput bottleneck for large model loads. |
+| Runtime image with model baked in | Small, fixed models change rarely. | Simple deployment, but large images slow pulls and make model rollout the same as image rollout. |
+
+For a production engine Application, make the model source, model version, credentials secret, cache volume, and cache size explicit `ArgoCDApplicationTemplate` parameters. The engine should mount registry or object-storage credentials. Prepare the cache with an init container or sidecar when needed. Report readiness only after the model is loaded.
+
+For large models, plan warmup separately from pod scheduling. A pod can be `Running` while the endpoint is still downloading weights, building a cache, compiling kernels, or loading the model into GPU memory. Surface that state in your product API.
+
+## Build a direct engine template
+
+Package the engine as an Argo CD Application so a template update or Git commit rolls out consistently across each applicable tenant cluster. Store the Deployment, Service, and route in a Helm chart. Then declare an `ArgoCDApplicationTemplate` that points at it.
+
+Keep model identity and customer-specific values as parameters so the same template serves every endpoint tier. The `source.helm.values` block below references each parameter with Go template syntax (`{{ .Values.parameterName }}`). This is the same parameter mechanism [templates use for tenant clusters](/platform/administer/templates/parameters), applied here to the Helm values that render the chart.
+
+```yaml
+apiVersion: management.loft.sh/v1
+kind: ArgoCDApplicationTemplate
+metadata:
+  name: vllm-inference
+spec:
+  template:
+    spec:
+      source:
+        repoURL: "https://github.com/acme/inference-runtimes"
+        targetRevision: main
+        path: "runtimes/vllm-inference" # Helm chart
+        helm:
+          values: |
+            model: "{{ .Values.model }}"
+            cacheSize: "{{ .Values.cacheSize }}"
+      destination:
+        namespace: "{{ .Values.namespace }}"
+      project: default
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
+```
+
+Set `CreateNamespace=true` so Argo CD creates the target namespace itself. That option only takes effect when the Application also sets `spec.destination.namespace`, so the template sets it from the `namespace` parameter. This is easy to miss: `target: vcluster` resolves the destination cluster, but it doesn't set the namespace on its own. Without `spec.destination.namespace`, the Application fails to sync into a namespace that doesn't already exist, unlike the smoke test above, where `kubectl create namespace` handled that step manually.
+
+Reference the template and pass its parameter values from the tenant cluster's `vcluster.yaml`, alongside the [Argo CD connector](/platform/integrations/argocd/connect-argocd):
+
+```yaml title="vcluster.yaml"
+integrations:
+  argoCD:
+    enabled: true
+    connector: argocd-main
+deploy:
+  argoCD:
+    applications:
+      - name: vllm-inference
+        target: vcluster
+        template:
+          name: vllm-inference
+          parameters:
+            model: facebook/opt-125m
+            cacheSize: 20Gi
+            namespace: inference
+```
+
+Argo CD syncs the Application into the tenant cluster once the connector registers it. `selfHeal: true` reverts manual drift, and a Git commit to the template path rolls out on the next reconcile.
+
+A production direct engine Application should package:
+
+- pinned runtime images and a rollout policy
+- model registry, object storage, or artifact repository credentials
+- persistent or pre-warmed model cache storage
+- model source, model version, cache size, and credential parameters
+- resource requests and limits for CPU, memory, GPU, and ephemeral storage
+- node selectors, affinities, tolerations, or runtime classes that match the endpoint tier
+- readiness, startup, and liveness probes tuned to model load time
+- PodDisruptionBudget and graceful shutdown for draining traffic
+- NetworkPolicies and service account permissions
+- metrics scraping, logs, traces, and runtime-specific dashboards
+- authentication and authorization at the provider traffic layer
+- route, DNS, and certificate policy
+
+Use a CNI that enforces NetworkPolicy, such as Calico or Cilium. Otherwise a NetworkPolicy that looks correct can silently do nothing.
+
+Keep driver configuration, GPU presentation mode, and node image details in the GPU stack and node type. Don't embed them into the engine Application.
+
+## Deploy through an inference control plane
+
+Use KServe when you want a Kubernetes inference control plane to own endpoint lifecycle. KServe reconciles an `InferenceService` into the model-serving workload and its supporting resources.
+
+Install the KServe controllers, custom resource definitions, and serving runtimes before applying an `InferenceService`. For Standard mode, configure KServe with Gateway API or an Ingress controller. The network controller remains a platform prerequisite even when KServe creates each endpoint's routing resource. See the [KServe Standard mode requirements](https://kserve.github.io/website/docs/admin-guide/kubernetes-deployment).
+
+This example follows KServe's [text generation pattern](https://kserve.github.io/website/docs/model-serving/generative-inference/tasks/text-generation). It selects Standard mode and uses the Hugging Face serving runtime. That runtime uses vLLM as its default backend for supported generative models:
+
+```yaml title="kserve-vllm.yaml"
+apiVersion: serving.kserve.io/v1beta1
+kind: InferenceService
+metadata:
+  name: qwen-vllm
+  namespace: inference
+  annotations:
+    # Use Kubernetes Deployments instead of Knative revisions.
+    serving.kserve.io/deploymentMode: "Standard"
+spec:
+  predictor:
+    model:
+      # KServe's Hugging Face runtime uses vLLM for supported models.
+      modelFormat:
+        name: huggingface
+      storageUri: hf://Qwen/Qwen2.5-0.5B-Instruct
+      args:
+        - --model_name=qwen
+      resources:
+        requests:
+          cpu: "2"
+          memory: 6Gi
+          nvidia.com/gpu: "1"
+        limits:
+          cpu: "4"
+          memory: 12Gi
+          nvidia.com/gpu: "1"
+    minReplicas: 1
+    maxReplicas: 4
+```
+
+Apply the resource and wait for KServe to report it ready:
+
+```bash
+kubectl create namespace inference --dry-run=client -o yaml | kubectl apply -f -
+kubectl apply -f kserve-vllm.yaml
+kubectl wait --for=condition=Ready inferenceservice/qwen-vllm \
+  --namespace inference \
+  --timeout=15m
+kubectl get inferenceservice qwen-vllm -n inference
+```
+
+KServe creates the Deployment, Service, routing resource, and Horizontal Pod Autoscaler for this Standard-mode endpoint. Don't add a second copy of those resources to the engine chart.
+
+When multiple endpoints share one KServe control plane, install KServe once. Gate endpoint delivery until its custom resource definitions are established and its controller is ready.
+
+For a self-contained Application, place the KServe installation and `InferenceService` in the same Application. Use sync waves to order the controller before the endpoint resource.
+
+For advanced large language model deployments, KServe also provides `LLMInferenceService`. It supports capabilities such as prefix-aware routing and disaggregated prefill and decode.
+
+## Sequence the GPU stack and the serving stack
+
+Argo CD has no native way to make one Application wait for another. If the GPU stack is separate from the serving stack, Argo CD syncs both without ordering them.
+
+For this specific pair, that is usually safe to leave unordered. A runtime pod requesting `nvidia.com/gpu` before the device plugin advertises it just stays `Pending`. Argo CD's `selfHeal` and the Kubernetes scheduler's own retry logic both converge once the GPU stack is ready, so the pod waits rather than fails.
+
+Treat a custom resource and its controller as a hard dependency. For example, an `InferenceService` needs the KServe custom resource definitions and controller before Argo CD applies it.
+
+Put hard dependencies in one Application and use `argocd.argoproj.io/sync-wave` annotations to order them. Sync waves only order resources inside one Application. They don't order separate Applications.
+
+Platform is building explicit cross-Application sequencing for a future release. Until then, default to bundling hard dependencies into one Application and letting Kubernetes absorb the soft ones.
+
+Plan for minutes, not seconds, for the sync itself. Argo CD's reconcile interval defaults to a few minutes and is configurable. If you don't trigger syncs explicitly, a template change reaches each tenant cluster on its next scheduled sync rather than instantly. A freshly created tenant cluster can take a while to reach fully `Healthy` across its Applications, depending on connector registration and image pull time.
+
+For template guidance, see [Deploy applications](/platform/integrations/argocd/deploy-applications), [Templates](/platform/administer/templates/overview), [Quotas](/platform/administer/projects/quotas), and [Allowed node types](/platform/administer/projects/allowed/node-types).
+
+## Expose an inference endpoint
+
+Routing ownership depends on the deployment pattern. Don't create a standalone route when a serving control plane already creates one.
+
+### Route a direct engine deployment
+
+For new direct HTTP endpoint deployments, prefer Gateway API. The most common provider model is:
+
+1. The platform team owns Gateway API CRDs, the Gateway controller, DNS, certificates, and shared `Gateway` resources in the control plane cluster.
+2. The tenant cluster imports approved Gateways with `sync.fromHost.gateways`.
+3. The runtime's Argo CD Application creates `HTTPRoute` resources in the tenant cluster alongside the Deployment and Service.
+4. vCluster syncs the tenant route to the control plane cluster and enforces the Gateway attachment policy.
+
+The tenant cluster template needs Gateway sync enabled. The following example maps a platform-owned Gateway to a tenant-facing Gateway and allows routes from selected tenant namespaces:
+
+```yaml title="vcluster.yaml"
+sync:
+  fromHost:
+    gatewayClasses:
+      enabled: true
+      selector:
+        matchLabels:
+          inference.example.com/sync: "yes"
+    gateways:
+      enabled: true
+      selector:
+        matchLabels:
+          inference.example.com/sync: "yes"
+      mappings:
+        byName:
+          "platform-gateways/public-inference": "shared-gateways/shared-inference"
+      allowedRoutes:
+        overrides:
+          - hostNamespace: platform-gateways
+            name: public-inference
+            allowedHostnames:
+              - "*.inference.example.com"
+            virtualNamespacePolicy:
+              from: Selector
+              selector:
+                matchLabels:
+                  inference.example.com/route-access: "allowed"
+  toHost:
+    gatewayApi:
+      httpRoutes:
+        enabled: true
+```
+
+Label the namespace that may attach routes:
+
+```bash
+kubectl label namespace inference inference.example.com/route-access=allowed
+```
+
+For the full Gateway API model, see [Gateway API](../key-features/gateway-api.mdx), [Gateway API sync](../configure/vcluster-yaml/sync/to-host/networking/gateway-api.mdx), and [imported Gateways and GatewayClasses](../configure/vcluster-yaml/sync/from-host/gateways.mdx).
+
+Add an `HTTPRoute` for the endpoint:
+
+```yaml title="vllm-route.yaml"
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: vllm-inference
+  namespace: inference
+spec:
+  parentRefs:
+    - name: shared-inference
+      namespace: shared-gateways
+  hostnames:
+    - customer-a.inference.example.com
+  rules:
+    - backendRefs:
+        - name: vllm-inference
+          port: 80
+```
+
+Add the route to the same Git path as the Deployment and Service. The direct engine Application then delivers all three together. This approach avoids relying on Argo CD to sequence a separate route Application after the backend exists.
+
+Once Argo CD syncs the Application, confirm the route from inside the tenant cluster:
+
+```bash
+kubectl describe httproute vllm-inference -n inference
+```
+
+Look for `Accepted=True` and `ResolvedRefs=True` conditions. If the route fails to become ready, check the imported Gateway, the allowed hostname list, listener policy, and Gateway API sync configuration.
+
+After DNS points to the Gateway address, validate the endpoint externally:
+
+```bash
+curl -H "Host: customer-a.inference.example.com" http://<gateway-address>/v1/models
+```
+
+In production, handle TLS and enforce customer authentication in your provider traffic layer, API gateway, service mesh, or runtime sidecar. Do not expose unauthenticated model endpoints directly to the public internet.
+
+### Route a control-plane-managed endpoint
+
+In Standard mode, KServe creates an HTTPRoute or Ingress for each `InferenceService`. The platform team still provides the underlying network controller and configures the Gateway or Ingress class that KServe uses.
+
+If the network controller runs in the control plane cluster, configure vCluster to sync the generated route. KServe owns the route lifecycle, while vCluster transports the resource between clusters. See [Gateway API sync](../configure/vcluster-yaml/sync/to-host/networking/gateway-api.mdx).
+
+KServe can create a default Gateway during installation. A provider can instead configure KServe to use a shared Gateway. In both cases, keep shared listener, DNS, certificate, and authentication policy in the platform traffic layer.
+
+Don't add the direct engine `HTTPRoute` from the previous section to a KServe-managed endpoint. Check the URL and generated networking resource through the `InferenceService` status:
+
+```bash
+kubectl get inferenceservice qwen-vllm -n inference \
+  -o jsonpath='{.status.url}{"\n"}'
+kubectl get httproute,ingress -n inference
+```
+
+Standard mode doesn't provide request-triggered scale-from-zero for HTTP endpoints. KServe Knative mode follows a different path. Knative manages revisions, request routing, activation, and scale-to-zero. This mode requires Knative and a supported networking layer.
+
+KServe recommends Standard mode for generative inference. It positions [Knative mode](https://kserve.github.io/website/docs/admin-guide/serverless) primarily for predictive inference.
+
+:::note Alternative: serverless routing
+For a serverless alternative that hands routing to NVIDIA's control plane instead of Gateway API, see [Run Ray Serve as an NVCF Function](https://www.vcluster.com/blog/run-ray-serve-nvcf-function-vcluster-tenant-cluster).
+:::
+
+## Add autoscaling and observability
+
+Start with runtime metrics and GPU hardware metrics. [GPU and inference autoscaling](./gpu-hpa-dcgm.mdx) shows how to expose NVIDIA DCGM metrics and model-serving metrics to HPA or KEDA.
+
+Choose one owner for each workload's autoscaler. For a direct Deployment, create the HPA or KEDA `ScaledObject` yourself. For KServe, configure autoscaling through the `InferenceService` instead of attaching a competing autoscaler.
+
+For inference workloads, GPU utilization alone is rarely enough. Add runtime metrics such as:
+
+- request concurrency
+- queue depth
+- time to first token
+- tokens per second
+- p95 and p99 latency
+- GPU memory usage
+- cache pressure
+
+Use these signals with Horizontal Pod Autoscaler, KEDA, a runtime-specific autoscaler, or your provider control plane.
+
+For the first production endpoint, verify that each signal is visible before enabling autoscaling:
+
+```bash
+kubectl top pods -n inference
+kubectl get --raw /apis/custom.metrics.k8s.io/v1beta1
+kubectl logs deployment/vllm-inference -n inference
+```
+
+## Validate provider readiness
+
+Before exposing the endpoint to customers, validate the full provider path:
+
+- Product automation creates or selects the project, template, quota, and allowed node type.
+- The tenant cluster reaches `Ready` and the private GPU node joins.
+- The serving stack's `ArgoCDApplication` reports `Synced` and `Healthy`.
+- The GPU device plugin, GPU Operator, or DRA driver exposes the expected resource.
+- The serving pods or workers schedule on the intended GPU node type.
+- The model loads from the approved source and reaches readiness.
+- The direct route or serving control plane reports its endpoint ready.
+- The endpoint accepts authorized traffic and rejects unauthorized traffic.
+- Logs, metrics, and alerts include endpoint, tenant, model, and node tier labels.
+- Delete and configured scale-down workflows drain traffic and reclaim GPU capacity.

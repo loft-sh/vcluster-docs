@@ -10,12 +10,15 @@ import Flow, { Step } from "@site/src/components/Flow";
 import InstallCLIFragment from '../_partials/deploy/install-cli.mdx';
 import ProductionNextStep from '../_fragments/production-next-step.mdx';
 import DefaultK8sVersion from '../_fragments/default-k8s-version.mdx';
+import SharedNodesSuitability from '@site/vcluster/_partials/admonitions/shared-nodes-suitability.mdx';
 
-You're running a Kubernetes cluster and want to give teams, tenants, or CI pipelines their own isolated Kubernetes environments. You don't want to spin up new infrastructure for each one.
+You're running a Kubernetes cluster and want to give internal teams or CI pipelines their own isolated Kubernetes environments. You don't want to spin up new infrastructure for each one.
 
 This guide shows you how to deploy a tenant cluster onto your existing cluster in under two minutes. You'll also see the isolation boundary in action. From inside the tenant cluster, everything looks like a normal Kubernetes cluster. From the outside, each tenant fits in a single namespace with no visibility into anyone else's workloads.
 
 By the end you'll have a working tenant cluster and a clear picture of how the isolation model works. There's also an optional step to connect it to vCluster Platform for self-service access and auto-sleep.
+
+<SharedNodesSuitability />
 
 ## Prerequisites
 
@@ -83,7 +86,63 @@ By the end you'll have a working tenant cluster and a clear picture of how the i
 
     The nginx pod is here, but with a rewritten name. vCluster syncs tenant workloads into this namespace so the underlying cluster can schedule them. The suffix (`-x-default-x-my-vcluster`) encodes the source namespace and cluster. From inside the tenant cluster, the pod appeared as plain `nginx` in namespace `default`.
 
-    This is the isolation boundary. The tenant gets a clean Kubernetes API with no visibility into the Control Plane Cluster's structure. Other tenant clusters have their own dedicated namespaces, so neither tenant can see the other's workloads.
+    This is the isolation boundary. The tenant gets a clean Kubernetes API with no visibility into the Control Plane Cluster's structure. Other tenant clusters have their own dedicated namespaces, so neither tenant can see the other's workloads. This isolation is at the API and namespace level. Tenants still share the same kernel and physical nodes. That's why shared nodes are for internal, trusted tenants rather than externally facing or resold offerings.
+  </Step>
+</Flow>
+
+## Verify network policy enforcement
+
+Shared-node isolation relies on the control plane cluster's CNI actually enforcing NetworkPolicy. Some CNIs accept policy resources without enforcing them, which silently leaves tenant traffic open. Confirm enforcement before you rely on it.
+
+On shared nodes, tenant workloads run on the control plane cluster, so the control plane cluster's CNI does the enforcement. A NetworkPolicy created inside the tenant cluster only takes effect once vCluster syncs it to the control plane cluster. That sync is off by default, so enable it first.
+
+<Flow>
+  <Step>
+    Enable NetworkPolicy sync on the tenant cluster.
+
+    ```bash
+    cat <<EOF > values.yaml
+    sync:
+      toHost:
+        networkPolicies:
+          enabled: true
+    EOF
+    vcluster create my-vcluster --namespace team-x --upgrade -f values.yaml
+    ```
+  </Step>
+  <Step>
+    Deploy a target pod with a service and a client pod.
+
+    ```bash
+    kubectl run web --image=nginx --port=80
+    kubectl expose pod web --port=80
+    kubectl run client --image=busybox --restart=Never -- sleep 3600
+    ```
+
+    Confirm the client can reach the target while traffic is still open.
+
+    ```bash
+    kubectl exec client -- wget -qO- --timeout=3 web
+    ```
+  </Step>
+  <Step>
+    Apply a default-deny ingress policy, then test the connection again.
+
+    ```bash
+    kubectl apply -f - <<EOF
+    apiVersion: networking.k8s.io/v1
+    kind: NetworkPolicy
+    metadata:
+      name: default-deny-ingress
+    spec:
+      podSelector: {}
+      policyTypes:
+        - Ingress
+    EOF
+    kubectl exec client -- wget -qO- --timeout=3 web
+    ```
+
+    The request should now time out. If it still succeeds, the control plane cluster's CNI isn't enforcing NetworkPolicy, so shared-node network isolation isn't in effect. Review the [security baseline](/docs/vcluster/security) before you run tenant workloads that depend on it.
   </Step>
 </Flow>
 

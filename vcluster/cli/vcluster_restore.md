@@ -29,6 +29,8 @@ vcluster restore my-vcluster container:///data/my-local-snapshot.tar.gz
 vcluster restore my-vcluster ./my-snapshot.tar.gz --driver docker
 # Restore with a different name
 vcluster restore my-new-name ./my-snapshot.tar.gz --driver docker
+# Restore the standalone vCluster on this host (stops and restarts vcluster.service)
+vcluster restore --standalone s3://my-bucket/my-bucket-key
 #######################################################
 ```
 
@@ -45,7 +47,6 @@ vcluster restore my-new-name ./my-snapshot.tar.gz --driver docker
       --pod-image-pull-secret stringArray   Additional pull secrets for the created pod
       --pod-mount stringArray               Additional mounts for the created pod. Use form <type>:<name>/<key>:<mount>. Supported types are: pvc, secret, configmap. E.g.: pvc:my-pvc:/path-in-pod or secret:my-secret/my-key:/path-in-pod
       --pod-service-account string          Service account to use for the created pod
-      --restore-volumes                     Restore volumes from volume snapshots. Deprecated: volume snapshot and restore will be removed in an upcoming release.
       --snapshot-temp-dir string            Temporary directory for snapshot operations. If set to empty string, the OS default directory for temporary files will be used
       --standalone                          Target the local standalone vCluster on this host
 ```

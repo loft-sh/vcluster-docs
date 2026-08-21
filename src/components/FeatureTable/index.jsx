@@ -8,6 +8,11 @@ import featuresData from '@site/src/data/features.yaml';
  * Displays a table of vCluster features with product tier availability.
  * Shows 4 tiers: Free | Dev | Prod | Scale
  * Dev, Prod, Scale are Enterprise tiers (optionally shown with Enterprise header)
+ * A product entry with a `header_note` in products.yaml renders an inline info
+ * icon next to its column header (adds no line/row height), linking to that
+ * product's docs_url, plus a footnote below the table with the same
+ * explanation. The table header is sticky so it (and the icon/link) stays
+ * visible while scrolling a long table, e.g. the full names="all" listing.
  *
  * @param {string} names - Comma-separated list of feature IDs to display, or "all" for all features
  * @param {string} tenancy - Filter features by tenancy model (e.g., "private", "shared", "standalone")
@@ -121,10 +126,16 @@ const FeatureTable = ({ names, tenancy, showEnterpriseHeader = true }) => {
     return 'Available in these plans';
   };
 
+  // A product with a header_note (currently just Free) gets a footnote below
+  // the table pointing to the OSS-vs-Free explanation, in addition to the
+  // inline linked icon on its column header.
+  const productWithNote = products.find(product => product.header_note);
+
   // Use compact layout when showing specific features (not "all")
-  const wrapperClass = showAll
-    ? styles.featureTableWrapper
-    : `${styles.featureTableWrapper} ${styles.featureTableWrapperCompact}`;
+  const wrapperClasses = [styles.featureTableWrapper];
+  if (!showAll) wrapperClasses.push(styles.featureTableWrapperCompact);
+  if (productWithNote) wrapperClasses.push(styles.featureTableWrapperWithFootnote);
+  const wrapperClass = wrapperClasses.join(' ');
 
   return (
     <>
@@ -152,6 +163,18 @@ const FeatureTable = ({ names, tenancy, showEnterpriseHeader = true }) => {
                     </a>
                   ) : (
                     product.name
+                  )}
+                  {product.header_note && (
+                    <a
+                      href={product.docs_url}
+                      className={styles.headerNoteIcon}
+                      title={product.header_note}
+                      aria-label={product.header_note}
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" height="14px" viewBox="0 -960 960 960" width="14px" fill="currentColor">
+                        <path d="M440-280h80v-240h-80v240Zm40-320q17 0 28.5-11.5T520-640q0-17-11.5-28.5T480-680q-17 0-28.5 11.5T440-640q0 17 11.5 28.5T480-600Zm0 520q-83 0-156-31.5T197-197q-54-54-85.5-127T80-480q0-83 31.5-156T197-763q54-54 127-85.5T480-880q83 0 156 31.5T763-763q54 54 85.5 127T880-480q0 83-31.5 156T763-197q-54 54-127 85.5T480-80Z"/>
+                      </svg>
+                    </a>
                   )}
                 </th>
               ))}
@@ -199,6 +222,19 @@ const FeatureTable = ({ names, tenancy, showEnterpriseHeader = true }) => {
           </tbody>
         </table>
       </div>
+      {productWithNote && (
+        <p className={styles.footnote}>
+          Free, Dev, Prod, and Scale are vCluster Platform license plans. Open source does not need a license or a Platform connection.
+          {productWithNote.docs_url && (
+            <>
+              {' '}See{' '}
+              <a href={productWithNote.docs_url} className={styles.productLink}>
+                Compare open source and free tiers
+              </a>.
+            </>
+          )}
+        </p>
+      )}
     </>
   );
 };

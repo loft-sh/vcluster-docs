@@ -18,17 +18,29 @@ This checklist guides the process of preparing End-of-Life (EOL) documentation b
 
 ### 2. Configure Docusaurus Build
 **File:** `docusaurus.config.js`
+- [ ] Set `noIndex: true` at the top level of the config
 - [ ] Set vCluster `lastVersion` to the EOL version (e.g., `"0.24.0"`)
 - [ ] Set vCluster `onlyIncludeVersions` to only this version: `["0.24.0"]`
 - [ ] Set platform plugin `lastVersion` to latest platform version (e.g., `"4.3.0"`)
 - [ ] Add platform plugin `onlyIncludeVersions: ["4.3.0"]`
 
-### 3. Clean Version Dropdowns
+### 3. Configure crawler response headers
+**File:** `netlify.toml`
+- [ ] Add `X-Robots-Tag: noindex` to every response:
+```toml
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Robots-Tag = "noindex"
+```
+- [ ] Do not block the archive in `robots.txt`. Crawlers must fetch a page to read its `noindex` signal.
+
+### 4. Clean Version Dropdowns
 **File:** `src/theme/DocSidebar/Desktop/Content/index.js`
 - [ ] Set `dropdownItemsAfter={[]}` for both vCluster and platform selectors
 - [ ] This removes all external version links from the dropdown
 
-### 4. Fix Broken Links
+### 5. Fix Broken Links
 Common patterns to fix:
 - [ ] Replace `@site` imports with relative paths in versioned docs
 - [ ] Fix fragment imports (must use absolute paths when imported across directories)
@@ -37,12 +49,12 @@ Common patterns to fix:
 - [ ] Clear cache: `rm -rf .docusaurus build node_modules/.cache`
 - [ ] Run build to verify: `npm run build`
 
-### 5. Deploy to Netlify
+### 6. Deploy to Netlify
 - [ ] Add branch to Netlify deployments
 - [ ] Branch URL format: `vcluster-v0-XX--vcluster-docs-site.netlify.app`
 - [ ] Verify deployment succeeds
 
-### 6. Add Redirects to vcluster.com
+### 7. Add Redirects to vcluster.com
 **File:** `/themes/loft/static/_redirects` in vcluster.com repo
 - [ ] Add redirect entries for the new EOL version:
 ```
@@ -51,7 +63,7 @@ Common patterns to fix:
 /docs/v0.XX/*       https://vcluster-v0-XX--vcluster-docs-site.netlify.app/docs/vcluster/:splat   302!
 ```
 
-### 7. Update Main Branch Documentation Menu
+### 8. Update Main Branch Documentation Menu
 **In main/master branch of vcluster-docs:**
 
 **File:** `docusaurus.config.js`
@@ -67,11 +79,24 @@ Common patterns to fix:
 }
 ```
 
+**File:** `netlify.toml` (this repo — separate from the vcluster.com redirects in step 7)
+- [ ] Add a row to the "Removed vCluster versions — redirect to latest" block, in ascending version order:
+```toml
+[[redirects]]
+  from = "/docs/vcluster/0.XX.0/*"
+  to = "/docs/vcluster/:splat"
+  status = 301
+```
+- [ ] Without this, the long-form `/docs/vcluster/0.XX.0/*` URL 404s instead of falling back to latest — deleting the versioned folder in this step removes the build path, but doesn't redirect it.
+
 ## Verification
 - [ ] EOL branch builds successfully with only its version
 - [ ] Netlify deployment is accessible
+- [ ] A live HTML response contains a robots meta tag with `noindex`
+- [ ] A live response contains an `X-Robots-Tag` header with `noindex`
 - [ ] Redirects from vcluster.com work correctly
 - [ ] Version appears in main docs dropdown and redirects properly
+- [ ] Long-form URL `vcluster.com/docs/vcluster/0.XX.0/*` redirects to latest (not a 404)
 
 ## Notes
 - Each EOL branch is self-contained with only its version documentation

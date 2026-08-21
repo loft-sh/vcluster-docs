@@ -221,7 +221,7 @@ When backporting: make the same changes in relevant `versioned_docs/version-X.XX
 
 ### Integration Tests (BrowserStack)
 
-Cross-browser tests for documentation rendering (mermaid diagrams, etc.).
+Cross-browser tests for documentation rendering (mermaid diagrams, and so on).
 
 **Location**: `tests/` directory
 
@@ -257,7 +257,7 @@ npm run test:local          # Local Safari only
 npm run test:browserstack   # All browsers via BrowserStack (needs credentials)
 ```
 
-**CI**: Tests run automatically on PRs via `.github/workflows/integration-tests.yml`
+**CI**: Tests run automatically on PRs using `.github/workflows/integration-tests.yml`
 
 ### Partials and Components
 
@@ -281,7 +281,29 @@ import Partial from '@site/docs/_partials/example.mdx';
 
 See `references/partials-guide.md` for complete patterns and troubleshooting.
 
-## Critical Rules
+## Concept and Explanation Pages
+
+Explanation pages (architecture, overview, "what is X") should build the reader's mental model from the outside in. Each section should answer the question a reader would naturally ask next, given what they just learned.
+
+**The progressive disclosure sequence:**
+
+1. What it IS — plain-language definition before any technical framing
+2. What it contains — structural components and their roles
+3. How the parts connect — topology, agents, registrations
+4. How you interact with it — entry points, access patterns
+5. How work flows through it — lifecycle, reconciliation, request paths
+6. Operational detail — network paths, failure behavior, edge cases
+
+**Rules:**
+
+- Do not introduce a term before the concept behind it is established. Glossary links help but do not substitute for a clear conceptual foundation.
+- Add a plain-language "why this matters" sentence before technical component lists. Readers need to know what the list is for before they can absorb its items.
+- Place diagrams immediately after the content they illustrate — not after examples that build on the pattern. A diagram should reinforce what was just described, not summarize what follows.
+- Do not open explanation pages with defensive disclaimers ("X does not replace Y"). Put the relationship between products where it naturally belongs in the flow — usually at the handoff point between sections.
+- Merge sections with confusingly similar names. Adjacent sections covering the same concept from slightly different angles (for example, "Project lifecycle" and "Project resource lifecycle") signal a structural problem, not a content problem.
+- Separate "what it is" sections from "how it works" sections. A section covering both structure and behavior is usually two sections collapsed into one.
+
+**Check the flow by asking:** can a reader who skims only the section headings reconstruct the mental model? If the heading sequence reads like a component inventory rather than a conceptual arc, restructure.
 
 ### Never-Do
 - ⚠️ **NEVER modify versioned docs** unless explicitly requested
@@ -290,6 +312,7 @@ See `references/partials-guide.md` for complete patterns and troubleshooting.
 - ⚠️ **NEVER place admonitions inside JSX components** like `<Step>`
 - ⚠️ **NEVER add a `link` field to `_category_.json`** — sidebar section labels must expand/collapse only, not navigate
 - ⚠️ **NEVER create `README.mdx` as a folder index** in general docs sections — use `overview.mdx` with an explicit `slug:` instead. **Exception**: `vcluster/configure/vcluster-yaml/` uses `README.mdx` because every folder is a yaml key and "Overview" is semantically wrong there (see Sidebar Navigation Conventions)
+- ⚠️ **NEVER recommend shared nodes for untrusted tenants with Kubernetes access or arbitrary workload execution** (external, resale, regulated) — route those to private nodes (see Tenancy Model Positioning)
 
 ### Always-Do
 - ✅ **Always run vale** before finalizing documentation
@@ -298,13 +321,41 @@ See `references/partials-guide.md` for complete patterns and troubleshooting.
 - ✅ **Always use relative paths** for versioned content
 - ✅ **Always add descriptive comments** in YAML code blocks
 
+## Tenancy Model Positioning
+
+When writing or editing any page that recommends or positions a worker node model, apply the shared-nodes rule (DOC-1616).
+
+**Core rule**: Shared nodes provide control-plane, API, and namespace isolation, but tenant workloads share the same kernel and physical nodes. They are **not** a security boundary for untrusted tenants with Kubernetes access or arbitrary workload execution. The real axis is trust plus tenant access, not internal versus external.
+
+- ✅ DO recommend shared nodes for internal, trusted tenants: development, testing, CI/CD, internal engineering teams, an enterprise sharing its own data center across its own teams.
+- ✅ DO keep the internal production paths (Internal Kubernetes Platform, CI/CD Platform, Enterprise AI Factory shared tier) but pair every shared-node recommendation with the suitability caveat.
+- ✅ DO route untrusted, external, or paying customers to private nodes (optionally vNode for runtime isolation).
+- ❌ DON'T recommend shared nodes for externally facing or resold tenant offerings, AI-cloud/GPU customer tenancy, or any multi-tenant SaaS with untrusted tenants.
+- ❌ DON'T lead with density or low-operational-overhead framing for shared nodes. Lead with isolation (consistent with the repositioning guidance in the project `CLAUDE.md`).
+- ❌ DON'T claim shared-node tenants get isolated nodes, networks, or infrastructure. That is only true for private nodes.
+- ✅ DO frame NetworkPolicy positively as an added isolation layer worth enabling even for trusted tenants. vCluster can create the policies through `policies.networkPolicy`, and the control plane cluster's CNI enforces them. Note the real-world failure mode is a silently ineffective control, most often a CNI that accepts NetworkPolicy resources without enforcing them, so point to the security baseline (`/docs/vcluster/security`) for verification.
+
+**Exception — provider-owned shared serving**: The rule targets untrusted tenant workloads on shared nodes, not all multitenancy. A provider that runs its own trusted models on a shared serving tier, exposing only an API, is doing application-level multitenancy. This token-factory pattern (for example Nebius-style token serving) is not untrusted code on shared nodes, so it's allowed even for external, paying customers. Scope it explicitly to provider-owned, trusted models with application-level isolation, and never to customer-supplied models or code. The real distinction is trusted-provider-workload versus untrusted-tenant-workload, not internal versus external. Because of this, do NOT blanket-import the suitability admonition onto provider shared-serving pages. See `vcluster/production-guide/inference-provider.mdx` for the worked example.
+
+**Keep it principle-based**: Frame shared-node risk as an architectural property (shared kernel and nodes) and a configuration responsibility, not as a vCluster defect. Never reference specific customers, their CNI or infrastructure choices, security incidents, conference reports, or found vulnerabilities in published docs. These positioning rules exist to prevent misconfiguration, not to document any single deployment.
+
+**Reuse the admonition**: Import the shared suitability warning rather than rewriting it per page:
+
+```jsx
+import SharedNodesSuitability from '@site/vcluster/_partials/admonitions/shared-nodes-suitability.mdx';
+
+<SharedNodesSuitability />
+```
+
+**Audit tip**: When searching for shared-node positioning, grep more than the literal `shared node`. Also search `shared infrastructure`, `dedicated node pools`, `shared tier`, and `shared node pool` — different pages use different phrasings.
+
 ## vCluster Terminology Quick Reference
 
 Key terms (see `references/vcluster-terms.md` for complete guide):
 - **vCluster**: The trademark (never "vClusters" - legally incorrect)
 - **tenant clusters**: The clusters that vCluster creates ("virtual clusters" is retired); lowercase in prose
 - **control plane cluster**: The cluster that hosts tenant cluster control planes ("host cluster" is retired); lowercase in prose
-- **vCluster Pro**: Enhanced/paid tenant cluster with Pro functionality
+- **vCluster Pro**: Enhanced/paid tenant cluster with Pro capabilities
 - **vCluster Platform**: Management platform and UI for tenant clusters
 - **vcluster**: The CLI command name
 

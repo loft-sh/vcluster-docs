@@ -182,7 +182,7 @@ to highlight important information.
 :::note Additional context: The `vcluster create` command automatically creates
 a new namespace if it doesn't exist. :::
 
-:::tip Use `vcluster` CLI to quickly deploy a virtual cluster. :::
+:::tip Use `vcluster` CLI to quickly deploy a tenant cluster. :::
 
 :::info The default configuration uses minimal resources suitable for testing.
 :::
@@ -420,6 +420,21 @@ The command line interface name is `vcluster`.
 - [CoreDNS](https://coredns.io/)
 - [etcd](https://etcd.io/)
 
+### Positioning shared nodes
+
+Shared nodes are a supported tenancy boundary for trusted tenants, not a security boundary for untrusted tenants with Kubernetes access or arbitrary workload execution. Frame the boundary by trust and tenant access, not by internal versus external.
+
+- Recommend shared nodes for trusted tenants such as development, testing, CI/CD, and internal engineering teams.
+- Route external, resale, regulated, or otherwise untrusted tenant offerings to private nodes, optionally with vNode for runtime isolation.
+- Don't soften this to "strongly not recommended". Shared-node mitigations such as NetworkPolicy don't replace data-plane isolation for untrusted tenants.
+- Recommend NetworkPolicy as an added isolation layer for all tenants, including trusted ones. vCluster can create it through `policies.networkPolicy`, and the CNI enforces it.
+- Frame the risk as an architectural property (shared kernel and nodes) plus a configuration responsibility, not as a vCluster defect. Don't reference specific customers or security incidents.
+- Reuse the `vcluster/_partials/admonitions/shared-nodes-suitability.mdx` partial rather than rewriting the caveat.
+
+There is one exception. A provider serving its own trusted models behind an API (no tenant Kubernetes access) is application-level multitenancy and can serve external customers. See the inference provider production guide.
+
+See the shared nodes positioning section in `CLAUDE.md` for the full guidance.
+
 ## Style guide automation {#style-guide-automation}
 
 To maintain quality and consistency in our technical documentation, we use
@@ -509,6 +524,38 @@ This content won't be checked by Vale.
 {/* vale on */}
 ```
 
+### Suppressing the release drift check
+
+On every vCluster release, `hack/cli-drift` and `hack/config-drift` compare
+prose code blocks against the regenerated CLI reference and `vcluster.yaml`
+schema partials, and drift findings open an automated fix PR.
+
+Some pages show outdated config or removed commands on purpose: migration
+guides, before/after comparisons, changelog examples. Opt such a block out by
+placing a `drift-ignore` comment on the line directly above the opening fence:
+
+````text
+{/* drift-ignore */}
+```yaml
+# deliberately shows the pre-0.24 syntax
+exportKubeConfig:
+  secret:
+    name: my-secret
+```
+````
+
+In `.md` files use `<!-- drift-ignore -->` instead. The marker applies only to
+the single fenced block below it. Both scanners honor it, for YAML blocks and
+for CLI examples alike. Do not use it to silence a finding on current-state
+docs; fix the drift instead.
+
+`InterpolatedCodeBlock` components are scanned the same way as fences:
+`[[VAR:...]]` placeholders are resolved to their defaults before validation,
+and the marker on the line directly above the component tag opts it out. A
+`yaml` block or component titled `vcluster.yaml` is always validated, even
+when its top-level keys no longer match any current schema root (that is what
+a block looks like after a release removes the field it documents).
+
 <!-- vale on -->
 
 ## Adding prose to generated partials
@@ -545,7 +592,7 @@ instead of silently orphaned.
 If the prose is conceptual (an overview page, a how-to, a comparison)
 and only happens to live near generated content, write it as a
 hand-authored `.mdx` outside `vcluster/_partials/config/` and import it
-where needed. The generator will not touch it. This is the right choice
+where needed. The generator doesn't modify it. This is the right choice
 when:
 
 - The prose can be read on its own without a specific schema field next

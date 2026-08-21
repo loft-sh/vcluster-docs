@@ -23,7 +23,6 @@ const (
 	anchorSeparator = "-"
 )
 
-
 // BasePath and BaseResourcesPath are package-level vars (not const) so the
 // release-dispatch receiver can redirect generator output to versioned
 // folders without a fork. Defaults match the legacy const values byte-for-byte
@@ -82,9 +81,10 @@ func generateSchema(configInstance interface{}) *jsonschema.Schema {
 	// than from explicit `jsonschema:"required"` tags, which those structs do
 	// not carry. renderField then derives the "required" badge from that array,
 	// so a field is only flagged required when the upstream type genuinely
-	// requires it within its parent object. The `+optional` comment override in
-	// renderField further demotes fields that lack `,omitempty` but are
-	// annotated optional.
+	// requires it within its parent object. normalizeRequired below reconciles
+	// the array with the `+optional` markers the fields document, and the same
+	// override in renderField keeps the badge correct for schemas that never go
+	// through reflection.
 	r.RequiredFromJSONSchemaTags = false
 	r.ExpandedStruct = true
 
@@ -141,7 +141,130 @@ func generateSchema(configInstance interface{}) *jsonschema.Schema {
 		r.CommentMap[k] = strings.ReplaceAll(r.CommentMap[k], ">", ")")
 	}
 
-	return r.Reflect(configInstance)
+	schema := r.Reflect(configInstance)
+	normalizeRequired(schema)
+
+	return schema
+}
+
+// normalizeRequired drops properties documented with a standalone Kubernetes
+// `+optional` marker from their parent object's `required` array.
+//
+// The reflector derives `required` from the absence of `,omitempty` in a field's
+// json tag (see generateSchema), which is not the same thing as Kubernetes
+// requiredness. Some loft-sh/api fields are deliberately `+optional` yet cannot
+// carry `,omitempty` because omitting an explicitly empty value would change its
+// meaning. ProjectSpec.AllowedNodeTypes is the canonical case: nil allows every
+// node type while an empty list allows none, so `,omitempty` would silently turn
+// "allow none" into "allow all". Reconciling the array here keeps the reflected
+// schema itself honest instead of leaving every consumer to re-derive
+// requiredness from the description.
+func normalizeRequired(schema *jsonschema.Schema) {
+	walkSchema(schema, map[*jsonschema.Schema]bool{}, func(s *jsonschema.Schema) {
+		if len(s.Required) == 0 || s.Properties == nil {
+			return
+		}
+
+		required := make([]string, 0, len(s.Required))
+		for _, name := range s.Required {
+			if property, ok := s.Properties.Get(name); ok && isOptional(property) {
+				continue
+			}
+
+			required = append(required, name)
+		}
+
+		if len(required) == 0 {
+			s.Required = nil
+			return
+		}
+
+		s.Required = required
+	})
+}
+
+// isOptional reports whether a property documents itself as optional. Nullable
+// fields (`jsonschema:"nullable"`) are reflected as a oneOf wrapper whose own
+// description is empty, with the documentation left on the non-null member, so
+// fall back to that member. renderField resolves the description the same way.
+func isOptional(property *jsonschema.Schema) bool {
+	if property == nil {
+		return false
+	}
+
+	if hasOptionalMarker(property.Description) {
+		return true
+	}
+	if property.Description != "" {
+		return false
+	}
+
+	for _, member := range property.OneOf {
+		if member == nil || member.Type == "null" {
+			continue
+		}
+		if hasOptionalMarker(member.Description) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func hasOptionalMarker(description string) bool {
+	for _, line := range strings.Split(description, "\n") {
+		if strings.TrimSpace(line) == "+optional" {
+			return true
+		}
+	}
+
+	return false
+}
+
+// walkSchema calls visit on schema and on every subschema reachable from it.
+// The visited set keeps a self-referential schema from recursing forever, and a
+// shape this does not know about is simply not descended into, so an unexpected
+// upstream schema degrades to a no-op rather than breaking generation.
+func walkSchema(schema *jsonschema.Schema, visited map[*jsonschema.Schema]bool, visit func(*jsonschema.Schema)) {
+	if schema == nil || visited[schema] {
+		return
+	}
+	visited[schema] = true
+
+	visit(schema)
+
+	for _, definition := range schema.Definitions {
+		walkSchema(definition, visited, visit)
+	}
+	if schema.Properties != nil {
+		for pair := schema.Properties.Oldest(); pair != nil; pair = pair.Next() {
+			walkSchema(pair.Value, visited, visit)
+		}
+	}
+	for _, property := range schema.PatternProperties {
+		walkSchema(property, visited, visit)
+	}
+	for _, dependent := range schema.DependentSchemas {
+		walkSchema(dependent, visited, visit)
+	}
+	for _, group := range [][]*jsonschema.Schema{schema.AllOf, schema.AnyOf, schema.OneOf, schema.PrefixItems} {
+		for _, member := range group {
+			walkSchema(member, visited, visit)
+		}
+	}
+	for _, nested := range []*jsonschema.Schema{
+		schema.Items,
+		schema.Contains,
+		schema.AdditionalProperties,
+		schema.PropertyNames,
+		schema.ContentSchema,
+		schema.Not,
+		schema.If,
+		schema.Then,
+		schema.Else,
+	} {
+		walkSchema(nested, visited, visit)
+	}
 }
 
 func runInDir(dir string, fn func()) {
@@ -313,6 +436,16 @@ func GenerateObjectOverview(information *ObjectInformation) {
 	}
 	relPath = strings.TrimSuffix(relPath, "/")
 
+	extraContentBeforeDescription := information.ExtraContentBeforeDescription
+	if notice := TypeDeprecationNotice(information.Object); notice != "" {
+		admonition := DeprecationAdmonition(notice)
+		if extraContentBeforeDescription != "" {
+			extraContentBeforeDescription = admonition + "\n\n" + extraContentBeforeDescription
+		} else {
+			extraContentBeforeDescription = admonition
+		}
+	}
+
 	// write overview
 	writeTemplate(TemplateObjectOverview, information.File, ObjectOverviewValues{
 		Title:        information.Title,
@@ -324,7 +457,7 @@ func GenerateObjectOverview(information *ObjectInformation) {
 		YAMLObject:   string(out),
 
 		ExtraImports:                  information.ExtraImports,
-		ExtraContentBeforeDescription: information.ExtraContentBeforeDescription,
+		ExtraContentBeforeDescription: extraContentBeforeDescription,
 		ExtraContentBeforeExample:     information.ExtraContentBeforeExample,
 		ExtraContentAfterExample:      information.ExtraContentAfterExample,
 
@@ -354,8 +487,7 @@ func GenerateFromPathWithError(schema *jsonschema.Schema, basePath string, schem
 		return err
 	}
 	filePath := path.Join(basePath, schemaPath) + ".mdx"
-	_ = os.MkdirAll(path.Dir(filePath), 0o777)
-	if err := os.WriteFile(filePath, []byte(content), os.ModePerm); err != nil {
+	if err := writeGeneratedFile(filePath, []byte(content)); err != nil {
 		return fmt.Errorf("failed to write file: %w", err)
 	}
 	return nil
@@ -442,9 +574,7 @@ func createSections(pageFile string, schema *jsonschema.Schema, definitions json
 	}
 
 	content = fmt.Sprintf("%s%s", importContent, content)
-	_ = os.MkdirAll(path.Dir(pageFile), 0o777)
-	err := os.WriteFile(pageFile, []byte(content), os.ModePerm)
-	if err != nil {
+	if err := writeGeneratedFile(pageFile, []byte(content)); err != nil {
 		panic(err)
 	}
 
@@ -500,8 +630,9 @@ func buildContent(prefix string, schema *jsonschema.Schema, definitions jsonsche
 
 // requiredSet returns the set of property names that the schema marks as
 // required. For reflected types this comes from the Kubernetes `,omitempty`
-// convention (see generateSchema); for schemas loaded from a values.schema.json
-// file it comes from the `required` arrays already present in the file.
+// convention narrowed by the `+optional` markers (see generateSchema and
+// normalizeRequired); for schemas loaded from a values.schema.json file it comes
+// from the `required` arrays already present in the file.
 func requiredSet(schema *jsonschema.Schema) map[string]bool {
 	set := map[string]bool{}
 	for _, name := range schema.Required {
@@ -714,9 +845,22 @@ func writeTemplate(templateContents, filePath string, values interface{}) {
 		panic(err)
 	}
 
-	_ = os.MkdirAll(path.Dir(filePath), 0o777)
-	err = os.WriteFile(filePath, b.Bytes(), os.ModePerm)
-	if err != nil {
+	if err := writeGeneratedFile(filePath, b.Bytes()); err != nil {
 		panic(err)
 	}
+}
+
+func writeGeneratedFile(filePath string, content []byte) error {
+	if err := os.MkdirAll(path.Dir(filePath), 0o755); err != nil {
+		return fmt.Errorf("create output directory: %w", err)
+	}
+	if err := os.WriteFile(filePath, content, 0o644); err != nil {
+		return fmt.Errorf("write output file: %w", err)
+	}
+	// WriteFile only applies its permission argument when creating a file.
+	// Chmod also normalizes files that were generated with executable bits.
+	if err := os.Chmod(filePath, 0o644); err != nil {
+		return fmt.Errorf("set output file permissions: %w", err)
+	}
+	return nil
 }

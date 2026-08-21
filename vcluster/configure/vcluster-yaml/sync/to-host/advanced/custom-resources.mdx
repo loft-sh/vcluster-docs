@@ -7,27 +7,31 @@ sidebar_class_name: free host-nodes
 description: Configuration for syncing custom resources to host.
 ---
 
-import CodeBlock from '@theme/CodeBlock';
 import CustomResourceDefinitions from '../../../../../_partials/config/sync/toHost/customResources.mdx'
 import VersionedCrdSyncing from '../../../../../_fragments/sync/versioned-crd-syncing.mdx'
+import AggregatedApiResources from '../../../../../_fragments/sync/aggregated-api-resources.mdx'
 import TenancySupport from '../../../../../_fragments/tenancy-support.mdx';
 
 
 
 <TenancySupport hostNodes="true" />
 
-vCluster allows you to sync custom resources from the tenant cluster to the control plane cluster. This is useful for syncing resources that are not included in the default sync behavior.
+<GlossaryTerm term="vcluster">vCluster</GlossaryTerm> allows you to sync custom resources from the <GlossaryTerm term="tenant-cluster">tenant cluster</GlossaryTerm> to the control plane cluster. This is useful for syncing resources that are not included in the default sync behavior.
 
-This feature only works for resources that have a corresponding CustomResourceDefinition (CRD) installed in the control plane cluster.
+This feature works for namespace-scoped resources backed by a CustomResourceDefinition (CRD) or served through [API aggregation](#aggregated-api-resources).
 
-If a synced custom resource creates additional resources in the control plane cluster, vCluster attempts to detect and sync those resources back to the tenant cluster. For example, a custom resource that creates a Secret has that Secret automatically synced into the tenant cluster.
+If a synced custom resource creates additional resources in the <GlossaryTerm term="control-plane-cluster">control plane cluster</GlossaryTerm>, vCluster attempts to detect and sync those resources back to the tenant cluster. For example, a custom resource that creates a Secret has that Secret automatically synced into the tenant cluster.
 
-vCluster also adds the necessary cluster and namespace-level RBAC permissions to retrieve the CRD and sync the corresponding resources.
+For help choosing a sync direction, and for lifecycle and troubleshooting guidance, see [Manage custom resources](../../../../../manage/custom-resources.mdx).
 
 <br />
 
-:::info Only Namespace-Scoped Resource
-This feature currently only works for namespace-scoped resources only.
+:::info Automatic RBAC for configured resources
+vCluster automatically adds the required cluster and namespace-level RBAC permissions for retrieving the CustomResourceDefinition and syncing the configured resources. Extension API servers can require additional permissions for related resources. See [Authorization on the control plane cluster](#authorization-on-the-control-plane-cluster).
+:::
+
+:::info Only namespace-scoped resources
+This feature currently only works for namespace-scoped resources.
 :::
 
 :::info Namespace syncing
@@ -36,11 +40,11 @@ If you want to sync many custom resources, consider using [namespace syncing](..
 
 ## Enable custom resource syncing {#enable-custom-resource-syncing}
 
-To enable custom resource syncing from the tenant cluster to the control plane cluster, first identify which CustomResourceDefinitions (CRDs) you want to sync by running `kubectl get crds`. Then, add the name of each CRD to the `customResources` section under `sync` in your `vcluster.yaml` configuration file.
+To enable custom resource syncing, run `kubectl api-resources` against the control plane cluster to identify the resource. Use `<plural>.<group>` as the key in `customResources`. For example, use `customobjects.example.io` for the `customobjects` resource in the `example.io/v1` API group.
 
-Although the custom resources themselves are synced from the tenant cluster to the control plane cluster, vCluster also copies the corresponding CRDs from the control plane cluster into the tenant cluster. This ensures the tenant cluster can understand and manage those custom resources correctly.
+At startup, vCluster determines how the control plane cluster serves the resource. It copies a CRD-backed resource's definition into the tenant cluster. For a resource served by an extension <GlossaryTerm term="api-server">API server</GlossaryTerm>, vCluster generates a schemaless CRD instead.
 
-By default, you do not need to specify an API version when syncing a custom resource. If the CRD defines multiple versions and no version is explicitly set, vCluster uses the storage version. To sync a specific version, such as when the storage version is not suitable, you can define that version directly in the `vcluster.yaml`.
+You don't need to specify an API version by default. vCluster uses the storage version for a CRD-backed resource. For an aggregated API resource, it uses the API group's preferred version. To select another version, append it to the resource key in `vcluster.yaml`.
 
 ```yaml
 sync:
@@ -50,21 +54,51 @@ sync:
         enabled: true
 ```
 
+<AggregatedApiResources yamlTitle="Configure aggregated API resource sync to host" direction="toHost"/>
+
+### Synchronous validation on the control plane cluster
+
+A generated CRD has no schema, so the tenant cluster can't validate an aggregated API resource on its own. vCluster validates it on the control plane cluster instead. When a client creates, updates, or patches such a resource, vCluster writes the change through to the extension API server before it answers the request.
+
+- If the extension API server accepts the object, the request succeeds.
+- If the extension API server rejects the object, vCluster attempts to roll the tenant write back, and returns the rejection to the client. vCluster rewrites the control plane cluster's object and namespace names in the message, details, and causes. The error refers to the tenant object.
+
+Write-through validates the request. It doesn't replace syncing. The <GlossaryTerm term="syncer">syncer</GlossaryTerm> still reconciles drift in both directions, propagates deletions, and removes control plane cluster objects that an interrupted request left behind.
+
+Key behaviors for write-through:
+
+- Only `create`, `update`, and `patch` requests on the resource itself are written through. Requests to subresources aren't.
+- Deletes aren't written through. The syncer removes the control plane cluster object after the tenant delete has already returned.
+- A rejected create exists in the tenant cluster until the rollback removes it, so watchers can observe a create followed by a delete.
+- A rejected write can stay in the tenant cluster for good. Rollback is best-effort, so a failed request isn't proof that nothing was stored.
+- vCluster pins each update and patch to the object it snapshotted for rollback. When a concurrent write lands first, the request fails with `409 Conflict` instead of being reverted. Retry it against the current object.
+- Dry-run requests aren't written through. `kubectl apply --dry-run=server` validates against the tenant cluster only, so it doesn't report extension API server errors.
+- vCluster rejects writes with `503 Service Unavailable` until the syncer finishes registering the resource on startup. This keeps writes from skipping validation.
+- vCluster rejects a write body it can't prepare for rollback with `415 Unsupported Media Type`. JSON, YAML, and server-side apply bodies are supported.
+- Each <GlossaryTerm term="control-plane">control plane</GlossaryTerm> replica allows up to 50 write-through requests at a time and rejects further writes with `429 Too Many Requests`. A write that the control plane cluster doesn't answer within 30 seconds fails.
+- The control plane cluster's audit log attributes writes that start in the tenant cluster to the vCluster identity.
+
+Deletion is asynchronous. The tenant delete returns as soon as the tenant cluster removes the object, and the syncer removes the control plane cluster object afterward. During that window the control plane cluster object still exists, and an extension API server that enforces policy keeps enforcing it. A successful delete in the tenant cluster isn't proof that enforcement stopped.
+
+vCluster can't tell its own rejected write apart from a newer one. It skips the rollback when another write reaches the object first. It also gives up after a few conflicting attempts. An abandoned rollback leaves the object in the tenant cluster. The control plane cluster keeps rejecting it, so the syncer retries without ever succeeding. The `vcluster_writethrough_rollback_failures_total` metric counts these cases.
+
+### The control plane cluster owns the status
+
+When an aggregated API resource has a `status` subresource, the status syncs from the control plane cluster to the tenant cluster only. vCluster doesn't write tenant status updates through, and the syncer doesn't push them either. Tenant status fields remain local until the same fields change on the control plane cluster.
+
+### Limitations
+
+The generated CRD serves the resource itself, plus the `status` subresource when the control plane cluster serves it. Extension API servers can expose additional subresources, such as `scale`, `logs`, or `exec`. Those aren't available inside the tenant cluster, because a CRD can't serve them.
+
+Only namespace-scoped resources sync to the control plane cluster, the same as for CRD-backed resources.
+
 <VersionedCrdSyncing yamlTitle="Configure CR sync to host" scopeName=""/>
 
 ## Patches
 
-You can modify the sync behavior with patches that target specific paths. Currently, there are two different kinds of patches supported.
+Use `sync.toHost.customResources.<resource>.patches` to transform custom resource fields while syncing to the control plane cluster. Custom resources support expression patches, reference patches, and labels patches. See [Patching synced resources](../../patching/README.mdx) for the full syntax and directionality rules.
 
-:::info Wildcard patches
-You can use `*` in paths to select all entries of an array or object, for example `spec.containers[*].name` or `spec.containers[*].volumeMounts[*]`. vCluster calls the patch multiple times.
-:::
-
-### Reference patches
-
-You can use a reference patch to make a specific field in one resource point to another resource that vCluster should rewrite. If the referenced resource exists in the control plane cluster, vCluster automatically imports it into the tenant cluster.
-
-This is useful when working with resources that reference other resources like `Secrets`:
+Reference patches are useful when a custom resource field points to another synced resource, such as a Secret:
 
 ```yaml
 sync:
@@ -79,37 +113,7 @@ sync:
             kind: Secret
 ```
 
-vCluster translates the path `spec.secretName` as it points to a Secret. If the Secret is created in the control plane cluster, vCluster automatically imports it into the tenant cluster.
-
-<!-- vale off -->
-### JavaScript expression patches {#javascript-expression-patches}
-<!-- vale on -->
-
-These are JavaScript ES6 compatible expression patches that can be used to change a field while syncing. You define how it changes when syncing from the tenant cluster into the control plane cluster or when syncing from the control plane cluster into the tenant cluster. To add a prefix to field values you can:
-
-```yaml
-sync:
-  toHost:
-    customResources:
-      customobjects.example.io:
-        enabled: true
-        patches:
-        - path: spec.names[*]
-          # specifies the sync direction here again, because you can also react on change for fromHost with an expression
-          expression: '"prefix-"+value'
-          # optional reverseExpression, if omitted patches from host are discarded for that path
-          # reverseExpression: 'value.slice("prefix-".length)'
-```
-
-There is also a variable called `context` besides `value` that can be used to access vCluster specific data:
-- `context.vcluster.name`: Name of the tenant cluster
-- `context.vcluster.namespace`: Namespace of the tenant cluster
-- `context.vcluster.config`: Config of the tenant cluster, basically `vcluster.yaml` merged with the defaults
-- `context.hostObject`: Host object (can be null if not available)
-- `context.virtualObject`: Virtual object (can be null if not available)
-- `context.path`: The matched path on the object, useful when using wildcard path selectors (*)
-
-For example, to add a prefix to values in a custom resource field, you can use the following patch:
+Expression patches are useful when the tenant and control plane cluster need different field values:
 
 ```yaml
 sync:
@@ -119,80 +123,29 @@ sync:
         enabled: true
         patches:
         - path: spec.hosts[*]
-          # specifies the sync direction here again, because you can also react on change for fromHost
           expression: "value.startsWith('prod-') ? value : `prod-${value}`"
-          # specifies how to sync back changes to the virtual cluster. If omitted does not sync back changes.
           reverseExpression: "value.startsWith('prod-') ? value.slice(5) : value"
 ```
 
-The patch creates a new custom object within the vCluster:
-
-```yaml
-apiVersion: example.io/v1
-kind: CustomObject
-metadata:
-  name: name-within-vcluster
-spec:
-  hosts:
-    - server.example.com
-```
-
-vCluster syncs the control plane cluster and applies your patch, creating this modified resource:
-
-```yaml
-apiVersion: example.io/v1
-kind: CustomObject
-metadata:
-  name: synced-name
-spec:
-  hosts:
-    - prod-server.example.com # the patch added prod- prefix to this field
-```
-
-If you directly edit the resource in the control plane cluster and change the value:
-
-```yaml
-apiVersion: example.io/v1
-kind: CustomObject
-metadata:
-  name: synced-name
-spec:
-  hosts:
-    - prod-other-server.example.com # changed from prod-server.example.com
-```
-
-vCluster detects the change, applies the reverse patch, and updates the resource in your tenant cluster:
-
-```yaml
-apiVersion: example.io/v1
-kind: CustomObject
-metadata:
-  name: name-within-vcluster
-spec:
-  hosts:
-    - other-server.example.com # the patch removed the prod- prefix
-```
-
-## Configure Istio waypoint Gateway via custom resources
+## Sync an Istio waypoint Gateway using custom resources
 
 :::tip Use native Gateway API sync for core Gateway API resources
 For syncing core Kubernetes Gateway API resources (`Gateway`, `HTTPRoute`, `TLSRoute`, `ReferenceGrant`, `BackendTLSPolicy`), use [native Gateway API sync](../networking/gateway-api.mdx) instead of custom-resource syncing. The example below covers Istio waypoint Gateways using the `HBONE` listener, which is outside the standard Gateway API channel and still requires the custom-resource path.
 :::
 
-To use Istio waypoint Gateways with custom resources, install the Gateway API CRDs in the control plane cluster and then create the waypoint Gateway.
+Install the Gateway API CRDs in the control plane cluster first. See [Create waypoint proxy in the host](../../../../../integrations/istio.mdx#create-waypoint-proxy-in-the-host) for the CRD installation step.
 
-### Install Gateway CRD in the host
+To-host sync goes from the tenant cluster to the control plane cluster, so create the waypoint Gateway in the tenant cluster instead of the control plane cluster. Enable sync for the resource:
 
-To create Gateway resources, install the Gateway API CustomResourceDefinition in the control plane cluster if it's not already present:
-
-```bash title="Install Gateway CRD"
-kubectl --context="${HOST_CTX}" get crd gateways.gateway.networking.k8s.io &> /dev/null || \
-kubectl --context="${HOST_CTX}" apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.1/standard-install.yaml
+```yaml title="Sync an Istio waypoint Gateway to the control plane cluster"
+sync:
+  toHost:
+    customResources:
+      gateways.gateway.networking.k8s.io:
+        enabled: true
 ```
 
-### Create waypoint gateway {#create-waypoint-gateway}
-
-Create a waypoint gateway configuration:
+Then create the same Gateway manifest shown in the Istio integration guide, but apply it to the tenant cluster. Point `kubectl` at your tenant cluster's context, not the control plane cluster context used in the linked step, and add `-n` if the workloads it routes for aren't in the current namespace:
 
 ```yaml title="waypoint-gateway.yaml"
 apiVersion: gateway.networking.k8s.io/v1
@@ -209,13 +162,11 @@ spec:
     protocol: HBONE
 ```
 
-Apply it to your control plane cluster:
-
-```bash title="Create Waypoint Gateway"
-kubectl --context="${HOST_CTX}" create -f waypoint-gateway.yaml --namespace="${VCLUSTER_HOST_NAMESPACE}"
+```bash title="Create Waypoint Gateway in the tenant cluster"
+kubectl --context="<tenant-cluster-context>" create -f waypoint-gateway.yaml
 ```
 
-After it is configured, you can configure your custom resources to sync the waypoint Gateway between the tenant and control plane clusters.
+vCluster syncs the Gateway to the control plane cluster, where Istio's waypoint controller reconciles it into a running proxy.
 
 ## Config reference
 
