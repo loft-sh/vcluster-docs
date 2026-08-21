@@ -26,7 +26,7 @@ Use DataVolumes when you need to:
 - Clone disk content from an existing PVC.
 - Create a blank disk that a VM can format and use.
 - Track the import, clone, or population status of a VM disk across connected KubeVirt clusters.
-- Identify VMs that reference a DataVolume before changing or deleting it.
+- Identify direct VM references and investigate other dependencies before changing or deleting a DataVolume.
 
 ## Prerequisites
 
@@ -35,16 +35,17 @@ Before creating or using DataVolumes, make sure:
 - The target Control Plane Cluster is [connected to vCluster Platform](../clusters/connect-cluster.mdx).
 - KubeVirt and CDI are installed on the target cluster, or the [KubeVirt node provider is configured to deploy them](../node-providers/kubevirt.mdx#infrastructure-deployment).
 - The user has permission to list, create, update, and delete `datavolumes.cdi.kubevirt.io` resources in the target namespace.
+- Cross-namespace clones need additional RBAC. See [Cross-namespace clones](#cross-namespace-clones).
 - The StorageClass used by the DataVolume can provision PVCs in the target cluster.
 - Image URLs, registries, PVC sources, secrets, and certificates are reachable from CDI importer pods.
 
 ## Create a standalone data volume
 
 :::tip
-Root disk DataVolumes for KubeVirt-backed Machines are usually generated automatically from [image properties](../node-providers/kubevirt.mdx#image-configuration) or an [OS image](../../use-platform/machines/os-images.mdx). Use the steps below to create a standalone DataVolume for reusable, secondary, or manually managed disks.
+Root disk DataVolumes for KubeVirt-backed Machines are usually generated automatically from [image properties](../node-providers/kubevirt.mdx#image-configuration) or an [OS image](../../use-platform/machines/os-images.mdx). Use the steps below instead for secondary or manually managed disks.
 :::
 
-Use the platform UI when you want an administrator-managed DataVolume that can be referenced by one or more VMs.
+The platform UI creates an administrator-managed DataVolume that a VM can reference directly.
 
 <Flow>
   <Step>
@@ -76,10 +77,49 @@ Use the platform UI when you want an administrator-managed DataVolume that can b
 
 See the [CDI documentation](https://kubevirt.io/user-guide/storage/containerized_data_importer/) for the full set of source types and import semantics.
 
-The DataVolumes table shows the cluster, namespace, source type, requested storage, platform lifecycle status, and owner VMs.
-Owner VMs appear when a VM references the volume.
+The DataVolumes table shows the cluster, namespace, source type, requested storage, platform lifecycle status, and **Used by machine**.
+The **Used by machine** column lists VMs that reference the volume directly.
+
+:::warning Before deleting a DataVolume
+An empty **Used by machine** value doesn't mean a DataVolume is unused.
+A DataVolume can back persistent storage without currently being attached to a VM.
+Some DataVolumes also back tenant PVCs through the vCluster KubeVirt CSI driver instead of a VM template disk, a case this column can never detect.
+See [Operational ownership](#operational-ownership) for the full breakdown before you delete anything this column doesn't explain.
+:::
+
+### Cross-namespace clones
+
+Cloning a PVC across namespaces needs RBAC beyond what's listed in [Prerequisites](#prerequisites).
+This applies whether the clone happens through the platform UI, `kubectl`, or the KubeVirt node provider's `kubevirt.vcluster.com/image-datasource` property.
+The identity performing the clone must be able to create `datavolumes/source` or pods in the source namespace.
+For DataVolumes the KubeVirt node provider synthesizes, that identity is the connected-cluster credentials the provider uses to reach the target cluster, not the identity of whoever created the Machine, NodeType, or NodeProvider.
+
+## Understand the data volume lifecycle
+
+CDI reports the raw lifecycle in the DataVolume `.status.phase` field.
+vCluster Platform maps that to a simplified **Status** column that groups related CDI phases.
+Use the CDI phase when you troubleshoot with `kubectl`. Use the platform status when you scan the UI.
+
+| Platform status | Common CDI phases or signals | Meaning |
+|---|---|---|
+| `Importing` | `ImportScheduled`, `ImportInProgress` | CDI scheduled or started an image import. |
+| `Pending` | `Pending`, `PVCBound`, clone phases, upload phases, `WaitForFirstConsumer`, `PendingPopulation` | CDI or the storage provider is preparing the PVC or waiting for scheduling. |
+| `Ready` | `Succeeded` | CDI finished preparing the volume. |
+| `Failed` | `Failed` or a `Running` condition with reason `Error` | CDI or the storage provider reported an error. |
+| `Paused` | `Paused` | CDI paused the operation. |
+| `Terminating` | `metadata.deletionTimestamp` is set | Kubernetes is deleting the DataVolume. |
+| `Unknown` | Missing, empty, or unrecognized phase | The platform can't classify the lifecycle state. |
+
+For example, the UI can show `Pending` for a DataVolume whose CDI phase is `WaitForFirstConsumer`.
+That usually means the PVC waits for a VM pod to schedule before the storage provider binds it.
 
 ## Create a reusable data source
+
+Three resources work together to prepare and consume VM storage:
+
+- `DataSource`: a reusable reference to prepared disk content.
+- `DataVolume`: the request and lifecycle for creating or populating that content into a PVC.
+- PersistentVolumeClaim: the storage a VM ultimately mounts.
 
 To let multiple VMs reuse the same disk content without importing it more than once, wrap a DataVolume's PVC in a CDI `DataSource`.
 Import or clone the disk once into a DataVolume through the platform UI, then create a `DataSource` that points to the resulting PVC:
@@ -100,26 +140,8 @@ spec:
 Reference the DataSource from a NodeProvider, NodeType, NodeClaim, or Machine with `kubevirt.vcluster.com/image-datasource`, the same property described in [Import a root disk through a Machine](#import-a-root-disk-through-a-machine).
 
 vCluster Platform doesn't create or manage DataSource resources directly. Create and update them with `kubectl`, and treat them as long-lived golden images.
-Deleting the underlying DataVolume or PVC breaks every VM that references the DataSource.
-
-## Understand the data volume lifecycle
-
-CDI reports the raw lifecycle in the DataVolume `.status.phase` field.
-vCluster Platform maps that to a simplified **Status** column that groups related CDI phases.
-Use the CDI phase when you troubleshoot with `kubectl`. Use the platform status when you scan the UI.
-
-| Platform status | Common CDI phases or signals | Meaning |
-|---|---|---|
-| `Importing` | `ImportScheduled`, `ImportInProgress` | CDI scheduled or started an image import. |
-| `Pending` | `Pending`, `PVCBound`, clone phases, upload phases, `WaitForFirstConsumer`, `PendingPopulation` | CDI or the storage provider is preparing the PVC or waiting for scheduling. |
-| `Ready` | `Succeeded` | CDI finished preparing the volume. |
-| `Failed` | `Failed` or a `Running` condition with reason `Error` | CDI or the storage provider reported an error. |
-| `Paused` | `Paused` | CDI paused the operation. |
-| `Terminating` | `metadata.deletionTimestamp` is set | Kubernetes is deleting the DataVolume. |
-| `Unknown` | Missing, empty, or unrecognized phase | The platform can't classify the lifecycle state. |
-
-For example, the UI can show `Pending` for a DataVolume whose CDI phase is `WaitForFirstConsumer`.
-That usually means the PVC waits for a VM pod to schedule before the storage provider binds it.
+Deleting the underlying DataVolume or PVC prevents new target DataVolumes from being populated and can interrupt clones that are still in progress.
+VMs whose target PVCs are already populated continue to use those independent volumes.
 
 ## Use data volumes with node providers
 
@@ -171,8 +193,10 @@ spec:
     kubevirt.vcluster.com/root-disk-size: 20Gi
 ```
 
-Use `<name>` to reference a DataSource in the VM namespace, or `<namespace>/<name>` to reference one in another namespace.
+Use `<name>` to reference a DataSource in the node provider namespace from `spec.kubeVirt.clusterRef.namespace`, or `<namespace>/<name>` to reference one in another namespace.
 Do not set `kubevirt.vcluster.com/image-url` and `kubevirt.vcluster.com/image-datasource` together.
+
+See [Cross-namespace clones](#cross-namespace-clones) for the RBAC a `<namespace>/<name>` reference requires.
 
 ### Attach data volumes to VM templates
 
@@ -237,10 +261,17 @@ spec:
 
 The referenced DataVolume must exist in the namespace where KubeVirt creates the VM.
 This is the path to use for DataVolumes created through the **Data Volumes** UI.
+Every VM created from this template references the same DataVolume and underlying PVC.
+
+:::warning
+DataVolumes created through the UI use `ReadWriteOnce` by default, which restricts read-write mounts to one node at a time.
+Only share a DataVolume when its access mode, storage provider, and workload support the intended concurrent access.
+When each VM needs an independent disk cloned from the same image, use a [reusable DataSource](#create-a-reusable-data-source) instead.
+:::
 
 ## Operational ownership
 
-DataVolumes are cluster resources, not vCluster Platform resources.
+DataVolumes are namespaced resources on connected KubeVirt clusters, not vCluster Platform resources.
 vCluster Platform gives administrators a UI for the connected KubeVirt clusters, but CDI owns the import and PVC population process.
 KubeVirt owns DataVolumes created from a VM's `dataVolumeTemplates`, and those resources usually follow the VM lifecycle.
 
@@ -249,13 +280,27 @@ Use this ownership model:
 | Owner | Responsibility |
 |---|---|
 | Platform administrator | Create reusable DataVolumes, choose storage classes, configure image sources, and control RBAC. |
-| vCluster Platform | Lists DataVolumes, creates administrator-requested DataVolumes, shows platform lifecycle status and owner VMs, and generates root-disk templates from KubeVirt image properties. |
+| vCluster Platform | Lists DataVolumes, creates administrator-requested DataVolumes, shows platform lifecycle status and directly referencing VMs, and generates root-disk templates from KubeVirt image properties. |
+| vCluster KubeVirt CSI driver | Creates host-cluster DataVolumes to back tenant PVCs and removes them according to the tenant PV reclaim lifecycle. |
 | CDI | Imports, clones, uploads, or populates PVC content and reports DataVolume phase and conditions. |
 | KubeVirt | Creates DataVolumes from VM templates and attaches the resulting PVCs to VMs. |
 | Storage provider | Provisions PVCs and enforces access modes, binding mode, expansion, and quota. |
 
-Before deleting a DataVolume, check the **Owner VMs** column or inspect VM volumes with `kubectl`.
-Deleting a DataVolume or its PVC while a VM references it can prevent the VM from starting or can detach required disk content.
+Some DataVolumes in this list back tenant-cluster PVCs rather than a VM template disk. The vCluster KubeVirt CSI driver creates one on the host cluster for each such PVC and hot-plugs the resulting PVC into the VM backing the selected tenant node. Because the VM references the PVC directly rather than the DataVolume, **Used by machine** never shows these VMs, even while the PVC is attached. Treat these the same as any other DataVolume you didn't create yourself.
+
+Before deleting a DataVolume, check the **Used by machine** column and inspect its metadata:
+
+```bash
+kubectl get datavolume -n vcluster-platform my-data-volume -o yaml
+```
+
+The column only detects direct VM references, so an empty value doesn't mean that the volume is unused.
+A DataVolume with the `csi.kubevirt.io/vcluster-claim` annotation backs the named PVC inside a vCluster.
+The `vcluster.loft.sh/managed-by` label also indicates that a vCluster manages the resource.
+Do not delete these DataVolumes directly from the platform UI or host cluster.
+Manage their lifecycle through the corresponding tenant PVC and PV reclaim policy instead.
+
+Deleting any DataVolume or its PVC while a VM or tenant PVC depends on it can prevent workloads from starting, detach required disk content, or cause data loss.
 
 ## Troubleshoot data volumes
 
@@ -286,8 +331,9 @@ kubectl get datasource -A
 kubectl describe datasource -n golden-images ubuntu-22-04
 ```
 
-Use `name` for a DataSource in the VM namespace and `namespace/name` for a DataSource in a different namespace.
-Also confirm the referenced DataSource points to a valid PVC or VolumeSnapshot and that RBAC allows CDI and KubeVirt to read it.
+Use `name` for a DataSource in the node provider namespace from `spec.kubeVirt.clusterRef.namespace`, and use `namespace/name` to select a different namespace explicitly.
+Also confirm the referenced DataSource points to a valid PVC or VolumeSnapshot.
+For a cross-namespace clone, verify that the connected-cluster credentials the KubeVirt node provider uses can create `datavolumes/source` or pods in the DataSource namespace.
 
 ### Virtual machine console opens but the guest doesn't boot
 
