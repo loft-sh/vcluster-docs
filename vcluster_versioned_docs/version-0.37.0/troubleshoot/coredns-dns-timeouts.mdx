@@ -1,0 +1,107 @@
+---
+title: Resolve CoreDNS DNS timeouts and SERVFAIL errors
+sidebar_label: CoreDNS DNS timeouts
+description: Diagnose and resolve DNS resolution timeouts and SERVFAIL errors caused by CoreDNS running out of capacity in a tenant cluster.
+---
+
+## Symptoms
+
+Tenant workloads see one or more of:
+
+- DNS resolution timeouts, or slower pod startup when init containers or
+  sidecars wait on DNS lookups.
+- Intermittent `SERVFAIL` responses from CoreDNS.
+- Sustained `NXDOMAIN` for a Service the tenant API server can still resolve.
+  Occasional `NXDOMAIN` alone isn't this: `ndots:5` search-path expansion
+  produces it as a normal byproduct of everyday lookups. It's only a signal
+  when it's sustained for a name that actually exists.
+
+## Confirm it's CoreDNS, not something else
+
+Test DNS resolution directly from a pod in the tenant cluster:
+
+```bash title="Test DNS resolution from inside the tenant cluster"
+kubectl run dns-test --rm -it --restart=Never --image=busybox:1.36 -- nslookup kubernetes.default.svc.cluster.local
+```
+
+Repeat it a few times in quick succession. Intermittent failures or slow
+responses point at CoreDNS capacity. Consistent, immediate failures point
+somewhere else, a NetworkPolicy blocking egress to CoreDNS, a misconfigured
+Corefile, or the CoreDNS Service having no endpoints.
+
+Check CoreDNS's own resource usage:
+
+```bash title="Check CoreDNS pod resource usage"
+kubectl top pod -n kube-system | grep ^coredns
+```
+
+If `kubectl top` isn't available (no metrics-server), or you already have
+Prometheus scraping CoreDNS's `:9153` metrics endpoint, use the [PromQL
+queries](../deploy/control-plane/coredns-scaling.mdx#what-to-watch)
+instead. They're more reliable for catching CPU or memory saturation than a
+point-in-time snapshot.
+
+Also check for restarts, which can mean CoreDNS is being OOMKilled rather
+than CPU-saturated. Both produce the same symptoms, but adding replicas only
+helps with the CPU case:
+
+```bash title="Check for OOMKilled restarts"
+kubectl get pods -n kube-system | grep ^coredns
+kubectl describe pod -n kube-system <coredns-pod-name> | grep -A3 "Last State"
+```
+
+## Cause
+
+A single CoreDNS replica is CPU-bound at vCluster's default 1 CPU limit, and
+has a 170Mi memory limit regardless of replica count. High DNS query volume,
+most often from AI and ML workloads with bursty pod scheduling, or from
+search-domain expansion (`ndots:5`) multiplying the number of queries per
+lookup, can exceed either ceiling. See
+[Why does CoreDNS become a DNS bottleneck?](../understand/coredns-bottlenecks.mdx)
+for the full explanation.
+
+## Fix
+
+### Separate CoreDNS deployment
+
+**If you're running the default separate CoreDNS deployment**
+(`controlPlane.coredns.embedded: false`), scale it. See
+[Scale CoreDNS for large node counts](../deploy/control-plane/coredns-scaling.mdx)
+for raising the replica count or running an autoscaler.
+
+### Check a node-proportional autoscaler
+
+**If you already run a node-proportional autoscaler**, confirm it's actually
+acting instead of assuming it is:
+
+```bash title="Watch the autoscaler adjust replica count"
+kubectl -n kube-system get deployment coredns -w
+kubectl -n kube-system logs deployment/coredns-autoscaler
+```
+
+### CoreDNS embedded
+
+**If you're running embedded CoreDNS** (`controlPlane.coredns.embedded: true`),
+neither of those options applies. There's no `coredns` Deployment to scale.
+See
+[Why embedded CoreDNS can't scale the same way](../understand/coredns-bottlenecks.mdx#why-embedded-coredns-cant-scale-the-same-way)
+for why.
+
+Two options add capacity instead, both ordinary `vcluster.yaml` changes applied
+through a normal upgrade on your live tenant cluster, no redeploy needed:
+
+- Raise `controlPlane.statefulSet.resources`. It resizes the whole
+  control-plane pod rather than CoreDNS specifically.
+- Raise `controlPlane.statefulSet.highAvailability.replicas`. More syncer
+  replicas means more active CoreDNS instances, since the `kube-dns`
+  Service points at the syncer pods (`TCP`/`UDP` 1053) when embedded is on.
+
+Switching CoreDNS from embedded to a separate Deployment can be done on a
+live tenant cluster without redeploying it. You may see a brief DNS gap
+during the switch.
+
+## Related resources
+
+- [Why does CoreDNS become a DNS bottleneck?](../understand/coredns-bottlenecks.mdx)
+- [Scale CoreDNS for large node counts](../deploy/control-plane/coredns-scaling.mdx)
+- [CoreDNS configuration](../configure/vcluster-yaml/control-plane/components/coredns.mdx)
