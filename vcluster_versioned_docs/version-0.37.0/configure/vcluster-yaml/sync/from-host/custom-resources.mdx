@@ -1,0 +1,225 @@
+---
+title: Custom resources
+sidebar_label: customResources
+sidebar_position: 1
+toc_max_heading_level: 3
+sidebar_class_name: free host-nodes
+description: Configuration for syncing custom resources from host
+---
+
+import CustomResourceDefinitions from '../../../../_partials/config/sync/fromHost/customResources.mdx'
+import VersionedCrdSyncing from '../../../../_fragments/sync/versioned-crd-syncing.mdx'
+import AggregatedApiResources from '../../../../_fragments/sync/aggregated-api-resources.mdx'
+import TenancySupport from '../../../../_fragments/tenancy-support.mdx';
+import FeatureTable from '@site/src/components/FeatureTable';
+
+<FeatureTable names="vcp-distro-generic-sync" />
+
+
+
+
+<TenancySupport hostNodes="true" />
+
+<GlossaryTerm term="vcluster">vCluster</GlossaryTerm> allows you to sync custom resources from the control plane cluster to the <GlossaryTerm term="tenant-cluster">tenant cluster</GlossaryTerm>. This feature creates read-only copies of custom resources inside your tenant cluster, making them available to applications and users without giving them direct access to the <GlossaryTerm term="control-plane-cluster">control plane cluster</GlossaryTerm>.
+
+When you enable custom resource syncing, vCluster first makes the resource type available in the tenant cluster. It copies the control plane cluster's CustomResourceDefinition (CRD) for a CRD-backed resource. For a resource served by an extension <GlossaryTerm term="api-server">API server</GlossaryTerm>, vCluster generates a schemaless CRD instead. It then begins syncing the resource instances. This is particularly useful for sharing cluster-wide resources or `ClusterStores` from [external-secrets](https://external-secrets.io/latest/) with tenant workloads. For details, see [Aggregated API resources](#aggregated-api-resources).
+
+The synced resources are read-only in the tenant cluster. Changes in the control plane cluster automatically update the tenant copies. Tenant changes never propagate to the control plane cluster. vCluster removes tenant-created objects and restores tenant-deleted objects. Tenant field updates remain local until the same fields change in the control plane cluster.
+
+If you need to sync resources from the tenant cluster to the control plane cluster instead, see [syncing custom resources to the control plane cluster](../to-host/advanced/custom-resources.mdx). For help choosing a direction, and for lifecycle and troubleshooting guidance, see [Manage custom resources](../../../../manage/custom-resources.mdx).
+
+For a full worked example, see [Sync a namespaced custom resource from the control plane cluster](../../../../learn-how-to/sync-custom-resource-from-host.mdx).
+
+:::info Automatic RBAC for configured resources
+vCluster automatically adds the required cluster RBAC permissions for retrieving the CustomResourceDefinition and syncing the configured resources. Extension API servers can require additional permissions for related resources. See [Authorization on the control plane cluster](#authorization-on-the-control-plane-cluster).
+:::
+
+<!-- vale off -->
+
+## Cluster-scoped example
+
+Cluster-scoped custom resources exist at the cluster level and are not tied to any specific namespace. These are the simplest to sync because they don't require namespace mapping.
+
+To sync cluster-scoped custom resources from the control plane cluster, configure the resource in your `vcluster.yaml` file:
+
+```yaml title="configure cluster-scoped custom resource sync from host"
+sync:
+  fromHost:
+    customResources:
+      customobjects.example.io:
+        enabled: true
+        scope: Cluster
+```
+
+By default, vCluster does not require you to specify an API version when syncing custom resources. When a CRD has multiple versions and you don't specify a version, vCluster uses the storage version.
+
+If you want to sync a specific version of a CRD that is not the storage version, you can explicitly specify it in the sync configuration.
+
+<AggregatedApiResources yamlTitle="Configure aggregated API resource sync from host" direction="fromHost" scopeName="Cluster"/>
+
+### Read-only sync of aggregated API resources
+
+vCluster generates a CRD in the tenant cluster for cluster-scoped and namespace-scoped aggregated API resources alike. Namespace-scoped resources still require `mappings.byName`, the same as CRD-backed ones.
+
+The synced copies are read-only in the tenant cluster. To let tenant workloads create and modify a resource that an extension API server serves, sync it in the other direction with [syncing custom resources to the control plane cluster](../to-host/advanced/custom-resources.mdx).
+
+### Limitations
+
+The Kubernetes API accepts standard CRD operations for an aggregated API resource, but from-host reconciliation remains read-only. vCluster removes tenant-created objects and restores tenant-deleted objects. Tenant field updates remain local until the same fields change in the control plane cluster.
+
+The generated CRD serves the resource itself, plus the `status` subresource when the control plane cluster serves it. Extension API servers can expose additional subresources, such as `scale`, `logs`, or `exec`. Those aren't available inside the tenant cluster, because a CRD can't serve them.
+
+<VersionedCrdSyncing yamlTitle="Configure cluster-scoped CR sync from host" scopeName="Cluster"/>
+
+## Namespace-scoped custom resources
+
+By default, namespace-scoped custom resource syncing is disabled.
+
+Enabling this feature allows you to sync namespaced custom resources from specific namespaces in the control plane cluster to corresponding namespaces in the tenant cluster.
+
+```yaml title="Configure namespace-scoped custom resource sync from host"
+sync:
+  fromHost:
+    customResources:
+      customobjects.example.io:
+        enabled: true
+        scope: Namespaced
+        mappings:
+          byName:
+            # syncs all CustomObjects from "foo" namespace
+            # to the "bar" namespace in a virtual cluster. CustomObjects names are unchanged.
+            "foo/*": "bar/*"
+```
+
+Key behaviors for namespace scoped syncing:
+
+- You can modify the name of the synced resource in the tenant cluster.
+- You cannot sync from all namespaces in the control plane cluster.
+- Sync is one-directional, from the control plane cluster to the tenant cluster. If you modify an object in the control plane cluster, vCluster syncs the change to the tenant object.
+- When you delete a tenant object, vCluster re-creates it if the control plane cluster object still exists.
+- When you delete a control plane cluster object, vCluster deletes the tenant object.
+
+vCluster creates namespaces in the tenant cluster automatically during the sync if they don't already exist.
+
+### Prerequisites
+
+Ensure you have the following:
+
+- All specified namespaces must exist in the control plane cluster when vCluster starts.
+- The control plane cluster must serve the resource when vCluster starts, either through a CustomResourceDefinition or through an extension API server.
+
+:::info Aggregated API resources
+Namespace-scoped resources served by an extension API server sync the same way, including the `mappings.byName` requirement. See [Aggregated API resources](#aggregated-api-resources) for the generated CRD and its limitations.
+:::
+
+### Example
+
+For namespace scoped custom resources, you must specify `mappings.byName` in the config. This tells vCluster which control plane cluster resources should be synced and where to place them in the tenant cluster.
+
+vCluster can't sync custom resources that were already synced from the tenant cluster to the control plane cluster. It skips these resources.
+
+The following is an example with a generic custom resource.
+
+To sync all custom resources from a given namespace in the control plane cluster to a given namespace in the tenant cluster, use the "namespace/*" wildcard:
+
+```yaml title="Configure custom resource sync from host namespace"
+sync:
+  fromHost:
+    customResources:
+      customobjects.example.io:
+        enabled: true
+        scope: Namespaced
+        mappings:
+          byName:
+            # syncs all CustomObjects from "foo" namespace
+            # to the "bar" namespace in a virtual cluster. CustomObjects names are unchanged.
+            "foo/*": "bar/*"
+```
+
+To sync only specific custom resources from namespaces, provide `namespace/name` as the key and value:
+
+```yaml title="Configure custom resource sync from host for one object"
+sync:
+  fromHost:
+    customResources:
+      customobjects.example.io:
+        enabled: true
+        scope: Namespaced
+        mappings:
+          byName:
+            # syncs CustomObject named "my-object" from "foo" host namespace
+            # to the "bar" namespace in virtual.
+            "foo/my-object": "bar/my-object"
+```
+
+There is also a syntax to sync all custom resources from the tenant cluster's own control plane cluster namespace to the tenant namespace. Since the tenant cluster's namespace is not always known upfront (for example, when vCluster is created by the platform), `""` (empty string) is treated as "tenant cluster's own control plane cluster namespace":
+
+```yaml title="configure custom resource sync from host for tenant cluster's namespace"
+sync:
+  fromHost:
+    customResources:
+      customobjects.example.io:
+        enabled: true
+        scope: Namespaced
+        mappings:
+          byName:
+            # syncs all CustomObjects from virtual cluster's host namespace
+            # to "my-virtual" namespace in a virtual cluster.
+            "": "my-virtual"
+```
+
+You can also specify only a few custom resources from the tenant cluster's own control plane cluster namespace:
+
+```yaml title="configure custom resource sync from host for objects in tenant cluster's namespace"
+sync:
+  fromHost:
+    customResources:
+      customobjects.example.io:
+        enabled: true
+        scope: Namespaced
+        mappings:
+          byName:
+            # syncs CustomObject named "my-object" from virtual cluster's host namespace
+            # to "my-virtual-namespace" in a virtual cluster.
+            "/my-object": "my-virtual/my-object"
+```
+
+It's also possible to modify the custom resource name during the sync:
+
+```yaml title="configure custom resource sync from host and modify name and namespace"
+sync:
+  fromHost:
+    customResources:
+      customobjects.example.io:
+        enabled: true
+        scope: Namespaced
+        mappings:
+          byName:
+            # syncs "foo" CustomObject from "system" namespace in the host
+            # as "my-foo" in "my-virtual" namespace in a virtual cluster.
+            "system/foo": "my-virtual/my-foo"
+```
+
+### Patches
+
+Use `sync.fromHost.customResources.<resource>.patches` to transform custom resource fields while syncing from the control plane cluster to the tenant cluster. For from-host sync, use `reverseExpression` for values that should appear in the tenant cluster. See [Patching synced resources](../patching/README.mdx) for syntax, directionality, and custom resource labels patches.
+
+```yaml title="configure custom resource sync from host with patches"
+sync:
+  fromHost:
+    customResources:
+      customobjects.example.io:
+        enabled: true
+        scope: Namespaced
+        mappings:
+          byName:
+            "default/my-object": "barfoo2/object-my"
+        patches:
+          - path: metadata.annotations[*]
+            # optional reverseExpression to reverse the change from the host cluster
+            reverseExpression: "value.startsWith('www.') ? value.slice(4) : value"
+```
+
+## Config reference
+
+<CustomResourceDefinitions/>

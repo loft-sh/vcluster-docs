@@ -1,0 +1,125 @@
+---
+title: Logging
+sidebar_label: Logging
+sidebar_position: 3
+description: Understand the types of logs vCluster produces and how to access, configure, and collect them.
+---
+
+import Tabs from "@theme/Tabs";
+import TabItem from "@theme/TabItem";
+
+vCluster produces three distinct types of logs. Each type has a different source, a different audience, and different tooling requirements.
+
+| Type | Source | Typical access |
+|------|--------|----------------|
+| [Control plane logs](#control-plane-logs) | vCluster pod `stdout` | `kubectl logs` |
+| [Audit logs](#audit-logs) | Tenant cluster API server | `kubectl logs` or file |
+| [Workload logs](#workload-logs) | Apps inside the tenant cluster | Log collector |
+
+## Control plane logs
+
+The vCluster pod writes operational logs to `stdout`. These cover syncer activity, API request handling, controller reconciliation, and runtime errors. Check these logs first when diagnosing unexpected vCluster behavior.
+
+```bash
+kubectl logs -n <vcluster-namespace> <vcluster-pod-name> -f
+```
+
+```text title="Example output"
+2025-06-16 04:43:25	INFO	license	loader/inject.go:52	initializing license...	{"component": "vcluster"}
+2025-06-16 04:43:25	INFO	license	loader/inject.go:59	detected license type	{"component": "vcluster", "licenseType": "Online"}
+2025-06-16 04:43:29	INFO	online/license.go:141	Enabled features:	{"component": "vcluster"}
+2025-06-16 04:43:29	INFO	syncer/syncer.go:84	starting syncer	{"component": "vcluster"}
+```
+
+By default, logs use a human-readable console format at `info` level. To change the output format or increase verbosity:
+
+- [Log encoding](../configure/vcluster-yaml/logging.mdx) — switch between console and JSON format
+- [Enable debug logging](../learn-how-to/control-plane/container/enable-debug-logging.mdx) — increase verbosity for troubleshooting
+
+## Audit logs
+
+The tenant cluster's Kubernetes API server can record an audit trail of every request it receives. This includes who made the request, what resource it targeted, and what action was taken.
+
+These are distinct from [platform audit logs](/docs/platform/configure/platform-configs/audit). Platform audit logs capture requests to the platform gateway. Tenant cluster audit logs capture requests to the tenant cluster's own Kubernetes API server.
+
+To enable audit logging, pass the `--audit-policy-file` flag as an API server extra argument. For a complete setup example with a ConfigMap and volume mount, see [Control plane configuration](../deploy/control-plane/kubernetes-pod/security/hardening-guide/host-nodes/3-control-plane.mdx#32-logging).
+
+Each audit event is a single-line JSON object:
+
+```json title="Example audit event"
+{"kind":"Event","apiVersion":"audit.k8s.io/v1","level":"Metadata","auditID":"a3d3e5f0-1b2c-4d5e-9f0a-1b2c3d4e5f6a","stage":"ResponseComplete","requestURI":"/api/v1/namespaces/default/secrets","verb":"get","user":{"username":"admin","groups":["system:masters","system:authenticated"]},"sourceIPs":["10.0.0.1"],"objectRef":{"resource":"secrets","namespace":"default","name":"db-credentials","apiVersion":"v1"},"responseStatus":{"code":200},"requestReceivedTimestamp":"2025-06-16T09:20:56.123456Z","stageTimestamp":"2025-06-16T09:20:56.145678Z","annotations":{"authorization.k8s.io/decision":"allow"}}
+```
+
+By default, audit events write to `stderr`. To route them to `stdout` for collection with `kubectl logs`, add `--audit-log-path` as a second extra argument:
+
+```yaml title="vcluster.yaml"
+controlPlane:
+  distro:
+    k8s:
+      apiServer:
+        extraArgs:
+        - --audit-policy-file=/etc/kubernetes/audit-policy.yaml
+        - --audit-log-path=/dev/stdout
+```
+
+## Workload logs
+
+Apps running inside the tenant cluster write logs to `stdout` and `stderr`, the same as in any Kubernetes cluster. You can access them directly through the tenant cluster's API server:
+
+```bash
+kubectl logs -n <namespace> <pod-name>
+```
+
+```text title="Example output"
+2025-06-16T09:21:03Z INFO  Server listening on :8080
+2025-06-16T09:21:04Z INFO  GET /health 200 OK (2ms)
+2025-06-16T09:21:10Z ERROR Failed to connect to database: connection refused
+```
+
+For centralized collection across multiple tenant clusters, standard log collectors such as Fluentd, Promtail, and the ELK stack need extra configuration. When vCluster syncs pods to the control plane cluster, it rewrites pod names. A pod named `web-6d4f9b` inside the tenant cluster appears as `web-6d4f9b-x-default-x-my-vcluster` on the control plane cluster. Log collectors reading from the node filesystem see only the rewritten name and cannot correlate entries back to the originating workload.
+
+The HostPath Mapper solves this by creating symlinks on each node that map physical pod paths back to their virtual names.
+
+<Tabs
+  defaultValue="oss"
+  values={[
+    { label: "vCluster OSS", value: "oss" },
+    { label: "vCluster Platform", value: "platform" },
+  ]}
+>
+<TabItem value="platform">
+
+Use the [Central HostPath Mapper](/docs/platform/maintenance/monitoring/central-hostpath-mapper). It installs a single DaemonSet on the control plane cluster that handles path remapping for all tenant clusters.
+
+</TabItem>
+<TabItem value="oss">
+
+Two options are available.
+
+**Option 1: Per-cluster HostPath Mapper**
+
+First, enable the HostPath Mapper in `vcluster.yaml`:
+
+```yaml title="vcluster.yaml"
+controlPlane:
+  hostPathMapper:
+    enabled: true
+```
+
+Then install the HostPath Mapper DaemonSet in the same namespace as the vCluster:
+
+```bash
+helm install vcluster-hpm vcluster-hpm \
+  --repo https://charts.loft.sh \
+  -n <vcluster-namespace> \
+  --set VclusterReleaseName=<vcluster-name>
+```
+
+See [Host path mapper](../configure/vcluster-yaml/control-plane/components/host-path-mapper.mdx) for version compatibility notes and full configuration options.
+
+**Option 2: Collect logs from inside the tenant cluster**
+
+Deploy your log collector inside the tenant cluster rather than on the control plane cluster node. Collectors running inside the tenant cluster read logs through the tenant cluster's API server and see virtual pod names directly. No path remapping is needed.
+
+</TabItem>
+</Tabs>

@@ -1,0 +1,56 @@
+import CodeBlock from '@theme/CodeBlock';
+
+## Aggregated API resources
+
+Not every extension type in a Kubernetes cluster is backed by a CustomResourceDefinition. Kubernetes can also serve types through [API aggregation](https://kubernetes.io/docs/concepts/extend-kubernetes/api-extension/apiserver-aggregation/), where an extension API server registered as an APIService owns the type instead of a CRD.
+
+vCluster syncs these resources through the same `customResources` configuration. You don't declare that a resource comes from an extension API server. vCluster resolves every configured resource against the control plane cluster on startup:
+
+- If the control plane cluster has a CRD for the resource, vCluster copies that CRD into the tenant cluster.
+- If it doesn't, vCluster looks the resource up in the control plane cluster's discovery data. When an extension API server serves the resource, vCluster generates a schemaless CRD for it in the tenant cluster.
+- If neither a CRD nor an extension API server serves the resource, the tenant cluster fails to start.
+
+This resolution happens only on startup. If the extension API server isn't serving the resource then, vCluster fails to start and tries again when the control plane pod restarts. An extension API server that appears or recovers later is picked up on that next restart.
+
+Because `kubectl get crds` doesn't list resources that an extension API server serves, use `kubectl api-resources` to find them.
+
+<CodeBlock language="yaml" title={props.yamlTitle}>
+  {'sync:\n' +
+    '  ' + props.direction + ':\n' +
+    '    customResources:\n' +
+    '      customobjects.example.io:\n' +
+    '        enabled: true' +
+    (props.scopeName ? '\n        scope: ' + props.scopeName : '')}
+</CodeBlock>
+
+### Generated CRDs for aggregated API resources
+
+vCluster builds the generated CRD from the control plane cluster's discovery data. The kind, plural name, scope, and presence of a `status` subresource come from the control plane cluster. vCluster derives the singular name by lowercasing the kind and derives the list kind by appending `List`. It marks the CRD with the `vcluster.loft.sh/generated-from: aggregated-apiserver` annotation and creates or updates it when the tenant cluster starts.
+
+Objects of a generated CRD live in the tenant cluster's own data store, like any other custom resource, so [snapshots](../../key-features/snapshots.mdx) include them.
+
+The generated CRD has no resource-specific OpenAPI schema and preserves unknown fields. The tenant API server doesn't validate custom fields against the extension API server's schema. Keep the following behaviors in mind:
+
+- `kubectl explain` returns no field documentation for the resource inside the tenant cluster.
+- The tenant cluster doesn't prune unknown fields.
+- When the resource key includes no version, vCluster uses the API group's preferred version on the control plane cluster. For CRD-backed resources, it uses the storage version instead.
+- When you change the version in the resource key, vCluster serves the new version and retains previously stored versions without serving them.
+
+vCluster uses the `vcluster.loft.sh/generated-from: aggregated-apiserver` annotation as the adoption marker. If an existing CRD has this marker, vCluster adopts it and updates its specification. If a CRD of the same name doesn't have this marker, the tenant cluster fails to start. Delete that CRD or remove the resource from `customResources`.
+
+Removing an entry from `customResources`, or setting `enabled: false`, stops the syncer. vCluster doesn't delete the generated CRD, its objects, or the objects it created on the control plane cluster. The tenant cluster keeps serving the resource, and writes to it stay tenant-local because nothing validates or syncs them.
+
+### Authorization on the control plane cluster
+
+vCluster grants itself the permissions it needs for every resource listed in `customResources`. Some extension API servers authorize a request against a related resource that you never configure for sync. For example, an API server can check access to a grouping resource before it serves or accepts an object. Grant those permissions explicitly. This example grants access to a related resource in the vCluster control plane namespace:
+
+```yaml title="Grant extra permissions for an extension API server"
+rbac:
+  role:
+    extraRules:
+      - apiGroups: ["example.io"]
+        resources: ["customobjectgroups"]
+        verbs: ["get", "list", "watch"]
+```
+
+Use `rbac.role.extraRules` for resources in the vCluster control plane namespace. Use `rbac.clusterRole.extraRules` for cluster-scoped resources or namespaced resources in other control plane cluster namespaces. For details, see [Add custom RBAC rules](../../configure/vcluster-yaml/rbac.mdx#add-custom-rbac-rules).
