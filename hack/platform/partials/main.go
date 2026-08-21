@@ -13,7 +13,6 @@ import (
 
 	"github.com/loft-sh/vcluster-docs/hack/platform/util"
 
-	clusterv1 "github.com/loft-sh/agentapi/v4/pkg/apis/loft/cluster/v1"
 	managementv1 "github.com/loft-sh/api/v4/pkg/apis/management/v1"
 	storagev1 "github.com/loft-sh/api/v4/pkg/apis/storage/v1"
 	argoapplicationsv1alpha1 "github.com/loft-sh/external-types/argoproj/argo-cd/v2/pkg/apis/application/v1alpha1"
@@ -553,8 +552,8 @@ spec:
 				},
 				AppConfig: storagev1.AppConfig{
 					Icon: "https://argo-cd.readthedocs.io/en/stable/assets/logo.png",
-					Config: clusterv1.HelmReleaseConfig{
-						Chart: clusterv1.Chart{
+					Config: storagev1.HelmReleaseConfig{
+						Chart: storagev1.Chart{
 							Name:    "argo-cd",
 							RepoURL: "https://argoproj.github.io/argo-helm",
 						},

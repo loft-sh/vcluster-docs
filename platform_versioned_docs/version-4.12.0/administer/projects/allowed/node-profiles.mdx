@@ -1,0 +1,69 @@
+---
+title: Manage Node Profiles
+sidebar_label: Node Profiles
+sidebar_position: 4
+description: Control which node profiles a project's private nodes can use, and set a default profile for nodes that don't select one.
+---
+
+A project can restrict which [node profiles](../../node-profiles/overview.mdx) its private nodes may use, and separately set a default profile for nodes that don't select one explicitly. Use these settings to keep tenants on a curated set of profiles and to apply a baseline configuration to nodes that join without an explicit profile.
+
+## Define allowed and default profiles
+
+Suppose the `ml-platform` project should only allow the `gpu-training` and `general-compute` profiles, and should default to `general-compute` when a node doesn't select a profile explicitly. Edit the project YAML and set `spec.allowedNodeProfiles` and, optionally, `spec.defaultNodeProfile`:
+
+```yaml
+apiVersion: management.loft.sh/v1
+kind: Project
+metadata:
+  name: ml-platform
+spec:
+  allowedNodeProfiles:
+    - name: gpu-training
+    - name: general-compute
+  defaultNodeProfile: general-compute
+```
+
+With this spec, nodes in this project can use either `gpu-training` or `general-compute`. A node that joins without an explicit profile, and whose <GlossaryTerm term="tenant-cluster">tenant cluster</GlossaryTerm> has no `privateNodes.defaultProfile`, falls back to the project's `general-compute` default.
+
+If a project shouldn't use node profiles at all, disallow them:
+
+```yaml
+spec:
+  allowedNodeProfiles: []
+```
+
+:::warning Also clear the default
+An empty `allowedNodeProfiles` list is rejected while `defaultNodeProfile` is still set, because the default itself would no longer be allowed. Clear `defaultNodeProfile` in the same update.
+:::
+
+## Behavior
+
+The project fields are `spec.allowedNodeProfiles` and `spec.defaultNodeProfile`. Changing either field requires permission to update the corresponding project subresource.
+
+### Allowed node profiles
+
+The value of `allowedNodeProfiles` determines which profiles a project's nodes may use:
+
+| Value | Effect |
+|-------|--------|
+| Unset (field omitted) | All node profiles are allowed. This is the default. |
+| Empty list (`allowedNodeProfiles: []`) | No node profiles are allowed. Any explicit `profileRef` or `profile` is rejected. `defaultNodeProfile` must also be unset. |
+| One or more entries | Only allows node profiles matching any specified entry. |
+
+Each entry in `allowedNodeProfiles` has a `name`, which can be either an exact `NodeProfile` name or an owner-prefix wildcard ending in `.*`.
+
+Matching rules:
+
+- Names are case sensitive.
+- A wildcard entry must end in `.*`. Only that literal suffix triggers prefix matching, so `platform.*` matches any profile whose name starts with `platform.`, such as `platform.gpu-training`. A pattern like `gpu-*` is treated as an exact name.
+- The platform rejects a manual join, `NodeClaim`, or auto-node pool that explicitly references a disallowed profile.
+
+### Default node profile
+
+`defaultNodeProfile` sets the project fallback profile. A node uses this value only when it doesn't select a profile explicitly and the tenant cluster's `privateNodes.defaultProfile` is also unset.
+
+The default must always be allowed by `allowedNodeProfiles`. That means `defaultNodeProfile` can't be set while `allowedNodeProfiles` is an empty list, because nothing matches an empty allowlist.
+
+## Precedence
+
+A profile is resolved in the order described in [Assignment and precedence](../../node-profiles/overview.mdx#assignment-and-precedence). An explicit selection wins first, then the tenant cluster's default, then the project's default. Whichever source wins, the result is validated against `allowedNodeProfiles` before the profile is applied.
