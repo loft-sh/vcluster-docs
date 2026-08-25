@@ -1,0 +1,169 @@
+---
+title: Metal3 Network Integration
+sidebar_label: Network Integration
+sidebar_position: 5.5
+sidebar_class_name: pro
+---
+
+The Metal3 provider provisions bare metal servers, but on its own it does not isolate the network those servers run on. Network integration determines how strongly each tenant's traffic is separated on the metal fabric and how the platform manages addresses for provisioned servers. The right choice depends on how much you trust the tenants that share your hardware: a single trusted team can run on a flat provisioning network, while untrusted or external tenants need isolation enforced in the physical network.
+
+The provider selects a network integration through a family of network providers. A provider is chosen with the `metal3.vcluster.com/network-provider` property on the network environment (a [`NodeEnvironment`](./overview.mdx#node-environments) resource).
+
+:::info Requires private nodes
+The Neutron and Netris modes on this page require [private nodes](/docs/vcluster/deploy/worker-nodes/private-nodes/overview). They provision servers as private nodes for a tenant cluster and select their network through a network environment. The default mode (no network integration) has no such requirement.
+:::
+
+## Choose a network integration mode
+
+There are three modes, from a flat shared network to full isolation in hardware.
+
+| Mode | Isolation level | IPAM | When to use |
+|---|---|---|---|
+| No network integration (default) | None. The provisioning network is the tenant network. | Platform IPAM leases on the shared flat network. | A single trusted tenant, or a lab where the provisioning network is the only network. |
+| Neutron (flat network) | None at the fabric. The network stays flat and shared; Ironic owns the port lifecycle. | Platform IPAM, per tenant network. | You want Ironic to drive ports through its neutron interface, but do not need hardware isolation. |
+| Netris | Hardware. Per-server L2 isolation through Netris. | Platform IPAM; the subnet is derived from the Netris server cluster unless a CIDR is pinned. | Untrusted, external, or regulated tenants that must be isolated at the physical network layer. |
+
+The two flat modes give control-plane, API, and address isolation between tenant clusters, but every server still shares the same layer 2 network. Only Netris moves the isolation boundary into the hardware fabric.
+
+## No network integration (default)
+
+With no network provider set, the provisioning network is also the tenant network. The platform's built-in IPAM leases an address on that shared flat network and writes it, together with the gateway and DNS servers, directly onto the `BareMetalHost` as DHCP annotations. This is the default Metal3 behavior and requires no additional configuration.
+
+Addresses come from the existing network properties documented on the [Metal3 provider page](./metal3.mdx#network-configuration):
+
+- `metal3.vcluster.com/network-cidr` sets the gateway and subnet to allocate from.
+- `metal3.vcluster.com/network-ip-range` restricts allocation to explicit ranges.
+- `metal3.vcluster.com/network-data` supplies a complete custom network-data document.
+
+Because all servers share one network, use this mode only where the tenants sharing the hardware are trusted.
+
+## Neutron (flat network)
+
+In this mode Ironic drives its `neutron` network interface instead of writing addresses straight onto the `BareMetalHost`. The platform allocates the address for each port and Ironic manages the port lifecycle across provisioning, cleaning, and inspection.
+
+:::warning Neutron does not isolate the network
+Neutron changes how ports are managed, not how the network is segmented. The underlying network is still flat and shared across tenants. For isolation enforced in hardware, use Netris.
+:::
+
+Enable Neutron by setting the NodeProvider field `metal3.neutronEnabled: true`:
+
+```yaml
+apiVersion: management.loft.sh/v1
+kind: NodeProvider
+metadata:
+  name: metal3-provider
+spec:
+  metal3:
+    neutronEnabled: true
+```
+
+Then supply the externally provisioned network names that Ironic requests through the metal3 chart `helmValues`:
+
+```yaml
+apiVersion: management.loft.sh/v1
+kind: NodeProvider
+metadata:
+  name: metal3-provider
+spec:
+  metal3:
+    deploy:
+      metal3:
+        enabled: true
+        helmValues: |
+          neutron:
+            enabled: true
+            networks:
+              provisioning: provisioning
+              cleaning: cleaning
+              inspection: inspection
+```
+
+When `cleaning` or `inspection` are left empty, they fall back to the provisioning network. Servers provisioned in this mode select their network through a network environment, so a network environment is required.
+
+## Netris (hardware network isolation)
+
+Netris provides true network isolation in hardware. On provisioning, the platform attaches each server to a Netris server cluster, which gives that server per-server L2 isolation. Tenants are then isolated from each other at the physical network layer rather than only at the control plane, which is what external, resale, or regulated tenants require.
+
+Requires [Neutron mode](#neutron-flat-network). Netris builds on Neutron and adds per-server L2 isolation on top, so it also requires a network environment.
+
+### Provide Netris API credentials
+
+Reference a Secret holding the Netris API `url`, `username`, and `password` on the NodeProvider. The `metal3.neutronEnabled: true` field is repeated here to show the complete provider configuration:
+
+```yaml
+apiVersion: management.loft.sh/v1
+kind: NodeProvider
+metadata:
+  name: metal3-provider
+spec:
+  metal3:
+    neutronEnabled: true
+    netris:
+      secretRef:
+        name: netris-credentials
+        namespace: metal3-system
+```
+
+### Select and configure the Netris provider
+
+The Netris provider is selected and configured through properties on the network environment. Set them under `spec.properties`.
+
+| Property | Required | Description |
+|---|---|---|
+| `metal3.vcluster.com/network-provider` | Yes | Set to `netris` to select the Netris network provider. |
+| `netris.vcluster.com/server-cluster` | Yes | Name of the Netris server cluster to attach each server to. Also the subnet source when no CIDR is pinned. |
+| `netris.vcluster.com/server-cluster-template` | Conditional | Name of a Netris server-cluster template. The platform creates the server cluster from it when the cluster does not already exist. |
+| `netris.vcluster.com/server-cluster-template-json` | Conditional | JSON body used to create the template when a template of that name does not already exist. |
+| `netris.vcluster.com/admin` | Conditional | Netris tenant that owns the created server cluster. Required when the platform creates the server cluster. |
+| `netris.vcluster.com/site` | Conditional | Netris site the created server cluster belongs to. Required when the platform creates the server cluster. |
+| `netris.vcluster.com/vpc` | No | VPC for the created server cluster. |
+
+When the named server cluster already exists, the platform adopts it and never marks it managed, so `server-cluster-template`, `admin`, and `site` are only needed when the platform must create the server cluster itself.
+
+When the platform creates a server cluster or template, it records what it created on the network environment so it can remove exactly those resources on teardown:
+
+- `netris.vcluster.com/managed-server-cluster`
+- `netris.vcluster.com/managed-server-cluster-template`
+
+These annotations are managed by the platform. Do not set them by hand.
+
+:::warning Shared Netris resources are deleted with their creator
+The platform only deletes the Netris server cluster and template that a network environment created. If several network environments reference the same Netris server cluster or VPC, deleting the network environment that created those Netris resources deletes them for every network environment that still references them, breaking the others. Give each network environment its own server cluster, or have only environments that adopt a pre-existing, externally managed server cluster share one.
+:::
+
+The subnet for each server is derived from the Netris server cluster's network unless `metal3.vcluster.com/network-cidr` pins it, in which case the pinned CIDR always wins.
+
+### Override the Netris server name
+
+By default a server is registered in Netris under its `BareMetalHost` name. To register it under a different name, set the following annotation on the `BareMetalHost`:
+
+```yaml
+apiVersion: metal3.io/v1alpha1
+kind: BareMetalHost
+metadata:
+  name: server-01
+  annotations:
+    netris.vcluster.com/server-name: rack1-server-01
+```
+
+### Example
+
+This network environment selects the Netris provider and points at a server cluster that the platform creates from a template if it does not already exist:
+
+```yaml
+apiVersion: management.loft.sh/v1
+kind: NodeEnvironment
+metadata:
+  name: tenant-a-network
+  namespace: metal3-system
+spec:
+  providerRef: metal3-provider
+  properties:
+    metal3.vcluster.com/network-provider: netris
+    netris.vcluster.com/server-cluster: tenant-a
+    netris.vcluster.com/server-cluster-template: default-template
+    netris.vcluster.com/admin: tenant-a-admin
+    netris.vcluster.com/site: datacenter-1
+```
+
+Servers select this network environment through the `vcluster.com/network-environment` property, described on the [Metal3 provider page](./metal3.mdx#network-environment). Any server provisioned into it is attached to the `tenant-a` Netris server cluster and given per-server L2 isolation.
