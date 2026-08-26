@@ -1,0 +1,88 @@
+---
+title: Use a control plane cluster registry from a tenant cluster
+sidebar_label: In-cluster registry access
+description: Pull images from a private registry running on the control plane cluster, from application code and from pod specs.
+sidebar_class_name: host-nodes private-nodes
+---
+
+import TenancySupport from '../_fragments/tenancy-support.mdx';
+
+<TenancySupport hostNodes="true" privateNodes="true" />
+
+A private OCI registry often runs as a `ClusterIP` Service on the <GlossaryTerm term="control-plane-cluster">control plane cluster</GlossaryTerm>, reachable at an in-cluster FQDN such as `registry.ns.svc.cluster.local`. Whether a <GlossaryTerm term="tenant-cluster">tenant cluster</GlossaryTerm> can reach it depends on who's doing the pulling.
+
+## Two ways a pod pulls an image
+
+A pod reaches the registry in one of two ways, and only one of them is helped by DNS changes inside the tenant cluster.
+
+**Application-level access.** Code running inside a pod, such as `crane`, `skopeo`, or a custom client using `go-containerregistry`, resolves the registry's hostname itself, through the pod's own DNS configuration.
+
+**Image pulls done by the kubelet.** When a pod spec references an image with `image: registry.ns.svc.cluster.local/my-image:tag`, the kubelet resolves that hostname and pulls the image through containerd, not the pod.
+
+`replicateServices.fromHost` only changes DNS resolution inside the tenant cluster's pod network, so it solves the first case and doesn't help with the second.
+
+## Application-level access
+
+Configure [`replicateServices.fromHost`](../configure/vcluster-yaml/networking/replicate-services.mdx) to map the registry's Service into the tenant cluster:
+
+```yaml title="vcluster.yaml"
+networking:
+  replicateServices:
+    fromHost:
+    - from: registry-ns/registry
+      to: my-virtual-namespace/registry
+```
+
+The tenant cluster's CoreDNS now resolves `registry.my-virtual-namespace` to the <GlossaryTerm term="control-plane">control plane</GlossaryTerm> cluster's registry Service. A pod that calls the registry directly, rather than through a pod spec's `image:` field, can reach it by that name. The tenant pod performs the pull itself, end to end.
+
+## Image pulls done by the kubelet
+
+On shared nodes there's no tenant kubelet. The underlying node's kubelet does the pulling, using the node's own `/etc/resolv.conf`, typically pointed at systemd-resolved rather than the tenant cluster's CoreDNS. `fromHost` doesn't change this, because it only affects the pod's DNS, not the node's.
+
+This is an upstream Kubernetes constraint, not a vCluster limitation. containerd can't depend on cluster DNS to pull images, including CoreDNS's own image, without a bootstrap circularity. Use one of the following instead.
+
+### NodePort
+
+Change the registry Service to `NodePort` and reference it by node hostname and port:
+
+```yaml title="registry-service.yaml"
+apiVersion: v1
+kind: Service
+metadata:
+  name: registry
+  namespace: registry-ns
+spec:
+  type: NodePort
+  ports:
+  - port: 5000
+    nodePort: 30500
+```
+
+```yaml title="Pod spec"
+image: <node-hostname>:30500/my-image:tag
+```
+
+This is the simplest option, but it changes every image reference to a node hostname and a non-standard port, and ties the reference to a specific node.
+
+### Redirect containerd with hosts.toml
+
+Keep the FQDN in image references, and redirect containerd to the registry at the OS layer instead of through DNS. Create `/etc/containerd/certs.d/registry.ns.svc.cluster.local/hosts.toml` on each node:
+
+```toml title="hosts.toml"
+server = "https://registry.ns.svc.cluster.local"
+
+[host."http://10.96.0.50:5000"]
+  capabilities = ["pull", "resolve"]
+```
+
+Point the `host` entry at the registry's `ClusterIP` or `NodePort` address instead of its FQDN. Resolving that FQDN from the node is exactly what fails, so the mirror entry needs an address the node can reach without it. Deploy a DaemonSet that writes this file to each node, so the configuration survives node scaling. containerd reads `hosts.toml` on each pull, so no restart or reload is needed. This is the cleanest option when preserving the FQDN in image references matters, and it follows containerd's own [registry host model](https://github.com/containerd/containerd/blob/main/docs/hosts.md).
+
+### Ingress with a resolvable hostname
+
+Expose the registry through an Ingress controller, using a hostname that resolves from the node's own DNS, such as a public or internal DNS zone the node already trusts. Reference that hostname in image specs instead of the in-cluster FQDN. This avoids per-node file management, at the cost of routing registry traffic through the ingress path.
+
+## Private nodes and vind
+
+The kubelet DNS ceiling above is specific to shared nodes, where tenant workloads run on the control plane cluster's own nodes and share its kubelet. With private nodes, each tenant cluster has its own kubelet running on its own dedicated nodes, so image pull redirection is a node-join setting rather than a DNS or DaemonSet workaround. Configure it through [`privateNodes.joinNode.containerd.registry`](../configure/vcluster-yaml/private-nodes/README.mdx#privateNodes-joinNode-containerd-registry) for nodes joined through kubeadm.
+
+vind doesn't use that setting. Its Docker driver serves images to worker node containers through a host-cache registry proxy instead. See [Deploy vind with restricted network access](../deploy/control-plane/docker-container/air-gapped.mdx) for how vind handles image pulls in a restricted-network environment.
