@@ -5823,8 +5823,8 @@ func (in *StackTask) DeepCopyInto(out *StackTask) {
 		*out = new(StackAppTask)
 		(*in).DeepCopyInto(*out)
 	}
-	if in.TaskTimeout != nil {
-		in, out := &in.TaskTimeout, &out.TaskTimeout
+	if in.Timeout != nil {
+		in, out := &in.Timeout, &out.Timeout
 		*out = new(metav1.Duration)
 		**out = **in
 	}

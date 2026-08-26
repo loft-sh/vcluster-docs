@@ -119,6 +119,7 @@ func addKnownTypes(scheme *runtime.Scheme) error {
 		&SpaceTemplateList{},
 		&StackInstance{},
 		&StackInstanceList{},
+		&StackInstanceOutputs{},
 		&StackTemplate{},
 		&StackTemplateList{},
 		&SubjectAccessReview{},
@@ -366,6 +367,12 @@ var (
 		management.ManagementSpaceInstanceStorage,
 		management.ManagementSpaceTemplateStorage,
 		management.ManagementStackInstanceStorage,
+		builders.NewApiResourceWithStorage(
+			management.InternalStackInstanceOutputsREST,
+			func() runtime.Object { return &StackInstanceOutputs{} }, // Register versioned resource
+			nil,
+			management.NewStackInstanceOutputsREST,
+		),
 		management.ManagementStackTemplateStorage,
 		management.ManagementSubjectAccessReviewStorage,
 		management.ManagementTeamStorage,
@@ -1047,6 +1054,14 @@ type StackInstanceList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []StackInstance `json:"items"`
+}
+
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+
+type StackInstanceOutputsList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata,omitempty"`
+	Items           []StackInstanceOutputs `json:"items"`
 }
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object

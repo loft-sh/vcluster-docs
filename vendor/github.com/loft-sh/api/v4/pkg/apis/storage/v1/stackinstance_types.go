@@ -36,6 +36,13 @@ const (
 	// StackInstanceReasonFeatureNotAllowed is set on the Ready condition when the license does not
 	// cover a feature the StackInstance's tasks need. Nothing runs until the license changes.
 	StackInstanceReasonFeatureNotAllowed = "FeatureNotAllowed"
+	// StackInstanceReasonOutputsConflict is set on the Ready condition when a Secret the
+	// StackInstance does not own holds the name its task outputs are stored under. Nothing runs
+	// until that Secret is gone, since retrying cannot free a name somebody else holds.
+	StackInstanceReasonOutputsConflict = "OutputsConflict"
+	// StackInstanceReasonOutputsRejected is set on the Ready condition when the apiserver refuses
+	// the Secret the StackInstance stores its task outputs in.
+	StackInstanceReasonOutputsRejected = "OutputsRejected"
 	// StackInstanceReasonDeleting is set on the Ready condition while the StackInstance is being
 	// torn down, so the condition matches the Deleting phase.
 	StackInstanceReasonDeleting = "Deleting"
@@ -154,7 +161,7 @@ type StackDefaults struct {
 type StackTask struct {
 	// Name is the stable identifier of the task. DNS-label-safe, unique within the stack.
 	// A task that declares outputs may use letters and digits only: its outputs are
-	// referenced as {{ .tasks.<name>.outputs.<output> }}, and the template syntax cannot
+	// referenced as {{ .Outputs.task.name }}, and the template syntax cannot
 	// address a name containing "-".
 	Name string `json:"name"`
 
@@ -172,12 +179,12 @@ type StackTask struct {
 	// +optional
 	App *StackAppTask `json:"app,omitempty"`
 
-	// TaskTimeout overrides Defaults.TaskTimeout for this task.
+	// Timeout overrides Defaults.TaskTimeout for this task.
 	// +optional
-	TaskTimeout *metav1.Duration `json:"taskTimeout,omitempty"`
+	Timeout *metav1.Duration `json:"timeout,omitempty"`
 
 	// Outputs declares named values this task publishes once it is Healthy. Later tasks
-	// consume them in their specs as {{ .tasks.<task>.outputs.<name> }} and must list
+	// consume them in their specs as {{ .Outputs.task.name }} and must list
 	// this task in dependsOn (validated at admission).
 	// +optional
 	Outputs []StackTaskOutput `json:"outputs,omitempty"`
@@ -186,7 +193,7 @@ type StackTask struct {
 // StackTaskOutput declares one captured value and where the controller reads it from.
 type StackTaskOutput struct {
 	// Name identifies the output. Letters and digits only, unique within the task: the
-	// output is referenced as {{ .tasks.<task>.outputs.<name> }}, and the template syntax
+	// output is referenced as {{ .Outputs.task.name }}, and the template syntax
 	// cannot address a name containing "-".
 	Name string `json:"name"`
 
@@ -362,7 +369,9 @@ type StackInstanceStatus struct {
 	// +optional
 	Conditions agentstoragev1.Conditions `json:"conditions,omitempty"`
 
-	// Tasks is the denormalized per-task status, including not-yet-materialized tasks.
+	// Tasks is the denormalized per-task status, including not-yet-materialized tasks. It is empty
+	// when the instance stopped before it could work out its task set, such as a missing
+	// destination or a template that does not resolve.
 	// +optional
 	Tasks []StackTaskStatus `json:"tasks,omitempty"`
 
