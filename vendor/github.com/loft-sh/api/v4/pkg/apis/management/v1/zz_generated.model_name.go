@@ -1371,6 +1371,21 @@ func (in StackInstanceList) OpenAPIModelName() string {
 }
 
 // OpenAPIModelName returns the OpenAPI model name for this type.
+func (in StackInstanceOutput) OpenAPIModelName() string {
+	return "com.github.loft-sh.api.v4.pkg.apis.management.v1.StackInstanceOutput"
+}
+
+// OpenAPIModelName returns the OpenAPI model name for this type.
+func (in StackInstanceOutputs) OpenAPIModelName() string {
+	return "com.github.loft-sh.api.v4.pkg.apis.management.v1.StackInstanceOutputs"
+}
+
+// OpenAPIModelName returns the OpenAPI model name for this type.
+func (in StackInstanceOutputsList) OpenAPIModelName() string {
+	return "com.github.loft-sh.api.v4.pkg.apis.management.v1.StackInstanceOutputsList"
+}
+
+// OpenAPIModelName returns the OpenAPI model name for this type.
 func (in StackInstanceSpec) OpenAPIModelName() string {
 	return "com.github.loft-sh.api.v4.pkg.apis.management.v1.StackInstanceSpec"
 }

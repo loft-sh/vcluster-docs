@@ -1264,7 +1264,15 @@ var (
 		func() runtime.Object { return &StackInstance{} },
 		func() runtime.Object { return &StackInstanceList{} },
 	)
-	InternalStackTemplate = builders.NewInternalResource(
+	InternalStackInstanceOutputsREST = builders.NewInternalSubresource(
+		"stackinstances", "StackInstanceOutputs", "outputs",
+		func() runtime.Object { return &StackInstanceOutputs{} },
+	)
+	NewStackInstanceOutputsREST = func(getter generic.RESTOptionsGetter) rest.Storage {
+		return NewStackInstanceOutputsRESTFunc(Factory)
+	}
+	NewStackInstanceOutputsRESTFunc NewRESTFunc
+	InternalStackTemplate           = builders.NewInternalResource(
 		"stacktemplates",
 		"StackTemplate",
 		func() runtime.Object { return &StackTemplate{} },
@@ -1676,6 +1684,7 @@ var (
 		InternalSpaceTemplateStatus,
 		InternalStackInstance,
 		InternalStackInstanceStatus,
+		InternalStackInstanceOutputsREST,
 		InternalStackTemplate,
 		InternalStackTemplateStatus,
 		InternalSubjectAccessReview,
@@ -1749,6 +1758,8 @@ type OperationPhase string
 type RequestTarget string
 type SnapshotRequestPhase string
 type SnapshotTakenStatus string
+type StackOutputReason string
+type StackOutputState string
 type Stage string
 type UID string
 
@@ -3143,6 +3154,24 @@ type StackInstance struct {
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 	Spec              StackInstanceSpec   `json:"spec,omitempty"`
 	Status            StackInstanceStatus `json:"status,omitempty"`
+}
+
+type StackInstanceOutput struct {
+	Name      string            `json:"name"`
+	Task      string            `json:"task"`
+	Sensitive bool              `json:"sensitive"`
+	State     StackOutputState  `json:"state"`
+	Reason    StackOutputReason `json:"reason,omitempty"`
+	Message   string            `json:"message,omitempty"`
+	Value     *string           `json:"value,omitempty"`
+}
+
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+
+type StackInstanceOutputs struct {
+	metav1.TypeMeta   `json:",inline"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
+	Outputs           []StackInstanceOutput `json:"outputs,omitempty"`
 }
 
 type StackInstanceSpec struct {
@@ -8908,6 +8937,14 @@ type StackInstanceList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []StackInstance `json:"items"`
+}
+
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+
+type StackInstanceOutputsList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata,omitempty"`
+	Items           []StackInstanceOutputs `json:"items"`
 }
 
 func (StackInstance) NewStatus() interface{} {

@@ -20,6 +20,14 @@ const (
 	// AppInstanceReasonAppNotFound is set on the Synced condition when the
 	// app referenced by spec.templateRef does not exist.
 	AppInstanceReasonAppNotFound = "AppNotFound"
+
+	// AppInstanceReasonDestinationNotFound is set when the space, tenant cluster or
+	// cluster the instance deploys into does not exist.
+	AppInstanceReasonDestinationNotFound = "DestinationNotFound"
+
+	// AppInstanceReasonDestinationNotReady is set when that destination exists but
+	// cannot take a deploy yet.
+	AppInstanceReasonDestinationNotReady = "DestinationNotReady"
 )
 
 // +genclient
