@@ -1,0 +1,170 @@
+---
+title: Scope a synced selector field to its tenant
+sidebar_label: Scope a synced selector field
+sidebar_position: 7
+sidebar_class_name: host-nodes
+description: Sync Calico network policies to the control plane cluster and scope their selector to the tenant that wrote them.
+---
+
+import Flow, { Step } from "@site/src/components/Flow";
+import Highlight from "@site/src/components/Highlight/Highlight";
+import TenancySupport from '../_fragments/tenancy-support.mdx';
+
+<TenancySupport hostNodes="true" />
+
+Some custom resources decide what they act on through a selector held as an opaque string rather than a structured `LabelSelector`. <GlossaryTerm term="vcluster">vCluster</GlossaryTerm> can't parse that string, so it syncs the field verbatim. Every tenant namespace maps to a single namespace on the <GlossaryTerm term="control-plane-cluster">control plane cluster</GlossaryTerm>, so the copied selector matches workloads the policy was never written for.
+
+This guide walks through scoping such a field with an expression patch, using a Calico NetworkPolicy as the example. The same approach applies to any resource an extension <GlossaryTerm term="api-server">API server</GlossaryTerm> serves with a selector-like string field. For the config reference, see [Custom resources to the control plane cluster](../configure/vcluster-yaml/sync/to-host/advanced/custom-resources.mdx). For lifecycle and troubleshooting guidance, see [Manage custom resources](../manage/custom-resources.mdx).
+
+### Why the selector needs a scope term
+
+vCluster labels every synced object with `vcluster.loft.sh/namespace`, which records the tenant namespace the object came from. See [Sync to the control plane cluster](../configure/vcluster-yaml/sync/to-host/README.mdx). An extension API server doesn't consult that label on its own. The selector has to name it.
+
+:::warning One tenant cluster per namespace
+A namespace on the control plane cluster holds exactly one <GlossaryTerm term="tenant-cluster">tenant cluster</GlossaryTerm>, and this guide assumes that. Running more than one there isn't supported. In an older deployment that does, a namespace-scoped selector doesn't separate the tenants, and no patch on `spec.selector` makes it safe.
+:::
+
+### Prerequisites
+
+- Calico installed on the <GlossaryTerm term="control-plane">control plane</GlossaryTerm> cluster, with its `projectcalico.org/v3` API server enabled.
+- No CustomResourceDefinition for `projectcalico.org` on the control plane cluster. That absence is what makes this an aggregated API resource. vCluster generates a schemaless CRD in the tenant cluster instead of copying one. See [Aggregated API resources](../configure/vcluster-yaml/sync/to-host/advanced/custom-resources.mdx#aggregated-api-resources).
+
+### Set up cluster contexts
+
+Setting up the control plane and tenant cluster contexts makes it easier to switch between them.
+
+```bash title="set up kubectl contexts"
+export HOST_CTX="your-host-context"
+export VCLUSTER_CTX="vcluster-ctx"
+```
+
+:::tip
+You can find your contexts by running `kubectl config get-contexts`
+:::
+
+### Configure the tenant cluster
+
+```yaml title="vcluster.yaml"
+sync:
+  toHost:
+    customResources:
+      networkpolicies.projectcalico.org/v3:
+        enabled: true
+        patches:
+          - path: spec.selector
+            expression: |
+              value ? `(${value}) && vcluster.loft.sh/namespace == '${context.virtualObject.metadata.namespace}'` : value
+rbac:
+  role:
+    extraRules:
+      - apiGroups: ["projectcalico.org"]
+        resources: ["tier.networkpolicies"]
+        verbs: ["create", "delete", "patch", "update", "get", "list", "watch"]
+  clusterRole:
+    extraRules:
+      - apiGroups: ["projectcalico.org"]
+        resources: ["tier.globalnetworkpolicies", "tiers"]
+        verbs: ["get", "list", "watch"]
+```
+
+This configuration:
+
+- Restricts each policy to the tenant namespace it was created in. The brackets around `value` keep the tenant's own selector intact, and are required. See [Limitations](#limitations).
+- Sets no `reverseExpression`, so the scope term isn't translated back and the tenant keeps reading the selector it wrote.
+- Grants the permissions Calico's API server needs. It authorizes a policy write against a related `tier` resource that you never configure for sync. See [Authorization on the control plane cluster](../configure/vcluster-yaml/sync/to-host/advanced/custom-resources.mdx#authorization-on-the-control-plane-cluster).
+
+### Sync a policy and check its scope
+
+<Flow id="calico-selector-scoping-example">
+  <Step>
+    <Highlight color="secondary">Tenant Cluster</Highlight> Create two namespaces, each with a labeled workload. The workload in `demo2` carries the label the policy selects, but sits in a different namespace:
+
+    ```bash title="Create the workloads"
+    kubectl --context="${VCLUSTER_CTX}" create namespace demo
+    kubectl --context="${VCLUSTER_CTX}" create namespace demo2
+    kubectl --context="${VCLUSTER_CTX}" -n demo run frontend --image=nginx --labels=app=frontend
+    kubectl --context="${VCLUSTER_CTX}" -n demo2 run web --image=nginx --labels=app=web
+    ```
+  </Step>
+
+  <Step>
+    <Highlight color="secondary">Tenant Cluster</Highlight> Apply a policy in `demo` only:
+
+    ```yaml title="deny-web-ingress.yaml"
+    apiVersion: projectcalico.org/v3
+    kind: NetworkPolicy
+    metadata:
+      name: deny-web-ingress
+      namespace: demo
+    spec:
+      selector: app == 'web'
+      types:
+        - Ingress
+    ```
+
+    ```bash title="Apply the policy"
+    kubectl --context="${VCLUSTER_CTX}" create -f deny-web-ingress.yaml
+    ```
+  </Step>
+
+  #### Check the selector on the control plane cluster
+
+  <Step>
+    <Highlight>Control Plane Cluster</Highlight> vCluster rewrites object names, so list the policies instead of looking one up by name:
+
+    ```bash title="Read the synced selector"
+    kubectl --context="${HOST_CTX}" -n vcluster-my-vcluster \
+      get networkpolicies.projectcalico.org -o custom-columns='NAME:.metadata.name,SELECTOR:.spec.selector'
+    ```
+
+    The synced copy carries the scope term:
+
+    ```bash title="Composed selector"
+    NAME             SELECTOR
+    v1mn70meafc7je   (app == 'web') && vcluster.loft.sh/namespace == 'demo'
+    ```
+  </Step>
+
+  #### Confirm the other namespace is unaffected
+
+  <Step>
+    <Highlight color="secondary">Tenant Cluster</Highlight> The workload in `demo2` keeps serving traffic. Without the patch, the copied selector matches it too, even though its namespace holds no policy.
+
+    The policy denies ingress, so probe by pod IP. A failed name lookup and an enforced policy look the same from the client:
+
+    ```bash title="Probe the workload in demo2"
+    POD_IP=$(kubectl --context="${VCLUSTER_CTX}" -n demo2 get pod web -o jsonpath='{.status.podIP}')
+    kubectl --context="${VCLUSTER_CTX}" -n demo2 run probe --rm -it --restart=Never \
+      --image=busybox:1.36 -- wget -q -T 5 -O- "http://${POD_IP}:80/"
+    ```
+  </Step>
+
+  #### Confirm the tenant object is unchanged
+
+  <Step>
+    <Highlight color="secondary">Tenant Cluster</Highlight> The tenant object still reads the selector it was created with:
+
+    ```bash title="Read the tenant selector"
+    kubectl --context="${VCLUSTER_CTX}" -n demo get networkpolicies.projectcalico.org \
+      deny-web-ingress -o jsonpath='{.spec.selector}'
+    ```
+
+    ```bash title="Tenant selector"
+    app == 'web'
+    ```
+  </Step>
+</Flow>
+
+### Limitations
+
+- Keep the brackets around `value`. Calico gives `||` the lowest precedence, so `app == 'web' || all()` composed without brackets becomes `app == 'web' || (all() && <scope term>)`, and the first half escapes the scope term. Selector grammar belongs to the extension API server, so check its precedence rules.
+- Don't patch `notSelector`. Appending a scope term to a negated selector inverts it into "not X, or outside this namespace", which admits other namespaces' workloads as peers.
+- `namespaceSelector` can't be scoped this way. It selects over namespace labels, and every tenant object shares one namespace on the control plane cluster.
+- A policy with no `spec.selector` isn't scoped at all. A patch only applies to a path present in the change being synced, and a Calico policy without a selector applies to every endpoint in its namespace.
+- Existing objects aren't retrofitted. A policy synced before you configured the patch keeps its old selector until it changes again.
+
+For the last two, [empty paths](../configure/vcluster-yaml/sync/patching/README.mdx#empty-paths) apply a patch unconditionally. A patch with `path: ""` reads `context.virtualObject` and can set a field the tenant never provided.
+
+### Apply this to other resources
+
+Any aggregated API resource that decides its scope through an opaque string field needs the same treatment, using the terms and grammar of that resource's own selector language. See [Patching synced resources](../configure/vcluster-yaml/sync/patching/README.mdx) for the full expression syntax.
