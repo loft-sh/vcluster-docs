@@ -36,6 +36,13 @@ const (
 	// StackInstanceReasonFeatureNotAllowed is set on the Ready condition when the license does not
 	// cover a feature the StackInstance's tasks need. Nothing runs until the license changes.
 	StackInstanceReasonFeatureNotAllowed = "FeatureNotAllowed"
+	// StackInstanceReasonOutputsConflict is set on the Ready condition when a Secret the
+	// StackInstance does not own holds the name its task outputs are stored under. Nothing runs
+	// until that Secret is gone, since retrying cannot free a name somebody else holds.
+	StackInstanceReasonOutputsConflict = "OutputsConflict"
+	// StackInstanceReasonOutputsRejected is set on the Ready condition when the apiserver refuses
+	// the Secret the StackInstance stores its task outputs in.
+	StackInstanceReasonOutputsRejected = "OutputsRejected"
 	// StackInstanceReasonDeleting is set on the Ready condition while the StackInstance is being
 	// torn down, so the condition matches the Deleting phase.
 	StackInstanceReasonDeleting = "Deleting"
@@ -100,7 +107,7 @@ type StackInstanceSpec struct {
 	Destination StackDestination `json:"destination,omitempty"`
 
 	// Template defines the stack inline. It has the same shape as a StackTemplate's
-	// inputs and tasks, so a template's payload can be copy-pasted here and back.
+	// parameters and tasks, so a template's payload can be copy-pasted here and back.
 	// Exactly one of Template or TemplateRef must be set (validated at admission).
 	// +optional
 	Template *StackTemplateDefinition `json:"template,omitempty"`
@@ -110,12 +117,12 @@ type StackInstanceSpec struct {
 	// +optional
 	TemplateRef *StackTemplateRef `json:"templateRef,omitempty"`
 
-	// Inputs are the values the template's tasks reference as .Values.<name>, rendered with
-	// the shared template engine. Declarations provide defaults and validation but are not a
+	// Parameters are the values the template's tasks reference as .Values.<name>, the same way
+	// an app reads its parameters. Declarations provide defaults and validation but are not a
 	// whitelist: values without a matching declaration are passed through and may be
 	// referenced too.
 	// +optional
-	Inputs *runtime.RawExtension `json:"inputs,omitempty"`
+	Parameters *runtime.RawExtension `json:"parameters,omitempty"`
 
 	// Defaults are applied to all tasks unless overridden per-task.
 	// +optional
@@ -154,7 +161,7 @@ type StackDefaults struct {
 type StackTask struct {
 	// Name is the stable identifier of the task. DNS-label-safe, unique within the stack.
 	// A task that declares outputs may use letters and digits only: its outputs are
-	// referenced as {{ .tasks.<name>.outputs.<output> }}, and the template syntax cannot
+	// referenced as {{ .Outputs.task.name }}, and the template syntax cannot
 	// address a name containing "-".
 	Name string `json:"name"`
 
@@ -172,12 +179,12 @@ type StackTask struct {
 	// +optional
 	App *StackAppTask `json:"app,omitempty"`
 
-	// TaskTimeout overrides Defaults.TaskTimeout for this task.
+	// Timeout overrides Defaults.TaskTimeout for this task.
 	// +optional
-	TaskTimeout *metav1.Duration `json:"taskTimeout,omitempty"`
+	Timeout *metav1.Duration `json:"timeout,omitempty"`
 
 	// Outputs declares named values this task publishes once it is Healthy. Later tasks
-	// consume them in their specs as {{ .tasks.<task>.outputs.<name> }} and must list
+	// consume them in their specs as {{ .Outputs.task.name }} and must list
 	// this task in dependsOn (validated at admission).
 	// +optional
 	Outputs []StackTaskOutput `json:"outputs,omitempty"`
@@ -186,7 +193,7 @@ type StackTask struct {
 // StackTaskOutput declares one captured value and where the controller reads it from.
 type StackTaskOutput struct {
 	// Name identifies the output. Letters and digits only, unique within the task: the
-	// output is referenced as {{ .tasks.<task>.outputs.<name> }}, and the template syntax
+	// output is referenced as {{ .Outputs.task.name }}, and the template syntax
 	// cannot address a name containing "-".
 	Name string `json:"name"`
 
@@ -306,12 +313,12 @@ type StackAppSpec struct {
 }
 
 // StackTemplateDefinition is the reusable payload of a StackTemplate: the declared
-// inputs and the task DAG. It is embedded inline in StackTemplateSpec and used
+// parameters and the task DAG. It is embedded inline in StackTemplateSpec and used
 // verbatim as a StackInstance's inline spec.template.
 type StackTemplateDefinition struct {
-	// Inputs declares the typed inputs (with defaults) a stack accepts, reused from AppParameter.
+	// Parameters declares the typed parameters (with defaults) a stack accepts, reused from AppParameter.
 	// +optional
-	Inputs []AppParameter `json:"inputs,omitempty"`
+	Parameters []AppParameter `json:"parameters,omitempty"`
 
 	// Tasks is the DAG blueprint. Each task follows the same task-level
 	// mutual-exclusivity rule (ArgoCDApplication XOR App), validated at admission.
@@ -347,7 +354,7 @@ type StackPublishedOutputFromTask struct {
 }
 
 // StackTemplateRef references a cluster-scoped StackTemplate. The values for the
-// template's declared inputs live on the instance at spec.inputs.
+// template's declared parameters live on the instance at spec.parameters.
 type StackTemplateRef struct {
 	// Name holds the name of the StackTemplate to reference.
 	Name string `json:"name"`
@@ -362,7 +369,9 @@ type StackInstanceStatus struct {
 	// +optional
 	Conditions agentstoragev1.Conditions `json:"conditions,omitempty"`
 
-	// Tasks is the denormalized per-task status, including not-yet-materialized tasks.
+	// Tasks is the denormalized per-task status, including not-yet-materialized tasks. It is empty
+	// when the instance stopped before it could work out its task set, such as a missing
+	// destination or a template that does not resolve.
 	// +optional
 	Tasks []StackTaskStatus `json:"tasks,omitempty"`
 
