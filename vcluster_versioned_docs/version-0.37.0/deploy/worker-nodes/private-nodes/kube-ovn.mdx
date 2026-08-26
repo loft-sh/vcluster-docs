@@ -1,0 +1,231 @@
+---
+title: kube-ovn integration
+sidebar_label: kube-ovn
+sidebar_position: 3.6
+description: Route directly to tenant pod IPs and expose LoadBalancer services on kube-ovn VIPs for private-nodes tenant clusters, without an external load balancer or MetalLB.
+sidebar_class_name: pro private-nodes
+---
+
+import TenancySupport from '../../../_fragments/tenancy-support.mdx';
+import ProAdmonition from '../../../_partials/admonitions/pro-admonition.mdx';
+
+<TenancySupport privateNodes="true" />
+
+<ProAdmonition/>
+
+vCluster ships an embedded cloud-controller-manager (CCM). Its kube-ovn
+integration lets a private-nodes tenant cluster route traffic through the
+tenant's kube-ovn VPC. This works when the tenant's nodes run on a kube-ovn
+network, for example KubeVirt VM nodes on the control plane cluster. It layers
+two capabilities onto that VPC:
+
+- **Direct pod routing**, so the tenant VPC router reaches pod IPs directly and
+  preserves the client source IP.
+- **LoadBalancer services**, so `type: LoadBalancer` Services get an externally
+  reachable VIP without an external load balancer, cloud provider, or MetalLB.
+
+The direct-to-pod LoadBalancer builds on direct pod routing. The integration
+only writes into kube-ovn objects the operator has already created, namely the
+VPC and its subnets. It never creates or manages the VPC or the subnets
+themselves. See [Prerequisites](#prerequisites) for the kube-ovn topology that
+must already exist.
+
+## Configuration
+
+The entire user-facing surface lives under
+`controlPlane.advanced.cloudControllerManager` in `vcluster.yaml`. It's a
+vCluster Pro feature.
+
+```yaml title="vcluster.yaml"
+controlPlane:
+  advanced:
+    cloudControllerManager:
+      # The embedded CCM must be running
+      enabled: true
+      kubeOvn:
+        # Turn on the kube-ovn integration
+        enabled: true
+        # The custom VPC the integration operates on
+        vpc: vmlb-vpc
+        loadBalancers:
+          # Subnet the LoadBalancer VIPs are allocated from
+          externalSubnet: vmlb-external
+          # A real subnet in the VPC (see the table below)
+          backendSubnet: vmlb-vms
+        podRoutes:
+          # Add direct pod routing and route LoadBalancer VIPs straight to pods
+          enabled: false
+```
+
+Two switches control the integration:
+
+- `kubeOvn.enabled` turns the integration on. This is also what enables
+  LoadBalancer services.
+- `kubeOvn.podRoutes.enabled` adds direct pod routing and switches LoadBalancer
+  services to route directly to pods. Left at its default `false`, LoadBalancer
+  services route through nodes instead.
+
+Each field:
+
+| Key | Meaning |
+|---|---|
+| `cloudControllerManager.enabled` | Gates the embedded CCM. Must be `true`, because the kube-ovn integration runs inside it. |
+| `kubeOvn.enabled` | Enables the kube-ovn integration. Requires `privateNodes.enabled: true` (see [Prerequisites](#prerequisites)) or the config is rejected. |
+| `kubeOvn.vpc` | Name of the existing kube-ovn `Vpc` to operate on. Shared by both `loadBalancers` and `podRoutes`. |
+| `kubeOvn.loadBalancers.externalSubnet` | Name of the kube-ovn `Subnet` the VIPs are allocated from. Each LoadBalancer VIP is an `OvnEip` on this subnet. |
+| `kubeOvn.loadBalancers.backendSubnet` | Name of a real `Subnet` inside `vpc`. It selects which kube-ovn load balancer the VIP is placed on, and it's stamped as the generated Service's `ovn.kubernetes.io/logical_switch`. The value just needs to be a real subnet in the VPC. Only required (and only used) when `podRoutes.enabled` is set; node routing ignores it. |
+| `kubeOvn.podRoutes.enabled` | Adds direct pod routing and routes LoadBalancer VIPs straight to pods. Defaults to `false`, which routes through nodes. When set, it additionally requires `networking.podCIDR` and `loadBalancers.backendSubnet`, or the config is rejected. See [Direct pod routing](#direct-pod-routing). |
+
+:::note Configure from the Platform UI
+The same fields are available in vCluster Platform. On a tenant cluster in
+private nodes mode, the networking settings expose the kube-ovn integration and
+write the same `controlPlane.advanced.cloudControllerManager.kubeOvn` values. The
+form appears only for tenant clusters running vCluster 0.37 or later.
+:::
+
+### RBAC
+
+When `kubeOvn.enabled` is set, vCluster deploys the RBAC the integration needs in
+the control plane cluster.
+
+## Direct pod routing
+
+Set `podRoutes.enabled: true`. The integration's route controller programs one
+`Vpc` static route per node podCIDR, read from `Node.Spec.PodCIDRs`, so the
+tenant VPC router can reach pod IPs directly. This removes the extra kube-proxy
+hop and preserves the client source IP end to end.
+
+These static routes are the foundation that the direct-to-pod LoadBalancer builds
+on. The routes don't depend on any `type: LoadBalancer` Service, or on
+`externalSubnet` and `backendSubnet`. Direct pod routing runs inside the kube-ovn
+integration, reached through `podRoutes.enabled` with `kubeOvn.enabled`, not as a
+separate component.
+
+Enabling `podRoutes.enabled` also requires `networking.podCIDR` and
+`loadBalancers.backendSubnet` in `vcluster.yaml`. The pod CIDR is the cluster
+CIDR that kube-controller-manager splits into the per-node `Node.Spec.PodCIDRs`
+the route controller reads.
+
+## LoadBalancer services
+
+When a tenant creates a `type: LoadBalancer` Service, the integration allocates a
+VIP from a kube-ovn external subnet (an `OvnEip`). It programs the tenant VPC's
+router to forward that VIP to the Service backends (a `RouterLBRule`), then
+publishes the allocated VIP back onto the Service as its ingress address.
+Deleting the Service, or changing it away from `type: LoadBalancer`, tears the
+kube-ovn resources back down.
+
+The `OvnEip` and `RouterLBRule` share a Service-UID-derived name (`vlb-<uid>`).
+How the VIP reaches its backends depends on `podRoutes.enabled`.
+
+### Node routing (default)
+
+With `podRoutes.enabled: false`, the CCM service controller drives the
+LoadBalancer. For each `type: LoadBalancer` Service the integration creates:
+
+- an `OvnEip` on `externalSubnet` whose allocated IP becomes the VIP, and
+- a `RouterLBRule` that DNATs the VIP to the tenant node internal IPs, targeting
+  the Service `NodePort`.
+
+Traffic path:
+
+1. The client sends traffic to the VIP.
+2. The tenant VPC router DNATs the VIP to a node IP and `NodePort`.
+3. kube-proxy on that node performs the second hop to a backend pod.
+
+Because kube-proxy does the final hop, the client source IP is lost. The pod sees
+the node's address. This mode requires each Service port to have a `NodePort`
+allocated, which is the default for `type: LoadBalancer`. Use it when you don't
+need the client source IP.
+
+### Direct-to-pod routing
+
+With `podRoutes.enabled: true`, the LoadBalancer builds on [direct pod
+routing](#direct-pod-routing) and sends traffic straight to pods, preserving the
+client source IP. It replaces the node-routing service load balancer with two
+cooperating pieces:
+
+- The PodLBReconciler reconciles each Service into an `OvnEip` and a pod-mode
+  `RouterLBRule` with empty endpoints and selector. It stamps the generated
+  Service with `backendSubnet` as its `logical_switch`, so kube-ovn places the
+  VIP on the VPC's load balancer.
+- The EndpointSliceReplicator copies the tenant Service's EndpointSlices into the
+  control plane cluster namespace to supply the pod-IP backends.
+
+Traffic path:
+
+1. The client sends traffic to the VIP.
+2. The tenant VPC router DNATs the VIP straight to a pod IP, using the per-node
+   podCIDR routes to find the next hop.
+3. The backend pod receives the traffic and sees the real client source IP.
+
+Node routing and direct-to-pod routing don't run at the same time. Enabling
+`podRoutes.enabled` switches the LoadBalancer from one to the other. Use
+direct-to-pod routing when the workload needs the real client source IP, for
+example source-IP allowlists, logging, geo-routing, or mTLS by IP.
+
+:::warning In-place changes don't self-converge
+Switching an already-created LoadBalancer Service to direct-to-pod routing, by
+flipping `podRoutes.enabled` while the Service exists, doesn't converge on its
+own. Node routing leaves a stale v1 Endpoints object, created by kube-ovn's own
+RouterLBRule controller, that emptying `RouterLBRule.spec.endpoints` doesn't
+clear. kube-ovn unions it with the pod backends, giving a mixed datapath for a few
+minutes until the stale Endpoints is removed.
+
+Recreate the LoadBalancer Service after changing `podRoutes.enabled` rather than
+relying on an in-place change.
+:::
+
+## Prerequisites
+
+This feature sits on top of a specific kube-ovn topology on the control plane
+cluster. Everything below must already exist and be healthy before you enable the
+integration. The integration writes into these objects but doesn't create them.
+
+### Configure kube-ovn
+
+The cluster administrator must have the following in place on the control plane cluster.
+These are configured directly on kube-ovn and are outside the vCluster config
+surface.
+
+1. **kube-ovn deployed in secondary (non-primary CNI) mode.** The primary CNI,
+   for example flannel, keeps pod networking, services, and DNS. kube-ovn only
+   serves the tenant VPC overlay subnets and the external segment through Multus
+   secondary interfaces. On the kube-ovn install this requires `NON_PRIMARY_CNI:
+   true`, and `CNI_CONFIG_PRIORITY: "20"` so kube-ovn's conflist sorts after
+   `00-multus` and `10-flannel` rather than becoming the cluster CNI. The
+   `install-cni` step writes a conflist unconditionally with no non-primary
+   branch, so the priority is what keeps it out of the primary datapath.
+
+2. **Custom VPCs enabled.** Set `ENABLE_EXTERNAL_VPC: true` on the kube-ovn
+   install. Without it, the controller silently refuses to reconcile any `Vpc`
+   other than the default, and the tenant VPC objects reconcile to nothing.
+
+3. **The VPC and its subnets exist.** The `Vpc` named in `kubeOvn.vpc` and the
+   subnets named in `loadBalancers.externalSubnet` and
+   `loadBalancers.backendSubnet` must already exist. The KubeVirt node provider
+   creates these through NodeEnvironment properties. See [kube-ovn
+   networking](/docs/platform/next/administer/node-providers/kubevirt#integrate-with-kube-ovn).
+
+4. **Provider network, uplink, and the external segment.** Configure a
+   `ProviderNetwork` with the node uplink NIC, a `Vlan`, and the external
+   `Subnet` that the VIPs are allocated from. The external subnet's name must
+   match kube-ovn's `--external-gateway-switch` flag, which defaults to
+   `external`. The VPC must also have `enableExternal: true` so it gets an LRP
+   and gateway chassis onto that segment.
+
+5. **Egress out of the custom VPC configured.** Tenant nodes need egress from the
+   VPC to reach external networks, for example to pull images. Enable it through
+   the NodeEnvironment's `kube-ovn.vcluster.com/egress-enabled` property. See
+   [kube-ovn
+   networking](/docs/platform/next/administer/node-providers/kubevirt#integrate-with-kube-ovn).
+
+6. **A kube-ovn build that has the `RouterLBRule` CRD.** The integration drives
+   the `RouterLBRule` custom resource, which kube-ovn versions up to and including
+   1.16 don't ship. Use a kube-ovn build that includes it.
+
+## Related
+
+- [Private nodes overview](./overview.mdx)
+- [Join manually provisioned nodes](./join.mdx)
+- [Node requirements](./node-requirements.mdx)
