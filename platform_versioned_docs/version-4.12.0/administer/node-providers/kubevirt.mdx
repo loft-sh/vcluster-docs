@@ -3,11 +3,14 @@ title: KubeVirt
 sidebar_label: KubeVirt
 sidebar_position: 3
 sidebar_class_name: free
+toc_min_heading_level: 2
+toc_max_heading_level: 3
 ---
 
 
 import Flow, {Step} from "@site/src/components/Flow";
 import FeatureTable from '@site/src/components/FeatureTable';
+import KubeVirtNodeProvisioningFlow from '@site/static/media/diagrams/kubevirt-node-provisioning-flow.svg';
 
 <FeatureTable names="auto-nodes-kubevirt" />
 
@@ -22,34 +25,10 @@ For administrator guidance on VM disk imports and Multus networks, see [Data Vol
 This enables you to offer different "flavors" of virtual machines, for example small, medium, and large compute shapes, as nodes for your vCluster,
 all managed from a central configuration.
 
-```mermaid
-flowchart LR
-    subgraph platform["vCluster Platform"]
-        direction LR
-        NodeClaimCreate["NodeClaim (for Create)"]
-        NodeClaimDelete["NodeClaim (for Delete)"]
-        NodeType["NodeType (has VM Template)"]
-        Provision("apply VirtualMachine")
-        Destroy("delete VirtualMachine")
-    end
-
-    subgraph host_cluster["KubeVirt control plane cluster"]
-        direction TB
-        KubeVirtVM["KubeVirt VirtualMachine"]
-    end
-
-    vCluster -- "Creates" --> NodeClaimCreate
-    NodeClaimCreate -- "Claims" --> NodeType
-    NodeClaimCreate -- "Triggers" --> Provision
-
-    NodeType -- "Is used by" --> Provision
-    Provision -- "Creates" --> KubeVirtVM
-    KubeVirtVM -- "Joins as Node" --> Node["vCluster"]
-
-    vCluster -- "Deletes" --> NodeClaimDelete
-    NodeClaimDelete -- "Triggers" --> Destroy
-    Destroy -- "Destroys" --> KubeVirtVM
-```
+<figure>
+  <KubeVirtNodeProvisioningFlow style={{width: '100%', height: 'auto'}} role="img" aria-label="A NodeClaim references a NodeType for its VM template and requests a node from the vCluster Platform. The platform creates a KubeVirt VirtualMachine on the control plane cluster from that template, with a join-token Secret injected through cloud-init. The VM registers as a worker node in the tenant cluster using that token. Deleting the NodeClaim deletes the VirtualMachine and removes the node." />
+  <figcaption>The platform turns a NodeClaim into a KubeVirt VirtualMachine on the control plane cluster, which joins the tenant cluster as a worker node through cloud-init. Deleting the NodeClaim reverses the flow.</figcaption>
+</figure>
 
 ## Overview
 
@@ -602,7 +581,9 @@ The following properties tune the injected interface. They only take effect when
 
 **Type:** `string`
 
-Sets an in-tree binding method for the injected interface. One of `bridge`, `masquerade`, or `sriov`. Defaults to `bridge`.
+Sets the binding method for the injected interface. One of `bridge`, `masquerade`, or `sriov`. Defaults to `bridge`.
+
+KubeVirt removed several network bindings, including macvtap and slirp, from its in-tree API in v1.3, so this property now accepts only the remaining in-tree bindings and rejects any other value. Plugin-based bindings such as macvtap, passt, slirp, and custom bindings are selected through `kubevirt.vcluster.com/interface-template` instead.
 
 #### `kubevirt.vcluster.com/interface-template`
 
@@ -616,21 +597,119 @@ A partial KubeVirt interface definition merged over the default injected interfa
 
 When `"true"`, the Multus network becomes the VM's default network, and the pod network and its interface are removed, since KubeVirt rejects a VM that has both. Defaults to `"false"`.
 
-### Node environment selection
+### Network environment
 
 #### `vcluster.com/network-environment`
 
 **Type:** `string`
 
-Names the [NodeEnvironment](./overview.mdx#node-environments) whose properties merge into the NodeClaim's effective property set. The platform resolves this from the merged properties of NodeProvider, NodeType, and NodeClaim. When set, this property takes precedence over the typed `NodeClaim.spec.environmentRef` field.
+Names the [NodeEnvironment](./overview.mdx#node-environments) whose properties merge into the NodeClaim's effective property set. The platform resolves this network environment from the merged properties of NodeProvider, NodeType, and NodeClaim. When set, this property takes precedence over the typed `NodeClaim.spec.environmentRef` field.
 
-Use this to declare environment-level defaults at the provider or type level, or to keep network configuration separate from provider and type definitions.
+Use it to declare network environment defaults at the provider or type level, or to keep network configuration separate from provider and type definitions.
 
 ### SSH and user data
 
 The `vcluster.com/ssh-keys` and `vcluster.com/user-data` properties behave identically across providers. See the [metal3 reference](./metal3.mdx#ssh-and-user-data) for details.
 
 To render cloud-init from a reusable template, reference a [MachineConfigTemplate](../../use-platform/machines/machine-config-templates.mdx) with the `vcluster.com/user-data-template-config` property. See [Machine Config Templates](../../use-platform/machines/machine-config-templates.mdx) for the template syntax and available variables.
+
+## Integrate with kube-ovn
+
+KubeVirt VMs can attach to [kube-ovn](https://kubeovn.github.io/docs/stable/en/) networks, so each set of auto-nodes runs on its own isolated, routable overlay network with OVN-native DHCP and optional external egress.
+
+### Attach VMs to a kube-ovn network
+
+A VM joins a kube-ovn network the same way it joins any other network, through a Multus `NetworkAttachmentDefinition` that's set as the VM's default network with an interface binding. This works whether you created the kube-ovn network yourself, another system manages it, or the platform provisioned it for you. To have the platform create the network, see [Provision a kube-ovn network](#provision-a-kube-ovn-network).
+
+By default, the integration uses the `managedtap` interface binding instead of `bridge`. The `bridge` binding makes KubeVirt run its own DHCP inside the launcher pod, which answers the guest before kube-ovn can, shadowing OVN-native DHCP so the VM never receives the address and gateway the subnet serves. `managedtap` avoids this. The binding is overridable, so you can set a different one where it fits your network.
+
+The attachment is driven by these KubeVirt properties (see [Network configuration](#network-configuration)):
+
+- `kubevirt.vcluster.com/network-attachment-definition`: the kube-ovn Multus NAD to attach to.
+- `kubevirt.vcluster.com/multus-default`: `"true"` so the kube-ovn network is the VM's default network.
+- `kubevirt.vcluster.com/interface-template`: `{"binding":{"name":"managedtap"}}` to use the managedtap binding.
+
+When the NodeEnvironment carries the `kube-ovn.vcluster.com/subnet` property, the platform fills these in automatically, each only when you have not set it yourself. Set any of them explicitly on the NodeType or NodeClaim to override the default.
+
+- [`kubevirt.vcluster.com/network-attachment-definition`](#kubevirt-vcluster-com-network-attachment-definition) points at the `NetworkAttachmentDefinition` named after the subnet in the provider namespace (`<provider-namespace>/<subnet>`).
+- `kubevirt.vcluster.com/multus-default` becomes `"true"`.
+- `kubevirt.vcluster.com/interface-template` selects the `managedtap` binding, for the reason described above.
+
+#### Register the managedtap binding
+
+The integration uses `managedtap` by default, and registering it is required whenever you use it. The binding must be registered on the `KubeVirt` resource on the control plane cluster, and it requires KubeVirt v1.4 or later. If the default `managedtap` binding is not registered, provisioning fails. Override the binding on the NodeType or NodeClaim if you do not want to register it.
+
+Register the binding through the KubeVirt provider's `deploy.kubevirt.helmValues`. The platform renders `kubevirt.spec` verbatim into the `KubeVirt` resource `.spec`, so add the network binding under it:
+
+```yaml
+apiVersion: management.loft.sh/v1
+kind: NodeProvider
+metadata:
+  name: kubevirt-provider
+spec:
+  kubeVirt:
+    deploy:
+      kubevirt:
+        enabled: true
+        helmValues: |
+          kubevirt:
+            spec:
+              configuration:
+                network:
+                  binding:
+                    managedtap:
+                      domainAttachmentType: managedTap
+```
+
+If KubeVirt is managed outside the provider, register the same binding on your existing `KubeVirt` resource instead.
+
+:::note Verify the binding registration
+The network binding registration follows the KubeVirt API, not a vCluster schema. Confirm the exact fields for your KubeVirt version against the [KubeVirt network binding plugin documentation](https://kubevirt.io/user-guide/network/network_binding_plugins/).
+:::
+
+### Provision a kube-ovn network
+
+Instead of pointing VMs at an existing kube-ovn network, you can have the platform create one for you. Set `kube-ovn.vcluster.com/vpc` on the [NodeEnvironment](./overview.mdx#node-environments) to provision the kube-ovn resources on the control plane cluster. This property gates provisioning. Without it, the platform creates nothing. Provisioning runs as part of the NodeEnvironment's infrastructure lifecycle, so the network exists before any VM uses the environment and is removed when the environment is deleted.
+
+A VM attaches to a network provisioned this way through the same [attachment properties](#attach-vms-to-a-kube-ovn-network). When the NodeEnvironment carries `kube-ovn.vcluster.com/subnet`, those attachment defaults are filled in automatically.
+
+#### `kube-ovn.vcluster.com/vpc`
+
+**Type:** `string`
+
+Name of the kube-ovn `Vpc`. Setting it enables provisioning and creates the VPC, subnet, and `NetworkAttachmentDefinition`. When the VPC does not exist, the platform creates it. A pre-existing VPC is only modified when this NodeEnvironment manages it.
+
+#### `kube-ovn.vcluster.com/subnet`
+
+**Type:** `string`
+**Required:** Yes, when `kube-ovn.vcluster.com/vpc` is set.
+
+Name of the kube-ovn `Subnet` provisioned inside the VPC. The platform also creates a `NetworkAttachmentDefinition` of the same name in the provider namespace that VMs attach to.
+
+#### `kube-ovn.vcluster.com/subnet-cidr`
+
+**Type:** `string` (IPv4 CIDR)
+**Required:** Yes, when `kube-ovn.vcluster.com/vpc` is set.
+
+CIDR block for the subnet. Only IPv4 is supported; an IPv6 or dual-stack CIDR is rejected. The subnet's CIDR is immutable, so changing it on a live environment requires recreating the subnet.
+
+#### `kube-ovn.vcluster.com/external-subnet`
+
+**Type:** `string`
+
+Name of a pre-existing external `Subnet`. Setting it wires the VPC's external connectivity and default route, using the external subnet's gateway as the next hop. The platform never creates or deletes this external subnet. Required for egress.
+
+#### `kube-ovn.vcluster.com/egress-enabled`
+
+**Type:** `string` (`"true"` or `"false"`)
+
+When `"true"`, the platform creates the egress source NAT objects (`OvnEip` and `OvnSnatRule`) so VMs on the subnet can reach external networks. Requires `kube-ovn.vcluster.com/external-subnet`. Defaults to `"false"`. Disabling egress after it was enabled is not supported.
+
+The platform labels every object it provisions with `kube-ovn.vcluster.com/node-environment`, set to the NodeEnvironment's UID, and removes those objects by that label when the NodeEnvironment is deleted. Objects it did not create, such as a pre-existing VPC or the external subnet, are left untouched.
+
+### Expose services with the kube-ovn cloud-controller-manager
+
+Provisioning a kube-ovn network and attaching VMs to it gives them a VPC and overlay connectivity. To expose `LoadBalancer` services and direct pod routing on that same VPC, deploy the kube-ovn cloud-controller-manager in the tenant cluster. See [kube-ovn cloud-controller-manager](/docs/vcluster/next/deploy/worker-nodes/private-nodes/kube-ovn) for setup. The integration here builds the VPC and wires the VMs onto it; the cloud-controller-manager then provides LoadBalancer services and pod routing on top of it.
 
 ## Netris integration
 
