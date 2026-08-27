@@ -1,26 +1,18 @@
 ---
-title: Auto Sleep
+title: Configure auto sleep
 sidebar_label: sleep
 sidebar_position: 7
 sidebar_class_name: pro host-nodes
-description: Learn how to configure and manage auto sleep feature in tenant clusters, with or without a platform agent.
+description: Configure inactivity-based and scheduled auto sleep for tenant clusters, with or without vCluster Platform.
 ---
-import ProAdmonition from '../../_partials/admonitions/pro-admonition.mdx'
-import Sleep from '../../_partials/config/sleep.mdx'
-import SleepDeploymentExample from '../../_fragments/sleep-deployment-example.mdx'
-import SleepIngressExample from '../../_fragments/sleep-ingress-example.mdx'
-import SleepIstioExample from '../../_fragments/sleep-istio-example.mdx'
-import BasePrerequisites from '@site/docs/_partials/base-prerequisites.mdx';
-import InstallCli from '../../_partials/deploy/install-cli.mdx';
+import ProAdmonition from '../../_partials/admonitions/pro-admonition.mdx';
+import Sleep from '../../_partials/config/sleep.mdx';
+import SleepDeploymentExample from '../../_fragments/sleep-deployment-example.mdx';
+import SleepIngressExample from '../../_fragments/sleep-ingress-example.mdx';
+import SleepIstioExample from '../../_fragments/sleep-istio-example.mdx';
 import TenancySupport from '../../_fragments/tenancy-support.mdx';
-import Button from "@site/src/components/Button";
-import Expander from "@site/src/components/Expander";
-import Label from "@site/src/components/Label";
-import Input from "@site/src/components/Input";
-import Flow, { Step } from "@site/src/components/Flow";
-import NavStep from "@site/src/components/NavStep";
-import Tabs from "@theme/Tabs";
-import TabItem from "@theme/TabItem";
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
 import FeatureTable from '@site/src/components/FeatureTable';
 
 <FeatureTable names="vcp-distro-sleep-mode" />
@@ -29,111 +21,84 @@ import FeatureTable from '@site/src/components/FeatureTable';
 
 <ProAdmonition />
 
-Not all workloads need to run continuously. Scaling them down reduces costs. With auto sleep, you can scale workloads based on a set schedule, user activity, ingress traffic, or Gateway API HTTP traffic when the selected Gateway controller supports request mirroring.
+Auto sleep reduces the compute resources that idle tenant clusters consume. It
+can respond to inactivity, a cron schedule, or supported HTTP traffic.
 
-:::warning
-Auto sleep is intended for pre-production use cases only, and has limitations when used on a tenant cluster instance not connected to the platform.
+:::warning Pre-production workloads
+Auto sleep is intended for pre-production workloads. Sleeping interrupts
+workloads and deletes standalone Pods that no controller manages.
 :::
 
-## Configure
+## How auto sleep is managed
+
+The component that manages auto sleep determines which resources can stop:
+
+| Deployment | Sleep behavior |
+| --- | --- |
+| Tenant cluster without a platform agent | The tenant cluster scales down its workloads. Its control plane stays running to detect activity and restore workloads. |
+| Tenant cluster connected to vCluster Platform | The platform agent takes over sleep management and can scale down both workloads and the tenant cluster control plane. |
+
+When an existing tenant cluster connects to a compatible platform agent, the
+agent reads its `sleep` configuration and takes over automatically. Don't
+configure a second sleep mechanism. This handoff requires vCluster 0.24.0 or
+later and vCluster Platform 4.3.0 or later.
+
+For vCluster 0.33.0 or later, add the
+`sleepmode.loft.sh/scope: "workloads-only"` annotation to the platform
+VirtualClusterInstance. Use it when the tenant cluster should keep managing its
+own workload sleep and its control plane must stay running. With this scope,
+the platform agent doesn't take over auto sleep.
+
+See [Sleep tenant clusters](../../key-features/sleep.mdx) for the lifecycle and
+[Pause and resume a tenant cluster](../../manage/sleep-wakeup.mdx) for manual
+operations.
+
+## Configure inactivity-based auto sleep
 
 <Tabs
   defaultValue="yaml"
   values={[
-    { label: "vcluster.yaml", value: "yaml" },
-    { label: "vCluster CLI", value: "cli" },
-    { label: "Platform UI", value: "ui" },
-    { label: "Custom Resource", value: "crds" },
+    { label: 'vcluster.yaml', value: 'yaml' },
+    { label: 'Platform UI', value: 'ui' },
   ]}
 >
 <TabItem value="yaml">
 
-### Enable auto sleep
+Set `sleep.auto.afterInactivity` to the amount of idle time allowed before
+workloads sleep:
 
-To enable auto sleep, add the following configuration to your `vcluster.yaml`:
-
-```yaml title="Sleep configuration"
+```yaml title="vcluster.yaml"
 sleep:
   auto:
     afterInactivity: 1h
 ```
 
-### Deployment example
+The value uses Go duration syntax. Use `s`, `m`, or `h`, such as `30s`, `15m`,
+or `24h`. The syntax doesn't support `d`; use `24h` instead of `1d`.
 
-A deployment resource in Kubernetes manages a set of identical pods. Configuring auto sleep for a deployment scales down the pods while keeping the control plane active.
-This setup allows the tenant cluster to reduce resource usage while still being able to monitor activity and trigger wake-up actions when needed.
+</TabItem>
+<TabItem value="ui">
 
-:::note Control plane behavior
-- **Without agent**: The control plane remains active, allowing the tenant cluster instance to monitor activity and wake up automatically.
-- **With agent**: The platform agent can shut down the control plane completely for maximum resource savings.
-:::
+1. Select the project that contains the tenant cluster.
+2. Click **Tenant Clusters** in the sidebar.
+3. Click **Edit** for the tenant cluster.
+4. Expand **Auto-Sleep and Auto-Delete**.
+5. Set **Sleep after inactivity**.
+6. Click **Save**.
 
-<details>
-<summary>Configure auto sleep with a deployment resource</summary>
-<SleepDeploymentExample />
-</details>
+For a tenant cluster created from a template, edit the template instead of the
+instance. See [Create a tenant cluster template](/docs/platform/administer/templates/create-templates).
 
-### Ingress controller example
+</TabItem>
+</Tabs>
 
-An ingress controller, such as NGINX, manages external HTTP/S traffic to services in a Kubernetes cluster.
-To configure auto sleep for the ingress controller, make sure it stays responsive to incoming traffic and can wake up the cluster if needed. This setup keeps the ingress controller active, even when the tenant cluster instance is in auto sleep and allows the controller to handle requests that trigger the tenant cluster to wake up.
+## Configure scheduled sleep and wakeup
 
-<details>
-<summary>Configure auto sleep with an ingress resource</summary>
-<SleepIngressExample />
-</details>
+Set five-field cron expressions for `schedule` and `wakeup.schedule`. Set an
+[IANA time zone](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones)
+with `timezone`; the default is UTC.
 
-### Istio gateway example
-
-:::note
-Enable Istio integration for auto sleep to work with Istio resources.
-:::
-
-When Istio is installed on the control plane cluster and the [Istio integration](./integrations/istio.mdx) is enabled, the tenant cluster instance syncs [Gateway](https://istio.io/latest/docs/reference/config/networking/gateway/) and [VirtualService](https://istio.io/latest/docs/reference/config/networking/virtual-service/) resources to the control plane cluster.
-
-With auto sleep enabled, any traffic routed to a Service in the tenant cluster instance is tracked as activity and keeps the tenant cluster instance awake. If the vCluster is asleep, incoming traffic wakes it up.
-
-<details>
-  <summary>Configure an ingress gateway for cluster external access</summary>
-  <SleepIstioExample />
-</details>
-
-### Gateway API HTTPRoute activity detection {#gateway-api-httproute-activity-detection}
-
-Gateway-backed auto sleep for HTTP traffic depends on `HTTPRoute` request mirroring support. Platform uses a managed request mirror rule to observe traffic and update activity for the sleeping tenant cluster.
-
-A Gateway controller can support `HTTPRoute` traffic without supporting request mirroring. In that case, Gateway endpoints can still be usable, but automatic wakeup from HTTP traffic is not available through that controller.
-
-If a controller supports request mirroring but does not advertise it in `GatewayClass` status, set the `sleepmode.loft.sh/request-mirror-controller-allowlist` annotation on the Platform `Cluster` resource with the controller names that should be treated as request-mirror-capable.
-
-If Gateway API CRDs are installed on a Control Plane Cluster after vCluster Platform is already running, restart Platform. This runs CRD discovery again and starts the Gateway API sleep-mode controllers:
-
-```bash title="Restart vCluster Platform"
-kubectl rollout restart deployment/loft -n vcluster-platform
-```
-
-If your Platform deployment or namespace differs, adjust the command.
-
-For the broader adoption path, see [Gateway API](../../key-features/gateway-api.mdx) and [Migrate from ingress-nginx to Gateway API](../../manage/ingress-nginx-to-gateway-api.mdx).
-
-### Enable auto sleep with label selectors and schedules {#enable-sleep-with-label-selectors-and-schedules}
-
-Use label selectors and schedules to configure auto sleep based on inactivity or specific timing:
-
-<details>
-<summary>Auto sleep label selectors and schedule</summary>
-
-```yaml title="Sleep after 3 hours of inactivity, anything that does not have the label dont=sleep"
-sleep:
-  auto:
-    afterInactivity: 3h  # Uses Go duration with a max unit of hour
-    exclude:
-      selector:
-        labels:
-          dont: sleep
-```
-
-```yaml title="Sleep every Friday at 17:30 and wake every Monday at 7:00 in Mountain timezone"
+```yaml title="Sleep Friday evening and wake Monday morning"
 sleep:
   auto:
     timezone: America/Denver
@@ -141,212 +106,208 @@ sleep:
     wakeup:
       schedule: 0 7 * * 1
 ```
+
+In vCluster Platform, select the project and click **Tenant Clusters**. Click
+**Edit** for the tenant cluster, expand **Auto-Sleep and Auto-Delete**, then set
+**Sleep Schedule**, **Wake up Schedule**, and **Schedule timezone**.
+
+## Exclude workloads from auto sleep
+
+Use a label selector when you know which workloads must stay running. The
+following configuration excludes workloads with the label `sleep: no-thanks`:
+
+```yaml title="Exclude workloads by label"
+sleep:
+  auto:
+    afterInactivity: 3h
+    exclude:
+      selector:
+        labels:
+          sleep: no-thanks
+```
+
+For platform-managed sleep, you can instead add the
+`sleepmode.loft.sh/exclude: "true"` annotation to a Deployment, StatefulSet,
+ReplicaSet, or Pod. Sleep creates a quota that prevents new Pods, so Kubernetes
+can't replace an excluded Pod that stops while the resource sleeps:
+
+```yaml title="Exclude a Deployment"
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: connectivity-agent
+  annotations:
+    sleepmode.loft.sh/exclude: "true"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: connectivity-agent
+  template:
+    metadata:
+      labels:
+        app: connectivity-agent
+    spec:
+      containers:
+        - name: agent
+          image: example.com/connectivity-agent:1.0
+```
+
+## Activity detection and wakeup
+
+This section applies to platform-managed namespaces and tenant clusters alike,
+except where noted. Auto sleep resets the inactivity timer when it detects
+relevant activity. If the resource is already sleeping, supported activity
+wakes it.
+
+For platform-managed sleep started by a sleep schedule, activity doesn't wake
+the resource. It remains asleep until its wakeup schedule or a manual wakeup.
+Standalone auto sleep, which only applies to a tenant cluster without a
+platform agent, can wake from activity after scheduled sleep.
+
+### Kubernetes API activity
+
+For a platform-managed namespace or tenant cluster, Kubernetes API requests
+routed through vCluster Platform count as activity. This includes `kubectl`
+requests when the kubeconfig routes through the platform proxy.
+
+Direct requests to a tenant cluster API endpoint that bypasses the platform
+proxy aren't visible to platform activity detection. A standalone tenant
+cluster detects API activity through its running control plane.
+
+### Detect web traffic
+
+For both namespaces and tenant clusters, vCluster Platform can detect traffic
+to the following resources:
+
+- ingress-nginx Ingress resources
+- Istio Gateway and VirtualService resources
+- Gateway API HTTPRoute resources when the Gateway controller supports request mirroring
+
+For ingress-nginx, the platform adds `mirror-target` and `mirror-request-body`
+annotations unless the Ingress already has either annotation. The platform
+preserves existing user-managed mirror annotations, but traffic to that Ingress
+doesn't refresh the last-activity timestamp through this integration.
+ingress-nginx is deprecated; for new endpoint deployments, prefer
+[Gateway API](../../key-features/gateway-api.mdx).
+
+For Istio, enable the [Istio integration](./integrations/istio.mdx). The
+platform uses `istio-proxy` metrics to determine activity.
+
+#### Gateway API HTTPRoute activity {#gateway-api-httproute-activity-detection}
+
+Gateway-backed activity detection requires the controller to support the
+`HTTPRoute` request-mirror filter. An HTTPRoute can serve traffic without this
+feature, but its awake traffic doesn't refresh the last-activity timestamp. The
+namespace or tenant cluster can therefore enter sleep while the route is
+receiving traffic. Don't rely on activity-based auto sleep through that route
+unless its controller supports request mirroring.
+
+If a compatible controller doesn't advertise request mirroring in
+`GatewayClass` status, add the
+`sleepmode.loft.sh/request-mirror-controller-allowlist` annotation to the
+platform `Cluster` resource. Use the `GatewayClass.spec.controllerName` value.
+Separate multiple controller names with commas.
+
+<details>
+<summary>Restart the agent after installing Gateway API CRDs</summary>
+
+If you install Gateway API CRDs after the connected-cluster agent starts,
+restart the agent Deployment so it discovers the HTTPRoute controller:
+
+```bash title="Restart the vCluster Platform agent"
+kubectl rollout restart deployment/loft --namespace vcluster-platform
+```
+
+The agent Deployment name is always `loft`. Its namespace defaults to
+`vcluster-platform` for newly connected clusters; clusters connected before
+this default existed may still use `loft`. Check the platform `Cluster`
+resource's `spec.managementNamespace` if you're unsure.
+
 </details>
 
+### Ingress wakeup
 
-</TabItem>
+When platform activity detection supports the route, opening its hostname
+displays a wakeup page while the namespace or tenant cluster wakes. The page
+reloads and reaches the application after wakeup completes.
 
-<TabItem value="ui">
+### Last activity update interval
 
-### Manual sleep
+The platform limits how often mirrored Ingress and HTTPRoute traffic updates the
+last-activity timestamp. The default interval is five minutes. Requests received
+during the interval don't write another timestamp. Istio activity uses its
+metrics polling interval instead.
 
-<Flow id="sleep-manual-ui">
-  <Step>
-    Click on <NavStep>Virtual Clusters</NavStep> to find the tenant cluster that you want to put to sleep.
-  </Step>
-  <Step>
-    Hover over the row of the tenant cluster that you want to put to sleep.
-  </Step>
-  <Step>
-    Click on the vertical ellipsis button and select <Label>Sleep</Label> to put the tenant cluster to sleep.
-  </Step>
-  <Step>
-    Notice how the <Label>Status</Label> column shows that the tenant cluster is now sleeping.
-  </Step>
-</Flow>
+Set `SLEEP_MODE_LAST_ACTIVITY_UPDATE_INTERVAL` on the connected-cluster agent
+to change the interval. See [Agent values](/docs/platform/administer/clusters/advanced/agent-config#agent-values)
+for how to set agent environment variables platform-wide or per cluster.
 
-:::info Automatic Wakeup
-Note that the tenant cluster will automatically wake up again, once you run a kubectl command or send a Kubernetes request via another tool to the tenant cluster.
-:::
+## Filter platform activity
 
-### Configure auto sleep
+Use `sleepmode.loft.sh` annotations when automated clients or selected requests
+shouldn't keep a platform-managed namespace or tenant cluster awake. For a
+namespace, add them to the Namespace. For a tenant cluster, add them under
+`spec.template.metadata.annotations` in its VirtualClusterTemplate.
 
-:::info Manual Support only
-This only works for tenant clusters without a template, if you want to change the auto sleep configuration for a tenant cluster created by a template, it must be configured in the template.
-:::
+Common filters include:
 
-<Flow id="sleep-automatic-ui">
-  <Step>
-    Click on <NavStep>Virtual Clusters</NavStep> to find the tenant cluster that you want to configure auto sleep for.
-  </Step>
-  <Step>
-    Hover over the row of the tenant cluster that you want to configure.
-  </Step>
-  <Step>
-    Click on <Label>Edit</Label> on the tenant cluster that you want to edit.
-  </Step>
-  <Step>
-    Use the <Label>Sleep After Inactivity (minutes)</Label> field to specify the time to wait before putting the tenant cluster to sleep if there is no more user activity in this tenant cluster.
-  </Step>
-  <Step>
-    Click on the <Button>Save</Button> button to save the changes.
-  </Step>
-</Flow>
+| Annotation | Effect |
+| --- | --- |
+| `sleepmode.loft.sh/ignore-all` | Ignore all activity. |
+| `sleepmode.loft.sh/ignore-ingresses` | Ignore supported Ingress, HTTPRoute, and Istio traffic. |
+| `sleepmode.loft.sh/ignore-groups` | Ignore requests from selected user groups. |
+| `sleepmode.loft.sh/ignore-resources` | Ignore requests to selected Kubernetes resources. |
+| `sleepmode.loft.sh/ignore-verbs` | Ignore selected Kubernetes API verbs. |
+| `sleepmode.loft.sh/ignore-user-agents` | Ignore matching user agents; a trailing wildcard is supported. |
+| `sleepmode.loft.sh/ignore-active-connections` | Don't treat open streaming connections as activity. |
+| `sleepmode.loft.sh/disable-ingress-wakeup` | Don't wake the resource for supported Ingress, HTTPRoute, or Istio access. |
 
-### Configure scheduled auto sleep and wake-up
+You can also add the `X-Sleep-Mode-Ignore` header to an individual request.
+See the [platform annotation reference](/docs/platform/next/reference/platform-annotations#sleepmode-annotations)
+for where to set each filter and all value formats.
 
-:::info Manual Support only
-This only works for tenant clusters without a template, if you want to change the auto sleep configuration for a tenant cluster created by a template, it must be configured in the template.
-:::
+## Handle long-running connections
 
-<Flow id="sleep-automatic-constraint-schedule-ui">
-  <Step>
-    In the <NavStep>Virtual Clusters</NavStep> view, hover over the tenant cluster that you want to configure auto sleep for.
-  </Step>
-  <Step>
-    Click on the <Button>Edit</Button> button.
-  </Step>
-  <Step>
-    In the <Label>Definition</Label> section, under the <Label>Sleep Mode</Label> section, use the <Label>Sleep Schedule</Label> field and/or the <Label>Wake-Up Schedule</Label> field to specify the <Input>Cronjob Times</Input> when the respective tenant cluster should be put to sleep or woken up.
-  </Step>
-  <Step>
-    <b>[Optional]</b> Input a <Label>Schedule Timezone</Label> for the timezone to apply the schedule.
-  </Step>
-  <Step>
-    Click on the <Button>Save</Button> button to save the changes.
-  </Step>
-</Flow>
+Streaming requests such as `kubectl exec` and `kubectl port-forward` can keep a
+namespace or tenant cluster active. Choose one of these controls when idle
+streams should no longer prevent sleep:
 
-### Wake up tenant cluster
+1. Add `loft.sh/streaming-connection-idle-timeout: "3600"` to the platform
+   `Cluster` resource. The platform closes new streaming connections after the
+   configured number of idle seconds. Existing connections aren't affected.
+2. Add `sleepmode.loft.sh/ignore-active-connections: "true"` to the Namespace or
+   tenant cluster template metadata. Open streams then don't count as activity
+   and can be interrupted when the resource sleeps.
+3. Configure the kubelet `--streaming-connection-idle-timeout` flag on the
+   control plane cluster independently of vCluster Platform.
 
-<Flow id="wakeup-manual-ui">
-  <Step>
-    In the <NavStep>Virtual Clusters</NavStep> view, hover over the tenant cluster that you want to wake up.
-  </Step>
-  <Step>
-    Click on the vertical ellipsis button and select <Label>Wake Up</Label> to wake up the tenant cluster.
-  </Step>
-  <Step>
-    Notice how the <Label>Status</Label> column shows that the tenant cluster is now running again after a <Label>Pending</Label> state.
-  </Step>
-</Flow>
+## Configure auto-delete
 
-### Configure auto-delete
+Auto-delete permanently deletes a platform-managed tenant cluster after an
+inactivity period. It is separate from sleep and can run whether the tenant
+cluster is awake or sleeping.
 
-The platform lets you configure auto-delete for tenant clusters that have not been used for a certain period of time.
+See [Configure automatic deletion](./deletion.mdx) for the `vcluster.yaml` and
+vCluster Platform procedures.
 
-:::tip Manual Support only
-This only works for tenant clusters without a template, if you want to change the auto sleep configuration for a tenant cluster created by a template, it must be configured in the template.
-:::
+## Examples
 
-<Flow id="auto-delete-ui">
-  <Step>
-    In the <NavStep>Virtual Clusters</NavStep> view, hover over the tenant cluster that you want to configure auto-delete for.
-  </Step>
-  <Step>
-    Click on the <Button>Edit</Button> button.
-  </Step>
-  <Step>
-    Under the <Label>Sleep Mode</Label> section, use the <Label>Delete After Inactivity (minutes)</Label> field to specify the time to wait before deleting the tenant cluster if there was no more user activity within this tenant cluster.
-  </Step>
-  <Step>
-    Click on the <Button>Save</Button> button to save the changes.
-  </Step>
-</Flow>
+<details>
+<summary>Standalone deployment example</summary>
+<SleepDeploymentExample />
+</details>
 
-</TabItem>
+<details>
+<summary>Ingress example</summary>
+<SleepIngressExample />
+</details>
 
-<TabItem value="crds">
+<details>
+<summary>Istio Gateway example</summary>
+<SleepIstioExample />
+</details>
 
-You can configure auto sleep for a tenant cluster by setting the sleep configuration in the VirtualClusterInstance manifest.
-
-```yaml {8-11}
-apiVersion: management.loft.sh/v1
-kind: VirtualClusterInstance
-metadata:
-  name: my-vcluster
-  namespace: loft-p-my-project
-spec:
-  clusterRef:
-    cluster: my-connected-cluster
-  sleepModeConfig:
-    afterInactivity: 3600  # seconds
-    autoDelete:
-      afterInactivity: 86400  # seconds
-  templateRef:
-    name: my-vcluster-template
-```
-
-For scheduled sleep and wake-up, you can use the `sleepSchedule` and `wakeupSchedule` fields:
-
-```yaml {9-11}
-apiVersion: management.loft.sh/v1
-kind: VirtualClusterInstance
-metadata:
-  name: my-vcluster
-  namespace: loft-p-my-project
-spec:
-  clusterRef:
-    cluster: my-connected-cluster
-  sleepModeConfig:
-    sleepSchedule: "30 17 * * 5"  # Sleep every Friday at 17:30
-    wakeupSchedule: "0 7 * * 1"   # Wake every Monday at 7:00
-    timezone: America/Denver
-  templateRef:
-    name: my-vcluster-template
-```
-
-</TabItem>
-
-<TabItem value="cli">
-
-### Pause a tenant cluster (Helm driver)
-
-For tenant clusters deployed with the Helm driver (without platform):
-
-```bash
-vcluster pause VCLUSTER_NAME --namespace NAMESPACE
-```
-
-This will scale down the tenant cluster and delete all workloads created through the tenant cluster. Upon resume, all workloads will be recreated. Other resources such as persistent volume claims, services etc. will not be affected.
-
-### Resume a paused tenant cluster
-
-```bash
-vcluster resume VCLUSTER_NAME --namespace NAMESPACE
-```
-
-### Sleep a tenant cluster (Platform)
-
-For tenant clusters managed by the vCluster Platform:
-
-```bash
-vcluster platform sleep vcluster VCLUSTER_NAME --project PROJECT_NAME
-```
-
-You can optionally prevent the tenant cluster from waking up for a certain period:
-
-```bash
-vcluster platform sleep vcluster VCLUSTER_NAME --project PROJECT_NAME --prevent-wakeup 3600
-```
-
-The `--prevent-wakeup` flag specifies the number of seconds the tenant cluster should remain asleep (use 0 for infinite sleeping).
-
-### Wake up a sleeping tenant cluster (Platform)
-
-```bash
-vcluster platform wakeup vcluster VCLUSTER_NAME --project PROJECT_NAME
-```
-
-:::info Automatic Wakeup
-Note that the tenant cluster will automatically wake up again, once you run a kubectl command or send a Kubernetes request via another tool to the tenant cluster.
-:::
-
-</TabItem>
-
-</Tabs>
-
-
-## Config reference
+## Configuration reference
 
 <Sleep />
