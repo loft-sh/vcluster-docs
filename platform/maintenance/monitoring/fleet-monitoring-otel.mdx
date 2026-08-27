@@ -12,21 +12,18 @@ import Tabs from '@theme/Tabs'
 import TabItem from '@theme/TabItem'
 import UnmanagedMetricsLabels from './_fragments/unmanaged-metrics-labels.mdx'
 
-When managing many tenant clusters across <GlossaryTerm term="control-plane">Control Plane</GlossaryTerm> Clusters, you need per-tenant
+<UnmanagedMetricsLabels />
+
+When managing many tenant clusters across <GlossaryTerm term="control-plane-cluster">control plane clusters</GlossaryTerm>, you need per-tenant
 visibility into resource consumption and API health without deploying monitoring
 inside each <GlossaryTerm term="tenant-cluster">tenant cluster</GlossaryTerm>. This guide explains how to configure OpenTelemetry
 Collectors to collect workload and control plane metrics from across multiple
 tenant clusters. All metrics are enriched with <GlossaryTerm term="vcluster">vCluster</GlossaryTerm> identity labels at
 enrichment time and pushed to a central Prometheus using `remote_write`.
 
-<UnmanagedMetricsLabels />
-
-:::note
 For a simpler setup using the built-in OpenTelemetry DaemonSet App, see
-[Aggregating Metrics](./aggregating-metrics.mdx). This guide covers advanced
-fleet monitoring with `remote_write`, Target Allocator, and per-tenancy-model
-collectors.
-:::
+[Aggregating Metrics](./aggregating-metrics.mdx) instead. This guide covers advanced
+fleet monitoring with `remote_write`, Target Allocator, and per-tenancy-model collectors.
 
 This architecture supports both the Shared Nodes and Private Nodes tenancy
 models. Each model uses a different collector configuration deployed as a
@@ -124,7 +121,7 @@ The architecture comprises the following:
 
 - Collector architecture:
   - A central Prometheus with the remote write receiver enabled.
-  - One OTel Collector Deployment with Target Allocator per <GlossaryTerm term="control-plane-cluster">Control Plane Cluster</GlossaryTerm> (scrapes shared-nodes tenant clusters and their control planes using ServiceMonitors).
+  - One OTel Collector Deployment with Target Allocator per control plane cluster (scrapes shared-nodes tenant clusters and their control planes using ServiceMonitors).
   - One OTel Collector DaemonSet per private-nodes tenant cluster (scrapes local kubelet, cAdvisor, and <GlossaryTerm term="api-server">API server</GlossaryTerm> metrics from inside the tenant cluster).
 
 ## How it works
@@ -135,7 +132,7 @@ The architecture comprises the following:
 For background on why direct Prometheus scraping fails in Shared Nodes mode and how to configure it, see [Prometheus node metrics on shared nodes](./prometheus-shared-nodes.mdx).
 :::
 
-The shared-nodes collector runs on the Control Plane Cluster as a Deployment with 2
+The shared-nodes collector runs on the control plane cluster as a Deployment with 2
 replicas. A Target Allocator discovers vCluster ServiceMonitors and distributes
 cAdvisor and ServiceMonitor scrape targets across replicas using
 consistent-hashing.
@@ -238,7 +235,7 @@ server:
 
 ### Shared nodes prerequisites
 
-- Prometheus Operator CRDs installed on the Control Plane Cluster (`ServiceMonitor`,
+- Prometheus Operator CRDs installed on the control plane cluster (`ServiceMonitor`,
   `PodMonitor`).
 - Tenant clusters deployed with a ServiceMonitor enabled. This allows scraping
   their API server and controller metrics. Enable this in your `vcluster.yaml`:
@@ -271,7 +268,7 @@ server:
 ## Deploy the shared nodes collector
 <!-- vale on -->
 
-Deploy one shared-nodes collector per Control Plane Cluster. First, register the App
+Deploy one shared-nodes collector per control plane cluster. First, register the App
 manifest with the Platform, then deploy it to each cluster through the UI.
 
 <!-- vale off -->
@@ -354,7 +351,8 @@ spec:
         subjects:
         - kind: ServiceAccount
           name: patch-webhook-sa
-          namespace: otel
+          # Keep this namespace aligned with spec.defaultNamespace below.
+          namespace: monitoring
         roleRef:
           kind: ClusterRole
           name: otel-collector-shared-nodes-patch-webhook
@@ -641,7 +639,7 @@ kubectl apply -f otel-collector-shared-nodes-app.yaml
 | Prometheus Skip TLS Verification | No | Skip TLS verification for the Prometheus connection |
 
 :::info
-Repeat these steps for each Control Plane Cluster.
+Repeat these steps for each control plane cluster.
 :::
 
 <!-- vale off -->
@@ -731,7 +729,7 @@ spec:
                     - role: node
                   scheme: https
                   tls_config:
-                    insecure_skip_verify: {{ .Values.prometheus.insecure }}
+                    insecure_skip_verify: {{ .Values.kubelet.insecure }}
                   authorization:
                     credentials_file: /var/run/secrets/kubernetes.io/serviceaccount/token
                   relabel_configs:
@@ -758,7 +756,7 @@ spec:
                     - role: node
                   scheme: https
                   tls_config:
-                    insecure_skip_verify: {{ .Values.prometheus.insecure }}
+                    insecure_skip_verify: {{ .Values.kubelet.insecure }}
                   authorization:
                     credentials_file: /var/run/secrets/kubernetes.io/serviceaccount/token
                   metrics_path: /metrics/cadvisor
@@ -789,7 +787,6 @@ spec:
                   scheme: https
                   tls_config:
                     ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
-                    insecure_skip_verify: {{ .Values.prometheus.insecure }}
                   authorization:
                     credentials_file: /var/run/secrets/kubernetes.io/serviceaccount/token
                   relabel_configs:
@@ -881,6 +878,11 @@ spec:
     label: Prometheus Skip TLS Verification
     type: boolean
     variable: prometheus.insecure
+  - defaultValue: true
+    description: Skip kubelet certificate verification for clusters whose serving certificates use a separate CA or lack IP SANs
+    label: Skip kubelet TLS Verification
+    type: boolean
+    variable: kubelet.insecure
   recommendedApp:
   - virtualcluster
 ```
@@ -892,7 +894,7 @@ spec:
   ensures one collector per node, scraping only the local kubelet and cAdvisor
   using `${env:K8S_NODE_NAME}` filtering. No Target Allocator is needed.
 - **`external_labels` instead of `k8sattributes` for identity**: The collector
-  runs inside the tenant cluster, so it can't access Control Plane Cluster namespace labels.
+  runs inside the tenant cluster, so it can't access control plane cluster namespace labels.
   The Platform injects `{{ .Values.loft.* }}` template variables at deploy time.
 - **`resource_to_telemetry_conversion: false`**: Setting this to `true` causes
   duplicate labels that break Grafana dashboards.
@@ -940,6 +942,12 @@ kubectl apply -f otel-collector-private-nodes-app.yaml
 | Prometheus Username | No | Basic auth username |
 | Prometheus Password | No | Basic auth password |
 | Prometheus Skip TLS Verification | No | Skip TLS verification for the Prometheus connection |
+| Skip kubelet TLS Verification | No | Skip kubelet certificate verification for kubelet scrapes. The default is `true`. |
+
+The default skips kubelet certificate verification because kubelet serving certificates
+commonly use a separate certificate authority or omit node IP subject alternative names.
+Set **Skip kubelet TLS Verification** to `false` only when the collector can validate the
+kubelet serving certificate for every node address it scrapes.
 
 :::info
 Repeat these steps for each private-nodes tenant cluster.
