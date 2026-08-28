@@ -27,17 +27,17 @@ header "Location" == "/enterprise-demo?source=hurl"
 GET {{VCLUSTER_COM_URL}}/pro/docs
 HTTP 302
 [Asserts]
-header "Location" contains "/pro/docs/getting-started/explore"
+header "Location" == "/pro/docs/getting-started/explore"
 
 GET {{VCLUSTER_COM_URL}}/pro/docs/getting-started/install
 HTTP 301
 [Asserts]
-header "Location" contains "/docs/platform/install/quick-start-guide"
+header "Location" == "{{VCLUSTER_COM_URL}}/docs/platform/install/quick-start-guide"
 
 GET {{VCLUSTER_COM_URL}}/pro/docs/virtual-clusters/create
 HTTP 301
 [Asserts]
-header "Location" contains "/docs/platform/use-platform/virtual-clusters/create/create-no-template"
+header "Location" == "{{VCLUSTER_COM_URL}}/docs/platform/use-platform/virtual-clusters/create/create-no-template"
 
 # vcluster.com control routes
 GET {{VCLUSTER_COM_URL}}/docs/
