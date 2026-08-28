@@ -21,6 +21,8 @@ This guide covers declaring Argo CD Applications in your Platform configuration 
 
 An `ArgoCDApplicationTemplate` is a reusable Argo CD ApplicationSpec. Create one when you want to deploy the same application definition across multiple tenant clusters without duplicating configuration.
 
+`ArgoCDApplicationTemplate` supports the same parameter definitions (types, validation, defaults) as tenant cluster templates. Both templated and inline `ArgoCDApplication` specs can use the built-in platform-specific values (project, tenant cluster name, and so on) described in [Parameters](../../administer/templates/parameters.mdx#argo-cd-application-parameter-values).
+
 <Tabs
   defaultValue="ui"
   values={[
@@ -59,12 +61,26 @@ kind: ArgoCDApplicationTemplate
 metadata:
   name: app-template
 spec:
+  # Define values that each ArgoCDApplication can supply.
+  parameters:
+    - variable: imageTag
+      label: Image tag
+      type: string
+      defaultValue: latest
   template:
     spec:
       source:
         repoURL: "https://github.com/acme/app-charts"
         targetRevision: "main"
         path: "app"
+        helm:
+          values: |-
+            image:
+              # Render the value supplied by ArgoCDApplication.spec.parameters.
+              tag: "{{ .Values.imageTag }}"
+            platform:
+              # Platform supplies built-in loft values without parameter definitions.
+              cluster: "{{ .Values.loft.cluster }}"
       project: default
       syncPolicy:
         automated:
@@ -368,7 +384,9 @@ spec:
     cluster:
       name: loft-cluster        # replace with your control plane cluster name
   templateRef:
-    name: infra-template        # references an ArgoCDApplicationTemplate
+    name: app-template          # references the ArgoCDApplicationTemplate defined above
+  parameters:
+    imageTag: "1.2.3"           # supplies the template's imageTag parameter
 ```
 
   </TabItem>
@@ -404,6 +422,20 @@ spec:
   </TabItem>
 </Tabs>
 
+## Delete applications
+
+Deleting an `ArgoCDApplication` object directly always cascades. Platform deletes the corresponding Argo CD `Application` with cascading delete enabled, which prunes the workloads it manages from the target cluster. This isn't currently configurable.
+
+Deleting a tenant cluster follows a separate cleanup path. Depending on the destination and connector, Platform either requests cascading deletion or relies on tenant cluster deletion to remove workloads.
+
+The generated Argo CD `Application` doesn't carry the `resources-finalizer.argocd.argoproj.io` finalizer, and there's no way to add it. `metadata` on `ArgoCDApplication` and `ArgoCDApplicationTemplate` only supports labels and annotations.
+
+:::warning Deleting an Application outside Platform orphans workloads
+Because the generated `Application` has no finalizer, Argo CD doesn't block on cleanup if it's removed outside Platform. This can happen through external automation or a non-cascade delete from the Argo CD UI. The workloads it deployed are orphaned in the target cluster instead of being pruned. Delete the `ArgoCDApplication` object through Platform instead so cleanup runs as expected.
+:::
+
 :::warning Disabling the integration
-Disabling `integrations.argoCD.enabled` on a tenant cluster, or removing `spec.argoCD` from a control plane cluster, removes the cluster from Argo CD and deletes all `ArgoCDApplication` objects managed by Platform. Any applications deployed by the integration will be removed from Argo CD.
+Disabling `integrations.argoCD.enabled` on a tenant cluster, or removing `spec.argoCD` from a control plane cluster, removes the cluster and its applications from Argo CD.
+
+Platform also deletes `ArgoCDApplication` objects generated from `deploy.argoCD.applications`. Independently created `ArgoCDApplication` objects remain and report a connector error. Delete those objects if you no longer need them.
 :::
