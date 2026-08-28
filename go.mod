@@ -6,7 +6,7 @@ require (
 	github.com/gertd/go-pluralize v0.2.1
 	github.com/ghodss/yaml v1.0.0
 	github.com/invopop/jsonschema v0.12.1-0.20240219232115-a4467074499d
-	github.com/loft-sh/api/v4 v4.12.0-rc.3
+	github.com/loft-sh/api/v4 v4.12.0-rc.4
 	github.com/loft-sh/external-types v0.1.0-alpha.2.0.20260409132559-a38365a8cbf2
 	k8s.io/api v0.36.0
 	k8s.io/apimachinery v0.36.0
@@ -48,7 +48,7 @@ require (
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/kylelemons/godebug v1.1.0 // indirect
 	github.com/loft-sh/admin-apis v0.0.0-20260721223200-58c89e54604e // indirect
-	github.com/loft-sh/agentapi/v4 v4.12.0-rc.3 // indirect
+	github.com/loft-sh/agentapi/v4 v4.12.0-rc.4 // indirect
 	github.com/loft-sh/apiserver v0.0.0-20260707184419-aef558a5ae8d // indirect
 	github.com/mailru/easyjson v0.7.7 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
