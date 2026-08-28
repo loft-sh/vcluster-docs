@@ -116,5 +116,9 @@ The script will:
 - Only wrap terms that exist in `src/data/glossary.yaml`
 - Only wrap the first occurrence of each term in a document
 - Respect the glossary type setting (vcluster, platform, or both)
-- Skip terms in front matter, code blocks, links, and HTML/JSX tags
+- Skip terms in front matter, code spans, fenced code (including longer
+  backtick and tilde fences), table rows, link text, link destinations, link
+  reference definitions, bare URL autolinks, MDX comments (`{/* ... */}`),
+  ESM and brace expressions, HTML/JSX tags, and interactive or code-oriented
+  JSX children such as `<Link>`, `<code>`, and `<CodeBlock>`
 - Preserve the original case of matched terms
