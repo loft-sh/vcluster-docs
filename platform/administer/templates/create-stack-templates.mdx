@@ -1,0 +1,209 @@
+---
+title: Create a Stack template
+sidebar_label: Create a Stack Template
+sidebar_position: 5
+---
+
+import Flow, { Step } from "@site/src/components/Flow";
+import Button from "@site/src/components/Button";
+import NavStep from "@site/src/components/NavStep";
+
+A Stack template defines applications that vCluster Platform deploys as one unit. It also defines the order in which those applications become ready. Use a Stack when applications have dependencies, need health gates, or pass values to later tasks.
+
+A `StackTemplate` is a reusable, cluster-scoped blueprint. A `StackInstance` applies that blueprint to one tenant cluster or control plane cluster. Each task creates either an AppInstance or an ArgoCDApplication.
+
+## Understand licensing
+
+Stacks don't have a separate license entitlement. Each task requires the entitlement for the resource it creates:
+
+- An App task requires the Apps feature, which is available on every plan.
+- An Argo CD Application task requires the Argo CD Integration feature, which isn't available on the free plan.
+- A Stack that mixes task types requires both features.
+
+If a task isn't licensed, the StackInstance remains blocked with the `FeatureNotAllowed` reason. Learn more about [Apps](../../understand/what-are-apps.mdx) and the [Argo CD integration](../../integrations/argocd/overview.mdx).
+
+## Create a Stack template in the UI
+
+<Flow id="create-stack-template-ui">
+  <Step>
+    Go to <NavStep>Management > Stacks & Apps</NavStep>, and select the **Stacks** tab.
+  </Step>
+  <Step>
+    Click <Button>Create Stack Template</Button>.
+  </Step>
+  <Step>
+    Enter a name, display name, and description for the template.
+  </Step>
+  <Step>
+    Add App or Argo CD Application tasks. Configure dependencies between tasks in the graph.
+  </Step>
+  <Step>
+    Add parameters and published outputs when the Stack needs configurable or returned values.
+  </Step>
+  <Step>
+    Click <Button>Create</Button>.
+  </Step>
+</Flow>
+
+You can also select **YAML** in the editor and apply the resource through the management API.
+
+## Define a stack template
+
+The following example deploys a database App before an API App. Create the referenced `postgresql` and `example-api` Apps before you create this template.
+
+```yaml title="stack-template.yaml"
+apiVersion: management.loft.sh/v1
+kind: StackTemplate
+metadata:
+  name: example-platform
+spec:
+  displayName: Example application platform
+  description: Deploys a database before the API that uses it.
+  parameters:
+    - variable: databaseStorage
+      label: Database storage
+      description: Persistent storage allocated to the database.
+      type: string
+      defaultValue: 10Gi
+  tasks:
+    - name: database
+      app:
+        templateRef:
+          name: postgresql
+        parameters:
+          storage: "{{ .Values.databaseStorage }}"
+    - name: api
+      # Wait until the database AppInstance reports Healthy.
+      dependsOn:
+        - database
+      timeout: 20m
+      app:
+        templateRef:
+          name: example-api
+```
+
+Apply the template through the vCluster Platform management API:
+
+```bash
+vcluster platform connect management
+kubectl apply -f stack-template.yaml
+```
+
+Tasks without dependency edges can run concurrently. A dependent task starts only after every task in `dependsOn` becomes healthy.
+
+## Configure tasks
+
+Each task needs a unique DNS-label-safe `name`. A Stack supports up to 20 tasks. Set exactly one task type:
+
+- `app` creates an AppInstance.
+- `argoCDApplication` creates an ArgoCDApplication.
+
+Within the selected type, set either an inline `template` or a reusable `templateRef`. Don't set both. Parameters are valid with `templateRef` and are passed to the referenced template.
+
+This task uses a reusable ArgoCDApplicationTemplate:
+
+```yaml
+tasks:
+  - name: workloads
+    argoCDApplication:
+      templateRef:
+        name: application-workloads
+      parameters:
+        environment: production
+```
+
+The Argo CD connector must be enabled before an Argo CD Application task can become healthy. See [Connect Argo CD](../../integrations/argocd/connect-argocd.mdx).
+
+## Pass parameters to tasks
+
+Declare optional parameters under `spec.parameters`. Tasks read their values with `{{ .Values.<variable> }}`. Parameter declarations provide defaults, UI fields, and validation.
+
+Values that don't have declarations are still available to tasks. However, vCluster Platform can't validate those values or supply defaults.
+
+## Pass outputs between tasks
+
+A task can capture one scalar value from a Secret or namespaced Kubernetes resource. A later task reads the value with `{{ .Outputs.<task>.<output> }}` and must list the source task in `dependsOn`.
+
+```yaml
+tasks:
+  - name: database
+    app:
+      templateRef:
+        name: postgresql
+    outputs:
+      - name: password
+        fromSecret:
+          namespace: database
+          name: database-credentials
+          key: password
+      - name: serviceip
+        fromResource:
+          apiVersion: v1
+          kind: Service
+          namespace: database
+          name: postgresql
+          # Select one scalar field with kubectl JSONPath syntax.
+          jsonPath: "{.spec.clusterIP}"
+  - name: api
+    dependsOn:
+      - database
+    app:
+      templateRef:
+        name: example-api
+      parameters:
+        databasePassword: "{{ .Outputs.database.password }}"
+        databaseAddress: "{{ .Outputs.database.serviceip }}"
+publishedOutputs:
+  # Expose the service address without exposing the database password.
+  - name: databaseAddress
+    fromTask:
+      task: database
+      output: serviceip
+```
+
+Output and task names used in templates can contain only letters and digits. The source namespace must be a namespace where the Stack deploys an App. Resource outputs can't read cluster-scoped resources.
+
+Published outputs are available through the StackInstance outputs subresource. They aren't written to `status`. Access to sensitive output values requires separate `get` permission on `stackinstances/outputs`.
+
+## Test a stack template
+
+Create a StackInstance that references the template. A destination is immutable after creation.
+
+```yaml title="stack-instance.yaml"
+apiVersion: management.loft.sh/v1
+kind: StackInstance
+metadata:
+  name: example-platform
+  namespace: p-example
+spec:
+  displayName: Example application platform
+  destination:
+    virtualCluster:
+      name: development
+  templateRef:
+    name: example-platform
+  parameters:
+    databaseStorage: 20Gi
+  defaults:
+    # Apply this timeout to tasks that don't set their own timeout.
+    taskTimeout: 15m
+  # Delete children removed from the resolved task graph.
+  prunePolicy: Prune
+```
+
+```bash
+kubectl apply -f stack-instance.yaml
+kubectl get stackinstance example-platform -n p-example
+```
+
+The default `prunePolicy` is `Retain`. If a task is removed from the template, its existing child remains and appears in `status.orphanedApplications`. Set `Prune` to delete removed children in reverse dependency order.
+
+:::warning
+A referenced StackTemplate is resolved during every reconciliation. Stack templates don't have Stack revisions. Review template changes before applying them to existing StackInstances.
+:::
+
+## Next steps
+
+- [Use a Stack](../../use-platform/apps/use-stacks.mdx) to deploy a StackTemplate.
+- [Manage Certified Stacks](./certified-stacks.mdx) to use templates bundled with vCluster Platform.
+- [Troubleshoot Stacks](../../troubleshoot/stacks.mdx) to inspect blocked or failed tasks.

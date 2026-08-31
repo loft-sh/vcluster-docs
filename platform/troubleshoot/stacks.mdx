@@ -1,0 +1,191 @@
+---
+title: Troubleshoot Stacks
+sidebar_label: Stacks
+sidebar_position: 6
+---
+
+A StackInstance reports an aggregate phase and a status for every resolved task. Start with the top-level reason, then inspect the task that is blocked or failed.
+
+## Collect stack status
+
+Connect to the vCluster Platform management API:
+
+```bash
+vcluster platform connect management
+```
+
+List StackInstances and inspect one instance:
+
+```bash
+kubectl get stackinstances -A
+kubectl describe stackinstance <stack-name> -n <project-namespace>
+kubectl get stackinstance <stack-name> -n <project-namespace> -o yaml
+```
+
+Print a compact task summary:
+
+```bash
+kubectl get stackinstance <stack-name> -n <project-namespace> \
+  -o jsonpath='{.status.phase}{"\n"}{range .status.tasks[*]}{.name}{"\t"}{.type}{"\t"}{.phase}{"\t"}{.reason}{"\t"}{.message}{"\n"}{end}'
+```
+
+Compare `status.observedGeneration` with `metadata.generation`. A lower observed generation means the controller hasn't reconciled the latest specification yet.
+
+## Understand phases
+
+| StackInstance phase | Meaning |
+| --- | --- |
+| `Pending` | A missing or invalid prerequisite requires manual action. |
+| `Progressing` | At least one task is still rolling out. |
+| `Healthy` | Every resolved task is healthy. |
+| `Degraded` | At least one task failed. |
+| `Deleting` | The controller is removing owned children. |
+
+| Task phase | Meaning |
+| --- | --- |
+| `Pending` | The task hasn't materialized a child yet. |
+| `Waiting` | The task is waiting for dependencies. |
+| `Progressing` | Its AppInstance or ArgoCDApplication is rolling out. |
+| `Blocked` | A prerequisite needs manual action. |
+| `Healthy` | The child reached readiness. |
+| `Failed` | The child failed or exceeded its timeout. |
+
+## Resolve top-level reasons
+
+### Resolve `TemplateNotFound`
+
+The StackInstance references a StackTemplate that doesn't exist. Confirm `spec.templateRef.name` and list available templates:
+
+```bash
+kubectl get stacktemplates
+```
+
+Create the missing template or update the reference.
+
+### Resolve `TemplateInvalid`
+
+The template can't render. Common causes include a missing parameter, invalid Go template expression, dependency cycle, duplicate task name, or invalid output reference.
+
+Inspect the Ready condition message. Then compare the StackInstance parameters with the StackTemplate declarations.
+
+Tasks read parameters as `{{ .Values.<name> }}` and outputs as `{{ .Outputs.<task>.<output> }}`. A task that consumes an output must depend on the source task.
+
+### Resolve `FeatureNotAllowed`
+
+At least one task requires a feature outside the active plan. App tasks require Apps. Argo CD Application tasks require Argo CD Integration.
+
+An App-only Stack is available on every plan. An Argo CD Application task isn't available on the free plan. Remove the unlicensed task or use a plan that includes its feature.
+
+### Resolve destination reasons
+
+The destination tenant cluster or control plane cluster doesn't exist, or is being deleted. `spec.destination` is immutable.
+
+Create the named destination if it is missing. To deploy somewhere else, create a new StackInstance with the correct destination.
+
+### Resolve output storage reasons
+
+The controller stores captured task outputs in a Secret owned by the StackInstance. `OutputsConflict` means another object owns the required Secret name. `OutputsRejected` means the API server rejected the Secret.
+
+Read the Ready condition message and inspect Secrets in the project namespace. Don't delete a Secret until you confirm that the StackInstance doesn't own it.
+
+## Diagnose a task
+
+Use `status.tasks[].type` and `applicationName` to find the generated child. An `app` task creates an AppInstance. An `argoCDApplication` task creates an ArgoCDApplication.
+
+```bash
+# Replace the resource kind and generated name with values from task status.
+kubectl describe appinstance <application-name> -n <project-namespace>
+kubectl describe argocdapplication <application-name> -n <project-namespace>
+```
+
+### Diagnose waiting tasks
+
+Read `dependsOn` in task status. A waiting task starts only after every dependency becomes healthy.
+
+Diagnose the dependency first. Independent tasks can continue while one branch waits or fails.
+
+### Failed or timed-out tasks
+
+Read the task reason and message, then inspect its child resource. A task uses its own `timeout` or `defaults.taskTimeout`. The default is 10 minutes.
+
+For an AppInstance, inspect Helm status, hook Jobs, Pods, events, and required credentials in the destination. For an ArgoCDApplication, inspect connector health, sync state, and application health.
+
+### App tasks report a missing owner
+
+AppInstances require an owner. Set `spec.owner` on the StackInstance or ensure the workflow creating it supplies an owner. The controller propagates StackInstance owner and access settings to children.
+
+## Diagnose outputs
+
+An output becomes available only after its source task is healthy. Check these constraints:
+
+- `fromSecret` names an existing key in a Secret.
+- `fromResource` selects one scalar value with kubectl JSONPath syntax.
+- The source is namespaced and belongs to a namespace where the Stack deploys an App.
+- Task and output names used by templates contain only letters and digits.
+- The consuming task lists the source task in `dependsOn`.
+
+Published values are served through `stackinstances/outputs`, not through StackInstance status. Confirm the reader has `get` permission on that subresource. Treat published credentials as sensitive even when the UI can display them.
+
+## Handle removed tasks
+
+When a referenced StackTemplate removes a task, inspect `status.orphanedApplications`.
+
+- `prunePolicy: Retain`, the default, keeps the child resource.
+- `prunePolicy: Prune` deletes removed children in reverse dependency order.
+
+Before switching to `Prune`, confirm that no retained application contains data that must survive.
+
+## Troubleshoot NVIDIA Run:ai certified stacks
+
+### Check a healthy stack when NVIDIA Run:ai isn't ready
+
+Check beyond Helm task health. Verify the NVIDIA Run:ai operator dependency checks and scheduler Pods. Confirm the Prometheus operator has the expected fixed name and that the GPU components are ready.
+
+### Ingress or certificate setup fails
+
+Confirm the ingress LoadBalancer has an address. For an IPv4 address, the templates can derive a `nip.io` domain. AWS LoadBalancers return hostnames and require the AWS ingress-provider setting.
+
+When using a supplied certificate, confirm its DNS names cover the configured domain. In the central model, the host and tenant settings must agree about whether a private certificate authority is required.
+
+### A central-model tenant waits for Secrets
+
+The tenant's `discover` task waits for registration facts, registry credentials, and the optional certificate authority. Check the registration StackInstance in the project namespace first.
+
+Then confirm that these Secrets exist in the tenant cluster's `runai` namespace:
+
+- `runai-tenant-facts`
+- `runai-reg-creds-host`
+- `runai-ca-cert`, when a private certificate authority is enabled
+
+Don't copy registration credentials into Stack parameters. Fix registration or Secret sync so rotated values continue to propagate.
+
+### A central-model tenant has no GPU nodes
+
+Confirm the control plane cluster has nodes matching the tenant's selector:
+
+```bash
+kubectl get nodes -l runai.vcluster.com/tenant=<tenant-label-value>
+```
+
+The template has no all-node fallback. Each tenant needs at least one matching GPU node, and a node must not match multiple tenants.
+
+### GPU utilization is empty in the central model
+
+This is a known limitation. DCGM Exporter runs on the control plane cluster, outside each tenant API. Synced node capacity still supports allocation, but per-tenant utilization views aren't available.
+
+## Recover from an incomplete removal
+
+Helm uninstall can leave namespaces, persistent volume claims, completed hook Jobs, and custom resource definitions. Inspect leftovers before reinstalling.
+
+For the central model, delete resources in this order:
+
+1. Delete each tenant cluster.
+2. Delete its `runai-reg-<tenant-name>` registration StackInstance.
+3. Confirm that NVIDIA Run:ai lists no remaining clusters.
+4. Delete the shared host StackInstance.
+
+:::danger
+Deleting the shared host StackInstance removes the shared control plane and its PostgreSQL, NATS, and Thanos Receive data. Every remaining tenant loses service.
+:::
+
+See [Manage Certified Stacks](../administer/templates/certified-stacks.mdx) for prerequisites and supported deployment sequences.
