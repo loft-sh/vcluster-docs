@@ -1,0 +1,192 @@
+---
+title: OIDC Token Exchange
+sidebar_label: OIDC Token Exchange
+sidebar_position: 7
+description: Exchange external OIDC tokens for platform access keys using RFC 8693 token exchange, enabling passwordless CI/CD authentication.
+---
+
+# OIDC token exchange
+
+The platform supports [RFC 8693](https://datatracker.ietf.org/doc/html/rfc8693) token exchange. You can exchange an external OIDC token for a platform [access key](access-keys.mdx). Automation tools and CI/CD pipelines can use this flow to authenticate without storing long-lived secrets.
+
+## How it works
+
+An external identity provider issues a short-lived OIDC token to a workload. The workload sends the token to the platform. The platform verifies the token and returns an access key. The workload uses the access key to log in with [`vcluster platform login`](/docs/vcluster/cli/vcluster_platform_login), or directly in API requests.
+
+The access key has the same permissions as the platform user that the token identity maps to.
+
+The exchange follows these steps:
+
+1. The pipeline requests an OIDC token from its runtime, such as GitHub Actions or Azure DevOps.
+2. The pipeline sends the token to the platform token exchange endpoint.
+3. The platform verifies the token against the configured SSO connector and issues an access key.
+4. The pipeline uses the access key to log in.
+
+## Token exchange endpoint
+
+```
+POST https://<platform-host>/auth/<connector-id>/token
+Content-Type: application/x-www-form-urlencoded
+```
+
+**Parameters:**
+
+| Parameter | Value |
+|-----------|-------|
+| `grant_type` | `urn:ietf:params:oauth:grant-type:token-exchange` |
+| `subject_token` | The OIDC token from the external provider |
+| `subject_token_type` | `urn:ietf:params:oauth:token-type:id_token` or `urn:ietf:params:oauth:token-type:access_token` |
+
+The `<connector-id>` in the URL must match the `id` field of the connector in your platform configuration. Use `oidc` if you authenticate with the primary OIDC provider configured under `auth.oidc`.
+
+**Response:**
+
+```json
+{
+  "access_token": "<platform-access-key>",
+  "issued_token_type": "urn:ietf:params:oauth:token-type:access_token",
+  "token_type": "Bearer",
+  "expires_in": 300
+}
+```
+
+`expires_in` is the lifetime of the access key in seconds. The platform caps the key to the remaining lifetime of the subject token, so the value is the shorter of the platform login TTL and the time left on the subject token. A subject token that expires in 5 minutes returns `expires_in: 300`. Don't cache the access key for longer than `expires_in` seconds.
+
+The access key expires at a fixed time. It has no inactivity extension and no identity refresh, so a pipeline that needs a longer session must exchange a new token.
+
+## Token types
+
+The platform accepts two token types.
+
+**ID tokens** (`urn:ietf:params:oauth:token-type:id_token`): The platform verifies the token against the provider JWKS endpoint. The `aud` claim must match the `clientId` value in the connector configuration. Use this type for GitHub Actions.
+
+**Access tokens** (`urn:ietf:params:oauth:token-type:access_token`): The platform verifies the token against the provider JWKS endpoint. The `aud` claim must match the `resource` value in the connector configuration. Set the `resource` field in the platform configuration before you exchange access tokens. Use this type for providers such as Microsoft Entra ID.
+
+## Configure a connector for token exchange
+
+Token exchange works with any OIDC SSO connector. Add the connector under `auth.connectors`. For the full list of supported providers, see [SSO providers](../../configure/platform-configs/single-sign-on.mdx).
+
+```yaml title="Platform connector configuration"
+auth:
+  connectors:
+    # The id becomes part of the exchange URL: /auth/my-provider/token
+    - id: my-provider
+      oidc:
+        issuerUrl: https://my-oidc-provider.example.com
+        # Must match the aud claim in the tokens that the provider issues
+        clientId: <expected-audience>
+        # Leave empty if the provider doesn't require a client secret
+        clientSecret: ""
+        # Claim that identifies the platform user
+        usernameClaim: sub
+        loftUsernameClaim: sub
+        groupsClaim: ""
+```
+
+:::note
+If your platform uses `auth.oidc` as the primary SSO provider, token exchange is available at `/auth/oidc/token`.
+:::
+
+<!-- vale off -->
+### GitHub Actions
+<!-- vale on -->
+
+GitHub Actions issues OIDC tokens for workflows that have the `id-token: write` permission. The issuer URL is the same for all GitHub organizations.
+
+```yaml title="Platform connector configuration"
+auth:
+  connectors:
+    - id: github-actions
+      oidc:
+        # Global GitHub Actions OIDC issuer
+        issuerUrl: https://token.actions.githubusercontent.com
+        # Must match the audience that the workflow requests
+        clientId: https://<platform-host>
+        clientSecret: ""
+        # Maps each repository to a separate platform user
+        usernameClaim: repository
+        loftUsernameClaim: repository
+        groupsClaim: ""
+```
+
+- The `clientId` must match the `audience` parameter that the workflow uses when it requests the token.
+- Fields like `usernameClaim` and `loftUsernameClaim` must reference one of the claims that GitHub provides. For all claims GitHub Actions includes in OIDC tokens, see the [GitHub Actions OIDC reference](https://docs.github.com/en/actions/reference/security/oidc). In this example, setting `usernameClaim: repository` maps each repository (`<owner>/<repo>`) to a separate platform user, but doesn't distinguish between individual workflows or branches.
+
+**Workflow example:**
+
+```yaml title=".github/workflows/platform-login.yaml"
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Get OIDC token
+        id: oidc
+        run: |
+          OIDC_TOKEN=$(curl -s \
+            -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=https://$PLATFORM_HOST" \
+            | jq -r '.value')
+          echo "token=$OIDC_TOKEN" >> "$GITHUB_OUTPUT"
+        env:
+          PLATFORM_HOST: <platform-host>
+
+      - name: Exchange token
+        id: exchange
+        run: |
+          RESPONSE=$(curl -s -X POST \
+            "https://$PLATFORM_HOST/auth/github-actions/token" \
+            -H "Content-Type: application/x-www-form-urlencoded" \
+            -d "grant_type=urn:ietf:params:oauth:grant-type:token-exchange" \
+            -d "subject_token=${{ steps.oidc.outputs.token }}" \
+            -d "subject_token_type=urn:ietf:params:oauth:token-type:id_token")
+          echo "::add-mask::$(echo "$RESPONSE" | jq -r '.access_token')"
+          echo "key=$(echo "$RESPONSE" | jq -r '.access_token')" >> "$GITHUB_OUTPUT"
+        env:
+          PLATFORM_HOST: <platform-host>
+
+      - name: Install the vCluster CLI
+        uses: loft-sh/setup-vcluster@main
+
+      - name: Log in to the platform
+        run: |
+          vcluster platform login "https://$PLATFORM_HOST" \
+            --access-key "${{ steps.exchange.outputs.key }}"
+        env:
+          PLATFORM_HOST: <platform-host>
+```
+
+The `::add-mask::` command keeps the access key out of the workflow logs.
+
+<!-- vale off -->
+### Active Directory Federation Services (ADFS)
+<!-- vale on -->
+
+ADFS doesn't follow the OIDC standard for access tokens. It publishes an `access_token_issuer` field in its discovery document, and it signs access tokens with that value as the `iss` claim. ADFS doesn't use the standard `issuer` value in access tokens.
+
+**Enable ADFS access token support**
+
+Set this environment variable on the platform deployment:
+
+```bash
+LOFT_OIDC_TRUST_ACCESS_TOKEN_ISSUER=true
+```
+
+When this variable is set, the platform reads the `access_token_issuer` field from the connector discovery document. If the field is present, the platform accepts only that value as the issuer for access tokens. The platform no longer accepts the standard issuer for access tokens. ID token validation doesn't change.
+
+:::note
+This variable applies to all connectors. Every connector with an `access_token_issuer` field in its discovery document adopts the replace behavior.
+:::
+
+## Troubleshoot token exchange errors
+
+| Error | Cause | Fix |
+|-------|-------|-----|
+| `token verification failed` | The `issuerUrl` or audience doesn't match | Decode the token (`echo "$TOKEN" \| cut -d. -f2 \| base64 -d \| jq '{iss, aud}'`). Compare the values with the platform configuration. |
+| `access token authentication requires the resource (audience) to be configured` | The `resource` field is missing from the platform configuration | Add `resource: "<expected-audience>"` to `auth.oidc` or the connector configuration. |
+| `expected audience "api://..." got "..."` | The `resource` field uses the `api://` prefix, but the token contains the bare GUID | Set `resource` to the bare GUID. Don't use the `api://` prefix. |
+| `oidc: access token issued by a different provider` | ADFS signs access tokens with `access_token_issuer` as `iss` instead of the standard issuer | Set `LOFT_OIDC_TRUST_ACCESS_TOKEN_ISSUER=true` on the platform deployment. |
+| `invalid_grant` | The token expired, or the issuer isn't trusted | Get a new token. Verify that the issuer URL matches the platform configuration. |
+| HTTP 404 on `/auth/<id>/token` | The connector ID doesn't match, or the connector is disabled | Check that the connector `id` in the platform configuration matches the URL, and that the authentication method is enabled. |
