@@ -92,6 +92,8 @@ A `Pending` StackInstance can also report the first blocked task's reason direct
 - An `app` task blocks with `AppNotFound`, `DestinationNotFound`, or `DestinationNotReady`.
 - An `argoCDApplication` task blocks with `InvalidConnector`, `CreateArgoClientFailed`, `GetClusterFailed`, or `TemplateNotFound`.
 
+Recreating a connector with the same name resolves `InvalidConnector` on its own. The controller watches connectors and re-enqueues affected tasks as soon as a matching name exists again. Pointing an existing connector at a different Argo CD server doesn't clean up the application it already created on the previous server.
+
 To confirm a fix worked, re-run the status command above and check that the aggregate phase reads `Healthy`.
 
 ## Diagnose a task
@@ -111,7 +113,10 @@ kubectl describe argocdapplication <application-name> -n <project-namespace>
 | Task phase `Progressing` | The generated AppInstance or ArgoCDApplication is still rolling out, or the controller is capturing its outputs. | Inspect the generated child and the task's reason and message. If the task is capturing outputs, continue with [Diagnose outputs](#diagnose-outputs). |
 | Task phase `Blocked` | An instance-level reason stopped reconciliation, or the task is missing a prerequisite. An `app` child can report `AppNotFound`, `DestinationNotFound`, or `DestinationNotReady`. An `argoCDApplication` child can report `InvalidConnector`, `CreateArgoClientFailed`, `GetClusterFailed`, or `TemplateNotFound`. | Compare the task reason with the Ready condition and resolve any instance-level problem first. Otherwise, inspect the generated AppInstance or ArgoCDApplication. Create the missing App or ArgoCDApplicationTemplate, fix the child destination, or fix the Argo CD connector. |
 | Task phase `Failed`, reason `MissingOwner` | AppInstances require an owner. vCluster Platform fills in `spec.owner` automatically for any authenticated caller creating the StackInstance through the management API, whether that's the UI, a script, or a GitOps controller. A StackInstance admitted by writing `storage.loft.sh/v1` directly bypasses that defaulting and can end up without an owner. | Set `spec.owner` on the StackInstance. The controller propagates owner and access settings to children. |
+| Task phase `Failed`, message includes `release name is invalid` | The generated child name fits the 63-character Kubernetes object-name limit, but Helm's own release-name limit is 53 characters. A long StackInstance name, task name, or both can cross it. | Shorten the StackInstance name, the task name, or both, then reconcile again. |
 | Task phase `Failed`, any other reason | The controller couldn't validate, render, build, write, or read the child; the child reported failure; or the task exceeded its deployment or output-capture timeout. A task uses its own `timeout`, then `defaults.taskTimeout`, or 10 minutes by default. | Read the task reason and message first. If `applicationName` is empty, fix the reported task definition, dependency, ownership conflict, or apply error. Otherwise, inspect the child. For an AppInstance, check Helm status, hook Jobs, Pods, events, and required credentials. For an ArgoCDApplication, check connector health, sync state, and application health. |
+
+A `Healthy` Stack with a missing or unexpected child application can mean two tasks share a name. vCluster Platform doesn't currently reject a duplicate task name, so the later task's child silently replaces the earlier one's. Check `status.tasks[]` for repeated `name` values, then rename the conflicting task in the StackTemplate.
 
 To confirm a fix worked, re-run the compact task summary above and check that the task reads `Healthy`.
 
