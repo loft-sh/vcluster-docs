@@ -93,7 +93,7 @@ Tasks without dependency edges can run concurrently. A dependent task starts onl
 
 ## Configure tasks
 
-Give each task a unique DNS-label-safe `name`. A Stack supports up to 20 tasks. Each task can set its own `timeout`. A task without one uses the Stack's `defaults.taskTimeout`, or 10 minutes if that isn't set either. Set exactly one task type:
+Give each task a unique DNS-label-safe `name`. A duplicate name is rejected when the Stack is applied. A Stack supports up to 20 tasks. Each task can set its own `timeout`. A task without one uses the Stack's `defaults.taskTimeout`, or 10 minutes if that isn't set either. Set exactly one task type:
 
 - `app` creates an AppInstance.
 - `argoCDApplication` creates an ArgoCDApplication.
@@ -101,9 +101,7 @@ Give each task a unique DNS-label-safe `name`. A Stack supports up to 20 tasks. 
 Within the selected type, set either an inline `template` or a reusable `templateRef`. Don't set both. Parameters are valid only with `templateRef`. They pass through to the referenced template.
 
 :::caution
-vCluster Platform doesn't currently reject a duplicate task name. A repeated name silently replaces the earlier task's child application, and the StackInstance can still report `Healthy`.
-
-For an `app` task, also keep the combined StackInstance and task name short. The generated child name only enforces the 63-character Kubernetes object-name limit, but Helm's own release-name limit is 53 characters. A longer combination fails to deploy with a `release name is invalid` error that doesn't mention length.
+For an `app` task, keep the combined StackInstance and task name short. The generated child name only enforces the 63-character Kubernetes object-name limit, but Helm's own release-name limit is 53 characters. A longer combination fails to deploy with a `release name is invalid` error that doesn't mention length.
 :::
 
 This task uses a reusable ArgoCDApplicationTemplate:
@@ -121,6 +119,15 @@ tasks:
 :::note
 The Argo CD connector must be enabled before an Argo CD Application task can become healthy. See [Connect Argo CD](../../integrations/argocd/connect-argocd.mdx).
 :::
+
+There's no field to skip a task based on a parameter. A Stack always resolves its full task set. To make a task a no-op under some condition, interpolate the `templateRef` name so it points at an App or ArgoCDApplicationTemplate that does nothing:
+
+```yaml
+- name: gpu
+  app:
+    templateRef:
+      name: 'gpu-operator{{ if eq .Values.gpuProvider "gke" }}-skip{{ end }}'
+```
 
 ## Pass parameters to tasks
 
@@ -169,13 +176,21 @@ publishedOutputs:
       output: serviceip
 ```
 
-Output names and the names of tasks that declare outputs can contain only lowercase letters and digits. Other task names can also contain hyphens. Resource outputs can't read cluster-scoped resources. The source namespace must be a namespace this Stack has already deployed an App or Argo CD Application into. vCluster Platform rejects a resource output whose source is in any other namespace before it reads the resource, even if the controller could otherwise reach it.
+Output names and the names of tasks that declare outputs can contain only lowercase letters and digits. Other task names can also contain hyphens. Resource outputs can't read cluster-scoped resources, and `fromResource` rejects `kind: Secret` outright. Read a Secret value with `fromSecret`, which also keeps it flagged as sensitive. The source namespace must be a namespace this Stack has already deployed an App or Argo CD Application into. vCluster Platform rejects a resource output whose source is in any other namespace before it reads the resource, even if the controller could otherwise reach it.
+
+Output references support template functions and pipelines. For example, `{{ .Outputs.database.password | quote }}` is valid. Keep the reference in the canonical `.Outputs.<task>.<output>` form. An output reference can't control an `if`, `range`, or `with` action, declare a variable, or share one action with a `.Values` reference because parameters and outputs are rendered at different times. Parameter-driven control flow can contain output references in its body:
+
+```yaml
+endpoint: '{{ if .Values.tls }}https://{{ .Outputs.api.hostname }}{{ else }}http://{{ .Outputs.api.hostname }}{{ end }}'
+```
+
+The text `<%` is reserved for internal output rendering and isn't valid in a task payload.
 
 Published outputs are available through the StackInstance outputs subresource. They aren't written to `status`. Access to sensitive output values requires separate `get` permission on `stackinstances/outputs`. See [Stack permissions](../users-permissions/permissions/stacks.mdx).
 
 ## Test a stack template
 
-Create a StackInstance that references the template. A destination is immutable after creation.
+Create a StackInstance that references the template. A destination and, once set, an owner are both immutable after creation. A tenant cluster destination must be in the same project as the StackInstance. There's no cross-project form of this field, so deploying the same Stack into tenant clusters across several projects takes one StackInstance per project, all referencing the same template.
 
 ```yaml title="stack-instance.yaml"
 apiVersion: management.loft.sh/v1

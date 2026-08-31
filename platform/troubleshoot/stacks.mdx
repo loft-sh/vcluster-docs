@@ -116,9 +116,21 @@ kubectl describe argocdapplication <application-name> -n <project-namespace>
 | Task phase `Failed`, message includes `release name is invalid` | The generated child name fits the 63-character Kubernetes object-name limit, but Helm's own release-name limit is 53 characters. A long StackInstance name, task name, or both can cross it. | Shorten the StackInstance name, the task name, or both, then reconcile again. |
 | Task phase `Failed`, any other reason | The controller couldn't validate, render, build, write, or read the child; the child reported failure; or the task exceeded its deployment or output-capture timeout. A task uses its own `timeout`, then `defaults.taskTimeout`, or 10 minutes by default. | Read the task reason and message first. If `applicationName` is empty, fix the reported task definition, dependency, ownership conflict, or apply error. Otherwise, inspect the child. For an AppInstance, check Helm status, hook Jobs, Pods, events, and required credentials. For an ArgoCDApplication, check connector health, sync state, and application health. |
 
-A `Healthy` Stack with a missing or unexpected child application can mean two tasks share a name. vCluster Platform doesn't currently reject a duplicate task name, so the later task's child silently replaces the earlier one's. Check `status.tasks[]` for repeated `name` values, then rename the conflicting task in the StackTemplate.
-
 To confirm a fix worked, re-run the compact task summary above and check that the task reads `Healthy`.
+
+## Retry a stack
+
+Set the `platform.vcluster.com/stack-retry` annotation on the StackInstance to a task name or `all` to retry without recreating the instance:
+
+```yaml
+metadata:
+  annotations:
+    platform.vcluster.com/stack-retry: "all"
+```
+
+The controller clears the annotation once it acts on it, so the annotation's presence is what "a retry is in flight" means. There's no status field for it. Requesting a retry from the UI needs the `update` verb on the StackInstance.
+
+An Argo CD Application task retries by re-triggering its child directly. A Stack retry can't re-trigger a failed `app` task because its AppInstance runs again only when the task's definition changes. The controller reports a `RetryNotApplicable` event for that task. Edit the task instead. A retry of `all` can still retry other eligible tasks in the Stack.
 
 ## Diagnose outputs
 
@@ -132,6 +144,17 @@ An output becomes available only after its source task is healthy. If a task nev
 
 Published values are served through `stackinstances/outputs`, not through StackInstance status. Confirm the reader has `get` permission on that subresource. Treat published credentials as sensitive even when the UI can display them. See [Stack permissions](../administer/users-permissions/permissions/stacks.mdx).
 
+Use each output's `state` and `reason` to distinguish a value that is still being captured from a definition or task failure:
+
+| State and reason | Meaning |
+| --- | --- |
+| `Pending` / `NotCaptured` | The task hasn't captured a current value. |
+| `Pending` / `SourceChanged` | The stored value came from an older source definition and is being captured again. |
+| `Failed` / `OutputNotDeclared` | `publishedOutputs` references an output the task doesn't declare. |
+| `Failed` / `NoSource` | The task output doesn't declare a source. |
+| `Failed` / `TaskFailed` | The producing task failed before a current value was available. |
+| `Available` / `TaskFailed` | The producing task failed after capture, so the API serves the last good value. |
+
 ## Handle removed tasks
 
 When a referenced StackTemplate removes a task, inspect `status.orphanedApplications`.
@@ -141,7 +164,7 @@ When a referenced StackTemplate removes a task, inspect `status.orphanedApplicat
 
 Before switching to `Prune`, confirm that no retained application contains data that must survive.
 
-## Troubleshoot NVIDIA Run:ai certified stacks
+## Troubleshoot NVIDIA Run:ai certified stacks {#troubleshoot-nvidia-runai-certified-stacks}
 
 | Signal | Cause | Resolution |
 | --- | --- | --- |
