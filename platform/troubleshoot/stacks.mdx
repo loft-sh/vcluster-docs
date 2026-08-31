@@ -4,7 +4,15 @@ sidebar_label: Stacks
 sidebar_position: 6
 ---
 
-A StackInstance reports an aggregate phase and a status for every resolved task. Start with the top-level reason, then inspect the task that is blocked or failed.
+Start here:
+
+1. Run the status command below and note the aggregate `phase`, the Ready condition's `reason`, and each task's phase.
+2. Follow the path for the aggregate phase:
+   - For `Pending` or `Degraded`, start with [Resolve top-level reasons](#resolve-top-level-reasons).
+   - For `Progressing`, inspect the task that is `Pending`, `Waiting`, or `Progressing` under [Diagnose a task](#diagnose-a-task).
+   - For `Deleting`, wait for deletion to finish. If it doesn't, inspect the remaining owned applications and their deletion status.
+   - For `Healthy`, use [Diagnose outputs](#diagnose-outputs) or the integration-specific checks if the deployed workload still isn't working.
+3. Apply the resolution, then re-run the status command. `Healthy` means the Stack's own orchestration succeeded, not that everything it deployed is fully working. For some integrations, confirm the deployed workload's own readiness too. See [Troubleshoot NVIDIA Run:ai certified stacks](#troubleshoot-nvidia-runai-certified-stacks) for an example.
 
 ## Collect stack status
 
@@ -22,16 +30,18 @@ kubectl describe stackinstance <stack-name> -n <project-namespace>
 kubectl get stackinstance <stack-name> -n <project-namespace> -o yaml
 ```
 
-Print a compact task summary:
+Print a compact summary, including the Ready condition's reason and message:
 
 ```bash
 kubectl get stackinstance <stack-name> -n <project-namespace> \
-  -o jsonpath='{.status.phase}{"\n"}{range .status.tasks[*]}{.name}{"\t"}{.type}{"\t"}{.phase}{"\t"}{.reason}{"\t"}{.message}{"\n"}{end}'
+  -o jsonpath='{.status.phase}{"\n"}{range .status.conditions[?(@.type=="Ready")]}{.reason}{"\t"}{.message}{"\n"}{end}{range .status.tasks[*]}{.name}{"\t"}{.type}{"\t"}{.phase}{"\t"}{.reason}{"\t"}{.message}{"\n"}{end}'
 ```
 
 Compare `status.observedGeneration` with `metadata.generation`. A lower observed generation means the controller hasn't reconciled the latest specification yet.
 
-## Understand phases
+### Understand phases
+
+The StackInstance reports one aggregate phase across all of its tasks:
 
 | StackInstance phase | Meaning |
 | --- | --- |
@@ -41,6 +51,8 @@ Compare `status.observedGeneration` with `metadata.generation`. A lower observed
 | `Degraded` | At least one task failed. |
 | `Deleting` | The controller is removing owned children. |
 
+Each task also reports its own phase, which the aggregate phase summarizes:
+
 | Task phase | Meaning |
 | --- | --- |
 | `Pending` | The task hasn't materialized a child yet. |
@@ -48,49 +60,43 @@ Compare `status.observedGeneration` with `metadata.generation`. A lower observed
 | `Progressing` | Its AppInstance or ArgoCDApplication is rolling out. |
 | `Blocked` | A prerequisite needs manual action. |
 | `Healthy` | The child reached readiness. |
-| `Failed` | The child failed or exceeded its timeout. |
+| `Failed` | The controller, generated child, or task timeout produced a terminal error. |
 
 ## Resolve top-level reasons
 
-### Resolve `TemplateNotFound`
+A `Degraded` or `Pending` StackInstance carries a reason on its Ready condition. Where that reason comes from differs, so start with the `Degraded` row or the instance-level table below, and only treat a reason as a blocked task's own reason (further down) once you've ruled those out.
 
-The StackInstance references a StackTemplate that doesn't exist. Confirm `spec.templateRef.name` and list available templates:
+| Signal | Cause | Resolution |
+| --- | --- | --- |
+| `Degraded` | At least one task failed. This reason is always exactly `Degraded`, regardless of which task or why. | Go to [Diagnose a task](#diagnose-a-task) and find the task in phase `Failed`. |
+| `NoTasks` | The resolved Stack definition has zero tasks. | Add at least one task to the referenced StackTemplate or inline `spec.template`. |
 
-```bash
-kubectl get stacktemplates
-```
+### Instance-level reasons
 
-Create the missing template or update the reference.
+These reasons can identify an instance-level problem that blocks the current reconciliation. Existing child applications can remain, and the controller can mark existing task entries as `Blocked`. Because `TemplateNotFound` and `DestinationNotFound` are also used by child tasks, use the Ready condition message and the checks below to identify the source; task presence alone isn't enough.
 
-### Resolve `TemplateInvalid`
+| Signal | Cause | Resolution |
+| --- | --- | --- |
+| `TemplateNotFound` | Either `spec.templateRef.name` on the StackInstance doesn't resolve to a StackTemplate, or an Argo CD Application task can't resolve its own template reference. Existing task entries can be `Blocked` in either case. | If the StackInstance uses `spec.templateRef`, run `kubectl get stacktemplate <template-name>` first. Create the missing StackTemplate or fix the StackInstance reference. If that StackTemplate exists, inspect the blocked ArgoCDApplication and fix its ArgoCDApplicationTemplate reference. |
+| `TemplateInvalid` | The template can't render: a missing parameter, an invalid Go template expression, a dependency cycle, or an invalid output reference. | Inspect the Ready condition message, then compare the StackInstance parameters with the StackTemplate declarations. Tasks read parameters as `{{ .Values.<name> }}` and outputs as `{{ .Outputs.<task>.<output> }}`; a task that consumes an output must depend on the source task. |
+| `FeatureNotAllowed` | At least one task requires a feature outside the active plan. App tasks require the Apps feature, available on every plan. Argo CD Application tasks require the Argo CD Integration feature, which isn't available on the free plan. | Remove the unlicensed task, or use a plan that includes the missing feature. |
+| `DestinationNotFound` | Either the StackInstance's own destination tenant cluster or control plane cluster doesn't exist, or an `app` task's generated AppInstance reports the same reason for its own destination. Existing task entries can be `Blocked` in either case. | If `status.tasks[]` is empty or every task is `Blocked` with this reason, it's the StackInstance's own destination: create one with the same name. The controller looks up the destination by name on every reconciliation, so the existing StackInstance resolves on its own once it exists. Create a new StackInstance only to target a different destination, since `spec.destination` is immutable. If only one task is `Blocked`, inspect that task's own AppInstance destination instead. |
+| `DestinationDeleting` | The destination is being deleted. | Wait for the deletion to finish. As with `DestinationNotFound`, the existing StackInstance resolves once a destination with the same name is available again. |
+| `OutputsConflict` | Another object already owns the Secret name the controller needs for captured outputs. | Read the Ready condition message and inspect Secrets in the project namespace. Don't delete a Secret until you confirm the StackInstance doesn't own it. |
+| `OutputsRejected` | The API server rejected the outputs Secret. | Read the Ready condition message for the underlying API error. |
 
-The template can't render. Common causes include a missing parameter, invalid Go template expression, dependency cycle, or invalid output reference.
+### Reasons that can come from a blocked task
 
-Inspect the Ready condition message. Then compare the StackInstance parameters with the StackTemplate declarations.
+A `Pending` StackInstance can also report the first blocked task's reason directly. `TemplateNotFound` and `DestinationNotFound` can originate at either the instance or task level, so read the Ready condition message and inspect `status.tasks[]` rather than relying on the reason alone. Then go to [Diagnose a task](#diagnose-a-task):
 
-Tasks read parameters as `{{ .Values.<name> }}` and outputs as `{{ .Outputs.<task>.<output> }}`. A task that consumes an output must depend on the source task.
+- An `app` task blocks with `AppNotFound`, `DestinationNotFound`, or `DestinationNotReady`.
+- An `argoCDApplication` task blocks with `InvalidConnector`, `CreateArgoClientFailed`, `GetClusterFailed`, or `TemplateNotFound`.
 
-### Resolve `FeatureNotAllowed`
-
-At least one task requires a feature outside the active plan. App tasks require the Apps feature, available on every plan. Argo CD Application tasks require the Argo CD Integration feature, which isn't available on the free plan.
-
-Remove the unlicensed task, or use a plan that includes the missing feature.
-
-### Resolve destination reasons
-
-`DestinationNotFound` means the destination tenant cluster or control plane cluster doesn't exist. The controller looks up the destination by name on every reconciliation, so creating a destination with that same name resolves the existing StackInstance. Create a new StackInstance only if you want to target a different destination, since `spec.destination` is immutable.
-
-`DestinationDeleting` means the destination is being deleted. Wait for the deletion to finish. As with `DestinationNotFound`, the existing StackInstance resolves this reason once a destination with the same name is available again; a new StackInstance is needed only to target a different destination.
-
-### Resolve output storage reasons
-
-The controller stores captured task outputs in a Secret owned by the StackInstance. `OutputsConflict` means another object owns the required Secret name. `OutputsRejected` means the API server rejected the Secret.
-
-Read the Ready condition message and inspect Secrets in the project namespace. Don't delete a Secret until you confirm that the StackInstance doesn't own it.
+To confirm a fix worked, re-run the status command above and check that the aggregate phase reads `Healthy`.
 
 ## Diagnose a task
 
-Use `status.tasks[].type` and `applicationName` to find the generated child. An `app` task creates an AppInstance. An `argoCDApplication` task creates an ArgoCDApplication.
+If the top-level reason doesn't point to a fix, or every task reports `Healthy` but the deployed workload still isn't right, move to the task level. Use `status.tasks[].type` and `applicationName` to find the generated child. An `app` task creates an AppInstance. An `argoCDApplication` task creates an ArgoCDApplication.
 
 ```bash
 # Replace the resource kind and generated name with values from task status.
@@ -98,27 +104,20 @@ kubectl describe appinstance <application-name> -n <project-namespace>
 kubectl describe argocdapplication <application-name> -n <project-namespace>
 ```
 
-### Diagnose waiting tasks
+| Signal | Cause | Resolution |
+| --- | --- | --- |
+| Task phase `Pending` | The task is ready to start, but the controller hasn't materialized its child yet. | Recheck `status.observedGeneration`, then inspect StackInstance events if the task remains pending across reconciliations. |
+| Task phase `Waiting` | The task's `dependsOn` lists a task that isn't healthy yet. | Diagnose that dependency first. Independent tasks keep progressing while one branch waits or fails. |
+| Task phase `Progressing` | The generated AppInstance or ArgoCDApplication is still rolling out, or the controller is capturing its outputs. | Inspect the generated child and the task's reason and message. If the task is capturing outputs, continue with [Diagnose outputs](#diagnose-outputs). |
+| Task phase `Blocked` | An instance-level reason stopped reconciliation, or the task is missing a prerequisite. An `app` child can report `AppNotFound`, `DestinationNotFound`, or `DestinationNotReady`. An `argoCDApplication` child can report `InvalidConnector`, `CreateArgoClientFailed`, `GetClusterFailed`, or `TemplateNotFound`. | Compare the task reason with the Ready condition and resolve any instance-level problem first. Otherwise, inspect the generated AppInstance or ArgoCDApplication. Create the missing App or ArgoCDApplicationTemplate, fix the child destination, or fix the Argo CD connector. |
+| Task phase `Failed`, reason `MissingOwner` | AppInstances require an owner. vCluster Platform fills in `spec.owner` automatically for any authenticated caller creating the StackInstance through the management API, whether that's the UI, a script, or a GitOps controller. A StackInstance admitted by writing `storage.loft.sh/v1` directly bypasses that defaulting and can end up without an owner. | Set `spec.owner` on the StackInstance. The controller propagates owner and access settings to children. |
+| Task phase `Failed`, any other reason | The controller couldn't validate, render, build, write, or read the child; the child reported failure; or the task exceeded its deployment or output-capture timeout. A task uses its own `timeout`, then `defaults.taskTimeout`, or 10 minutes by default. | Read the task reason and message first. If `applicationName` is empty, fix the reported task definition, dependency, ownership conflict, or apply error. Otherwise, inspect the child. For an AppInstance, check Helm status, hook Jobs, Pods, events, and required credentials. For an ArgoCDApplication, check connector health, sync state, and application health. |
 
-Read `dependsOn` in task status. A waiting task starts only after every dependency becomes healthy.
-
-Diagnose the dependency first. Independent tasks can continue while one branch waits or fails.
-
-### Failed or timed-out tasks
-
-Read the task reason and message, then inspect its child resource. A task uses its own `timeout` or `defaults.taskTimeout`. The default is 10 minutes.
-
-For an AppInstance, inspect Helm status, hook Jobs, Pods, events, and required credentials in the destination. For an ArgoCDApplication, inspect connector health, sync state, and application health.
-
-### App tasks report a missing owner
-
-AppInstances require an owner. vCluster Platform fills in `spec.owner` automatically for any authenticated caller creating the StackInstance through the management API, whether that's the UI, a script, or a GitOps controller. A StackInstance admitted by writing `storage.loft.sh/v1` directly bypasses that defaulting and can end up without an owner. Its App tasks then fail with the `MissingOwner` reason, which reports task phase `Failed` and drives the StackInstance to `Degraded`, not `Pending`.
-
-Set `spec.owner` on the StackInstance to resolve it. The controller propagates StackInstance owner and access settings to children.
+To confirm a fix worked, re-run the compact task summary above and check that the task reads `Healthy`.
 
 ## Diagnose outputs
 
-An output becomes available only after its source task is healthy. Check these constraints:
+An output becomes available only after its source task is healthy. If a task never gets an output value, work through these constraints in order:
 
 - `fromSecret` names an existing key in a Secret.
 - `fromResource` selects one scalar value with kubectl JSONPath syntax, and can't read a cluster-scoped resource.
@@ -139,41 +138,13 @@ Before switching to `Prune`, confirm that no retained application contains data 
 
 ## Troubleshoot NVIDIA Run:ai certified stacks
 
-### A stack looks healthy but NVIDIA Run:ai isn't ready
-
-Check beyond Helm task health. Verify the NVIDIA Run:ai operator dependency checks and scheduler Pods. Confirm the Prometheus operator has the expected fixed name and that the GPU components are ready.
-
-### Ingress or certificate setup fails
-
-Confirm the ingress LoadBalancer has an address. For an IPv4 address, the templates can derive a `nip.io` domain. AWS LoadBalancers return hostnames and require the AWS ingress-provider setting.
-
-When using a supplied certificate, confirm its DNS names cover the configured domain. In the central model, the host and tenant settings must agree about whether a private certificate authority is required.
-
-### A central-model tenant waits for Secrets
-
-The tenant's `discover` task waits for registration facts, registry credentials, and the optional certificate authority. Check the registration StackInstance in the project namespace first.
-
-Then confirm that these Secrets exist in the tenant cluster's `runai` namespace:
-
-- `runai-tenant-facts`
-- `runai-reg-creds-host`
-- `runai-ca-cert`, when a private certificate authority is enabled
-
-Don't copy registration credentials into Stack parameters. Fix registration or Secret sync so rotated values continue to propagate.
-
-### A central-model tenant has no GPU nodes
-
-Confirm the control plane cluster has nodes matching the tenant's selector:
-
-```bash
-kubectl get nodes -l runai.vcluster.com/tenant=<tenant-label-value>
-```
-
-The template has no all-node fallback. Each tenant needs at least one matching GPU node, and a node must not match multiple tenants.
-
-### GPU utilization is empty in the central model
-
-This is a known limitation. DCGM Exporter runs on the control plane cluster, outside each tenant API. Synced node capacity still supports allocation, but per-tenant utilization views aren't available.
+| Signal | Cause | Resolution |
+| --- | --- | --- |
+| Every task is `Healthy`, but NVIDIA Run:ai itself isn't ready | A healthy Helm task only means the chart installed. The operator's own dependency checks and scheduler startup happen after that. | Verify the NVIDIA Run:ai operator's dependency checks and scheduler Pods directly. Confirm the Prometheus operator has its expected fixed name and that the GPU components are ready. |
+| Ingress or certificate setup fails | The ingress LoadBalancer has no address yet, or the ingress-provider setting doesn't match how the LoadBalancer surfaces its address. An IPv4 address supports a derived `nip.io` domain; AWS LoadBalancers return hostnames instead. A supplied certificate's DNS names may not cover the configured domain, or the central model's host and tenant private-CA settings may disagree. | Confirm the LoadBalancer address and matching ingress-provider setting. For a supplied certificate, confirm its DNS names cover the domain. In the central model, confirm the host and tenant agree on whether a private certificate authority is required. |
+| A central-model tenant waits for Secrets | The tenant's `discover` task waits for registration facts, registry credentials, and the optional certificate authority, synced from the shared host. | Check the registration StackInstance in the project namespace first. Then confirm `runai-tenant-facts`, `runai-reg-creds-host`, and (when a private CA is enabled) `runai-ca-cert` exist in the tenant cluster's `runai` namespace. Don't copy registration credentials into Stack parameters; fix registration or Secret sync instead, so rotated values keep propagating. |
+| A central-model tenant has no GPU nodes | No control plane cluster node matches the tenant's node-label selector. The template has no all-node fallback. | Confirm matching nodes with `kubectl get nodes -l runai.vcluster.com/tenant=<tenant-label-value>`. Each tenant needs at least one matching node, and a node must not match multiple tenants. |
+| GPU utilization is empty in the central model | Known limitation: DCGM Exporter runs on the control plane cluster, outside each tenant's API. | None. Synced node capacity still supports allocation; per-tenant utilization views aren't available. |
 
 ### Recover from an incomplete Run:ai removal
 
