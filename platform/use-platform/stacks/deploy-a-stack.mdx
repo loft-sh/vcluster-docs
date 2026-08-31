@@ -1,0 +1,171 @@
+---
+title: Deploy a stack
+sidebar_label: Deploy a stack
+sidebar_position: 5
+---
+
+import Flow, { Step } from "@site/src/components/Flow";
+import NavStep from "@site/src/components/NavStep";
+import Label from "@site/src/components/Label";
+
+A `StackInstance` deploys one stack into one destination. It lives in a project namespace
+and either references a cluster-scoped `StackTemplate` or carries its definition inline.
+
+## Deploy from a template
+
+```yaml
+apiVersion: management.loft.sh/v1
+kind: StackInstance
+metadata:
+  name: demo-app
+  namespace: loft-p-demo
+spec:
+  displayName: Demo application
+  templateRef:
+    name: demo-app
+  parameters: |
+    appVersion: "1.4.0"
+    replicas: 3
+  destination:
+    virtualCluster:
+      name: demo-tenant
+```
+
+Values for the template's declared parameters go on the instance. A missing required
+parameter, or a value that fails a parameter's validation, leaves the instance blocked with
+the reason `TemplateInvalid`.
+
+## Define a stack inline
+
+An instance can carry its own definition instead of referencing a template. The `template`
+field has the same shape as a `StackTemplate` spec:
+
+```yaml
+apiVersion: management.loft.sh/v1
+kind: StackInstance
+metadata:
+  name: demo-app
+  namespace: loft-p-demo
+spec:
+  template:
+    tasks:
+      - name: namespace
+        app:
+          templateRef: { name: demo-namespace }
+      - name: database
+        dependsOn: [namespace]
+        app:
+          templateRef: { name: demo-postgres }
+  destination:
+    virtualCluster:
+      name: demo-tenant
+```
+
+Use a template when several instances share a definition. Use an inline definition for a
+one-off stack that nothing else reuses.
+
+## Choose a destination
+
+A stack deploys into either a tenant cluster or a connected cluster. Exactly one of the two
+must be set.
+
+```yaml
+# Into a tenant cluster.
+destination:
+  virtualCluster:
+    name: demo-tenant
+
+# Into a connected cluster.
+destination:
+  cluster:
+    name: production-eu
+```
+
+The two are resolved differently, and the difference matters:
+
+| Destination | Resolved as | Scope |
+|-------------|-------------|-------|
+| `virtualCluster` | `VirtualClusterInstance` | **The instance's own namespace.** The tenant cluster must be in the same project as the stack. |
+| `cluster` | `Cluster` | Cluster-scoped. Any connected cluster. |
+
+:::warning a stack cannot target a tenant cluster in another project
+`destination.virtualCluster` is looked up in the `StackInstance`'s own namespace. There is
+no cross-project form of this field. To deploy the same stack into tenant clusters in
+several projects, create one `StackInstance` per project, all referencing the same
+`StackTemplate`.
+:::
+
+### The destination is immutable
+
+The destination cannot be changed after the instance is created. If the named destination
+does not exist, the instance is blocked with the reason `DestinationNotFound` and stays
+blocked until that destination is created. A stack cannot be retargeted; create a new
+instance instead.
+
+While a destination is being torn down, the instance reports `DestinationDeleting` and
+applications are not applied, because a recreated application would hold up the
+destination's own deletion.
+
+## Deploy from the UI
+
+There is no global "create stack" action, and stacks are not deployed from the stack
+templates page. You create a stack from the destination it deploys into, so the destination
+is fixed by where you start.
+
+### Into a tenant cluster
+
+<Flow id="deploy-stack-vcluster">
+  <Step>
+    From the project drop-down menu, select the project holding the tenant cluster.
+  </Step>
+  <Step>
+    Click <NavStep>Tenant Clusters</NavStep> and open the tenant cluster.
+  </Step>
+  <Step>
+    Open the <Label>Config</Label> tab, then the <Label>Stacks</Label> section. It lists the
+    stacks already deployed to this tenant cluster.
+  </Step>
+  <Step>
+    Add a stack. The destination is locked to this tenant cluster and the namespace is fixed,
+    so there is no destination or project to choose.
+  </Step>
+  <Step>
+    Choose a stack template or define the stack inline, fill in the template's parameters,
+    then confirm.
+  </Step>
+</Flow>
+
+### Into a connected cluster
+
+<Flow id="deploy-stack-cluster">
+  <Step>
+    Click <NavStep>Clusters</NavStep> and open the cluster.
+  </Step>
+  <Step>
+    Open the <Label>Stacks</Label> tab. It lists the stacks already deployed to this cluster.
+  </Step>
+  <Step>
+    Add a stack. The cluster is fixed by context, but you choose the project that provides the
+    namespace for the `StackInstance`.
+  </Step>
+  <Step>
+    Choose a stack template or define the stack inline, fill in the template's parameters,
+    then confirm.
+  </Step>
+</Flow>
+
+Each stack is shown as a card with its task graph, per-task status, and published outputs.
+Day-2 actions on a stack are **Edit**, which opens the YAML sheet, **Show Yaml**, and
+**Delete**.
+
+## Manage stack templates
+
+Stack templates are managed separately from the stacks that use them. Click
+<NavStep>Stacks &amp; Apps</NavStep> to list, create, and edit `StackTemplate` resources.
+Deploying is done from a destination, as above.
+
+:::note the nav item is named for what you can access
+The sidebar entry is labeled **Stacks &amp; Apps** for users who can list stack templates,
+and **Apps** for those who cannot. If you see only **Apps**, your role does not grant access
+to stacks. See [Access and permissions](./index.mdx#access-and-permissions).
+:::

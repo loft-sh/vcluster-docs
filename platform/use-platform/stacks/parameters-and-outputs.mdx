@@ -1,0 +1,199 @@
+---
+title: Parameters and outputs
+sidebar_label: Parameters and outputs
+sidebar_position: 4
+---
+
+Stack payloads read two kinds of value, and they behave differently.
+
+| Reference | Reads | Available |
+|-----------|-------|-----------|
+| `{{ .Values.<name> }}` | A stack parameter, supplied on the instance | Immediately, before any task runs |
+| `{{ .Outputs.<task>.<output> }}` | A value captured from a task's destination | Only after that task became healthy |
+
+Parameters are filled in first. Outputs are filled in later, once the task that produces
+them has run and its value has been captured. That ordering is the reason the two behave
+differently in the sections below.
+
+## Parameters
+
+Parameters are declared on the template and supplied on the instance. Inside a task payload
+they support the full template syntax, including conditionals and functions:
+
+```yaml
+- name: backend
+  app:
+    templateRef:
+      name: demo-backend
+    parameters:
+      version: "{{ .Values.appVersion }}"
+      fqdn: '{{ if .Values.domain }}{{ .Values.domain }}{{ else }}{{ .Values.tenant }}.example.com{{ end }}'
+```
+
+## Declare an output
+
+A task declares the values it captures from its destination. Each output reads from exactly
+one source: a Secret key, or a single field of a single resource.
+
+### From a Secret
+
+```yaml
+- name: database
+  outputs:
+    - name: password
+      fromSecret:
+        namespace: demo
+        name: demo-postgres
+        key: password
+```
+
+### From a resource
+
+```yaml
+- name: ingress
+  outputs:
+    - name: address
+      fromResource:
+        apiVersion: v1
+        kind: Service
+        namespace: ingress-nginx
+        name: ingress-nginx-controller
+        jsonPath: "{.status.loadBalancer.ingress[0].ip}"
+```
+
+`jsonPath` uses kubectl template syntax and must select exactly one scalar value. The
+namespace must be a namespace the stack deploys into, and cluster-scoped resources cannot
+be read.
+
+Output names must be letters and digits only, and unique within the task. The task that
+declares them is subject to the same restriction. See
+[Task names](./create-a-stack-template.mdx#task-names).
+
+## Read an output in a later task
+
+```yaml
+- name: app
+  dependsOn: [database]
+  app:
+    templateRef:
+      name: demo-frontend
+    parameters:
+      databasePassword: "{{ .Outputs.database.password }}"
+```
+
+The reference must sit inside a task that depends, directly or transitively, on the task
+producing the value. Otherwise there is no guarantee the value has been captured.
+
+### Output references must be plain substitutions
+
+Because outputs are filled in after the rest of the template has rendered, an output can
+only be read as a plain substitution. Pipelines and functions are rejected when the stack is
+applied, not silently ignored:
+
+```yaml
+# Rejected on apply.
+databasePassword: "{{ .Outputs.database.password | quote }}"
+caBundle: "{{ .Outputs.ca.cert | b64enc | nindent 4 }}"
+
+# Correct.
+databasePassword: "{{ .Outputs.database.password }}"
+```
+
+This is the one place where output references and parameter references differ in what they
+accept. `{{ .Values.x | quote }}` is fine; `{{ .Outputs.t.x | quote }}` is not.
+
+Two further restrictions apply to any string that reads `.Outputs`:
+
+- It must not also declare a template with `define` or `block`.
+- An action that reads `.Outputs` must not contain the literal text `{{`.
+
+### The reserved `<%` sequence
+
+A task payload must not contain the literal text `<%`, which is reserved. Applying a stack
+whose payload contains it is rejected.
+
+### What you see in the stored resource
+
+When a stack is applied, the platform rewrites output references into an internal form that
+uses different delimiters:
+
+```yaml
+# What you write:
+databasePassword: "{{ .Outputs.database.password }}"
+
+# What you see when reading the stored StackInstance back:
+databasePassword: "<% .Outputs.database.password %>"
+```
+
+This is expected. Always author using `{{ }}`, and never write `<%` yourself.
+
+## Publish outputs
+
+`publishedOutputs` selects the captured task outputs the stack exposes, optionally renaming
+them:
+
+```yaml
+spec:
+  publishedOutputs:
+    - name: databasePassword
+      fromTask:
+        task: database
+        output: password
+    - name: ingressAddress
+      fromTask:
+        task: ingress
+        output: address
+```
+
+## Read published outputs
+
+Published output values live in a platform-managed Secret. They are never written to the
+instance's `status`. They are read either in the UI, on the stack's detail view, or through
+the `stackinstances/outputs` subresource of the management API, which requires the `get`
+verb on that subresource:
+
+```bash
+kubectl get --raw \
+  "/apis/management.loft.sh/v1/namespaces/loft-p-demo/stackinstances/demo-app/outputs"
+```
+
+There is no CLI command for reading stack outputs.
+
+Each published output reports a `state`:
+
+| State | Meaning |
+|-------|---------|
+| `Available` | The value is captured and returned. |
+| `Pending` | No value can be served yet. |
+| `Failed` | The value cannot be produced. |
+
+The `reason` distinguishes a stack that has to be edited from one that may still come good
+on its own. `OutputNotDeclared` and `NoSource` mean the stack is wrong and must be fixed.
+`NotCaptured`, `TaskFailed`, and `SourceChanged` describe a value that is not ready yet or
+no longer matches the stack's declarations.
+
+:::note an Available output can still carry a reason
+An output can be `Available` with the reason `TaskFailed`. This means the task producing the
+value failed **after** the value was captured, so what you are being served is the last good
+value rather than a current one.
+:::
+
+## Handle sensitive values
+
+Whether an output is treated as sensitive is decided by **the source you read it from**, not
+by what the value contains:
+
+| Source | `sensitive` |
+|--------|-------------|
+| `fromSecret` | `true` |
+| `fromResource` | `false` |
+
+:::warning read secret values with fromSecret
+A credential captured through `fromResource` is reported as not sensitive and is displayed
+in plain text wherever outputs are shown. To have a value treated as sensitive, read it from
+a Secret with `fromSecret`.
+:::
+
+Masking in the UI is a display affordance, not an access control. Anyone permitted to read
+the outputs subresource can read the real value regardless of how it is displayed. The
+actual boundary is RBAC on `stackinstances/outputs`.

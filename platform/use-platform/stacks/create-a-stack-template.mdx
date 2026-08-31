@@ -1,0 +1,144 @@
+---
+title: Create a stack template
+sidebar_label: Create a stack template
+sidebar_position: 2
+---
+
+A `StackTemplate` declares the parameters a stack accepts and the tasks it deploys. It is
+cluster-scoped and reusable: many `StackInstance` resources, in different projects and
+against different destinations, can reference the same template.
+
+## Declare parameters
+
+Parameters use the same schema as [App parameters](../apps/use-parameters.mdx).
+
+```yaml
+spec:
+  parameters:
+    - variable: appVersion
+      type: string
+      required: true
+      defaultValue: "1.4.0"
+      label: Application version
+      validation: '^[0-9]+\.[0-9]+\.[0-9]+$'
+    - variable: replicas
+      type: number
+      defaultValue: 2
+      label: Replica count
+```
+
+Values supplied on the instance are read in task payloads as `{{ .Values.<variable> }}`.
+
+## Declare tasks
+
+Each task deploys one application and names the tasks it waits for.
+
+```yaml
+spec:
+  tasks:
+    - name: namespace
+      timeout: 5m
+      app:
+        templateRef:
+          name: demo-namespace
+
+    - name: database
+      dependsOn: [namespace]
+      app:
+        templateRef:
+          name: demo-postgres
+```
+
+A task starts only once every task in its `dependsOn` list reaches readiness. Tasks with
+no dependency relationship run in parallel. The graph must be acyclic and every name in a
+`dependsOn` list must match a declared task.
+
+### Task names
+
+Task names must be valid DNS labels and unique within the stack.
+
+There is one extra restriction: **a task that declares outputs must use letters and digits
+only**. Outputs are referenced as `{{ .Outputs.<task>.<output> }}`, and the template syntax
+cannot address a name containing a hyphen. A task that declares no outputs may contain
+hyphens freely.
+
+```yaml
+# Valid: declares outputs, name is letters and digits only.
+- name: database
+  outputs:
+    - name: password
+      fromSecret: { namespace: demo, name: demo-postgres, key: password }
+
+# Valid: contains a hyphen, but declares no outputs.
+- name: ingress-ready
+  app:
+    templateRef: { name: demo-ingress-ready }
+```
+
+### Timeouts
+
+Each task has a timeout. The default is 10 minutes and is set stack-wide through
+`spec.defaults.taskTimeout` on the instance; a task overrides it with its own `timeout`.
+A task that does not reach readiness within its timeout is marked `Failed`.
+
+```yaml
+spec:
+  defaults:
+    taskTimeout: 15m
+  tasks:
+    - name: gpu-operator
+      timeout: 25m
+      app:
+        templateRef: { name: gpu-operator }
+```
+
+Set timeouts against what a component realistically takes. Operators that wait on node
+readiness or pull large images need considerably more than the default.
+
+## Publish outputs
+
+`publishedOutputs` selects which captured task outputs the stack exposes to its consumers,
+optionally under a different name. Only values already captured by a task can be published;
+nothing extra is read from the destination.
+
+```yaml
+spec:
+  publishedOutputs:
+    - name: databasePassword
+      fromTask:
+        task: database
+        output: password
+```
+
+See [Parameters and outputs](./parameters-and-outputs.mdx) for how these are read back.
+
+## Conditional tasks are not supported
+
+A task cannot be skipped based on a parameter. There is no `when` or `enabled` field, and
+a stack always resolves to its full task set.
+
+The supported pattern is to select a different application by interpolating the
+`templateRef` name, pointing at an application that does nothing when the feature is not
+wanted:
+
+```yaml
+- name: gpu
+  dependsOn: [namespace]
+  app:
+    templateRef:
+      name: 'gpu-operator{{ if eq .Values.gpuProvider "gke" }}-skip{{ end }}'
+```
+
+This requires a no-op application to exist under the resolved name. The task still runs and
+still reports a phase; only its payload changes.
+
+## Validate before you rely on it
+
+Several rules are enforced at admission rather than at deploy time, so a malformed template
+is rejected on apply:
+
+- Exactly one of `argoCDApplication` or `app` per task.
+- Exactly one of `template` or `templateRef` per task payload.
+- Exactly one of `fromSecret` or `fromResource` per output.
+- Every `dependsOn` entry names a declared task, and the graph is acyclic.
+- Every `publishedOutputs` entry names an existing task and one of its declared outputs.

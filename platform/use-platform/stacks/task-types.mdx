@@ -1,0 +1,111 @@
+---
+title: Task types
+sidebar_label: Task types
+sidebar_position: 3
+---
+
+Every task deploys exactly one of two things: a platform App, or an Argo CD Application.
+A task sets exactly one of `app` or `argoCDApplication`. Setting both, or neither, is
+rejected at admission.
+
+The choice determines which license feature the stack needs:
+
+| Task payload | Child resource | Required license feature |
+|--------------|----------------|--------------------------|
+| `app` | App instance | Apps |
+| `argoCDApplication` | Argo CD Application | Argo CD integration |
+
+A stack may mix both types. It then requires both features, and is blocked with the reason
+`FeatureNotAllowed` if the license covers only one.
+
+## App tasks
+
+An `app` task deploys a platform [App](../apps/use-on-demand.mdx) into the stack's
+destination.
+
+### Reference an existing App
+
+Use `templateRef` to deploy an App that already exists in the platform, and pass values to
+its parameters:
+
+```yaml
+- name: database
+  dependsOn: [namespace]
+  app:
+    templateRef:
+      name: demo-postgres
+    parameters:
+      storageClass: "{{ .Values.storageClass }}"
+      replicas: "{{ .Values.replicas }}"
+```
+
+### Define an App inline
+
+Use `template` to define the chart and values in the stack itself, without creating a
+separate App first:
+
+```yaml
+- name: database
+  dependsOn: [namespace]
+  app:
+    template:
+      metadata:
+        labels:
+          example.com/component: database
+      spec:
+        displayName: Demo database
+        releaseName: demo-postgres
+        namespace: demo
+        helm:
+          chart:
+            name: postgresql
+            version: "16.2.1"
+            repository: https://charts.bitnami.com/bitnami
+          values: |
+            auth:
+              database: demo
+```
+
+:::note parameters belong to templateRef only
+`parameters` is valid only alongside `templateRef`. Admission rejects `parameters` on a
+task that defines its App inline, because those values belong in the definition itself.
+:::
+
+An inline App definition carries the chart, values, and deploy options. Where the App runs,
+who owns it, and who can see it come from the stack, so the destination, owner, and access
+fields do not appear on the task.
+
+## Argo CD Application tasks
+
+An `argoCDApplication` task deploys an Argo CD Application. It requires the
+[Argo CD integration](../../integrations/argocd/overview.mdx) to be configured.
+
+```yaml
+- name: monitoring
+  dependsOn: [namespace]
+  argoCDApplication:
+    templateRef:
+      name: kube-prometheus
+```
+
+As with App tasks, `template` defines the Application inline instead:
+
+```yaml
+- name: monitoring
+  argoCDApplication:
+    template:
+      spec:
+        source:
+          repoURL: https://github.com/example/manifests
+          path: monitoring
+          targetRevision: "{{ .Values.manifestRevision }}"
+```
+
+### Readiness and health
+
+Argo CD Application tasks report two extra pieces of status that App tasks do not:
+`synced`, and `health` mirroring the child Argo CD health value. The task's own `phase`
+stays type-agnostic: `Healthy` and `Failed` describe the task's resolved readiness rather
+than Argo CD specific state, so a stack that mixes both task types reports consistently.
+
+See [Lifecycle and status](./lifecycle.mdx).

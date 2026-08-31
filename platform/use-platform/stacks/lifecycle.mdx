@@ -1,0 +1,108 @@
+---
+title: Lifecycle and status
+sidebar_label: Lifecycle and status
+sidebar_position: 6
+---
+
+A stack reports status at two levels: an aggregate phase for the instance, and a phase for
+each task.
+
+## Instance phases
+
+| Phase | Meaning |
+|-------|---------|
+| `Pending` | A prerequisite is missing and needs manual intervention. |
+| `Progressing` | At least one task is still rolling out. |
+| `Healthy` | Every task reached readiness. |
+| `Degraded` | At least one task failed. |
+| `Deleting` | The instance is being torn down. |
+
+## Task phases
+
+| Phase | Meaning |
+|-------|---------|
+| `Pending` | Not yet materialized. |
+| `Waiting` | Waiting on its dependencies. |
+| `Progressing` | The child application is rolling out. |
+| `Blocked` | Waiting on a prerequisite that somebody has to fix. |
+| `Healthy` | The child application reached readiness. |
+| `Failed` | The child application failed or timed out. |
+
+Each task status also carries its `type` (`app` or `argoCDApplication`), a machine-readable
+`reason`, a human-readable `message`, and `lastTransitionTime`. Argo CD Application tasks
+additionally report `synced` and `health`.
+
+Task status is reported for tasks that have not been materialized yet, so the full task set
+is visible from the moment the stack resolves. The task list is empty only when the instance
+stopped before it could work out its task set, such as when the template does not resolve.
+
+## The Ready condition
+
+The instance carries a `Ready` condition. When the stack is not progressing normally, its
+reason says why:
+
+| Reason | Meaning | Action |
+|--------|---------|--------|
+| `Invalid` | The spec itself is malformed. | Edit the stack. |
+| `TemplateNotFound` | `templateRef` names a `StackTemplate` that does not exist. | Create the template, or fix the reference. |
+| `TemplateInvalid` | The template exists but cannot be rendered: a missing parameter, a failed validation, or a substitution error. | Edit the stack. Nothing is retried until you do. |
+| `NoTasks` | The stack resolved to no tasks at all. | Edit the stack. |
+| `FeatureNotAllowed` | The license does not cover a feature the stack's tasks need. | Change the license. |
+| `DestinationNotFound` | `destination` names a cluster or tenant cluster that does not exist. | Create the destination. The destination is immutable, so this clears only when it exists. |
+| `DestinationDeleting` | The destination is being torn down. | Wait, or deploy elsewhere. |
+| `OutputsConflict` | A Secret the instance does not own already holds the name its task outputs are stored under. | Remove or rename the conflicting Secret. |
+| `Progressing` | Tasks are still rolling out. | Wait. |
+| `Degraded` | At least one task failed. | Inspect the failing task. |
+
+`TemplateInvalid` is a permanent user error. The controller reports it and waits rather than
+retrying quickly, so a stack in this state stays there until it is edited.
+
+## Retry
+
+A stack can be retried without recreating the instance. Retrying is requested by setting the
+`platform.vcluster.com/stack-retry` annotation on the `StackInstance`, either to a single
+task name or to `all`:
+
+```yaml
+metadata:
+  annotations:
+    platform.vcluster.com/stack-retry: "all"
+```
+
+The controller removes the annotation once it has acted on it, so the annotation's presence
+is what "a retry is in flight" means. There is no status field reporting it.
+
+In the UI, retry is available from the stack card. Requesting a retry needs the `update`
+verb on the `StackInstance`.
+
+:::note per-task retry is limited to Argo CD Application tasks
+A single task can be retried only when it is in the `Failed` phase **and** its type is not
+`app`. An `app` task that failed cannot be retried on its own; retry the whole stack with
+`all` instead.
+:::
+
+## Template drift and orphaned applications
+
+When a task is removed from a stack's resolved task set, for example because the template
+changed, the application it deployed becomes an orphan. `prunePolicy` on the instance
+controls what happens to it:
+
+| Policy | Behavior |
+|--------|----------|
+| `Retain` | The orphaned application is left in place. This is the default, and the behavior when the field is empty. |
+| `Prune` | The orphaned application is deleted. |
+
+```yaml
+spec:
+  prunePolicy: Prune
+```
+
+With `Prune`, orphans are deleted in reverse-dependency order, so an application that
+something still depends on is never deleted first. The dependency edges captured when the
+task left the resolved set are carried forward for exactly this purpose.
+
+:::warning Retain is the default
+Changing a template so that a task disappears does not remove what that task deployed. The
+application keeps running, unmanaged by the stack. Set `prunePolicy: Prune` if you want
+removals from the template to reach the destination.
+:::
