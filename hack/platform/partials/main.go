@@ -656,12 +656,13 @@ spec:
 	// StackInstanceOutputs
 	outputValue := "10.0.0.12"
 	util.GenerateObjectOverview(&util.ObjectInformation{
-		Title:       "Retrieve Stack Instance Outputs",
-		Name:        "Stack Instance Outputs",
-		Resource:    "stackinstances",
-		SubResource: "outputs",
-		Description: "Retrieve the outputs a StackTemplate publishes for a StackInstance. Reading this subresource requires separate get permission on stackinstances/outputs.",
-		File:        path.Join(util.BaseResourcesPath, "stackinstanceoutputs.mdx"),
+		Title:                 "Retrieve Stack Instance Outputs",
+		Name:                  "StackInstanceOutputs",
+		SubResourceParentName: "StackInstance",
+		Resource:              "stackinstances",
+		SubResource:           "outputs",
+		Description:           "Retrieve the outputs a StackTemplate publishes for a StackInstance. Reading this subresource requires separate get permission on stackinstances/outputs.",
+		File:                  path.Join(util.BaseResourcesPath, "stackinstanceoutputs.mdx"),
 		Object: &managementv1.StackInstanceOutputs{
 			TypeMeta: metav1.TypeMeta{
 				Kind:       "StackInstanceOutputs",

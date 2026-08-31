@@ -66,6 +66,11 @@ type ObjectInformation struct {
 	SubResourceCreateDescription string
 	SubResourceGet               bool
 	SubResourceGetDescription    string
+	// SubResourceParentName names the parent resource whose name appears in a subresource
+	// request's URL path, e.g. "StackInstance" for the stackinstances/outputs subresource.
+	// Falls back to Name when empty, which is correct whenever the resource's own display
+	// name already matches what appears in the URL (the common case).
+	SubResourceParentName string
 }
 
 func GenerateSchema(configInstance interface{}) *jsonschema.Schema {
@@ -392,10 +397,15 @@ func GenerateObjectOverview(information *ObjectInformation) {
 		})
 	}
 
+	subResourceParentName := information.Name
+	if information.SubResourceParentName != "" {
+		subResourceParentName = information.SubResourceParentName
+	}
+
 	// create SubResource Create partial
 	if information.SubResourceCreate {
 		writeTemplate(TemplateCreateSubResourceObject, path.Join(basePath, "subresourcecreate.mdx"), CreateSubResourceValues{
-			Name:        information.Name,
+			Name:        subResourceParentName,
 			ExampleName: exampleName,
 			Description: information.SubResourceCreateDescription,
 			SubResource: information.SubResource,
@@ -409,7 +419,7 @@ func GenerateObjectOverview(information *ObjectInformation) {
 	// create SubResource Get partial
 	if information.SubResourceGet {
 		writeTemplate(TemplateGetSubResourceObject, path.Join(basePath, "subresourceget.mdx"), GetSubResourceValues{
-			Name:        information.Name,
+			Name:        subResourceParentName,
 			ExampleName: exampleName,
 			Description: information.SubResourceGetDescription,
 			SubResource: information.SubResource,
