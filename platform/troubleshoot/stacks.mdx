@@ -64,7 +64,7 @@ Create the missing template or update the reference.
 
 ### Resolve `TemplateInvalid`
 
-The template can't render. Common causes include a missing parameter, invalid Go template expression, dependency cycle, duplicate task name, or invalid output reference.
+The template can't render. Common causes include a missing parameter, invalid Go template expression, dependency cycle, or invalid output reference.
 
 Inspect the Ready condition message. Then compare the StackInstance parameters with the StackTemplate declarations.
 
@@ -72,15 +72,15 @@ Tasks read parameters as `{{ .Values.<name> }}` and outputs as `{{ .Outputs.<tas
 
 ### Resolve `FeatureNotAllowed`
 
-At least one task requires a feature outside the active plan. App tasks require Apps. Argo CD Application tasks require Argo CD Integration.
+At least one task requires a feature outside the active plan. App tasks require the Apps feature, available on every plan. Argo CD Application tasks require the Argo CD Integration feature, which isn't available on the free plan.
 
-An App-only Stack is available on every plan. An Argo CD Application task isn't available on the free plan. Remove the unlicensed task or use a plan that includes its feature.
+Remove the unlicensed task, or use a plan that includes the missing feature.
 
 ### Resolve destination reasons
 
-The destination tenant cluster or control plane cluster doesn't exist, or is being deleted. `spec.destination` is immutable.
+`DestinationNotFound` means the destination tenant cluster or control plane cluster doesn't exist. The controller looks up the destination by name on every reconciliation, so creating a destination with that same name resolves the existing StackInstance. Create a new StackInstance only if you want to target a different destination, since `spec.destination` is immutable.
 
-Create the named destination if it is missing. To deploy somewhere else, create a new StackInstance with the correct destination.
+`DestinationDeleting` means the destination is being deleted. Wait for the deletion to finish. As with `DestinationNotFound`, the existing StackInstance resolves this reason once a destination with the same name is available again; a new StackInstance is needed only to target a different destination.
 
 ### Resolve output storage reasons
 
@@ -112,15 +112,17 @@ For an AppInstance, inspect Helm status, hook Jobs, Pods, events, and required c
 
 ### App tasks report a missing owner
 
-AppInstances require an owner. Set `spec.owner` on the StackInstance or ensure the workflow creating it supplies an owner. The controller propagates StackInstance owner and access settings to children.
+AppInstances require an owner. vCluster Platform fills in `spec.owner` automatically for any authenticated caller creating the StackInstance through the management API, whether that's the UI, a script, or a GitOps controller. A StackInstance admitted by writing `storage.loft.sh/v1` directly bypasses that defaulting and can end up without an owner. Its App tasks then fail with the `MissingOwner` reason, which reports task phase `Failed` and drives the StackInstance to `Degraded`, not `Pending`.
+
+Set `spec.owner` on the StackInstance to resolve it. The controller propagates StackInstance owner and access settings to children.
 
 ## Diagnose outputs
 
 An output becomes available only after its source task is healthy. Check these constraints:
 
 - `fromSecret` names an existing key in a Secret.
-- `fromResource` selects one scalar value with kubectl JSONPath syntax.
-- The source is namespaced and belongs to a namespace where the Stack deploys an App.
+- `fromResource` selects one scalar value with kubectl JSONPath syntax, and can't read a cluster-scoped resource.
+- The source must be in a namespace this Stack has already deployed an App or Argo CD Application into. The controller rejects a source in any other namespace before reading it, even when RBAC and the resource lookup would otherwise succeed.
 - Task and output names used by templates contain only letters and digits.
 - The consuming task lists the source task in `dependsOn`.
 
@@ -137,7 +139,7 @@ Before switching to `Prune`, confirm that no retained application contains data 
 
 ## Troubleshoot NVIDIA Run:ai certified stacks
 
-### Check a healthy stack when NVIDIA Run:ai isn't ready
+### A stack looks healthy but NVIDIA Run:ai isn't ready
 
 Check beyond Helm task health. Verify the NVIDIA Run:ai operator dependency checks and scheduler Pods. Confirm the Prometheus operator has the expected fixed name and that the GPU components are ready.
 
@@ -173,7 +175,7 @@ The template has no all-node fallback. Each tenant needs at least one matching G
 
 This is a known limitation. DCGM Exporter runs on the control plane cluster, outside each tenant API. Synced node capacity still supports allocation, but per-tenant utilization views aren't available.
 
-## Recover from an incomplete removal
+### Recover from an incomplete Run:ai removal
 
 Helm uninstall can leave namespaces, persistent volume claims, completed hook Jobs, and custom resource definitions. Inspect leftovers before reinstalling.
 
