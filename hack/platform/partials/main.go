@@ -573,6 +573,118 @@ spec:
 		Delete:   true,
 	})
 
+	// StackTemplate
+	util.GenerateObjectOverview(&util.ObjectInformation{
+		Title:       "Stack Template",
+		Name:        "StackTemplate",
+		Resource:    "stacktemplates",
+		Description: "StackTemplate is a reusable, parameterized task graph that a StackInstance deploys to a tenant cluster or control plane cluster.",
+		File:        path.Join(util.BaseResourcesPath, "stacktemplate.mdx"),
+		Object: &managementv1.StackTemplate{
+			TypeMeta: metav1.TypeMeta{
+				Kind:       "StackTemplate",
+				APIVersion: managementv1.SchemeGroupVersion.String(),
+			},
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "example-platform",
+			},
+			Spec: managementv1.StackTemplateSpec{
+				StackTemplateSpec: storagev1.StackTemplateSpec{
+					DisplayName: "Example application platform",
+					Description: "Deploys a database before the API that uses it.",
+					StackTemplateDefinition: storagev1.StackTemplateDefinition{
+						Tasks: []storagev1.StackTask{
+							{
+								Name: "database",
+								App: &storagev1.StackAppTask{
+									TemplateRef: &storagev1.AppInstanceTemplateRef{Name: "postgresql"},
+								},
+							},
+							{
+								Name:      "api",
+								DependsOn: []string{"database"},
+								App: &storagev1.StackAppTask{
+									TemplateRef: &storagev1.AppInstanceTemplateRef{Name: "example-api"},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		Create:   true,
+		Retrieve: true,
+		Update:   true,
+		Delete:   true,
+	})
+
+	// StackInstance
+	util.GenerateObjectOverview(&util.ObjectInformation{
+		Title:       "Stack Instance",
+		Name:        "StackInstance",
+		Resource:    "stackinstances",
+		Description: "StackInstance deploys one inline or referenced task graph to a tenant cluster or control plane cluster and reports aggregate and per-task status.",
+		File:        path.Join(util.BaseResourcesPath, "stackinstance.mdx"),
+		Object: &managementv1.StackInstance{
+			TypeMeta: metav1.TypeMeta{
+				Kind:       "StackInstance",
+				APIVersion: managementv1.SchemeGroupVersion.String(),
+			},
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "example-platform",
+				Namespace: "p-my-project",
+			},
+			Spec: managementv1.StackInstanceSpec{
+				StackInstanceSpec: storagev1.StackInstanceSpec{
+					DisplayName: "Example application platform",
+					Destination: storagev1.StackDestination{
+						VirtualCluster: &storagev1.StackDestinationVirtualCluster{Name: "development"},
+					},
+					TemplateRef: &storagev1.StackTemplateRef{Name: "example-platform"},
+					PrunePolicy: storagev1.StackPrunePolicyRetain,
+					Owner:       &storagev1.UserOrTeam{User: "admin"},
+				},
+			},
+		},
+		Project:  true,
+		Create:   true,
+		Retrieve: true,
+		Update:   true,
+		Delete:   true,
+	})
+
+	// StackInstanceOutputs
+	outputValue := "10.0.0.12"
+	util.GenerateObjectOverview(&util.ObjectInformation{
+		Title:       "Retrieve Stack Instance Outputs",
+		Name:        "Stack Instance Outputs",
+		Resource:    "stackinstances",
+		SubResource: "outputs",
+		Description: "Retrieve the outputs a StackTemplate publishes for a StackInstance. Reading this subresource requires separate get permission on stackinstances/outputs.",
+		File:        path.Join(util.BaseResourcesPath, "stackinstanceoutputs.mdx"),
+		Object: &managementv1.StackInstanceOutputs{
+			TypeMeta: metav1.TypeMeta{
+				Kind:       "StackInstanceOutputs",
+				APIVersion: managementv1.SchemeGroupVersion.String(),
+			},
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "example-platform",
+				Namespace: "p-my-project",
+			},
+			Outputs: []managementv1.StackInstanceOutput{
+				{
+					Name:      "databaseAddress",
+					Task:      "database",
+					Sensitive: false,
+					State:     managementv1.StackOutputStateAvailable,
+					Value:     &outputValue,
+				},
+			},
+		},
+		SubResourceGet:            true,
+		SubResourceGetDescription: "Retrieve the published outputs of a StackInstance. Values captured from Secrets are marked sensitive.",
+	})
+
 	// Cluster
 	util.GenerateObjectOverview(&util.ObjectInformation{
 		Name:        "Cluster",
@@ -1001,13 +1113,16 @@ spec:
 			"| `sharedsecrets` | Shared secrets |\n" +
 			"| `spaceinstances` | Space instances |\n" +
 			"| `spacetemplates` | Space templates |\n" +
+			"| `stackinstances` | Project-scoped Stack instances |\n" +
+			"| `stackinstances/outputs` | Published Stack outputs |\n" +
+			"| `stacktemplates` | Cluster-scoped Stack templates |\n" +
 			"| `tasks` | Platform tasks |\n" +
 			"| `teams` | Teams |\n" +
 			"| `users` | Users |\n" +
 			"| `virtualclusterinstances` | Tenant cluster instances |\n" +
 			"| `virtualclustertemplates` | Tenant cluster templates |\n" +
 			"\n" +
-			"Common subresources include `projects/members`, `projects/templates`, `clusters/members`, `virtualclusterinstances/kubeconfig`, and `virtualclusterinstances/log`.\n" +
+			"Common subresources include `projects/members`, `projects/templates`, `clusters/members`, `stackinstances/outputs`, `virtualclusterinstances/kubeconfig`, and `virtualclusterinstances/log`.\n" +
 			"\n" +
 			"### Resource names\n" +
 			"\n" +

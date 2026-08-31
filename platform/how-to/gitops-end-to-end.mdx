@@ -305,6 +305,64 @@ spec:
 
 For the full list of deployment options including CLI, Terraform, and Flux, see the [deploy vCluster guide](/docs/vcluster/deploy/control-plane/kubernetes-pod/basics).
 
+## Manage stacks declaratively
+
+Store `StackTemplate` and `StackInstance` resources with the other Platform resources in your Git repository. A StackTemplate is cluster-scoped. Create each StackInstance in its project's `p-<project-name>` namespace.
+
+This example defines a reusable Stack with two App tasks, then deploys it to a tenant cluster. Argo CD sync waves create the referenced template before the instance; the Stack controller, not Argo CD, enforces the task dependency and health gate.
+
+```yaml title="stack-template.yaml"
+apiVersion: management.loft.sh/v1
+kind: StackTemplate
+metadata:
+  name: example-platform
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  displayName: Example platform
+  parameters:
+    - variable: namespace
+      label: Namespace
+      defaultValue: example
+  tasks:
+    - name: database
+      app:
+        templateRef:
+          name: postgresql
+        parameters:
+          namespace: "{{ .Values.namespace }}"
+    - name: api
+      dependsOn:
+        - database
+      app:
+        templateRef:
+          name: example-api
+        parameters:
+          namespace: "{{ .Values.namespace }}"
+---
+apiVersion: management.loft.sh/v1
+kind: StackInstance
+metadata:
+  name: example-platform
+  namespace: p-team-alpha
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  destination:
+    virtualCluster:
+      name: dev-vcluster
+  templateRef:
+    name: example-platform
+  parameters:
+    namespace: example
+  owner:
+    user: admin
+```
+
+Declare the referenced App or Argo CD application templates in an earlier sync wave or manage them separately. A referenced StackTemplate is resolved on every StackInstance reconciliation, so a committed template change can update existing instances. Review `prunePolicy` before removing tasks: its default value, `Retain`, reports removed child applications as orphans instead of deleting them.
+
+For the complete task and output schema, see [Create a Stack template](../administer/templates/create-stack-templates.mdx). For Stack resource permissions, see [Stack permissions](../administer/users-permissions/permissions/stacks.mdx).
+
 ## Manage GitOps drift
 
 Platform controllers may modify certain fields on resources after creation, causing drift in ArgoCD. Configure `ignoreDifferences` in your ArgoCD Applications to handle this:
@@ -345,6 +403,8 @@ platform-gitops/
       team-alpha.yaml           # Project resource
     virtual-clusters/
       dev-vcluster.yaml         # VirtualClusterInstance
+    stacks/
+      example-platform.yaml     # StackTemplate + StackInstance
 ```
 
 ## Next steps

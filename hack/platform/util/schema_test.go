@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/invopop/jsonschema"
@@ -194,4 +195,24 @@ func TestNormalizeRequiredToleratesUnusualSchemas(t *testing.T) {
 
 		normalizeRequired(schema)
 	})
+}
+
+func TestBuildContentStopsAtRecursiveDefinition(t *testing.T) {
+	node := &jsonschema.Schema{Type: "object"}
+	node.Properties = jsonschema.NewProperties()
+	node.Properties.Set("name", &jsonschema.Schema{Type: "string"})
+	node.Properties.Set("child", &jsonschema.Schema{Ref: "#/$defs/Node"})
+
+	root := &jsonschema.Schema{Type: "object"}
+	root.Properties = jsonschema.NewProperties()
+	root.Properties.Set("root", &jsonschema.Schema{Ref: "#/$defs/Node"})
+	definitions := jsonschema.Definitions{"Node": node}
+
+	content := buildContent("", root, definitions, false, 1, nil, nil)
+	if !strings.Contains(content, "name") || !strings.Contains(content, "child") {
+		t.Fatalf("recursive content omitted fields: %s", content)
+	}
+	if len(content) > 10_000 {
+		t.Fatalf("recursive content grew unexpectedly large: %d bytes", len(content))
+	}
 }
