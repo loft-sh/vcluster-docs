@@ -1,11 +1,9 @@
 ---
-title: OIDC Token Exchange
+title: OIDC token exchange
 sidebar_label: OIDC Token Exchange
 sidebar_position: 7
 description: Exchange external OIDC tokens for platform access keys using RFC 8693 token exchange, enabling passwordless CI/CD authentication.
 ---
-
-# OIDC token exchange
 
 The platform supports [RFC 8693](https://datatracker.ietf.org/doc/html/rfc8693) token exchange. You can exchange an external OIDC token for a platform [access key](access-keys.mdx). Automation tools and CI/CD pipelines can use this flow to authenticate without storing long-lived secrets.
 
@@ -50,7 +48,7 @@ The `<connector-id>` in the URL must match the `id` field of the connector in yo
 }
 ```
 
-`expires_in` is the lifetime of the access key in seconds. The platform caps the key to the remaining lifetime of the subject token, so the value is the shorter of the platform login TTL and the time left on the subject token. A subject token that expires in 5 minutes returns `expires_in: 300`. Don't cache the access key for longer than `expires_in` seconds.
+`expires_in` is the lifetime of the access key in seconds. The platform caps the key to the remaining lifetime of the subject token. The value is the shorter of the platform login TTL and the time left on the subject token. A subject token that expires in approximately 5 minutes returns an `expires_in` value no greater than `300`. Don't cache the access key for longer than `expires_in` seconds.
 
 The access key expires at a fixed time. It has no inactivity extension and no identity refresh, so a pipeline that needs a longer session must exchange a new token.
 
@@ -79,6 +77,8 @@ auth:
         clientSecret: ""
         # Claim that identifies the platform user
         usernameClaim: sub
+        # Namespace the subject to prevent collisions with other connectors
+        usernamePrefix: "my-provider:"
         loftUsernameClaim: sub
         groupsClaim: ""
 ```
@@ -103,14 +103,20 @@ auth:
         # Must match the audience that the workflow requests
         clientId: https://<platform-host>
         clientSecret: ""
-        # Maps each repository to a separate platform user
-        usernameClaim: repository
+        # repository_id is a stable numeric ID; the platform matches returning
+        # users against this claim, so use it instead of the repository name
+        usernameClaim: repository_id
+        # Namespace the subject to prevent collisions with other connectors
+        usernamePrefix: "github-actions:"
+        # Use the repository name for the initial platform username and display name
         loftUsernameClaim: repository
         groupsClaim: ""
 ```
 
 - The `clientId` must match the `audience` parameter that the workflow uses when it requests the token.
-- Fields like `usernameClaim` and `loftUsernameClaim` must reference one of the claims that GitHub provides. For all claims GitHub Actions includes in OIDC tokens, see the [GitHub Actions OIDC reference](https://docs.github.com/en/actions/reference/security/oidc). In this example, setting `usernameClaim: repository` maps each repository (`<owner>/<repo>`) to a separate platform user, but doesn't distinguish between individual workflows or branches.
+- `usernameClaim` is the claim the platform uses to match a returning identity to an existing user, so use the stable `repository_id` claim rather than `repository`. A renamed repository keeps the same `repository_id`. A repository name can be reused after deletion, though, which would otherwise let a new repository inherit the old one's platform identity and permissions. The `usernamePrefix` namespaces the numeric ID to prevent collisions with subjects from other SSO connectors.
+- `loftUsernameClaim` provides the initial platform username and display name. The human-readable `repository` claim (`<owner>/<repo>`) works well here, while returning-user matching continues to use `usernameClaim`. For all claims GitHub Actions includes in OIDC tokens, see the [GitHub Actions OIDC reference](https://docs.github.com/en/actions/reference/security/oidc).
+- This configuration maps every workflow and Git ref in one repository to the same platform user. Use a more specific stable claim if separate workflows need different platform permissions.
 
 **Workflow example:**
 
@@ -125,10 +131,17 @@ jobs:
       - name: Get OIDC token
         id: oidc
         run: |
-          OIDC_TOKEN=$(curl -s \
+          RESPONSE=$(curl -sS -w "\n%{http_code}" \
             -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=https://$PLATFORM_HOST" \
-            | jq -r '.value')
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=https://$PLATFORM_HOST")
+          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+          OIDC_TOKEN=$(echo "$BODY" | jq -r '.value // empty')
+          if [ "$HTTP_CODE" != "200" ] || [ -z "$OIDC_TOKEN" ]; then
+            echo "OIDC token request failed with HTTP $HTTP_CODE"
+            exit 1
+          fi
+          echo "::add-mask::$OIDC_TOKEN"
           echo "token=$OIDC_TOKEN" >> "$GITHUB_OUTPUT"
         env:
           PLATFORM_HOST: <platform-host>
@@ -136,14 +149,19 @@ jobs:
       - name: Exchange token
         id: exchange
         run: |
-          RESPONSE=$(curl -s -X POST \
+          RESPONSE=$(curl -sS -X POST \
             "https://$PLATFORM_HOST/auth/github-actions/token" \
             -H "Content-Type: application/x-www-form-urlencoded" \
             -d "grant_type=urn:ietf:params:oauth:grant-type:token-exchange" \
             -d "subject_token=${{ steps.oidc.outputs.token }}" \
             -d "subject_token_type=urn:ietf:params:oauth:token-type:id_token")
-          echo "::add-mask::$(echo "$RESPONSE" | jq -r '.access_token')"
-          echo "key=$(echo "$RESPONSE" | jq -r '.access_token')" >> "$GITHUB_OUTPUT"
+          KEY=$(echo "$RESPONSE" | jq -r '.access_token // empty')
+          if [ -z "$KEY" ]; then
+            echo "Token exchange failed: $RESPONSE"
+            exit 1
+          fi
+          echo "::add-mask::$KEY"
+          echo "key=$KEY" >> "$GITHUB_OUTPUT"
         env:
           PLATFORM_HOST: <platform-host>
 
@@ -159,6 +177,105 @@ jobs:
 ```
 
 The `::add-mask::` command keeps the access key out of the workflow logs.
+
+<!-- vale off -->
+### Azure DevOps
+<!-- vale on -->
+
+Azure DevOps issues OIDC tokens through a Generic service connection that uses workload identity federation. Unlike GitHub Actions, the audience is fixed, and the trust boundary is the issuer URL instead.
+
+```yaml title="Platform connector configuration"
+auth:
+  connectors:
+    - id: azure-devops
+      oidc:
+        # Includes your organization GUID; this is the actual trust boundary
+        issuerUrl: https://vstoken.dev.azure.com/<org-guid>
+        # Fixed audience: Azure DevOps doesn't let you customize it per pipeline
+        clientId: api://AzureADTokenExchange
+        clientSecret: ""
+        # Azure DevOps tokens have no email claim
+        usernameClaim: sub
+        # Namespace the subject to prevent collisions with other connectors
+        usernamePrefix: "azure-devops:"
+        loftUsernameClaim: sub
+        groupsClaim: ""
+```
+
+- The `clientId` must be `api://AzureADTokenExchange`. Azure DevOps shares this audience across every organization, so the `issuerUrl`, which includes your organization GUID, is what actually scopes the trust to your organization.
+- Azure DevOps tokens have no `email` claim. Set `usernameClaim` and `loftUsernameClaim` to `sub`, which follows the format `sc://<org>/<project>/<service-connection-name>`.
+- The `usernamePrefix` prevents the subject from matching a user created through another SSO connector.
+- The pipeline needs a Generic service connection, even though the token request doesn't reference it as a resource. Assign the service connection to at least one task in the pipeline so Azure DevOps authorizes the request. Any built-in task with a `connectedService` input works, such as `FtpUpload@2` in the example below.
+
+**Pipeline example:**
+
+```yaml title="azure-pipelines.yaml"
+steps:
+  # A task must reference the service connection so Azure DevOps
+  # authorizes this pipeline to request an OIDC token for it.
+  - task: FtpUpload@2
+    displayName: "Authorize service connection for OIDC"
+    continueOnError: true
+    timeoutInMinutes: 1
+    inputs:
+      serverEndpoint: <service-connection-name>
+      rootDirectory: $(System.DefaultWorkingDirectory)
+      filePatterns: "nonexistent"
+      remoteDirectory: /
+
+  - script: |
+      RESPONSE=$(curl -sS -w "\n%{http_code}" \
+        -H "Authorization: Bearer $SYSTEM_ACCESSTOKEN" \
+        -H "Content-Type: application/json" -H "Content-Length: 0" \
+        "$SYSTEM_OIDCREQUESTURI?api-version=7.1-preview.1&serviceConnectionId=<service-connection-id>")
+      HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+      BODY=$(echo "$RESPONSE" | sed '$d')
+      OIDC_TOKEN=$(echo "$BODY" | jq -r '.oidcToken // empty')
+      if [ "$HTTP_CODE" != "200" ] || [ -z "$OIDC_TOKEN" ]; then
+        echo "OIDC token request failed with HTTP $HTTP_CODE"
+        exit 1
+      fi
+      echo "##vso[task.setvariable variable=OIDC_TOKEN;issecret=true]$OIDC_TOKEN"
+    displayName: "Get OIDC token"
+    env:
+      SYSTEM_ACCESSTOKEN: $(System.AccessToken)
+
+  - script: |
+      RESPONSE=$(curl -sS -w "\n%{http_code}" -X POST \
+        "https://<platform-host>/auth/azure-devops/token" \
+        -H "Content-Type: application/x-www-form-urlencoded" \
+        -d "grant_type=urn:ietf:params:oauth:grant-type:token-exchange" \
+        -d "subject_token=$OIDC_TOKEN" \
+        -d "subject_token_type=urn:ietf:params:oauth:token-type:id_token")
+      HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+      BODY=$(echo "$RESPONSE" | sed '$d')
+      PLATFORM_TOKEN=$(echo "$BODY" | jq -r '.access_token // empty')
+      if [ "$HTTP_CODE" != "200" ] || [ -z "$PLATFORM_TOKEN" ]; then
+        echo "Token exchange failed with HTTP $HTTP_CODE: $BODY"
+        exit 1
+      fi
+      echo "##vso[task.setvariable variable=PLATFORM_TOKEN;issecret=true]$PLATFORM_TOKEN"
+    displayName: "Exchange token"
+    env:
+      OIDC_TOKEN: $(OIDC_TOKEN)
+
+  - script: |
+      VERSION=$(curl -s https://api.github.com/repos/loft-sh/vcluster/releases/latest | jq -r '.tag_name')
+      curl -L -o vcluster "https://github.com/loft-sh/vcluster/releases/download/${VERSION}/vcluster-linux-amd64"
+      chmod +x vcluster
+      sudo mv vcluster /usr/local/bin/
+    displayName: "Install the vCluster CLI"
+
+  - script: |
+      vcluster platform login "https://<platform-host>" --access-key "$PLATFORM_TOKEN"
+    displayName: "Log in to the platform"
+    env:
+      PLATFORM_TOKEN: $(PLATFORM_TOKEN)
+```
+
+Azure DevOps doesn't expose pipeline variables to a script automatically. Map each one explicitly through `env`, including `System.AccessToken` and any variable a previous step set with `setvariable`, such as `OIDC_TOKEN` and `PLATFORM_TOKEN`. Setting `issecret=true` on both bearer credentials keeps them out of the pipeline logs, the same way `::add-mask::` does for GitHub Actions.
+
+The service connection must have **Grant access permission to all pipelines** enabled, or be explicitly authorized for this pipeline, or the OIDC token request fails.
 
 <!-- vale off -->
 ### Active Directory Federation Services (ADFS)
@@ -182,11 +299,21 @@ This variable applies to all connectors. Every connector with an `access_token_i
 
 ## Troubleshoot token exchange errors
 
+Token verification failures return a generic error code and description. Check the platform log for the specific cause.
+
 | Error | Cause | Fix |
 |-------|-------|-----|
-| `token verification failed` | The `issuerUrl` or audience doesn't match | Decode the token (`echo "$TOKEN" \| cut -d. -f2 \| base64 -d \| jq '{iss, aud}'`). Compare the values with the platform configuration. |
+| `invalid_grant`: `token verification failed` | The `issuerUrl` or audience doesn't match, the `resource` field is missing or wrong, or the connector's discovery document doesn't trust the issuer | Check the platform log for the specific connector error. Decode the token (`echo "$TOKEN" \| jq -R 'split(".")[1] \| gsub("-"; "+") \| gsub("_"; "/") \| . + ("=" * ((4 - (length % 4)) % 4)) \| @base64d \| fromjson \| {iss, aud}'`) and compare the values with the platform configuration. |
+| `invalid_grant`: `access token has expired` | The subject token's remaining lifetime reached zero before the platform issued an access key | Get a new token and retry immediately. |
+| `invalid_grant`: `too many failed token exchange attempts` (HTTP 429) | Five token exchanges from the same client IP failed within 10 minutes | Correct the token or connector configuration, wait 10 minutes, and retry. |
+| HTTP 404 on `/auth/<connector-id>/token` | The connector ID doesn't match, or the connector is disabled | Check that the connector `id` in the platform configuration matches the URL, and that the authentication method is enabled. |
+
+### Platform log messages
+
+These appear only in the platform log, not in the response the client receives.
+
+| Log message | Cause | Fix |
+|-------|-------|-----|
 | `access token authentication requires the resource (audience) to be configured` | The `resource` field is missing from the platform configuration | Add `resource: "<expected-audience>"` to `auth.oidc` or the connector configuration. |
-| `expected audience "api://..." got "..."` | The `resource` field uses the `api://` prefix, but the token contains the bare GUID | Set `resource` to the bare GUID. Don't use the `api://` prefix. |
+| `oidc: expected audience "api://..." got [...]` | The `resource` field uses the `api://` prefix, but the token contains the bare GUID | Set `resource` to the bare GUID. Don't use the `api://` prefix. |
 | `oidc: access token issued by a different provider` | ADFS signs access tokens with `access_token_issuer` as `iss` instead of the standard issuer | Set `LOFT_OIDC_TRUST_ACCESS_TOKEN_ISSUER=true` on the platform deployment. |
-| `invalid_grant` | The token expired, or the issuer isn't trusted | Get a new token. Verify that the issuer URL matches the platform configuration. |
-| HTTP 404 on `/auth/<id>/token` | The connector ID doesn't match, or the connector is disabled | Check that the connector `id` in the platform configuration matches the URL, and that the authentication method is enabled. |
