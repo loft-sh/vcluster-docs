@@ -17,6 +17,9 @@ const (
 	// StackInstanceReady is the top-level readiness condition of a StackInstance.
 	StackInstanceReady agentstoragev1.ConditionType = "Ready"
 
+	// StackInstanceReasonInvalid is set on the Ready condition when the spec itself is malformed,
+	// so no task can run until a person edits it.
+	StackInstanceReasonInvalid = "Invalid"
 	// StackInstanceReasonTemplateNotFound is set on the Ready condition when the StackTemplate
 	// referenced by spec.templateRef does not exist.
 	StackInstanceReasonTemplateNotFound = "TemplateNotFound"
