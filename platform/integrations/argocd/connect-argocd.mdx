@@ -183,7 +183,24 @@ When the VirtualClusterInstance reconciles, Platform registers the tenant cluste
 
 ### On a control plane cluster
 
-To register a control plane cluster with Argo CD, add `spec.argoCD` to the Cluster object:
+Connecting a cluster to Platform creates a `Cluster` object for it. Add `spec.argoCD` to that existing object instead of applying a new manifest.
+
+Find the object's name:
+
+```sh
+kubectl get clusters.management.loft.sh
+```
+
+When Platform runs in the same cluster it manages, that cluster's object is typically named `loft-cluster`.
+
+Patch it in place:
+
+```sh
+kubectl patch clusters.management.loft.sh <cluster-name> --type merge \
+  -p '{"spec":{"argoCD":{"enabled":true,"connector":"argocd-main"}}}'
+```
+
+If you manage the object through GitOps, add `argoCD` alongside its existing fields instead:
 
 ```yaml
 apiVersion: management.loft.sh/v1
@@ -191,14 +208,21 @@ kind: Cluster
 metadata:
   name: my-cluster
 spec:
+  # existing connection method: spec.local, spec.networkPeer, or spec.config
   argoCD:
     enabled: true
     connector: argocd-main
 ```
 
+A `Cluster` manifest fails validation unless it targets an existing object or already sets one of `spec.local`, `spec.networkPeer`, or `spec.config`. Applying only `spec.argoCD` on its own returns `spec.config: Required value: spec.config or spec.local or spec.networkPeer is required`.
+
 :::warning Disabling the integration
-Disabling the integration removes the cluster from Argo CD and deletes all `ArgoCDApplication` objects managed by Platform. This applies whether the integration is configured using `vcluster.yaml`, a VirtualClusterInstance manifest, or a Cluster object. Any applications deployed by the integration will be removed from Argo CD.
+Disabling the integration removes the cluster from Argo CD and deletes every `ArgoCDApplication` object Platform generated for it from `deploy.argoCD.applications`. This is a cascading delete. Argo CD also removes the Kubernetes resources those Applications were managing, not just the Application registration. This applies whether the integration is configured using `vcluster.yaml`, a VirtualClusterInstance manifest, or a Cluster object. Standalone `ArgoCDApplication` objects you created directly keep their CR when you disable the integration alone. Once the destination's connector stops resolving, Platform still deletes the standalone object's remote Argo CD Application the same way, cascading to the workloads it managed, and marks the CR's `Synced` condition `False` until the cluster registers again. Deleting the tenant cluster itself deletes every `ArgoCDApplication` targeting it, standalone or not, along with the workloads those applications managed.
 :::
+
+The Platform UI keeps these two settings in order. The guided `vcluster.yaml` editor only shows the Applications section once the integration is enabled with a connector, and disabling the integration through the UI prompts you to confirm removing any configured applications, stripping them from `deploy.argoCD.applications` as part of the disable.
+
+Editing `vcluster.yaml` directly doesn't enforce that order. Entries in `deploy.argoCD.applications` stay inert until the integration is enabled with a connector, and disabling directly doesn't remove them from the file. They just stop producing `ArgoCDApplication` objects until you re-enable the integration.
 
 ## Next step
 
