@@ -59,7 +59,11 @@ const config = {
     },
   ],
 
-  onBrokenLinks: "throw",
+  // Archive branch: cross-section links to versions this build no longer
+  // includes are expected, so warn instead of failing the build.
+  onBrokenLinks: "warn",
+  // Archive branch: keep EOS docs out of search results so the live docs win.
+  noIndex: true,
 
   // Even if you don't use internationalization, you can use this field to set
   // useful metadata like html lang. For example, if your site is Chinese, you
@@ -262,28 +266,9 @@ const config = {
         beforeDefaultRemarkPlugins: [
           [remarkVersionTokens, { siteDir: __dirname }],
         ],
-        lastVersion: "0.36.0",
-        onlyIncludeVersions: ["current", "0.37.0", "0.36.0", "0.35.0", "0.34.0"],
+        lastVersion: "0.34.0",
+        onlyIncludeVersions: ["0.34.0"],
         versions: {
-          current: {
-            label: "main 🚧",
-          },
-          "0.37.0": {
-            label: "v0.37",
-            banner: "unreleased",
-            badge: true,
-            noIndex: true,
-          },
-          "0.36.0": {
-            label: "v0.36 Stable",
-            banner: "none",
-            badge: true,
-          },
-          "0.35.0": {
-            label: "v0.35",
-            banner: "none",
-            badge: true,
-          },
           "0.34.0": {
             label: "v0.34 (EOS)",
             banner: "none",
@@ -305,35 +290,15 @@ const config = {
         beforeDefaultRemarkPlugins: [
           [remarkVersionTokens, { siteDir: __dirname }],
         ],
-        lastVersion: "4.11.0",
-        onlyIncludeVersions: ["current", "4.12.0", "4.11.0", "4.10.0", "4.9.0", "4.8.0"],
+        // Archive branch: pin Platform to 4.9.0, the release that shipped
+        // alongside vCluster 0.34.0 (both 2026-04-29), so cross-section links
+        // land on the contemporaneous Platform docs rather than a later one.
+        // Must never be empty, or the shared partials fail to resolve.
+        lastVersion: "4.9.0",
+        onlyIncludeVersions: ["4.9.0"],
         versions: {
-          current: {
-            label: "main 🚧",
-          },
-          "4.12.0": {
-            label: "v4.12",
-            banner: "unreleased",
-            badge: true,
-            noIndex: true,
-          },
-          "4.11.0": {
-            label: "v4.11 Stable",
-            banner: "none",
-            badge: true,
-          },
-          "4.10.0": {
-            label: "v4.10",
-            banner: "none",
-            badge: true,
-          },
           "4.9.0": {
             label: "v4.9",
-            banner: "none",
-            badge: true,
-          },
-          "4.8.0": {
-            label: "v4.8",
             banner: "none",
             badge: true,
           },
@@ -485,12 +450,12 @@ const config = {
         additionalLanguages: ["bash", "hcl"],
       },
       announcementBar: {
-        id: "vcluster-0-36-platform-4-11-release",
+        id: "vcluster-v0-34-eos-archive",
         content:
-          '🚀 <strong>New releases: <a href="https://www.vcluster.com/releases/en/changelog?hideLogo=true&hideMenu=true&theme=dark&embed=true&c=vCluster" target="_blank">vCluster Platform 4.11 and vCluster 0.36</a></strong>',
-        backgroundColor: "#050b24",
-        textColor: "#ffffff",
-        isCloseable: true,
+          '⚠️ <strong>This is an archived EOS version of vCluster v0.34 documentation.</strong> For the latest docs, visit <a href="https://vcluster.com/docs/vcluster/">vcluster.com/docs/vcluster</a>.',
+        backgroundColor: "#f5a623",
+        textColor: "#000000",
+        isCloseable: false,
       },
     }
   ),
