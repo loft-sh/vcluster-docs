@@ -59,7 +59,8 @@ const config = {
     },
   ],
 
-  onBrokenLinks: "throw",
+  noIndex: true,
+  onBrokenLinks: "warn",
 
   // Even if you don't use internationalization, you can use this field to set
   // useful metadata like html lang. For example, if your site is Chinese, you
@@ -263,31 +264,12 @@ const config = {
           [remarkVersionTokens, { siteDir: __dirname }],
         ],
         lastVersion: "0.36.0",
-        onlyIncludeVersions: ["current", "0.37.0", "0.36.0", "0.35.0", "0.34.0"],
+        onlyIncludeVersions: ["0.36.0"],
         versions: {
-          current: {
-            label: "main 🚧",
-          },
-          "0.37.0": {
-            label: "v0.37",
-            banner: "unreleased",
-            badge: true,
-            noIndex: true,
-          },
           "0.36.0": {
-            label: "v0.36 Stable",
+            label: "v0.36",
             banner: "none",
-            badge: true,
-          },
-          "0.35.0": {
-            label: "v0.35",
-            banner: "none",
-            badge: true,
-          },
-          "0.34.0": {
-            label: "v0.34 (EOS)",
-            banner: "none",
-            badge: true,
+            badge: false,
           },
         },
       },
@@ -305,37 +287,13 @@ const config = {
         beforeDefaultRemarkPlugins: [
           [remarkVersionTokens, { siteDir: __dirname }],
         ],
-        lastVersion: "4.11.0",
-        onlyIncludeVersions: ["current", "4.12.0", "4.11.0", "4.10.0", "4.9.0", "4.8.0"],
+        lastVersion: "4.8.0",
+        onlyIncludeVersions: ["4.8.0"],
         versions: {
-          current: {
-            label: "main 🚧",
-          },
-          "4.12.0": {
-            label: "v4.12",
-            banner: "unreleased",
-            badge: true,
-            noIndex: true,
-          },
-          "4.11.0": {
-            label: "v4.11 Stable",
-            banner: "none",
-            badge: true,
-          },
-          "4.10.0": {
-            label: "v4.10",
-            banner: "none",
-            badge: true,
-          },
-          "4.9.0": {
-            label: "v4.9",
-            banner: "none",
-            badge: true,
-          },
           "4.8.0": {
-            label: "v4.8",
+            label: "v4.8 (EOS)",
             banner: "none",
-            badge: true,
+            badge: false,
           },
         },
       },
@@ -485,12 +443,12 @@ const config = {
         additionalLanguages: ["bash", "hcl"],
       },
       announcementBar: {
-        id: "vcluster-0-36-platform-4-11-release",
+        id: "platform-v4-8-eos",
         content:
-          '🚀 <strong>New releases: <a href="https://www.vcluster.com/releases/en/changelog?hideLogo=true&hideMenu=true&theme=dark&embed=true&c=vCluster" target="_blank">vCluster Platform 4.11 and vCluster 0.36</a></strong>',
-        backgroundColor: "#050b24",
-        textColor: "#ffffff",
-        isCloseable: true,
+          '⚠️ <strong>This is an archived version of the docs. Go to the <a href="https://vcluster.com/docs/platform/">latest Platform docs</a>.</strong>',
+        backgroundColor: "#e8a735",
+        textColor: "#000000",
+        isCloseable: false,
       },
     }
   ),
