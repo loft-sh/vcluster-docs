@@ -4,11 +4,11 @@ import { useLocation } from '@docusaurus/router';
 import { useActiveDocContext } from '@docusaurus/plugin-content-docs/client';
 import { usePageVariables } from '../PageVariables/PageVariablesContext';
 
-// Latest versions - fallback if not in versioned docs context
-const LATEST_VERSIONS = {
-  platform: '4.11.2',
-  vcluster: '0.36.1',
-};
+// Latest stable patch per tracked minor - fallback when not in versioned docs
+// context. Shared with plugins/remark-version-tokens.js so plain markdown
+// fences and this component resolve the version tokens to the same value.
+// Auto-synced daily; see src/data/latest-versions.json.
+import LATEST_VERSIONS from '@site/src/data/latest-versions.json';
 
 const varInputId = (instanceId, key) => `var-${instanceId}-${key.toLowerCase().replace(/[^a-z0-9]/g, '-')}`;
 
