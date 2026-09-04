@@ -355,8 +355,8 @@ Key terms (see `references/vcluster-terms.md` for complete guide):
 - **vCluster**: The trademark (never "vClusters" - legally incorrect)
 - **tenant clusters**: The clusters that vCluster creates ("virtual clusters" is retired); lowercase in prose
 - **control plane cluster**: The cluster that hosts tenant cluster control planes ("host cluster" is retired); lowercase in prose
-- **vCluster Pro**: Enhanced/paid tenant cluster with Pro capabilities
 - **vCluster Platform**: Management platform and UI for tenant clusters
+- **"vCluster Pro" does not exist** as a product — don't use it. License-gated features are "Enterprise" features, unlocked via a vCluster Platform Enterprise plan (Dev/Prod/Scale), not a separate "Pro" product or tier.
 - **vcluster**: The CLI command name
 
 ## Resources
