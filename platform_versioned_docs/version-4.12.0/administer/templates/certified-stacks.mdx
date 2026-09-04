@@ -1,0 +1,165 @@
+---
+title: Manage Certified Stacks
+sidebar_label: Manage Certified Stacks
+sidebar_position: 6
+---
+
+import SharedNodesSuitability from '@site/vcluster/_partials/admonitions/shared-nodes-suitability.mdx';
+
+Certified Stacks are StackTemplates that vCluster Platform bundles and identifies as tested integrations. Platform 4.12 includes NVIDIA Run:ai templates for dedicated and central control-plane deployment models.
+
+Certified templates are read-only. Copy a template when you need to customize it, and give the copy a different name. Platform updates can replace bundled resources during an upgrade.
+
+## Review bundled NVIDIA Run:ai resources
+
+Platform 4.12 includes these certified resources:
+
+| Resource | Purpose |
+| --- | --- |
+| `run-ai-dedicated-control-plane` StackTemplate | Installs the NVIDIA Run:ai control plane, GPU components, and cluster components in one tenant cluster. |
+| `run-ai-central-control-plane-host` StackTemplate | Installs the shared NVIDIA Run:ai control plane and GPU components once on a control plane cluster. |
+| `run-ai-central-control-plane-registration` StackTemplate | Registers one tenant with the shared NVIDIA Run:ai control plane. |
+| `run-ai-central-control-plane` StackTemplate | Installs the NVIDIA Run:ai tenant components in one tenant cluster. |
+| `runai-tenant` VirtualClusterTemplate | Creates a tenant cluster with the dedicated Stack. |
+| `runai-tenant-central-control-plane` VirtualClusterTemplate | Creates a tenant cluster, registration Stack, and central-model tenant Stack. |
+
+The bundle also includes the Apps referenced by these StackTemplates. All four Run:ai StackTemplates use App tasks, so they require the Apps feature, included on every plan, but not the Argo CD Integration feature.
+
+## Choose a deployment model
+
+| Model | Infrastructure | Choose this model when |
+| --- | --- | --- |
+| Dedicated control plane | Each tenant cluster runs its own NVIDIA Run:ai control plane and GPU Operator. | Each tenant needs independent NVIDIA Run:ai and GPU Operator lifecycles. |
+| Central control plane | Tenants share one NVIDIA Run:ai control plane and one GPU Operator on the control plane cluster. | Trusted tenants can share labeled nodes and a control-plane lifecycle. |
+
+Both bundled tenant templates use shared control plane cluster nodes by default. The dedicated model separates the lifecycle of the NVIDIA Run:ai control plane, but doesn't create private worker nodes. The central model partitions visible GPU nodes with labels. Node labels are scheduling policy, not a security boundary.
+
+<SharedNodesSuitability />
+
+## Before you begin
+
+Both deployment models require:
+
+- vCluster Platform 4.12 and vCluster 0.37
+- GPU-capable nodes with an NVIDIA runtime configuration appropriate for the provider
+- an ingress LoadBalancer and working DNS resolution
+- a StorageClass for NVIDIA Run:ai stateful components
+- NVIDIA Run:ai JFrog registry credentials
+- an administrator email address and password for the NVIDIA Run:ai control plane
+
+On AWS, the ingress-provider setting must match the LoadBalancer type, or the deploy stalls with a confusing error. See [Troubleshoot Stacks](../../troubleshoot/stacks.mdx) for other ingress and certificate failure modes.
+
+The certified templates default to NVIDIA Run:ai 2.26. Chart versions are pinned in the bundled Apps. Changing only the `runaiVersion` parameter doesn't upgrade the charts.
+
+:::warning
+Choose one owner for the node-level NVIDIA components. For example, default Google Kubernetes Engine GPU pools already manage the driver and device plugin. Select the matching provider option instead of installing a second GPU stack.
+:::
+
+## Deploy a dedicated control plane
+
+The `runai-tenant` VirtualClusterTemplate creates a tenant cluster and declares a `deploy.stacks` entry named `runai`. This entry references the `run-ai-dedicated-control-plane` StackTemplate. Platform generates the StackInstance name from the tenant cluster name and Stack configuration name.
+
+Before creating the tenant cluster, collect these values:
+
+- the StorageClass
+- the ingress provider and optional domain
+- NVIDIA Run:ai registry server, username, password, and email
+- the control-plane administrator email and password
+- an optional image pull Secret for the vCluster Platform image
+
+The bundled tenant template uses the standard GPU provider settings and self-signed TLS. Copy the VirtualClusterTemplate to expose other GPU or TLS parameters. For production, use a certificate for a domain you control. The default mode creates and retains an internal certificate authority. It derives a `nip.io` hostname when the LoadBalancer has an IPv4 address.
+
+After creation, monitor the generated StackInstance for the tenant cluster. Then follow [Verify a deployment](#verify-a-deployment) below. A healthy Helm task alone doesn't prove that the NVIDIA Run:ai scheduler is ready.
+
+## Deploy a central control plane
+
+The central model has three lifecycles, covering the shared host foundation, one registration per tenant, and the components inside each tenant cluster.
+
+### Install the shared host foundation
+
+Install `run-ai-central-control-plane-host` once on the control plane cluster. Use `runai` as the StackInstance name. Configure the shared StorageClass, ingress address, NVIDIA Run:ai credentials, TLS, and GPU provider.
+
+Wait for every host task to become healthy before creating tenants. Record the published control-plane FQDN and confirm the NVIDIA Run:ai UI is reachable.
+
+### Label tenant GPU nodes
+
+Assign each tenant a distinct, persistent node-label value. The bundled tenant template uses this key by default:
+
+```text
+runai.vcluster.com/tenant
+```
+
+```bash
+# Assign this GPU node to one trusted tenant.
+kubectl label node gpu-node-a runai.vcluster.com/tenant=team-a
+
+# Confirm the tenant's visible node set.
+kubectl get nodes -l runai.vcluster.com/tenant=team-a
+```
+
+Configure the label through the node pool when possible. Manually applied labels don't appear on new nodes created by an autoscaler.
+
+Each node must match at most one tenant value. A tenant with no matching nodes can't schedule workloads. Overlapping assignments can cause independent tenant schedulers to allocate the same GPU capacity.
+
+### Create a tenant
+
+Create the tenant cluster from `runai-tenant-central-control-plane`. Set `nodeSelectorValue` to the tenant's unique node-label value.
+
+The template performs these operations:
+
+1. It creates a `run-ai-central-control-plane-registration` StackInstance in the project namespace.
+2. The registration writes tenant facts to a Secret on the control plane cluster.
+3. vCluster syncs the facts, registry credentials, and optional certificate authority into the tenant cluster.
+4. The tenant's `run-ai-central-control-plane` Stack waits for those Secrets before installing its agent.
+
+Leave `tenantSlug` empty for the normal path. Set it only when an administrator created a distinct registration in advance. Duplicate slugs can adopt and deregister the same NVIDIA Run:ai cluster.
+
+The bundled tenant template expects the host to use a private certificate authority. If the shared endpoint uses a publicly trusted certificate, copy the tenant template. Set `requireControlPlaneCA: false` on its `deploy.stacks` entry. The host Stack and tenant Stack must use matching values.
+
+## Verify a deployment
+
+Connect to the vCluster Platform management API and inspect aggregate and task status:
+
+```bash
+vcluster platform connect management
+kubectl get stackinstances -A
+kubectl get stackinstance <stack-name> -n <project-namespace> \
+  -o jsonpath='{.status.phase}{"\n"}{range .status.tasks[*]}{.name}{"\t"}{.phase}{"\t"}{.message}{"\n"}{end}'
+```
+
+For each tenant cluster, also verify:
+
+- the ingress address is reachable and serving the expected certificate
+- the expected GPU nodes and `nvidia.com/gpu` capacity are visible
+- the NVIDIA Run:ai operator finishes its dependency checks
+- the scheduler is running
+- the cluster appears in the NVIDIA Run:ai UI
+
+In the central model, GPU allocation works from synced node capacity. Per-tenant GPU utilization views aren't available because DCGM Exporter runs outside each tenant cluster.
+
+## Remove a dedicated deployment
+
+Delete the tenant cluster or its generated dedicated StackInstance. Helm uninstall doesn't remove every namespace, persistent volume claim, or custom resource definition. Inspect the destination before reinstalling or deleting remaining data.
+
+## Remove a central deployment
+
+Order matters because the shared host foundation doesn't own tenant registrations:
+
+1. Delete every tenant cluster. This removes its in-cluster agent but doesn't deregister the tenant.
+2. Delete that tenant's `runai-reg-<tenant-name>` registration StackInstance. Its delete hook deregisters the tenant.
+3. Confirm that the NVIDIA Run:ai UI lists no clusters.
+4. Delete the shared host StackInstance.
+
+:::danger
+Deleting the shared host StackInstance removes the central NVIDIA Run:ai control plane and its PostgreSQL, NATS, and Thanos Receive data volumes. Every remaining tenant loses its control plane.
+:::
+
+Removal can leave namespaces, completed hook Jobs, Prometheus volumes, and NVIDIA custom resource definitions. Review [Troubleshoot Stacks](../../troubleshoot/stacks.mdx) before a clean reinstall.
+
+## Customize a certified stack
+
+Don't edit an object marked as certified. Export or copy it, remove the `vcluster.com/certified` annotation, and use a new resource name. The copy no longer receives certified bundle updates.
+
+Keep task dependencies, fixed resource names, chart versions, and output namespaces intact unless you have validated the whole workflow. The NVIDIA Run:ai bundle relies on all four.
+
+For exhaustive parameters and implementation details, read the upstream [dedicated control-plane](https://github.com/loft-sh/certified-stacks/blob/main/run-ai/dedicated-control-plane/README.md) and [central control-plane](https://github.com/loft-sh/certified-stacks/blob/main/run-ai/central-control-plane/README.md) guides.
