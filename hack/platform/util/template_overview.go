@@ -135,6 +135,4 @@ An example {{ .Name }}:
 <SubResourceCreate />
 
 {{- end }}
-
-
 `

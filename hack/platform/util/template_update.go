@@ -51,7 +51,7 @@ const templateUpdateKubectl = `
 
 Run the following command to update ` + myObjectInNamespace + `:
 ` + "```bash" + `
-kubectl edit {{ .Resource }}.management.loft.sh {{ .ExampleName }} ` + kubectlNamespace + `
+kubectl edit {{ .Resource }}.management.loft.sh {{ .ExampleName }}` + kubectlNamespace + `
 ` + "```" + `
 
 Then edit the object and upon save, kubectl will update the resource.
@@ -63,7 +63,7 @@ To learn more about patches in Kubernetes, please take a look at the [official d
 
 Run the following kubectl command to add a new annotation ` + "`my-annotation: my-value`" + ` to the ` + myObjectInNamespace + ` via a patch:
 ` + "```bash" + `
-kubectl patch {{ .Resource }}.management.loft.sh {{ .ExampleName }} ` + kubectlNamespace + ` \
+kubectl patch {{ .Resource }}.management.loft.sh {{ .ExampleName }}` + kubectlNamespace + ` \
         --type json \
         -p '[{"op": "add", "path": "/metadata/annotations/my-annotation", "value": "my-value"}]'
 ` + "```" + `
