@@ -1,9 +1,14 @@
 #!/usr/bin/env node
 
 /**
- * Sync LATEST_VERSIONS in src/components/InterpolatedCodeBlock/index.js with
- * the latest stable patch release for the currently-tracked minor version of
- * vCluster and vCluster Platform.
+ * Sync src/data/latest-versions.json with the latest stable patch release for
+ * the currently-tracked minor version of vCluster and vCluster Platform.
+ *
+ * That file is the single source of truth for the version tokens. It is read
+ * by src/components/InterpolatedCodeBlock (render time) and by
+ * plugins/remark-version-tokens.js (build time), so __PLATFORM_VERSION__ and
+ * __VCLUSTER_VERSION__ resolve identically in plain markdown fences and in
+ * interpolated code blocks.
  *
  * Patch-only: never auto-promotes a minor version (0.33.x stays on 0.33).
  * New minor versions land through the normal docs release process.
@@ -27,36 +32,35 @@ const TARGETS = {
 
 const PRERELEASE_MARKERS = ['-next', '-alpha', '-rc', '-beta'];
 
-const TARGET_FILE = path.join(
-  __dirname,
-  '..',
-  'src',
-  'components',
-  'InterpolatedCodeBlock',
-  'index.js'
-);
+const TARGET_FILE = path.join(__dirname, '..', 'src', 'data', 'latest-versions.json');
 
 function getMinor(version) {
   return version.split('.').slice(0, 2).join('.');
 }
 
 function readCurrentVersions(content) {
-  const match = content.match(
-    /const LATEST_VERSIONS = \{\s*platform: '([^']+)',\s*vcluster: '([^']+)',?\s*\};/
-  );
-  if (!match) {
-    throw new Error(`Could not parse LATEST_VERSIONS block in ${TARGET_FILE}`);
+  let data;
+  try {
+    data = JSON.parse(content);
+  } catch (err) {
+    throw new Error(`Could not parse ${TARGET_FILE}: ${err.message}`);
   }
-  return { platform: match[1], vcluster: match[2] };
+  for (const key of Object.keys(TARGETS)) {
+    if (typeof data[key] !== 'string') {
+      throw new Error(`Missing or non-string '${key}' in ${TARGET_FILE}`);
+    }
+  }
+  return data;
 }
 
+// Preserves any other keys in the file (for example the _comment banner) so
+// the daily sync only ever rewrites the version values.
 function applyUpdate(content, next) {
-  const replacement =
-    `const LATEST_VERSIONS = {\n` +
-    `  platform: '${next.platform}',\n` +
-    `  vcluster: '${next.vcluster}',\n` +
-    `};`;
-  return content.replace(/const LATEST_VERSIONS = \{[^}]+\};/, replacement);
+  const data = JSON.parse(content);
+  for (const key of Object.keys(TARGETS)) {
+    data[key] = next[key];
+  }
+  return `${JSON.stringify(data, null, 2)}\n`;
 }
 
 async function fetchLatestPatch(repo, minor) {
