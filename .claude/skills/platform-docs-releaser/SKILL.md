@@ -291,6 +291,19 @@ Copy from previous version, update version numbers. Include cross-version tests 
 
 This PR is small, reviewable, and safe to merge by anyone with merge rights.
 
+#### 7. After merge — trigger vmetal-docs lifecycle sync
+
+vMetal has no version or support window of its own — it ships as part of vCluster Platform and follows the same lifecycle. Its docs site (`vmetal-docs`) keeps a generated copy of `docs/_partials/platform_supported_versions.mdx` at `docs/reference/lifecycle-policy.mdx`, synced by its `generate-lifecycle-docs` workflow.
+
+Once the config flip PR is merged (release/EOS/EOL dates for the new row are final at that point), dispatch that workflow:
+
+```bash
+gh api repos/loft-sh/vmetal-docs/dispatches \
+  -f event_type=platform-released
+```
+
+This opens a PR in vmetal-docs regenerating `lifecycle-policy.mdx` from the current `platform_supported_versions.mdx`. It is not required to merge that PR before this one — it lands independently in vmetal-docs. If the dispatch is skipped or fails, a weekly scheduled run in that workflow catches the drift within a week.
+
 ## Files Modified Summary
 
 | File | Changes | Phase |
@@ -303,6 +316,7 @@ This PR is small, reviewable, and safe to merge by anyone with merge rights.
 | `netlify.toml` | Add redirect for new lastVersion; remove redirect for previous lastVersion | Release day |
 | `hack/test-platform-X.Y.hurl` | New test file | Release day |
 | Platform support dates file (`docs/_partials/platform_supported_versions.mdx`) | Release/EOL dates + Default vCluster Version column | User adds, AI verifies |
+| `vmetal-docs` `docs/reference/lifecycle-policy.mdx` | Regenerated via `repository_dispatch` (external repo) | After Release day merge |
 
 ## Division of Responsibilities
 
@@ -313,6 +327,7 @@ This PR is small, reviewable, and safe to merge by anyone with merge rights.
 - ✅ **Update netlify redirect** - `netlify.toml`
 - ✅ **Create hurl test** - Including cross-version tests
 - ✅ **Verify Default vCluster Version column** - Check the new row in `platform_supported_versions.mdx` matches `DefaultVClusterVersion` in `loft-enterprise` ([DOC-1658](https://linear.app/loft/issue/DOC-1658))
+- ✅ **Trigger vmetal-docs lifecycle sync** - After the config flip PR merges, dispatch `loft-sh/vmetal-docs`'s `generate-lifecycle-docs` workflow (see Part 5, item 7)
 
 ### User Handles (Items 2, 6-8):
 - **Create versioned docs** - `npm run docusaurus docs:version:platform X.Y.Z`
