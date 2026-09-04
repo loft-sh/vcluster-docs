@@ -31,7 +31,7 @@ export const vclusterEOLVersions = [
 ];
 
 export const platformEOLVersions = [
-  { to: "https://vcluster.com/docs/v4.8", label: "v4.8 (EOS)" },
+  { to: "https://vcluster.com/docs/v4.8", label: "v4.8" },
   { to: "https://vcluster.com/docs/v4.7", label: "v4.7 (EOS)" },
   { to: "https://vcluster.com/docs/v4.6", label: "v4.6 (EOS)" },
   { to: "https://vcluster.com/docs/v4.5", label: "v4.5 (EOL)" },
