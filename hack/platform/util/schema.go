@@ -66,6 +66,11 @@ type ObjectInformation struct {
 	SubResourceCreateDescription string
 	SubResourceGet               bool
 	SubResourceGetDescription    string
+	// SubResourceParentName names the parent resource whose name appears in a subresource
+	// request's URL path, e.g. "StackInstance" for the stackinstances/outputs subresource.
+	// Falls back to Name when empty, which is correct whenever the resource's own display
+	// name already matches what appears in the URL (the common case).
+	SubResourceParentName string
 }
 
 func GenerateSchema(configInstance interface{}) *jsonschema.Schema {
@@ -392,10 +397,15 @@ func GenerateObjectOverview(information *ObjectInformation) {
 		})
 	}
 
+	subResourceParentName := information.Name
+	if information.SubResourceParentName != "" {
+		subResourceParentName = information.SubResourceParentName
+	}
+
 	// create SubResource Create partial
 	if information.SubResourceCreate {
 		writeTemplate(TemplateCreateSubResourceObject, path.Join(basePath, "subresourcecreate.mdx"), CreateSubResourceValues{
-			Name:        information.Name,
+			Name:        subResourceParentName,
 			ExampleName: exampleName,
 			Description: information.SubResourceCreateDescription,
 			SubResource: information.SubResource,
@@ -409,7 +419,7 @@ func GenerateObjectOverview(information *ObjectInformation) {
 	// create SubResource Get partial
 	if information.SubResourceGet {
 		writeTemplate(TemplateGetSubResourceObject, path.Join(basePath, "subresourceget.mdx"), GetSubResourceValues{
-			Name:        information.Name,
+			Name:        subResourceParentName,
 			ExampleName: exampleName,
 			Description: information.SubResourceGetDescription,
 			SubResource: information.SubResource,
@@ -552,6 +562,7 @@ func RenderFromPath(schema *jsonschema.Schema, schemaPath string, defaults map[s
 		1,
 		defaults,
 		requiredSet(parentSchema)[lastProperty],
+		nil,
 	)
 	return content, nil
 }
@@ -562,7 +573,7 @@ func GenerateResource(schema *jsonschema.Schema, basePath string, subResource bo
 }
 
 func createSections(pageFile string, schema *jsonschema.Schema, definitions jsonschema.Definitions, skipMetadata, subResource bool, metadataOnly bool, depth int) string {
-	content := buildContent("", schema, definitions, metadataOnly, depth, nil)
+	content := buildContent("", schema, definitions, metadataOnly, depth, nil, nil)
 	importContent := ""
 	if !skipMetadata && !metadataOnly {
 		if subResource {
@@ -581,7 +592,16 @@ func createSections(pageFile string, schema *jsonschema.Schema, definitions json
 	return content
 }
 
-func buildContent(prefix string, schema *jsonschema.Schema, definitions jsonschema.Definitions, metadataOnly bool, depth int, defaults interface{}) string {
+func buildContent(prefix string, schema *jsonschema.Schema, definitions jsonschema.Definitions, metadataOnly bool, depth int, defaults interface{}, ancestors map[*jsonschema.Schema]bool) string {
+	if ancestors[schema] {
+		return ""
+	}
+	pathAncestors := make(map[*jsonschema.Schema]bool, len(ancestors)+1)
+	for ancestor := range ancestors {
+		pathAncestors[ancestor] = true
+	}
+	pathAncestors[schema] = true
+
 	content := ""
 	if schema.Properties != nil {
 		requiredFields := requiredSet(schema)
@@ -618,6 +638,7 @@ func buildContent(prefix string, schema *jsonschema.Schema, definitions jsonsche
 				depth,
 				defaults,
 				requiredFields[fieldName],
+				pathAncestors,
 			)
 			if fieldContent != "" {
 				content += "\n\n" + fieldContent
@@ -650,6 +671,7 @@ func renderField(
 	depth int,
 	defaults interface{},
 	isRequired bool,
+	ancestors map[*jsonschema.Schema]bool,
 ) string {
 	headlinePrefix := strings.Repeat("#", int(math.Min(5, float64(depth+1)))) + " "
 	anchorPrefix := strings.TrimPrefix(strings.ReplaceAll(prefix, prefixSeparator, anchorSeparator), anchorSeparator)
@@ -686,7 +708,7 @@ func renderField(
 		nestedSchema, ok := definitions[refSplit[len(refSplit)-1]]
 		if ok {
 			newPrefix := prefix + fieldName + prefixSeparator
-			fieldContent = buildContent(newPrefix, nestedSchema, definitions, metadataOnly, depth+1, defaults)
+			fieldContent = buildContent(newPrefix, nestedSchema, definitions, metadataOnly, depth+1, defaults, ancestors)
 			expandable = true
 		}
 	}

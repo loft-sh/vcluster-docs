@@ -92,6 +92,8 @@ A `Pending` StackInstance can also report the first blocked task's reason direct
 - An `app` task blocks with `AppNotFound`, `DestinationNotFound`, or `DestinationNotReady`.
 - An `argoCDApplication` task blocks with `InvalidConnector`, `CreateArgoClientFailed`, `GetClusterFailed`, or `TemplateNotFound`.
 
+Recreating a connector with the same name resolves `InvalidConnector` on its own. The controller watches connectors and re-enqueues affected tasks as soon as a matching name exists again. Pointing an existing connector at a different Argo CD server doesn't clean up the application it already created on the previous server.
+
 To confirm a fix worked, re-run the status command above and check that the aggregate phase reads `Healthy`.
 
 ## Diagnose a task
@@ -111,9 +113,24 @@ kubectl describe argocdapplication <application-name> -n <project-namespace>
 | Task phase `Progressing` | The generated AppInstance or ArgoCDApplication is still rolling out, or the controller is capturing its outputs. | Inspect the generated child and the task's reason and message. If the task is capturing outputs, continue with [Diagnose outputs](#diagnose-outputs). |
 | Task phase `Blocked` | An instance-level reason stopped reconciliation, or the task is missing a prerequisite. An `app` child can report `AppNotFound`, `DestinationNotFound`, or `DestinationNotReady`. An `argoCDApplication` child can report `InvalidConnector`, `CreateArgoClientFailed`, `GetClusterFailed`, or `TemplateNotFound`. | Compare the task reason with the Ready condition and resolve any instance-level problem first. Otherwise, inspect the generated AppInstance or ArgoCDApplication. Create the missing App or ArgoCDApplicationTemplate, fix the child destination, or fix the Argo CD connector. |
 | Task phase `Failed`, reason `MissingOwner` | AppInstances require an owner. vCluster Platform fills in `spec.owner` automatically for any authenticated caller creating the StackInstance through the management API, whether that's the UI, a script, or a GitOps controller. A StackInstance admitted by writing `storage.loft.sh/v1` directly bypasses that defaulting and can end up without an owner. | Set `spec.owner` on the StackInstance. The controller propagates owner and access settings to children. |
+| Task phase `Failed`, message includes `release name is invalid` | The generated child name fits the 63-character Kubernetes object-name limit, but Helm's own release-name limit is 53 characters. A long StackInstance name, task name, or both can cross it. | Shorten the StackInstance name, the task name, or both, then reconcile again. |
 | Task phase `Failed`, any other reason | The controller couldn't validate, render, build, write, or read the child; the child reported failure; or the task exceeded its deployment or output-capture timeout. A task uses its own `timeout`, then `defaults.taskTimeout`, or 10 minutes by default. | Read the task reason and message first. If `applicationName` is empty, fix the reported task definition, dependency, ownership conflict, or apply error. Otherwise, inspect the child. For an AppInstance, check Helm status, hook Jobs, Pods, events, and required credentials. For an ArgoCDApplication, check connector health, sync state, and application health. |
 
 To confirm a fix worked, re-run the compact task summary above and check that the task reads `Healthy`.
+
+## Retry a stack
+
+Set the `platform.vcluster.com/stack-retry` annotation on the StackInstance to a task name or `all` to retry without recreating the instance:
+
+```yaml
+metadata:
+  annotations:
+    platform.vcluster.com/stack-retry: "all"
+```
+
+The controller clears the annotation once it acts on it, so the annotation's presence is what "a retry is in flight" means. There's no status field for it. Requesting a retry from the UI needs the `update` verb on the StackInstance.
+
+An Argo CD Application task retries by re-triggering its child directly. A Stack retry can't re-trigger a failed `app` task because its AppInstance runs again only when the task's definition changes. The controller reports a `RetryNotApplicable` event for that task. Edit the task instead. A retry of `all` can still retry other eligible tasks in the Stack.
 
 ## Diagnose outputs
 
@@ -125,7 +142,18 @@ An output becomes available only after its source task is healthy. If a task nev
 - Output names and the names of tasks that declare outputs contain only lowercase letters and digits. Other task names can also contain hyphens.
 - The consuming task lists the source task in `dependsOn`.
 
-Published values are served through `stackinstances/outputs`, not through StackInstance status. Confirm the reader has `get` permission on that subresource. Treat published credentials as sensitive even when the UI can display them.
+Published values are served through `stackinstances/outputs`, not through StackInstance status. See the [StackInstanceOutputs reference](../api/resources/stackinstanceoutputs.mdx) for the response schema. Confirm the reader has `get` permission on that subresource. Treat published credentials as sensitive even when the UI can display them. See [Stack permissions](../administer/users-permissions/permissions/stacks.mdx).
+
+Use each output's `state` and `reason` to distinguish a value that is still being captured from a definition or task failure:
+
+| State and reason | Meaning |
+| --- | --- |
+| `Pending` / `NotCaptured` | The task hasn't captured a current value. |
+| `Pending` / `SourceChanged` | The stored value came from an older source definition and is being captured again. |
+| `Failed` / `OutputNotDeclared` | `publishedOutputs` references an output the task doesn't declare. |
+| `Failed` / `NoSource` | The task output doesn't declare a source. |
+| `Failed` / `TaskFailed` | The producing task failed before a current value was available. |
+| `Available` / `TaskFailed` | The producing task failed after capture, so the API serves the last good value. |
 
 ## Handle removed tasks
 
@@ -136,7 +164,7 @@ When a referenced StackTemplate removes a task, inspect `status.orphanedApplicat
 
 Before switching to `Prune`, confirm that no retained application contains data that must survive.
 
-## Troubleshoot NVIDIA Run:ai certified stacks
+## Troubleshoot NVIDIA Run:ai certified stacks {#troubleshoot-nvidia-runai-certified-stacks}
 
 | Signal | Cause | Resolution |
 | --- | --- | --- |

@@ -33,13 +33,13 @@ const templateRetrieveKubectl = `
 ### Retrieve a list of {{ .Plural }}
 Run the following command to list all ` + pluralInNamespace + `:
 ` + "```bash" + `
-kubectl get {{ .Resource }}.management.loft.sh ` + kubectlNamespace + ` -o yaml
+kubectl get {{ .Resource }}.management.loft.sh` + kubectlNamespace + ` -o yaml
 ` + "```" + `
 
 ### Retrieve a single {{ .Name }} by name
 Run the following kubectl command to get ` + myObjectInNamespace + `:
 ` + "```bash" + `
-kubectl get {{ .Resource }}.management.loft.sh {{ .ExampleName }} ` + kubectlNamespace + ` -o yaml
+kubectl get {{ .Resource }}.management.loft.sh {{ .ExampleName }}` + kubectlNamespace + ` -o yaml
 ` + "```" + `
 `
 
