@@ -165,6 +165,53 @@ On a cluster with the GPU stack deployed, this template also scrapes GPU metrics
 extra configuration. See
 [The cluster-collector template scrapes GPU metrics automatically](./gpu-observability-templates.mdx#the-cluster-collector-template-scrapes-gpu-metrics-automatically).
 
+On a tenant cluster, this template also scrapes the tenant control plane's backing store.
+See [Tenant backing store metrics](#tenant-backing-store-metrics) below.
+
+## Tenant backing store metrics
+
+The `otel-deploy` collector scrapes the tenant control plane's backing store with no extra
+configuration. vCluster serves these metrics on the tenant control plane's HTTPS proxy, the
+same target the collector already scrapes for tenant API server metrics, so the collector
+reaches them with its own ServiceAccount token and the tenant cluster's CA.
+
+| Scrape job | Path | Backing store |
+|---|---|---|
+| `vcluster-etcd` | `/metrics/etcd` | Embedded etcd. |
+| `vcluster-kine` | `/metrics/kine` | Embedded or external database. Requires vCluster v0.35.0 or later. |
+
+The tenant cluster's own RBAC authorizes these scrapes. The template grants the collector's
+ServiceAccount `get` on both paths, so no action is needed unless you replace the bundled
+ClusterRole.
+
+Deployed etcd and external etcd aren't covered. vCluster serves no metrics route for either,
+so no scrape job collects them.
+
+To query the collected series, see
+[Query fleet metrics](./query-fleet-metrics.mdx#example-queries).
+
+### One backing store job is always down
+
+A tenant cluster has one backing store, so only one of the two jobs ever returns data. The
+path for the other backing store doesn't exist on that tenant cluster, so its job reports
+`up == 0` and logs a scrape failure on every scrape interval, for the lifetime of the tenant
+cluster. This is expected, and a failing job doesn't affect the others on the collector.
+
+Prometheus generates `up` itself rather than reading it from the target, so
+`metric_relabel_configs` can't drop it at the collector. Exclude both backing store jobs
+from any general `up == 0` alert:
+
+```promql
+up{job!~"vcluster-etcd|vcluster-kine"} == 0
+```
+
+Then alert on the job that matches the tenant cluster's backing store. For a tenant cluster
+on embedded etcd:
+
+```promql
+up{job="vcluster-etcd"} == 0
+```
+
 ## Configure collectors manually
 
 To configure a collector yourself instead of using the bundled template, or to customize
