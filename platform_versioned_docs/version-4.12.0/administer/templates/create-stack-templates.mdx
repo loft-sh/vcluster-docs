@@ -6,7 +6,9 @@ sidebar_position: 5
 
 import Flow, { Step } from "@site/src/components/Flow";
 import Button from "@site/src/components/Button";
+import InterpolatedCodeBlock from "@site/src/components/InterpolatedCodeBlock";
 import NavStep from "@site/src/components/NavStep";
+import StarterStack from "!!raw-loader!./_code/starter-stack.yaml";
 
 A Stack template defines applications that vCluster Platform deploys as one unit. It also defines the order in which those applications become ready. Use a Stack when applications have dependencies, need health gates, or pass values to later tasks. Each application is a task, tasks declare which other tasks they wait for, and the platform rolls them out in that order.
 
@@ -46,6 +48,50 @@ Both features are available on every plan, including the free plan. If a task's 
 </Flow>
 
 You can also apply the resource through the management API using the **YAML** editor.
+
+## Deploy a starter stack
+
+Use this complete example as a starting point for your own Stack. It has no external chart or infrastructure dependencies.
+
+The first inline App task creates a ConfigMap from a Stack parameter. The second task waits for the first task to become healthy, then writes the captured greeting to another ConfigMap.
+
+<Flow id="deploy-starter-stack">
+  <Step>
+    Connect `kubectl` to the vCluster Platform management API:
+
+    ```bash
+    vcluster platform connect management
+    ```
+  </Step>
+  <Step>
+    Save the following resources as `starter-stack.yaml`. Set the project namespace and tenant cluster name for your destination, and set `spec.owner` to a user or team that can reach it. App tasks deploy as their owner, so a Stack with an App task needs one.
+
+    <InterpolatedCodeBlock
+      code={StarterStack}
+      language="yaml"
+      title="starter-stack.yaml"
+    />
+  </Step>
+  <Step>
+    Create the StackTemplate and StackInstance:
+
+    ```bash
+    kubectl apply -f starter-stack.yaml
+    ```
+  </Step>
+  <Step>
+    Wait for both tasks to report `Healthy`:
+
+    ```bash
+    kubectl get stackinstance starter-stack -n <project-namespace> \
+      -o jsonpath='{.status.phase}{"\n"}{range .status.tasks[*]}{.name}{"\t"}{.phase}{"\n"}{end}'
+    ```
+
+    The StackInstance reports `Healthy`. The destination contains `starter-backend` and `starter-frontend` ConfigMaps in the `stack-starter` namespace.
+  </Step>
+</Flow>
+
+Change `spec.parameters.greeting` on the StackInstance to test reconciliation. Replace either inline App template with your own manifests, or use `templateRef` to reference a reusable App.
 
 ## Define a stack template
 
@@ -93,12 +139,16 @@ Tasks without dependency edges can run concurrently. A dependent task starts onl
 
 ## Configure tasks
 
-Each task needs a unique DNS-label-safe `name`. A Stack supports up to 20 tasks. Each task can set its own `timeout`. A task without one uses the Stack's `defaults.taskTimeout`, or 10 minutes if that isn't set either. Set exactly one task type:
+Give each task a unique DNS-label-safe `name`. A duplicate name is rejected when the Stack is applied. A Stack supports up to 20 tasks. Each task can set its own `timeout`. A task without one uses the Stack's `defaults.taskTimeout`, or 10 minutes if that isn't set either. Set exactly one task type:
 
 - `app` creates an AppInstance.
 - `argoCDApplication` creates an ArgoCDApplication.
 
 Within the selected type, set either an inline `template` or a reusable `templateRef`. Don't set both. Parameters are valid only with `templateRef`. They pass through to the referenced template.
+
+:::caution
+For an `app` task, keep the combined StackInstance and task name short. The generated child name only enforces the 63-character Kubernetes object-name limit, but Helm's own release-name limit is 53 characters. A longer combination fails to deploy with a `release name is invalid` error that doesn't mention length.
+:::
 
 This task uses a reusable ArgoCDApplicationTemplate:
 
@@ -116,6 +166,15 @@ tasks:
 The Argo CD connector must be enabled before an Argo CD Application task can become healthy. See [Connect Argo CD](../../integrations/argocd/connect-argocd.mdx).
 :::
 
+There's no field to skip a task based on a parameter. A Stack always resolves its full task set. To make a task a no-op under some condition, interpolate the `templateRef` name so it points at an App or ArgoCDApplicationTemplate that does nothing:
+
+```yaml
+- name: gpu
+  app:
+    templateRef:
+      name: 'gpu-operator{{ if eq .Values.gpuProvider "gke" }}-skip{{ end }}'
+```
+
 ## Pass parameters to tasks
 
 Declare optional parameters under `spec.parameters`. Tasks read their values with `{{ .Values.<variable> }}`. A parameter declaration renders as a labeled form field in the UI, with a default value, and can enforce validation such as `required`, a `min`/`max` range, or a `validation` regular expression.
@@ -124,7 +183,7 @@ Values that don't have declarations are still available to tasks. However, vClus
 
 ## Pass outputs between tasks
 
-A task can capture one scalar value from a Secret or namespaced Kubernetes resource. A later task reads the value with `{{ .Outputs.<task>.<output> }}` and must list the source task in `dependsOn`.
+A task can capture one scalar value from a Secret or namespaced Kubernetes resource. A later task reads the value with `{{ .Outputs.<task>.<output> }}` and must list the source task in `dependsOn`. See [Template values and outputs in Stacks](../../how-to/use-go-template.mdx#template-values-and-outputs-in-stacks) for more Go template examples.
 
 ```yaml
 tasks:
@@ -163,13 +222,21 @@ publishedOutputs:
       output: serviceip
 ```
 
-Output names and the names of tasks that declare outputs can contain only lowercase letters and digits. Other task names can also contain hyphens. Resource outputs can't read cluster-scoped resources. The source namespace must be a namespace this Stack has already deployed an App or Argo CD Application into. vCluster Platform rejects a resource output whose source is in any other namespace before it reads the resource, even if the controller could otherwise reach it.
+Output names and the names of tasks that declare outputs can contain only lowercase letters and digits. Other task names can also contain hyphens. Resource outputs can't read cluster-scoped resources, and `fromResource` rejects `kind: Secret` outright. Read a Secret value with `fromSecret`, which also keeps it flagged as sensitive. The source namespace must be a namespace this Stack has already deployed an App or Argo CD Application into. vCluster Platform rejects a resource output whose source is in any other namespace before it reads the resource, even if the controller could otherwise reach it.
 
-Published outputs are available through the StackInstance outputs subresource. They aren't written to `status`. Access to sensitive output values requires separate `get` permission on `stackinstances/outputs`.
+Output references support template functions and pipelines. For example, `{{ .Outputs.database.password | quote }}` is valid. Keep the reference in the canonical `.Outputs.<task>.<output>` form. An output reference can't control an `if`, `range`, or `with` action, declare a variable, or share one action with a `.Values` reference because parameters and outputs are rendered at different times. Parameter-driven control flow can contain output references in its body:
+
+```yaml
+endpoint: '{{ if .Values.tls }}https://{{ .Outputs.api.hostname }}{{ else }}http://{{ .Outputs.api.hostname }}{{ end }}'
+```
+
+The text `<%` is reserved for internal output rendering and isn't valid in a task payload.
+
+Published outputs are available through the StackInstance outputs subresource. They aren't written to `status`. See the [StackInstanceOutputs reference](../../api/resources/stackinstanceoutputs.mdx) for the response schema. Access to sensitive values requires separate permission to retrieve StackInstance outputs. See [Stack permissions](../users-permissions/permissions/stacks.mdx).
 
 ## Test a stack template
 
-Create a StackInstance that references the template. A destination is immutable after creation.
+Create a StackInstance that references the template. A destination and, once set, an owner are both immutable after creation. A tenant cluster destination must be in the same project as the StackInstance. There's no cross-project form of this field, so deploying the same Stack into tenant clusters across several projects takes one StackInstance per project, all referencing the same template.
 
 ```yaml title="stack-instance.yaml"
 apiVersion: management.loft.sh/v1
@@ -179,6 +246,9 @@ metadata:
   namespace: p-example
 spec:
   displayName: Example application platform
+  # App tasks deploy as this user or team, so an owner is required.
+  owner:
+    user: admin
   destination:
     virtualCluster:
       name: development
@@ -208,4 +278,7 @@ A referenced StackTemplate is resolved during every reconciliation. Stack templa
 
 - [Use a Stack](../../use-platform/apps/use-stacks.mdx) to deploy a StackTemplate.
 - [Manage Certified Stacks](./certified-stacks.mdx) to use templates bundled with vCluster Platform.
+- [Manage Stacks declaratively](../../how-to/gitops-end-to-end.mdx#manage-stacks-declaratively) to store StackTemplates and StackInstances in Git.
+- [Stack permissions](../users-permissions/permissions/stacks.mdx) to configure RBAC for Stack resources.
+- [StackTemplate reference](../../api/resources/stacktemplate.mdx) for the full field schema.
 - [Troubleshoot Stacks](../../troubleshoot/stacks.mdx) to inspect blocked or failed tasks.
