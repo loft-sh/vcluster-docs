@@ -1,0 +1,129 @@
+---
+title: Upgrade in an air-gapped environment
+sidebar_label: Upgrade in an Air-Gapped Environment
+sidebar_position: 3
+description: Steps for upgrading vCluster Platform in air-gapped, offline, or VPC environments with restricted network connectivity.
+---
+
+import InterpolatedCodeBlock from "@site/src/components/InterpolatedCodeBlock";
+
+This page covers upgrading <GlossaryTerm term="vcluster">vCluster</GlossaryTerm> Platform when it was installed in an
+air-gapped environment (see [With Offline License Key](../../install/air-gapped/with-offline-license-key.mdx)
+or [With Offline License Server](../../install/air-gapped/with-offline-license-server.mdx)).
+Unlike the [regular upgrade](./upgrade.mdx), an air-gapped upgrade starts by
+re-populating your private registry with the target version's images and Helm
+chart. Your <GlossaryTerm term="control-plane-cluster">control plane cluster</GlossaryTerm> has no route to the public registries
+vCluster Labs publishes to, so it can only pull what you've mirrored.
+
+## Step 1 - Populate the registry with the target version
+
+On a machine with internet access, repeat the registry-population steps from
+the install guide for the version you're upgrading to. This is the same
+`download-images.sh`, `push-images.sh`, `helm pull`, and `helm push` workflow
+used during install. See [Populate images to private registry](../../install/air-gapped/with-offline-license-key.mdx#populate-images-to-private-registry)
+and [Populate the Helm charts to a private registry](../../install/air-gapped/with-offline-license-key.mdx#populate-the-helm-charts-to-a-private-registry)
+for the full walkthrough, including multi-platform images and insecure
+registries.
+
+### Platform images and chart
+
+<InterpolatedCodeBlock
+  title="Mirror the platform images and chart"
+  code={
+`export PLATFORM_VERSION=[[VAR:PLATFORM_VERSION:__PLATFORM_VERSION__]]
+export REGISTRY=[[VAR:REGISTRY:ecr.io/myteam]]
+
+wget -O images.txt https://github.com/loft-sh/loft/releases/download/v\${PLATFORM_VERSION}/images.txt
+wget -O download-images.sh https://github.com/loft-sh/loft/releases/download/v\${PLATFORM_VERSION}/download-images.sh
+wget -O push-images.sh https://github.com/loft-sh/loft/releases/download/v\${PLATFORM_VERSION}/push-images.sh
+chmod +x ./download-images.sh ./push-images.sh
+
+./download-images.sh --image-list images.txt --images loft-images.tar.gz
+./push-images.sh --registry \${REGISTRY} --images loft-images.tar.gz --image-list images.txt
+
+helm pull vcluster-platform --repo https://charts.loft.sh --version \${PLATFORM_VERSION}
+helm push vcluster-platform-\${PLATFORM_VERSION}.tgz oci://\${REGISTRY}/charts`
+  }
+  language="bash"
+/>
+
+### vCluster images and chart
+
+Do this only if you're also moving <GlossaryTerm term="tenant-cluster">tenant clusters</GlossaryTerm> to a new vCluster
+version. Both projects publish a release file named `images.txt`, so these
+commands save the vCluster list as `vcluster-images.txt` and pass it to both
+scripts explicitly. The scripts default to `images.txt`, which at this point
+still holds the platform list from the previous step.
+
+<InterpolatedCodeBlock
+  title="Mirror the vCluster images and chart"
+  code={
+`export VCLUSTER_VERSION=[[VAR:VCLUSTER_VERSION:__VCLUSTER_VERSION__]]
+export REGISTRY=[[VAR:REGISTRY:ecr.io/myteam]]
+
+wget -O vcluster-images.txt https://github.com/loft-sh/vcluster/releases/download/v\${VCLUSTER_VERSION}/images.txt
+
+./download-images.sh --image-list vcluster-images.txt --images vcluster-images.tar.gz
+./push-images.sh --registry \${REGISTRY} --images vcluster-images.tar.gz --image-list vcluster-images.txt
+
+helm pull vcluster --repo https://charts.loft.sh --version \${VCLUSTER_VERSION}
+helm push vcluster-\${VCLUSTER_VERSION}.tgz oci://\${REGISTRY}/charts`
+  }
+  language="bash"
+/>
+
+After mirroring, update the chart version on any tenant cluster templates that
+pin a vCluster version. For the optional image sets covering other Kubernetes
+distributions and versions, see [Pull and push images for vCluster](../../install/air-gapped/with-offline-license-key.mdx#pull-and-push-images-for-vcluster).
+
+## Step 2 - Upgrade the platform deployment
+
+Run `helm upgrade` against the chart version you just pushed, reusing your
+existing `vcluster-platform.yaml` values file. That file already points the
+platform and its agents at your private registry, so those settings carry
+over automatically. The relevant keys are `imageRef`,
+`env.DEFAULT_IMAGE_REGISTRY`, `env.DEFAULT_VCLUSTER_CHART_REPO`, and
+`agentValues.env`, as set up under [Configure and install vCluster Platform and agent](../../install/air-gapped/with-offline-license-key.mdx#configure-install-platform-agent).
+
+One value doesn't carry over. `imageRef.tag` pins the image to the version you
+installed, and it overrides the chart version. The command below sets it for
+this upgrade. Update it in `vcluster-platform.yaml` as well, so later upgrades
+don't revert to the old image.
+
+<InterpolatedCodeBlock
+  title="Upgrade the platform using helm"
+  code={
+`export PLATFORM_VERSION=[[VAR:PLATFORM_VERSION:__PLATFORM_VERSION__]]
+export REGISTRY=[[VAR:REGISTRY:ecr.io/myteam]]
+export PLATFORM_NAMESPACE=[[VAR:PLATFORM_NAMESPACE:vcluster-platform]]
+
+helm upgrade vcluster-platform oci://\${REGISTRY}/charts/vcluster-platform:\${PLATFORM_VERSION} \\
+  --version \${PLATFORM_VERSION} \\
+  --namespace \${PLATFORM_NAMESPACE} \\
+  --values vcluster-platform.yaml \\
+  --set imageRef.tag=\${PLATFORM_VERSION}`
+  }
+  language="bash"
+/>
+
+If you use Helm 4 with `--server-side=true`, see the note on server-side apply
+conflicts in [Upgrade vCluster Platform](./upgrade.mdx).
+
+:::warning
+vCluster Platform exclusively supports the default `secret` backend for
+storing Helm releases. Alternative `HELM_DRIVER` configurations (such as
+`configmap` or `sql`) are not supported.
+:::
+
+## Step 3 - Verify the deployment
+
+Confirm the platform and agent deployments are running the target image from
+your private registry:
+
+```bash title="Verify the deployed image"
+kubectl get deployment -n ${PLATFORM_NAMESPACE} loft \
+  -o jsonpath='{.spec.template.spec.containers[0].image}'
+```
+
+The platform automatically upgrades connected agents to the same version once
+the platform upgrade completes, pulling from the same private registry.
