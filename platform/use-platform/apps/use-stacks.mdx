@@ -1,0 +1,149 @@
+---
+title: Use a Stack
+sidebar_label: Use a Stack
+sidebar_position: 5
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+import Flow, { Step } from "@site/src/components/Flow";
+import Button from "@site/src/components/Button";
+import Label from "@site/src/components/Label";
+import NavStep from "@site/src/components/NavStep";
+
+A Stack deploys a group of applications to one tenant cluster or control plane cluster. The StackTemplate controls dependencies, health gates, parameters, and values shared between tasks.
+
+Use an App for one independently managed application. Use a Stack when several applications need ordering, health gates, or values from earlier tasks.
+
+## Understand licensing
+
+Stacks don't have a separate license feature. App tasks use the Apps feature, which is available on every plan. Argo CD Application tasks also require the Argo CD Integration feature, which isn't available on the free plan.
+
+If a task isn't licensed, the StackInstance is blocked with the `FeatureNotAllowed` reason.
+
+## Choose how to install a Stack
+
+You can install a Stack three ways:
+
+- From the catalog, to add a Stack to a tenant cluster or control plane cluster that already exists.
+- During tenant cluster creation, when the Stack should exist from the start.
+- Through `vcluster.yaml`, when you manage the tenant cluster's configuration declaratively, such as through GitOps.
+
+<br/>
+
+<Tabs>
+<TabItem value="catalog" label="From the catalog" default>
+
+The UI can show **Stacks & Apps** or **Apps**, depending on your permissions and the installed Platform patch level.
+
+<Flow id="install-stack-ui">
+  <Step>
+    Select the project that owns the destination tenant cluster.
+  </Step>
+  <Step>
+    Go to <NavStep>Stacks & Apps</NavStep>, or open the destination and select its applications view.
+  </Step>
+  <Step>
+    Select a StackTemplate. Review its description, parameters, and dependency graph.
+  </Step>
+  <Step>
+    Select the destination tenant cluster or control plane cluster.
+  </Step>
+  <Step>
+    Enter the required parameters, and click <Button>Install</Button>.
+  </Step>
+  <Step>
+    Open the StackInstance and monitor the aggregate status and each task.
+  </Step>
+</Flow>
+
+You need access to the StackTemplate and permission to create StackInstances in the project. Published output values require separate permission to get the `stackinstances/outputs` subresource.
+
+</TabItem>
+<TabItem value="creation" label="During tenant cluster creation">
+
+vCluster 0.37 adds a **Stacks** configuration section to tenant cluster creation. The UI hides this section for older vCluster versions.
+
+<Flow id="install-stack-during-vcluster-creation">
+  <Step>
+    Go to <NavStep>Tenant Clusters</NavStep>, and click <Button>New Tenant Cluster</Button>.
+  </Step>
+  <Step>
+    Select a template or configure the tenant cluster.
+  </Step>
+  <Step>
+    Open the <Label>Stacks</Label> section, and select a StackTemplate.
+  </Step>
+  <Step>
+    Set its name and parameters. Add other Stacks when required.
+  </Step>
+  <Step>
+    Finish the tenant cluster configuration, and click <Button>Create Tenant Cluster</Button>.
+  </Step>
+</Flow>
+
+The StackInstance is created for the new tenant cluster, and its lifecycle follows the tenant cluster's.
+
+</TabItem>
+<TabItem value="vcluster-yaml" label="vcluster.yaml">
+
+Use `deploy.stacks` to include a Stack in a tenant cluster configuration:
+
+```yaml title="vcluster.yaml"
+deploy:
+  stacks:
+    - name: observability
+      # Resolve this cluster-scoped StackTemplate during reconciliation.
+      templateRef:
+        name: observability
+      parameters:
+        retention: 7d
+      # Keep applications if a future template removes their tasks.
+      prunePolicy: Retain
+```
+
+Each entry needs a stable `name` and exactly one of `templateRef` or an inline `template`. A referenced StackTemplate is resolved live during reconciliation.
+
+You can also set `defaults.taskTimeout` and `prunePolicy`. The default task timeout is 10 minutes. The default prune policy is `Retain`.
+
+</TabItem>
+</Tabs>
+
+## Monitor a stack
+
+The StackInstance aggregate phase summarizes all tasks:
+
+| Phase | Meaning |
+| --- | --- |
+| `Pending` | A prerequisite needs manual action. |
+| `Progressing` | At least one task is rolling out. |
+| `Healthy` | Every task is healthy. |
+| `Degraded` | At least one task failed. |
+| `Deleting` | The Stack and its owned children are being removed. |
+
+Tasks can be `Pending`, `Waiting`, `Progressing`, `Blocked`, `Healthy`, or `Failed`. A waiting task hasn't started because one or more dependencies aren't healthy.
+
+Inspect status through the management API:
+
+```bash
+vcluster platform connect management
+kubectl get stackinstance <stack-name> -n <project-namespace> \
+  -o jsonpath='{.status.phase}{"\n"}{range .status.tasks[*]}{.name}{"\t"}{.phase}{"\t"}{.message}{"\n"}{end}'
+```
+
+## Update or remove a Stack
+
+Edit the StackInstance to change its parameters. The controller renders the template again and reconciles its tasks.
+
+When a referenced StackTemplate removes a task, `prunePolicy` controls the existing child:
+
+- `Retain`, the default, keeps the child and reports it in `status.orphanedApplications`.
+- `Prune` deletes removed children in reverse dependency order.
+
+Deleting a StackInstance removes the applications that it still owns. Application charts can leave persistent volumes, namespaces, hooks, or custom resource definitions behind. Review the application's uninstall behavior before deletion.
+
+## Next steps
+
+- [Create a Stack template](../../administer/templates/create-stack-templates.mdx) to author task graphs and outputs.
+- [Manage Certified Stacks](../../administer/templates/certified-stacks.mdx) to deploy NVIDIA Run:ai.
+- [Troubleshoot Stacks](../../troubleshoot/stacks.mdx) to diagnose blocked or failed tasks.
