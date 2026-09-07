@@ -38,6 +38,35 @@ If multiple connector Secrets have this label, Platform still creates per-connec
 gateway resources, but it doesn't publish the fleet-wide platform admin Grafana
 datasource. Remove the fleet label from all but one connector.
 
+## A tenant cluster gets no metrics-writer credential
+
+A tenant cluster that delivers metrics through a connector requests its `metrics-writer`
+credential from Platform. When Platform can't resolve that connector into a write endpoint the
+tenant cluster's collector could reach, it refuses the request, no credential Secret is
+delivered, and the tenant cluster logs the reason on every resync.
+
+Platform reports the same finding as an `ObservabilityConnectorUnresolved` condition on the
+tenant cluster's instance, which is where the admin who owns the connector can see it:
+
+```bash
+kubectl -n loft-p-my-project get virtualclusterinstance my-vcluster \
+  -o jsonpath='{range .status.conditions[?(@.type=="ObservabilityConnectorUnresolved")]}{.reason}{": "}{.message}{"\n"}{end}'
+```
+
+| Reason | Likely cause | Fix |
+|---|---|---|
+| `WriteGatewayInternalOnly` | The connector's gateway Service is `ClusterIP`, and this tenant cluster's collector doesn't run on the Platform cluster. | Set `serviceType: LoadBalancer` on the connector Secret. See [When tenant clusters require a LoadBalancer gateway](./install-observability-gateway.mdx#when-tenant-clusters-require-a-loadbalancer-gateway). |
+| `ObservabilityConnectorNotFound` | The connector named on the tenant cluster doesn't exist in the Platform namespace. | Create the connector, or correct the name on the tenant cluster. |
+| `ObservabilityConnectorMisconfigured` | The connector exists, but its settings can never yield a usable gateway. | See [Gateway resources aren't created](#gateway-resources-arent-created). |
+| `ObservabilityNotConfiguredOnInstance` | The tenant cluster enables observability without naming a connector. | Name a connector on the tenant cluster, or disable the integration. |
+
+The condition carries only causes an admin has to fix. A connector is shared across tenant
+clusters, so causes that clear on their own, such as a gateway still waiting for its
+LoadBalancer address, are left off the condition to keep it from flapping on every tenant
+cluster using that connector. Those appear only in the requesting tenant cluster's own log. An
+absent condition therefore means either that the connector resolves or that it's still coming
+up.
+
 ## Collector writes are rejected
 
 Check the collector exporter configuration:
