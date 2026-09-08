@@ -23,6 +23,25 @@ type SignatureKey struct {
 	KeyID string `json:"keyID" protobuf:"bytes,1,name=keyID"`
 }
 
+// ClusterResourceRestrictionItem is a cluster resource that is restricted by the project's whitelist or blacklist
+type ClusterResourceRestrictionItem struct {
+	Group string `json:"group" protobuf:"bytes,1,opt,name=group"`
+	Kind  string `json:"kind" protobuf:"bytes,2,opt,name=kind"`
+	// Name is the name of the restricted resource. Glob patterns using Go's filepath.Match syntax are supported.
+	// Unlike the group and kind fields, if no name is specified, all resources of the specified group/kind are matched.
+	Name string `json:"name,omitempty" protobuf:"bytes,3,opt,name=name"`
+}
+
+// ApplicationDestinationServiceAccount holds information about the service account to be impersonated for the application sync operation
+type ApplicationDestinationServiceAccount struct {
+	// Server specifies the URL of the target cluster's Kubernetes control plane API.
+	Server string `json:"server" protobuf:"bytes,1,opt,name=server"`
+	// Namespace specifies the target namespace for the application's resources.
+	Namespace string `json:"namespace,omitempty" protobuf:"bytes,2,opt,name=namespace"`
+	// DefaultServiceAccount to be used for impersonation during the sync operation
+	DefaultServiceAccount string `json:"defaultServiceAccount" protobuf:"bytes,3,opt,name=defaultServiceAccount"`
+}
+
 // AppProjectSpec is the specification of an AppProject
 type AppProjectSpec struct {
 	// SourceRepos contains list of repository URLs which can be used for deployment
@@ -30,11 +49,12 @@ type AppProjectSpec struct {
 	// Destinations contains list of destinations available for deployment
 	Destinations []ApplicationDestination `json:"destinations,omitempty" protobuf:"bytes,2,name=destination"`
 	// Description contains optional project description
+	// +kubebuilder:validation:MaxLength=255
 	Description string `json:"description,omitempty" protobuf:"bytes,3,opt,name=description"`
 	// Roles are user defined RBAC roles associated with this project
 	Roles []ProjectRole `json:"roles,omitempty" protobuf:"bytes,4,rep,name=roles"`
 	// ClusterResourceWhitelist contains list of whitelisted cluster level resources
-	ClusterResourceWhitelist []metav1.GroupKind `json:"clusterResourceWhitelist,omitempty" protobuf:"bytes,5,opt,name=clusterResourceWhitelist"`
+	ClusterResourceWhitelist []ClusterResourceRestrictionItem `json:"clusterResourceWhitelist,omitempty" protobuf:"bytes,5,opt,name=clusterResourceWhitelist"`
 	// NamespaceResourceBlacklist contains list of blacklisted namespace level resources
 	NamespaceResourceBlacklist []metav1.GroupKind `json:"namespaceResourceBlacklist,omitempty" protobuf:"bytes,6,opt,name=namespaceResourceBlacklist"`
 	// OrphanedResources specifies if controller should monitor orphaned resources of apps in this project
@@ -46,9 +66,13 @@ type AppProjectSpec struct {
 	// SignatureKeys contains a list of PGP key IDs that commits in Git must be signed with in order to be allowed for sync
 	SignatureKeys []SignatureKey `json:"signatureKeys,omitempty" protobuf:"bytes,10,opt,name=signatureKeys"`
 	// ClusterResourceBlacklist contains list of blacklisted cluster level resources
-	ClusterResourceBlacklist []metav1.GroupKind `json:"clusterResourceBlacklist,omitempty" protobuf:"bytes,11,opt,name=clusterResourceBlacklist"`
+	ClusterResourceBlacklist []ClusterResourceRestrictionItem `json:"clusterResourceBlacklist,omitempty" protobuf:"bytes,11,opt,name=clusterResourceBlacklist"`
 	// SourceNamespaces defines the namespaces application resources are allowed to be created in
 	SourceNamespaces []string `json:"sourceNamespaces,omitempty" protobuf:"bytes,12,opt,name=sourceNamespaces"`
+	// PermitOnlyProjectScopedClusters determines whether destinations can only reference clusters which are project-scoped
+	PermitOnlyProjectScopedClusters bool `json:"permitOnlyProjectScopedClusters,omitempty" protobuf:"bytes,13,opt,name=permitOnlyProjectScopedClusters"`
+	// DestinationServiceAccounts holds information about the service accounts to be impersonated for the application sync operation for each destination.
+	DestinationServiceAccounts []ApplicationDestinationServiceAccount `json:"destinationServiceAccounts,omitempty" protobuf:"bytes,14,name=destinationServiceAccounts"`
 }
 
 // SyncWindows is a collection of sync windows in this project
@@ -70,8 +94,12 @@ type SyncWindow struct {
 	Clusters []string `json:"clusters,omitempty" protobuf:"bytes,6,opt,name=clusters"`
 	// ManualSync enables manual syncs when they would otherwise be blocked
 	ManualSync bool `json:"manualSync,omitempty" protobuf:"bytes,7,opt,name=manualSync"`
-	//TimeZone of the sync that will be applied to the schedule
+	// TimeZone of the sync that will be applied to the schedule
 	TimeZone string `json:"timeZone,omitempty" protobuf:"bytes,8,opt,name=timeZone"`
+	// UseAndOperator use AND operator for matching applications, namespaces and clusters instead of the default OR operator
+	UseAndOperator bool `json:"andOperator,omitempty" protobuf:"bytes,9,opt,name=andOperator"`
+	// Description of the sync that will be applied to the schedule, can be used to add any information such as a ticket number for example
+	Description string `json:"description,omitempty" protobuf:"bytes,10,opt,name=description"`
 }
 
 // ProjectRole represents a role that has access to a project
@@ -104,9 +132,6 @@ type ApplicationDestination struct {
 	Namespace string `json:"namespace,omitempty" protobuf:"bytes,2,opt,name=namespace"`
 	// Name is an alternate way of specifying the target cluster by its symbolic name
 	Name string `json:"name,omitempty" protobuf:"bytes,3,opt,name=name"`
-
-	// nolint:govet
-	isServerInferred bool `json:"-"`
 }
 
 // JWTTokens represents a list of JWT tokens
