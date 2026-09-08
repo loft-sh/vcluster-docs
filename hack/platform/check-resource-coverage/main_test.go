@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"os"
+	"testing"
+)
 
 func TestGeneratorPattern(t *testing.T) {
 	tests := []struct {
@@ -47,5 +50,23 @@ func TestGeneratorPattern(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestStackResourcesStayCovered(t *testing.T) {
+	data, err := os.ReadFile("../partials/main.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	covered := map[string]bool{}
+	for _, match := range generatorPattern.FindAllStringSubmatch(string(data), -1) {
+		covered[normalize(match[1])] = true
+	}
+
+	for _, resource := range []string{"stacktemplates", "stackinstances"} {
+		if !covered[normalize(resource)] {
+			t.Errorf("%s is missing from the Platform API generator", resource)
+		}
 	}
 }

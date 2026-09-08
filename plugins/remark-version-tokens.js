@@ -9,7 +9,7 @@
  *
  * Context awareness:
  *   - In versioned docs (e.g., /platform/4.3.0/) → shows that version
- *   - In current/main docs → shows latest from lifecycle API
+ *   - In current/main docs → shows the latest stable patch release
  *
  * Usage in markdown:
  *   ```bash
@@ -24,36 +24,41 @@ const fs = require('fs');
 const path = require('path');
 const { visit } = require('unist-util-visit');
 
-// Load lifecycle data once at startup
-let lifecycleData = null;
+// Load the latest stable versions once at startup.
+//
+// Source of truth is src/data/latest-versions.json, which the daily
+// sync-latest-versions workflow keeps pointed at the latest stable PATCH of
+// each tracked minor, with prereleases filtered out. src/components/
+// InterpolatedCodeBlock reads the same file, so a token resolves identically
+// whether it sits in a plain markdown fence or inside that component.
+//
+// Deliberately NOT static/api/lifecycle/*.json. That data is generated from
+// the support tables, tracks minor versions only, and gains a version when
+// docs are versioned at RC time, so it names releases that have no published
+// chart yet. Install commands built from it tell readers to pull a version
+// that does not exist.
+let latestVersions = null;
 
-function loadLifecycleData(siteDir) {
-  if (lifecycleData) return lifecycleData;
+function loadLatestVersions(siteDir) {
+  if (latestVersions) return latestVersions;
 
   try {
-    const staticDir = path.join(siteDir, 'static', 'api', 'lifecycle');
-    const platformJson = JSON.parse(fs.readFileSync(path.join(staticDir, 'platform.json'), 'utf-8'));
-    const vclusterJson = JSON.parse(fs.readFileSync(path.join(staticDir, 'vcluster.json'), 'utf-8'));
+    const dataFile = path.join(siteDir, 'src', 'data', 'latest-versions.json');
+    const data = JSON.parse(fs.readFileSync(dataFile, 'utf-8'));
 
-    const getLatest = (data) => {
-      const active = data.versions?.filter(v => v.status === 'active') || [];
-      return active[0]?.version || data.versions?.[0]?.version || 'VERSION_NOT_FOUND';
+    const shape = (version) => ({
+      latest: version || 'VERSION_NOT_FOUND',
+      latestMinor: version?.split('.')?.slice(0, 2)?.join('.') || 'VERSION_NOT_FOUND'
+    });
+
+    latestVersions = {
+      platform: shape(data.platform),
+      vcluster: shape(data.vcluster)
     };
 
-    lifecycleData = {
-      platform: {
-        latest: getLatest(platformJson),
-        latestMinor: getLatest(platformJson)?.split('.')?.slice(0, 2)?.join('.') || 'VERSION_NOT_FOUND'
-      },
-      vcluster: {
-        latest: getLatest(vclusterJson),
-        latestMinor: getLatest(vclusterJson)?.split('.')?.slice(0, 2)?.join('.') || 'VERSION_NOT_FOUND'
-      }
-    };
-
-    return lifecycleData;
+    return latestVersions;
   } catch (err) {
-    console.warn('remark-version-tokens: Could not load lifecycle data:', err.message);
+    console.warn('remark-version-tokens: Could not load latest versions:', err.message);
     return {
       platform: { latest: 'VERSION_NOT_FOUND', latestMinor: 'VERSION_NOT_FOUND' },
       vcluster: { latest: 'VERSION_NOT_FOUND', latestMinor: 'VERSION_NOT_FOUND' }
@@ -88,7 +93,7 @@ function remarkVersionTokens(options = {}) {
   const siteDir = options.siteDir || process.cwd();
 
   return (tree, file) => {
-    const data = loadLifecycleData(siteDir);
+    const data = loadLatestVersions(siteDir);
     const filePath = file.path || file.history?.[0] || '';
 
     // Determine versions based on file path context
