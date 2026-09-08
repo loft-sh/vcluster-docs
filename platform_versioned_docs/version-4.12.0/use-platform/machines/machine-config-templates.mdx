@@ -1,0 +1,154 @@
+---
+title: Machine Config Templates
+sidebar_label: Machine Config Templates
+sidebar_position: 3
+---
+
+A `MachineConfigTemplate` is a reusable, cluster-scoped resource that holds a Go
+template for either a cloud-init (user data) document or a network-data document.
+A node provider renders the template when it provisions a Machine, so you can
+define provisioning configuration once and reference it by name from any node
+type or Machine instead of inlining it on each one. The platform ships with a few predefined templates that you can use as a starting point.
+
+A template defines a `cloudInitTemplate`, a `networkDataTemplate`, or both. A
+node provider renders the matching field when a property references the
+template; if that field is unset, provisioning fails.
+
+## Create a MachineConfigTemplate
+
+A cloud-init template renders into a `cloud-config` document. The platform
+appends the vCluster join command and the resolved SSH keys to the rendered
+output before applying it to the Machine.
+
+```yaml
+apiVersion: management.loft.sh/v1
+kind: MachineConfigTemplate
+metadata:
+  name: ubuntu-cloud-init
+spec:
+  displayName: "Ubuntu cloud-init"
+  cloudInitTemplate: |
+    #cloud-config
+    hostname: {{ .Values.NodeClaim.Name }}
+    users:
+      - name: ubuntu
+        sudo: ALL=(ALL) NOPASSWD:ALL
+        ssh_authorized_keys:
+        {{- range .Values.SSHKeys }}
+          - {{ . }}
+        {{- end }}
+    runcmd:
+      - echo "Provisioning {{ .Values.NodeClaim.Name }} in project {{ .Values.Project }}"
+```
+
+A network-data template renders into a cloud-init `network-config` document. The
+provider supplies the allocated IP and gateway for the Machine as template
+variables.
+
+```yaml
+apiVersion: management.loft.sh/v1
+kind: MachineConfigTemplate
+metadata:
+  name: static-network
+spec:
+  displayName: "Static network"
+  networkDataTemplate: |
+    version: 2
+    ethernets:
+      enp1s0:
+        # AllocatedIP, PrefixLength, and Gateway are supplied during IP allocation.
+        addresses:
+          - {{ .Values.AllocatedIP }}/{{ .Values.PrefixLength }}
+        gateway4: {{ .Values.Gateway }}
+        nameservers:
+          addresses: [8.8.8.8, 8.8.4.4]
+```
+
+### Fields
+
+| Field | Description |
+|---|---|
+| `spec.displayName` | Human-readable name shown in the UI. |
+| `spec.cloudInitTemplate` | Go template that renders a `cloud-config` document. |
+| `spec.networkDataTemplate` | Go template that renders a cloud-init `network-config` document. |
+| `spec.owner` | Optional user or team that owns this resource. |
+| `spec.access` | Optional access control list. |
+
+## Template syntax
+
+Templates use Go [`text/template`](https://pkg.go.dev/text/template) syntax with
+the [sprig](https://masterminds.github.io/sprig/) function library. The root
+object is `.Values`. The available fields depend on the template kind and the
+node provider that renders it.
+
+### Cloud-init templates
+
+| Variable | Description |
+|---|---|
+| `.Values.NodeClaim` | The NodeClaim (Machine) being provisioned. |
+| `.Values.Project` | The project the Machine belongs to. |
+| `.Values.Properties` | Merged properties from the NodeProvider, NodeType, NodeEnvironment, and NodeClaim. |
+| `.Values.SSHKeys` | List of SSH public keys (strings) resolved from the `vcluster.com/ssh-keys` property. |
+
+The Metal3 provider additionally exposes `.Values.BareMetalHost` (the selected
+`BareMetalHost`), `.Values.AllocatedIP`, `.Values.PrefixLength`, and
+`.Values.Gateway`.
+
+### Network-data templates
+
+| Variable | Description |
+|---|---|
+| `.Values.NodeClaim` | The NodeClaim (Machine) being provisioned. |
+| `.Values.Project` | The project the Machine belongs to. |
+| `.Values.Properties` | Merged properties from the NodeProvider, NodeType, NodeEnvironment, and NodeClaim. |
+| `.Values.AllocatedIP` | IP allocated for the Machine from the configured network. |
+| `.Values.PrefixLength` | Network prefix length for the allocated IP. Exposed by the KubeVirt and Metal3 providers. |
+| `.Values.Gateway` | Default gateway for the allocated network. |
+
+The Metal3 provider additionally exposes `.Values.BareMetalHost` (the selected
+`BareMetalHost`).
+
+## Reference a template
+
+Reference a MachineConfigTemplate by name from the properties of a node type
+(applies to every Machine of that type) or directly on a Machine:
+
+| Property | Renders |
+|---|---|
+| `vcluster.com/user-data-template-config` | The referenced template's `cloudInitTemplate`. |
+| `vcluster.com/network-data-template-config` | The referenced template's `networkDataTemplate`. |
+
+```yaml
+properties:
+  vcluster.com/user-data-template-config: ubuntu-cloud-init
+  vcluster.com/network-data-template-config: static-network
+```
+
+The referenced template must define the matching field. A template referenced by
+`vcluster.com/user-data-template-config` must set `cloudInitTemplate`, and one
+referenced by `vcluster.com/network-data-template-config` must set
+`networkDataTemplate`.
+
+## Access control
+
+MachineConfigTemplate resources are cluster-scoped. Use the `spec.owner` and
+`spec.access` fields to control who can use or modify them:
+
+```yaml
+apiVersion: management.loft.sh/v1
+kind: MachineConfigTemplate
+metadata:
+  name: ubuntu-cloud-init
+spec:
+  displayName: "Ubuntu cloud-init"
+  cloudInitTemplate: |
+    #cloud-config
+    hostname: {{ .Values.NodeClaim.Name }}
+  owner:
+    user: admin
+  access:
+    - users:
+        - "*"
+      verbs:
+        - get
+```

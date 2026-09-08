@@ -1,0 +1,65 @@
+---
+title: Platform Database
+sidebar_label: Platform Database
+sidebar_position: 3
+description: The platform database is a local PostgreSQL instance that stores usage snapshots for license reporting in air-gapped installations.
+---
+
+import VersionBadge from '@site/src/components/VersionBadge';
+
+<VersionBadge platformVersion="v4.4.0"/>
+
+The platform database is a local PostgreSQL instance provisioned only in air-gapped environments running an [offline license key](./with-offline-license-key.mdx). It stores usage snapshots, which are periodic records of CPU and GPU resource consumption used for license billing. The platform attempts to transmit these snapshots to the vCluster license server every 15 minutes. The local database acts as a staging area. Once a snapshot is successfully transmitted, vCluster's license server holds the authoritative record. Data that has not yet been transmitted exists only in this database.
+
+The platform database does not store core platform state. Tenant cluster definitions, project settings, users, and all other platform objects are stored as Kubernetes custom resources on the control plane cluster. This database exists solely for usage reporting.
+
+:::note Unrelated to the External Database feature
+This page covers the local PostgreSQL instance used for usage reporting in air-gapped environments. If you need high availability with multiple platform replicas, see [Platform External Database](../../administer/clusters/advanced/external-database/external-database.mdx). That is a separate feature using a Kine-backed PostgreSQL database as a shared backing store for multi-replica HA deployments, and it requires a fresh installation configured before the platform first starts.
+:::
+
+## When the platform database is provisioned
+
+The platform database is only created when all of the following conditions are true at startup:
+
+- The platform is configured with an [offline license key](./with-offline-license-key.mdx) (air-gapped mode).
+- The platform is not running as a hosted instance (managed and operated by vCluster Labs on your behalf).
+- The active license plan does not disable the platform database.
+
+Standard online-licensed installations do not provision this database. If you do not see a `platform-db` PVC or StatefulSet in your platform namespace, the database is not active in your environment and this page does not apply.
+
+## How the platform database surfaces to administrators
+
+Administrators encounter the platform database in several situations:
+
+**Namespace inspection.** The platform database runs as a StatefulSet in the platform namespace. A routine `kubectl get all` or `kubectl get pvc` will show the `platform-db` StatefulSet, Service, PVC, and Secret alongside platform resources.
+
+**Cluster conditions.** The controller sets `EmbeddedPostgresDeployed` and `EmbeddedPostgresAvailable` conditions on the `Cluster` resource. If the database fails to start, `kubectl describe cluster.storage.loft.sh <cluster-name>` shows a condition message directing you to investigate.
+
+**Platform logs.** If the database is unreachable, the platform logs `error sending usage snapshot` every 15 minutes. Administrators tailing logs during an incident will see this repeating.
+
+**Platform upgrades.** The controller restarts the postgres pods during platform upgrades. Administrators watching pod activity during an upgrade will see `platform-db` pods cycling, which is expected behavior.
+
+See [Troubleshoot Platform Database](../../troubleshoot/platform-database.mdx) for steps to resolve conditions and log errors.
+
+## What usage snapshots record
+
+Each snapshot captures a point-in-time count of resource capacity across the platform, not live workload utilization. The data is used to calculate consumption against the committed amounts in your license.
+
+| Metric | Description |
+|---|---|
+| Tenant cluster count | Total number of tenant clusters across the platform |
+| Node count | Total number of nodes across all connected clusters |
+| CPU count | Total CPU capacity across all nodes |
+| GPU count | Total GPU capacity across all nodes |
+| Per-node detail | Machine ID, creation timestamp, and full resource capacity for each node |
+| Per-tenant-cluster detail | Name, namespace, UID, creation timestamp, and node associations |
+
+## Configure
+
+By default, the platform database uses the default StorageClass. To specify a different StorageClass, navigate to `Admin > Config` and edit the `platformDB.storageClass` field.
+The value can also be configured in the vCluster Platform Helm values during install or upgrade:
+
+```yaml
+platformDB:
+  storageClass: <storage-class>
+```

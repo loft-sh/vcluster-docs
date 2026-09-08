@@ -1,0 +1,236 @@
+---
+sidebar_label: Recover from Failover
+sidebar_position: 5
+title: Recover from Regional Failover
+description: Runbook for diagnosing a failed region, restoring it, and confirming both regions are serving traffic again.
+toc_max_heading_level: 3
+---
+
+import Tabs from "@theme/Tabs";
+import TabItem from "@theme/TabItem";
+import VersionBadge from '@site/src/components/VersionBadge';
+import InterpolatedCodeBlock from "@site/src/components/InterpolatedCodeBlock";
+import PageVariables from "@site/src/components/PageVariables";
+
+<VersionBadge platformVersion="v4.8.0"/>
+
+When a region goes down, Route 53 health checks detect the failure and
+automatically redirect traffic to the healthy region. This runbook describes how
+to diagnose the failed region, restore it, and confirm that both regions are
+serving traffic again.
+
+## Configure your values
+
+The commands in this runbook reference your cluster context ARNs, the failed region's values file, and its health check ID. Set them below once and all commands update automatically.
+
+<details>
+<summary>Expand to set page variables</summary>
+
+<PageVariables
+  FIRST_REGION_CONTEXT="arn:aws:eks:us-east-1:123456789012:cluster/platform-multi-region-us-east-1"
+  SECOND_REGION_CONTEXT="arn:aws:eks:eu-west-1:123456789012:cluster/platform-multi-region-eu-west-1"
+  FAILED_REGION_CONTEXT="arn:aws:eks:us-east-1:123456789012:cluster/platform-multi-region-us-east-1"
+  FAILED_REGION_VALUES_FILE="platform-us-east-1-values.yaml"
+  FAILED_REGION_HEALTH_CHECK_ID="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+/>
+
+</details>
+
+## Step 1 - Confirm failover is active
+
+Verify which health check is failing:
+
+<InterpolatedCodeBlock
+  code={
+`aws route53 get-health-check-status --health-check-id [[GLOBAL:FAILED_REGION_HEALTH_CHECK_ID]] \\
+  --query 'HealthCheckObservations[].{Region:Region,Status:StatusReport.Status}' \\
+  --output table`
+  }
+  language="bash"
+/>
+
+Confirm the healthy region is still passing:
+
+<InterpolatedCodeBlock
+  code={
+`aws route53 get-health-check-status --health-check-id [[VAR:HEALTHY_REGION_HEALTH_CHECK_ID:yyyyyyyy-yyyy-yyyy-yyyy-yyyyyyyyyyyy]] \\
+  --query 'HealthCheckObservations[].{Region:Region,Status:StatusReport.Status}' \\
+  --output table`
+  }
+  language="bash"
+/>
+
+:::note
+During failover, the platform continues to operate normally through the healthy
+region. Users may experience slightly higher latency if they are geographically
+closer to the failed region.
+:::
+
+## Step 2 - Diagnose the failed region
+
+Check the state of the platform pods in the failed region:
+
+<InterpolatedCodeBlock
+  code={
+`kubectl --context [[GLOBAL:FAILED_REGION_CONTEXT]] \\
+  get pods -n vcluster-platform -l app=loft`
+  }
+  language="bash"
+/>
+
+Check pod logs for errors:
+
+<InterpolatedCodeBlock
+  code={
+`kubectl --context [[GLOBAL:FAILED_REGION_CONTEXT]] \\
+  logs -n vcluster-platform -l app=loft --tail=50`
+  }
+  language="bash"
+/>
+
+Check the ALB and ingress status:
+
+<InterpolatedCodeBlock
+  code={
+`kubectl --context [[GLOBAL:FAILED_REGION_CONTEXT]] \\
+  get ingress -n vcluster-platform loft`
+  }
+  language="bash"
+/>
+
+Common failure causes:
+- **Pod crashes (CrashLoopBackOff)**: Check logs for database connectivity
+  errors or resource exhaustion.
+- **Node failures**: Check `kubectl get nodes` for `NotReady` nodes.
+- **ALB unhealthy**: Verify the ALB target group health in the AWS console or
+  with `aws elbv2 describe-target-health`.
+- **Network partition**: Verify that VPC peering between the cluster VPC and
+  the database VPC is active, that routes exist on the correct route tables
+  (including public route tables if nodes are in public subnets), and that the
+  database security group allows port 3306 from the cluster VPC CIDR.
+
+## Step 3 - Restore the failed region
+
+The recovery steps depend on the failure cause.
+
+**If pods are crashlooping or unhealthy**, restart the deployment:
+
+<InterpolatedCodeBlock
+  code={
+`kubectl --context [[GLOBAL:FAILED_REGION_CONTEXT]] \\
+  rollout restart deployment/loft -n vcluster-platform`
+  }
+  language="bash"
+/>
+
+**If the deployment is scaled to zero or missing**, re-apply the values file:
+
+<Tabs
+  defaultValue="cli"
+  values={[
+    { label: "vCluster CLI", value: "cli" },
+    { label: "Helm", value: "helm" },
+  ]}
+>
+  <TabItem value="cli">
+
+<InterpolatedCodeBlock
+  code={
+`vcluster platform start \\
+  --namespace vcluster-platform \\
+  --kube-context [[GLOBAL:FAILED_REGION_CONTEXT]] \\
+  --values [[GLOBAL:FAILED_REGION_VALUES_FILE]] \\
+  --upgrade \\
+  --no-tunnel`
+  }
+  language="bash"
+/>
+
+  </TabItem>
+  <TabItem value="helm">
+
+<InterpolatedCodeBlock
+  code={
+`helm upgrade loft vcluster-platform --install --create-namespace --repository-config='' \\
+  --namespace vcluster-platform \\
+  --repo "https://charts.loft.sh/" \\
+  --version [[VAR:CHART_VERSION:4.8.0]] \\
+  --kube-context [[GLOBAL:FAILED_REGION_CONTEXT]] \\
+  -f [[GLOBAL:FAILED_REGION_VALUES_FILE]] \\
+  --server-side=true --force-conflicts`
+  }
+  language="bash"
+/>
+
+  </TabItem>
+</Tabs>
+
+Then scale up if needed:
+
+<InterpolatedCodeBlock
+  code={
+`kubectl --context [[GLOBAL:FAILED_REGION_CONTEXT]] \\
+  scale deployment -n vcluster-platform loft --replicas=[[VAR:REPLICA_COUNT:3]]`
+  }
+  language="bash"
+/>
+
+**If the EKS cluster itself is down**, follow the AWS documentation to restore
+the cluster or create a replacement, then redeploy the platform using the
+region's values file.
+
+## Step 4 - Wait for the rollout to complete
+
+<InterpolatedCodeBlock
+  code={
+`kubectl --context [[GLOBAL:FAILED_REGION_CONTEXT]] \\
+  rollout status deployment/loft -n vcluster-platform`
+  }
+  language="bash"
+/>
+
+## Step 5 - Verify recovery
+
+Confirm the Route 53 health check for the restored region returns healthy:
+
+<InterpolatedCodeBlock
+  code={
+`aws route53 get-health-check-status --health-check-id [[GLOBAL:FAILED_REGION_HEALTH_CHECK_ID]] \\
+  --query 'HealthCheckObservations[].{Region:Region,Status:StatusReport.Status}' \\
+  --output table`
+  }
+  language="bash"
+/>
+
+:::note
+Route 53 health checks run every 10 seconds with a failure threshold of 3.
+After the platform becomes healthy, expect up to 30 seconds before the health
+check status updates. DNS clients with cached responses may take an additional
+60 seconds (the ALB alias record TTL) to start resolving to the restored region.
+:::
+
+Verify both regions are serving traffic:
+
+<InterpolatedCodeBlock
+  code={
+`for CTX in [[GLOBAL:FIRST_REGION_CONTEXT]] [[GLOBAL:SECOND_REGION_CONTEXT]]; do
+  echo "=== $CTX ==="
+  kubectl --context "$CTX" get pods -n vcluster-platform -l app=loft
+  echo
+done`
+  }
+  language="bash"
+/>
+
+Confirm the custom DERP server is operational by checking for `NetworkPeer`
+resources:
+
+<InterpolatedCodeBlock
+  code={
+`kubectl --context [[GLOBAL:FAILED_REGION_CONTEXT]] \\
+  get networkpeers.storage.loft.sh -A`
+  }
+  language="bash"
+/>
+
+Both peers should show `Online: true`.

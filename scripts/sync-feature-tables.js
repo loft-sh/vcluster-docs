@@ -81,9 +81,12 @@ function resolveFilePath(filePath) {
     return filePath;
   }
 
-  // Try README.mdx
+  // Try treating the URL's final path segment as a directory containing an
+  // index page: <dir>/<basename-without-extension>/README.mdx
+  // e.g. .../sync/patching.mdx -> .../sync/patching/README.mdx
   const dir = path.dirname(filePath);
-  const readmePath = path.join(dir, 'README.mdx');
+  const base = path.basename(filePath, path.extname(filePath));
+  const readmePath = path.join(dir, base, 'README.mdx');
   if (fs.existsSync(readmePath)) {
     return readmePath;
   }

@@ -41,6 +41,8 @@ jest.mock('@site/src/data/products.yaml', () => ({
     free: {
       name: 'Free',
       enterprise: false,
+      docs_url: '/docs/vcluster/introduction/oss-vs-free#overview',
+      header_note: 'Requires vCluster Platform, unlike OSS',
       features: ['test-feature-free', 'test-feature-no-url'],
     },
     dev: {
@@ -98,6 +100,40 @@ describe('FeatureTable Component', () => {
       render(<FeatureTable names="test-feature-free" showEnterpriseHeader={false} />);
 
       expect(screen.queryByText('Enterprise')).not.toBeInTheDocument();
+    });
+
+    test('links the Free column header to the OSS-vs-Free overview', () => {
+      render(<FeatureTable names="test-feature-free" />);
+
+      const freeLink = screen.getByRole('link', { name: 'Free' });
+      expect(freeLink).toHaveAttribute('href', '/docs/vcluster/introduction/oss-vs-free#overview');
+    });
+
+    test('renders exactly one info icon, on the Free header, when only Free has a header_note', () => {
+      render(<FeatureTable names="test-feature-free" />);
+
+      const headerRow = screen.getByText('Available in these plans').closest('tr');
+      const icons = headerRow.querySelectorAll('[title]');
+
+      expect(icons).toHaveLength(1);
+      expect(icons[0]).toHaveAttribute('title', 'Requires vCluster Platform, unlike OSS');
+      expect(icons[0].closest('th')).toHaveTextContent('Free');
+    });
+
+    test('the info icon is a link to the same docs_url as the Free header text', () => {
+      render(<FeatureTable names="test-feature-free" />);
+
+      const icon = screen.getByRole('link', { name: 'Requires vCluster Platform, unlike OSS' });
+      expect(icon.tagName).toBe('A');
+      expect(icon).toHaveAttribute('href', '/docs/vcluster/introduction/oss-vs-free#overview');
+    });
+
+    test('renders a footnote linking to the OSS-vs-Free overview when a product has a header_note', () => {
+      render(<FeatureTable names="test-feature-free" />);
+
+      expect(screen.getByText(/vCluster Platform license plans/)).toBeInTheDocument();
+      const footnoteLink = screen.getByRole('link', { name: 'Compare open source and free tiers' });
+      expect(footnoteLink).toHaveAttribute('href', '/docs/vcluster/introduction/oss-vs-free#overview');
     });
 
     test('renders multiple features', () => {

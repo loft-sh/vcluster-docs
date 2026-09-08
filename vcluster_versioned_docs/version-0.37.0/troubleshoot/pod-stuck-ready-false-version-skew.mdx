@@ -1,0 +1,53 @@
+---
+title: Resolve pods stuck at Ready=False with control plane and tenant version skew
+sidebar_label: Pod stuck Ready=False (version skew)
+description: Troubleshoot pods and Deployments stuck at Ready=False when the tenant cluster runs Kubernetes 1.33 or earlier and the control plane cluster runs 1.34 or later.
+keywords: [ready false, qosClass immutable, observedGeneration, version skew, pod sync]
+---
+
+When the <GlossaryTerm term="tenant-cluster">tenant cluster</GlossaryTerm> runs Kubernetes 1.33 or earlier and the <GlossaryTerm term="control-plane-cluster">control plane cluster</GlossaryTerm> runs Kubernetes 1.34 or later, synced pods can get stuck reporting `Ready=False` even though the pod itself is running. Deployments and StatefulSets never show as ready, because they wait on that pod condition.
+
+## Symptoms
+
+A pod's containers are all `Running`, but its owning Deployment or StatefulSet never reaches the desired ready count:
+
+```bash title="Pod is Running, but the Deployment is not Ready"
+kubectl get pods
+# NAME                          READY   STATUS    RESTARTS   AGE
+# my-app-7cf4ddcbbf-k5m2n       1/1     Running   0          127m
+
+kubectl get deployments
+# NAME     READY   UP-TO-DATE   AVAILABLE   AGE
+# my-app   0/1     1            0           127m
+```
+
+The <GlossaryTerm term="syncer">syncer</GlossaryTerm> logs a reconcile error for the pod, similar to:
+
+```text title="Syncer log"
+ERROR   controller/controller.go:474    Reconciler error    {"component": "vcluster", "controller": "pod", ..., "error": "sync: patch host object: update object status: Pod \"my-app-7cf4ddcbbf-k5m2n--b21ec34921\" is invalid: status.qosClass: Invalid value: \"BestEffort\": field is immutable"}
+```
+
+Restarting the control plane's <GlossaryTerm term="api-server">API server</GlossaryTerm> pod can temporarily clear some of these errors, but they come back after creating or updating deployments.
+
+## Cause
+
+This is a known issue tracked in [vCluster GitHub Issue #3578](https://github.com/loft-sh/vcluster/issues/3578), with two contributing root causes:
+
+- **QoS class immutability**: the pod syncer copies the tenant pod's QoS class onto the host object before patching. Kubernetes 1.32 and later rejects that patch because `status.qosClass` is immutable once set.
+- **`observedGeneration` mismatch**: starting in Kubernetes 1.34, the host kubelet sets `observedGeneration` on pod status and conditions. A tenant API server on Kubernetes older than 1.34 drops that field on write, since `PodObservedGenerationTracking` is alpha or off by default there. The syncer then sees the object cache and the informer disagree on every reconcile, reads that as a real condition change, and keeps overwriting the tenant's `Ready=True` condition with stale data.
+
+Both root causes only trigger when the tenant cluster runs Kubernetes 1.33 or earlier and the <GlossaryTerm term="control-plane">control plane</GlossaryTerm> cluster runs Kubernetes 1.34 or later. See the [Kubernetes compatibility matrix](/docs/vcluster/manage/upgrade/supported_versions#kubernetes-compatibility-matrix) for the specific version combinations flagged with this known issue.
+
+## Workaround
+
+There is no reliable workaround available today. Restarting the control plane's API server pod clears the immediate errors, but they recur as soon as new pods sync. The most effective mitigation is to keep the tenant cluster on Kubernetes 1.34 or later whenever the control plane cluster runs Kubernetes 1.34 or later, until the fix ships.
+
+## Fix status
+
+A fix is in progress in [GitHub Issue #4037](https://github.com/loft-sh/vcluster/pull/4037), which stops the syncer from writing the immutable QoS class to the host and ignores `observedGeneration` when the tenant cluster doesn't persist it.
+
+## Related resources
+
+- [Kubernetes compatibility matrix](/docs/vcluster/manage/upgrade/supported_versions#kubernetes-compatibility-matrix)
+- [vcluster#3578](https://github.com/loft-sh/vcluster/issues/3578)
+- [vcluster#4037](https://github.com/loft-sh/vcluster/pull/4037)

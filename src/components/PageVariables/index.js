@@ -1,5 +1,7 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useId } from 'react';
 import { setPageVariables, updatePageVariable, usePageVariables } from './PageVariablesContext';
+
+const varInputId = (instanceId, key) => `var-${instanceId}-${key.toLowerCase().replace(/[^a-z0-9]/g, '-')}`;
 
 /**
  * PageVariables - Define global variables for use across multiple code blocks
@@ -29,6 +31,7 @@ import { setPageVariables, updatePageVariable, usePageVariables } from './PageVa
  * @param {Object} props - All props become available as page variables
  */
 const PageVariables = (props) => {
+  const instanceId = useId();
   // Initialize variables IMMEDIATELY (synchronously) before first render
   // Use a ref to ensure this only happens once
   const initializedRef = React.useRef(false);
@@ -78,6 +81,7 @@ const PageVariables = (props) => {
           }}
         >
           <label
+            htmlFor={varInputId(instanceId, key)}
             style={{
               minWidth: '200px',
               color: 'var(--ifm-font-color-base)',
@@ -89,6 +93,7 @@ const PageVariables = (props) => {
             {key}
           </label>
           <input
+            id={varInputId(instanceId, key)}
             type="text"
             value={currentValues[key] || defaultValue}
             onChange={(e) => updatePageVariable(key, e.target.value)}

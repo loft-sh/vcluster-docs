@@ -1,0 +1,90 @@
+---
+title: Resolve Pro feature license errors
+sidebar_label: Pro feature license errors
+description: How to resolve the "trying to use a vCluster pro feature" error, which is an image and license configuration problem rather than a paywall.
+---
+
+import InterpolatedCodeBlock from '@site/src/components/InterpolatedCodeBlock';
+
+When a tenant cluster requests a Pro feature such as DRA sync, the control plane can crashloop at startup with an error that names a "vCluster pro feature". The wording reads like a paywall, but it is almost always an order-of-operations problem. The feature needs the Pro image and an attached license to be present together, and one of them is missing.
+
+Many of these features, including DRA sync, are entitled by the **Free tier** at no cost. In most cases the fix is to connect the tenant cluster to the vCluster Platform so the image receives a license, not to upgrade a plan. For how tiers and licensing work, see [Open Source vs Free tier](../introduction/oss-vs-free.mdx).
+
+## Error messages
+
+The control plane crashloops during syncer initialization with a message like the following:
+
+```text title="Control plane startup error"
+start managers: init syncers: create pro syncers: cannot create resource claim syncer:
+you are trying to use a vCluster pro feature 'DRA Sync' (dra-sync) that is not available in the
+open source vcluster or disabled in your license. Please use the vCluster pro image and specify a
+license that allows using this feature or reach out to support@loft.sh
+```
+
+Whichever Pro syncer initializes first names itself in the message, so the feature name varies. The underlying cause is the same.
+
+## Cause
+
+A Pro feature needs two things present together. Missing either one produces this error.
+
+1. **The Pro image** (`ghcr.io/loft-sh/vcluster-pro`). The open source image (`ghcr.io/loft-sh/vcluster-oss`) does not compile the Pro syncers at all, so requesting a Pro feature on the OSS image is a no-op rather than a crash. For the available image builds, see [vCluster image options](../configure/vcluster-yaml/control-plane/deployment/statefulset.mdx#vcluster-image-options).
+2. **An attached license** that enables the feature. The Pro image reads the license from the `vcluster-platform-api-key` Secret in the tenant cluster's namespace.
+
+The `vcluster-platform-api-key` Secret is the unlock. It is created automatically when the tenant cluster is provisioned through the vCluster Platform, either as a VirtualClusterInstance or through the Platform UI. A tenant cluster created standalone with `vcluster create` or a bare `helm install`, and never connected to the Platform, has no such Secret. The Pro binary then has no license to read, and it crashloops with the error above.
+
+This is the combination that triggers the error. The Pro image is present, the feature is requested, but no Secret exists to license it.
+
+:::note Crashloop versus graceful degradation
+A tenant cluster that was previously licensed and then loses Platform connectivity falls back to the OSS feature set and keeps running. That graceful degradation does not apply here. A Pro image that never had a license Secret at all crashloops at startup instead of falling back.
+:::
+
+## Solution
+
+You can license an already-running tenant cluster in place. No recreation and no data loss are required.
+
+If the tenant cluster is still on the OSS image, switch it to the Pro image with `helm upgrade` first, setting `controlPlane.statefulSet.image.repository` to `ghcr.io/loft-sh/vcluster-pro`.
+
+Then add the tenant cluster to the Platform, which creates the Secret and restarts the control plane so the Pro binary reads the license.
+
+<InterpolatedCodeBlock
+  code={'vcluster platform login\n' +
+        'vcluster platform add vcluster [[VAR:NAME:my-vcluster]] --namespace [[VAR:NAMESPACE:my-namespace]] --project [[VAR:PROJECT:my-project]] --restart'}
+  language="bash"
+  title="Add an existing tenant cluster to the Platform"
+/>
+
+`--restart` is the default and restarts the control plane so it picks up the new license. For the full workflow, see [Add existing tenant clusters](/docs/platform/use-platform/virtual-clusters/add-virtual-clusters).
+
+:::warning Log in with the Platform's external URL
+`vcluster platform add vcluster` records whatever URL the CLI logged in with into the Secret. Logging in through a port-forward (`localhost:<port>`) writes an address the in-cluster pod cannot reach, so license validation fails. Log in with the Platform's external URL so the in-cluster pod can connect.
+:::
+
+## Verification
+
+After adding the tenant cluster, confirm the control plane is running and licensed.
+
+<InterpolatedCodeBlock
+  code={'# Confirm the control plane is no longer crashlooping\n' +
+        'kubectl get pods -n [[VAR:NAMESPACE:my-namespace]]\n\n' +
+        '# Confirm the license Secret now exists\n' +
+        'kubectl get secret vcluster-platform-api-key -n [[VAR:NAMESPACE:my-namespace]]\n\n' +
+        '# Confirm the tenant cluster shows a license status in the Platform\n' +
+        'vcluster platform list vclusters'}
+  language="bash"
+  title="Verify the tenant cluster is licensed"
+/>
+
+The control plane logs the enabled features at startup once the license is attached.
+
+```text title="Startup log on a licensed control plane"
+loader/loader.go  Using online license with host  loft.vcluster-platform
+online/license.go  Enabled features:
+online/license.go  dra-sync
+```
+
+## Related resources
+
+- [Open Source vs Free tier](../introduction/oss-vs-free.mdx)
+- [vCluster image options](../configure/vcluster-yaml/control-plane/deployment/statefulset.mdx#vcluster-image-options)
+- [Platform API key configuration](../configure/vcluster-yaml/platform.mdx)
+- [Add existing tenant clusters](/docs/platform/use-platform/virtual-clusters/add-virtual-clusters)

@@ -8,12 +8,13 @@
  * `versions` and `onlyIncludeVersions` config.
  */
 
-export const vclusterHiddenVersions = [];
-export const platformHiddenVersions = [];
+export const vclusterHiddenVersions = ["0.37.0"];
+export const platformHiddenVersions = ["4.12.0"];
 
 export const vclusterEOLVersions = [
+  { to: "https://vcluster.com/docs/v0.34", label: "v0.34 (EOS)" },
   { to: "https://vcluster.com/docs/v0.33", label: "v0.33 (EOS)" },
-  { to: "https://vcluster.com/docs/v0.32", label: "v0.32 (EOS)" },
+  { to: "https://vcluster.com/docs/v0.32", label: "v0.32 (EOL)" },
   { to: "https://vcluster.com/docs/v0.31", label: "v0.31 (EOL)" },
   { to: "https://vcluster.com/docs/v0.30", label: "v0.30 (EOL)" },
   { to: "https://vcluster.com/docs/v0.29", label: "v0.29 (EOL)" },
@@ -30,7 +31,8 @@ export const vclusterEOLVersions = [
 ];
 
 export const platformEOLVersions = [
-  { to: "https://vcluster.com/docs/v4.7", label: "v4.7" },
+  { to: "https://vcluster.com/docs/v4.8", label: "v4.8" },
+  { to: "https://vcluster.com/docs/v4.7", label: "v4.7 (EOS)" },
   { to: "https://vcluster.com/docs/v4.6", label: "v4.6 (EOS)" },
   { to: "https://vcluster.com/docs/v4.5", label: "v4.5 (EOL)" },
   { to: "https://vcluster.com/docs/v4.4", label: "v4.4 (EOL)" },
