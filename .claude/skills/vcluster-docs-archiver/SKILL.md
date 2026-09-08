@@ -108,6 +108,20 @@ git checkout main
 git status  # Show staged changes to user
 ```
 
+### Step 5b: Add Long-Form Redirect in vcluster-docs (REQUIRED)
+
+This is a **separate redirect layer from Step 6** — easy to miss because it lives in this repo, not vcluster.com. Deleting the versioned folder in Step 5 removes the long-form `/docs/vcluster/X.Y.Z/*` URLs from the build; without this redirect, they 404 instead of falling back to latest.
+
+In this repo's `netlify.toml`, add a row to the "Removed vCluster versions — redirect to latest" block:
+```toml
+[[redirects]]
+  from = "/docs/vcluster/0.22.0/*"
+  to = "/docs/vcluster/:splat"
+  status = 301
+```
+
+Keep the block in ascending version order alongside the existing rows.
+
 ### Step 6: Add Redirects (REQUIRED)
 In `/home/decoder/loft/vcluster.com/themes/loft/static/_redirects`:
 ```
@@ -179,6 +193,7 @@ We archived vCluster vX.XX documentation to standalone Netlify branch deploys.
 | Real example | `references/platform-4.2-example.md` |
 | Netlify setup | Configure in Netlify dashboard, then empty commit |
 | Merge order | Redirects (vcluster.com) FIRST, then dropdown (vcluster-docs) |
+| Long-form URL redirect | Add row to `netlify.toml` "Removed vCluster versions" block (this repo) — separate from the vcluster.com redirects |
 
 ## Final Checklist (Copy-Paste for User)
 
@@ -199,12 +214,14 @@ Archive Complete! Final steps:
 
 □ 4. MERGE ORDER (critical!):
    a. FIRST: Merge redirects PR (vcluster.com)
-   b. THEN: Merge dropdown PR (vcluster-docs)
+   b. THEN: Merge dropdown PR (vcluster-docs) — confirm it includes the
+      netlify.toml row from Step 5b, not just the dropdown/version removal
 
 □ 5. Post to Slack (optional)
    - Use template from Step 7
 
 □ 6. Verify production
    - Check vcluster.com/docs/vX.XX redirects correctly
+   - Check vcluster.com/docs/vcluster/X.Y.Z/* (long-form URL) redirects to latest
    - Check dropdown shows new EOL version
 ```

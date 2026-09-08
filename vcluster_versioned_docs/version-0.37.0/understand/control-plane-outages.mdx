@@ -1,0 +1,65 @@
+---
+title: What happens during control plane outages?
+sidebar_label: Control Plane Outages
+sidebar_position: 4
+sidebar_class_name: host-nodes private-nodes standalone
+---
+
+import TenancySupport from '../_fragments/tenancy-support.mdx';
+import ControlPlaneOutages from '@site/static/media/diagrams/control-plane-outages.svg';
+
+<TenancySupport hostNodes="true" privateNodes="true" standalone="true" />
+
+Tenant cluster behavior during an outage depends on which control plane is unavailable. A vCluster deployment can include the tenant cluster control plane and the control plane cluster that hosts it. Each outage affects a different part of the system.
+
+<figure>
+  <ControlPlaneOutages style={{width: '100%', maxWidth: '900px', height: 'auto', display: 'block', margin: '0 auto'}} role="img" aria-label="Control plane outage failure domains for vCluster" />
+  <figcaption>Control plane outage failure domains for vCluster</figcaption>
+</figure>
+
+## Tenant cluster control plane outage
+
+The tenant cluster control plane is the Kubernetes API server, controller manager, data store, and syncer for a specific tenant cluster. If this control plane is unavailable, tenant users can't reliably use the tenant cluster API. New API requests, scheduling decisions, controller reconciliation, status updates, and sync operations pause until the control plane becomes available again.
+
+| Capability | Status | Impact |
+| --- | --- | --- |
+| Tenant API access | Unavailable | Tenant users cannot reliably use kubectl, clients, or API-driven workflows. |
+| Scheduling and reconciliation | Unavailable | New scheduling decisions, controller reconciliation, and status propagation pause. |
+| Shared-node workloads | Limited | Existing pods can continue if the control plane cluster and its workers are healthy. |
+| Private-node workloads | Limited | Existing containers can continue, but kubelets and controllers depend on the tenant API for normal behavior. |
+| Standalone workloads | Limited | Workloads already running on worker nodes may continue, but Kubernetes API-driven operations pause. |
+
+Existing workloads are not deleted just because the tenant control plane is unavailable. What continues running depends on the worker node model:
+
+- **Shared nodes**: Workloads run as translated resources on the control plane cluster. If the control plane cluster and its worker nodes are still healthy, existing pods can continue running, but vCluster cannot create new translated resources or sync status while the tenant control plane is unavailable.
+- **Private nodes**: Workloads run on nodes dedicated to the tenant cluster. Existing containers can continue running at the node level, but kubelets and controllers need the tenant API server for normal Kubernetes behavior such as new scheduling, self-healing, scaling, and status updates.
+- **Standalone**: The tenant cluster behaves like a regular Kubernetes cluster. If its control plane is down, workloads already running on worker nodes may continue, but Kubernetes API-driven operations pause.
+
+Deploying vCluster in high availability mode reduces this risk by running multiple tenant control plane replicas with a highly available backing store. See [Deploy in high availability](../deploy/control-plane/kubernetes-pod/high-availability.mdx) for host nodes and private nodes, or [Deploy Standalone in high availability](../deploy/control-plane/binary/high-availability.mdx) for standalone.
+
+## Control plane cluster outage
+
+For vCluster deployments that run as pods on Kubernetes, the control plane cluster hosts the tenant cluster control plane pods and related resources. If the entire control plane cluster is unavailable, tenant control planes hosted there are also unavailable.
+
+| Capability | Status | Impact |
+| --- | --- | --- |
+| Hosted tenant control planes | Unavailable | Tenant control plane pods hosted on the unavailable cluster are unreachable. |
+| Tenant API access | Unavailable | Tenant API access is unavailable for tenant clusters hosted on that cluster. |
+| Resource syncing | Unavailable | The syncer cannot synchronize resources between the tenant cluster and the control plane cluster. |
+| Shared-node workloads | Limited | Usually affected because the translated workloads run on the same cluster. |
+| Private-node workloads | Limited | Runtime may continue on private nodes, but normal Kubernetes control-loop behavior depends on the tenant API. |
+
+High availability for an individual vCluster protects against failures such as a single vCluster pod or eligible node becoming unavailable. It does not protect tenant clusters from a full outage of the Kubernetes cluster that hosts their control planes.
+
+Existing workloads are not intentionally deleted by vCluster because of the outage. Recovery resumes when the control plane cluster and the tenant control plane pods become available again.
+
+The impact on workloads depends on where they run. With shared nodes, the same cluster usually hosts both tenant control planes and translated workloads, so a full control plane cluster outage can also affect workload execution. With private nodes, workloads run on separate tenant nodes, but normal Kubernetes control-loop behavior still depends on the tenant control plane being reachable.
+
+## Prepare for outages
+
+For production tenant clusters, plan availability at each layer:
+
+- Run the tenant cluster control plane in high availability mode.
+- Use a highly available backing store such as deployed etcd, embedded etcd, or an external database.
+- For shared nodes and private nodes, run the control plane cluster itself as a highly available Kubernetes cluster. For standalone, run multiple control plane nodes.
+- Test recovery behavior for shared nodes, private nodes, and standalone, because workload impact differs by worker node model.

@@ -25,7 +25,7 @@ curl -s "https://$LOFT_DOMAIN/kubernetes/management/apis/management.loft.sh/v1/`
 const templateDeleteKubectl = `
 Run the following command to delete ` + myObjectInNamespace + `:
 ` + "```bash" + `
-kubectl delete {{ .Resource }}.management.loft.sh {{ .ExampleName }} ` + kubectlNamespace + `
+kubectl delete {{ .Resource }}.management.loft.sh {{ .ExampleName }}` + kubectlNamespace + `
 ` + "```" + `
 `
 

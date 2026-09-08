@@ -1,14 +1,16 @@
-import React, { useState } from 'react';
+import React, { useId, useState } from 'react';
 import CodeBlock from '@theme/CodeBlock';
 import { useLocation } from '@docusaurus/router';
 import { useActiveDocContext } from '@docusaurus/plugin-content-docs/client';
 import { usePageVariables } from '../PageVariables/PageVariablesContext';
 
-// Latest versions - fallback if not in versioned docs context
-const LATEST_VERSIONS = {
-  platform: '4.11.0',
-  vcluster: '0.36.0',
-};
+// Latest stable patch per tracked minor - fallback when not in versioned docs
+// context. Shared with plugins/remark-version-tokens.js so plain markdown
+// fences and this component resolve the version tokens to the same value.
+// Auto-synced daily; see src/data/latest-versions.json.
+import LATEST_VERSIONS from '@site/src/data/latest-versions.json';
+
+const varInputId = (instanceId, key) => `var-${instanceId}-${key.toLowerCase().replace(/[^a-z0-9]/g, '-')}`;
 
 /**
  * InterpolatedCodeBlock - Interactive code block with editable variables
@@ -56,6 +58,7 @@ const LATEST_VERSIONS = {
  * @param {string} title - Optional title for the code block
  */
 const InterpolatedCodeBlock = ({ code = '', language = 'bash', title }) => {
+  const instanceId = useId();
   // Get global variables from page store
   const globalVariables = usePageVariables();
   const location = useLocation();
@@ -169,7 +172,8 @@ const InterpolatedCodeBlock = ({ code = '', language = 'bash', title }) => {
             }}
           >
             <label
-              style={{ 
+              htmlFor={varInputId(instanceId, key)}
+              style={{
                 minWidth: '150px',
                 color: 'var(--ifm-font-color-base)', /* Regular text color */
                 fontSize: '0.9rem',
@@ -180,11 +184,12 @@ const InterpolatedCodeBlock = ({ code = '', language = 'bash', title }) => {
               {key}
             </label>
             <input
+              id={varInputId(instanceId, key)}
               type="text"
               value={values[key] || ''}
               onChange={(e) => setValues(prev => ({ ...prev, [key]: e.target.value }))}
               placeholder={defaultValue}
-              style={{ 
+              style={{
                 backgroundColor: 'rgba(255, 255, 255, 0.7)',
                 border: '1px solid var(--ifm-color-emphasis-300)',
                 borderRadius: 'var(--ifm-global-radius)',

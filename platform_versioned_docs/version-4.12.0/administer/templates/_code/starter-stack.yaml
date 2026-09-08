@@ -1,0 +1,84 @@
+# Define a reusable Stack template with two inline App tasks.
+apiVersion: management.loft.sh/v1
+kind: StackTemplate
+metadata:
+  name: starter-stack
+spec:
+  displayName: Starter Stack
+  description: Deploys two ConfigMaps to demonstrate task ordering and output handoff.
+  parameters:
+    - variable: greeting
+      label: Greeting
+      description: Message passed from the first task to the second task.
+      type: string
+      defaultValue: Hello from a Stack
+  tasks:
+    - name: backend
+      app:
+        template:
+          spec:
+            displayName: Starter backend
+            description: Creates the greeting consumed by the frontend task.
+            defaultNamespace: stack-starter
+            wait: true
+            config:
+              manifests: |-
+                apiVersion: v1
+                kind: ConfigMap
+                metadata:
+                  name: starter-backend
+                data:
+                  greeting: {{ .Values.greeting | quote }}
+      outputs:
+        - name: greeting
+          fromResource:
+            apiVersion: v1
+            kind: ConfigMap
+            namespace: stack-starter
+            name: starter-backend
+            jsonPath: "{.data.greeting}"
+    - name: frontend
+      # Don't create this AppInstance until the backend task is healthy.
+      dependsOn:
+        - backend
+      app:
+        template:
+          spec:
+            displayName: Starter frontend
+            description: Records the greeting captured from the backend task.
+            defaultNamespace: stack-starter
+            wait: true
+            config:
+              manifests: |-
+                apiVersion: v1
+                kind: ConfigMap
+                metadata:
+                  name: starter-frontend
+                data:
+                  backendGreeting: {{ .Outputs.backend.greeting | quote }}
+  publishedOutputs:
+    - name: greeting
+      fromTask:
+        task: backend
+        output: greeting
+---
+# Apply the template to an existing tenant cluster.
+apiVersion: management.loft.sh/v1
+kind: StackInstance
+metadata:
+  name: starter-stack
+  namespace: [[VAR:PROJECT_NAMESPACE:p-my-project]]
+spec:
+  displayName: Starter Stack
+  # App tasks deploy as this user or team, so an owner is required.
+  owner:
+    user: [[VAR:OWNER_USER:admin]]
+  destination:
+    virtualCluster:
+      name: [[VAR:TENANT_CLUSTER_NAME:development]]
+  templateRef:
+    name: starter-stack
+  parameters:
+    greeting: Hello from my first Stack
+  # Delete child AppInstances if their tasks are removed from the template.
+  prunePolicy: Prune

@@ -11,9 +11,9 @@ type CreateValues struct {
 	YAMLObject string
 }
 
-const curlNamespace = `{{ if .Namespace }}namespaces/{{ .Namespace }}/{{ end }}{{ if .Project }}namespaces/loft-p-my-project/{{ end }}`
+const curlNamespace = `{{ if .Namespace }}namespaces/{{ .Namespace }}/{{ end }}{{ if .Project }}namespaces/p-my-project/{{ end }}`
 
-const kubectlNamespace = `{{ if .Project }}-n loft-p-my-project{{ end }}{{ if .Namespace }}-n {{ .Namespace }}{{ end }}`
+const kubectlNamespace = `{{ if .Project }} -n p-my-project{{ end }}{{ if .Namespace }} -n {{ .Namespace }}{{ end }}`
 
 const pluralInNamespace = `{{ .Plural }}{{ if .Project }} in project ` + "`my-project`" + `{{ end }}{{ if .Namespace }}in namespace ` + "`{{ .Namespace }}`" + `{{ end }}`
 
@@ -41,7 +41,7 @@ Create a file ` + "`object.yaml`" + ` with the following contents:
 
 Then create the ` + myObjectInNamespace + ` with:
 ` + "```bash" + `
-kubectl create -f object.yaml ` + kubectlNamespace + `
+kubectl create -f object.yaml` + kubectlNamespace + `
 ` + "```" + `
 `
 
@@ -51,7 +51,7 @@ import TabItem from '@theme/TabItem'
 
 You can either use curl or kubectl to create a new {{ .Name }}.
 {{- if .Project }}
-Make sure to set the project in the ` + "`metadata.namespace`" + ` field you want to create the {{ .Name }} in. If your project has the id ` + "`my-project`" + `, the corresponding namespace would be ` + "`loft-p-my-project`" + `.
+Make sure to set the project in the ` + "`metadata.namespace`" + ` field you want to create the {{ .Name }} in. If your project has the id ` + "`my-project`" + `, the corresponding namespace would be ` + "`p-my-project`" + `.
 {{- end }}
 
 <Tabs

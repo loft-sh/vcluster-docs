@@ -183,6 +183,14 @@ On the main branch:
     }
   ]}
   ```
+- [ ] Add a row to the "Removed vCluster versions — redirect to latest" block in this repo's `netlify.toml`:
+  ```toml
+  [[redirects]]
+    from = "/docs/vcluster/0.22.0/*"
+    to = "/docs/vcluster/:splat"
+    status = 301
+  ```
+  This is separate from the vcluster.com `_redirects` entries in step 7 above — it covers the long-form `/docs/vcluster/X.Y.Z/*` URL, which otherwise 404s once the versioned folder is deleted instead of falling back to latest.
 
 ## Common Issues & Quick Solutions
 

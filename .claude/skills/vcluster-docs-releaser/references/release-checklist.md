@@ -92,6 +92,12 @@ minor.
 
 ### Additional AI Tasks:
 
+- [ ] Verify the release's default Kubernetes version is consistent:
+  - `DEFAULT_K8S_VERSION` in `vcluster/_fragments/default-k8s-version.mdx` exactly matches the source release's `controlPlane.distro.k8s.image.tag`.
+  - The generated default in `vcluster_versioned_docs/version-0.XX.0/_partials/config/controlPlane/distro/k8s.mdx` exactly matches the fragment.
+  - The support table uses the same Kubernetes major and minor version.
+  - Default-version prose and examples import `DEFAULT_K8S_VERSION` instead of hardcoding a version.
+- [ ] Stop the release and correct every mismatch before continuing.
 - [ ] Update main docs label (line ~81): `label: "v0.XX"`
 - [ ] Update SEO sitemap priority (line ~108): `0.XX.0`
 - [ ] Update SEO comment (line ~120): `0.19-0.XX`

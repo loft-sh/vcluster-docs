@@ -121,9 +121,7 @@ kubectl get pods -n monitoring -l app.kubernetes.io/name=prometheus
 
 Prometheus needs a ServiceMonitor that matches the DCGM Exporter Service you're running. The standalone chart and the GPU Operator use different Service labels, namespaces, and port names, so follow the path that matches your Step 1 choice.
 
-<!-- vale off -->
-### GPU Operator path
-<!-- vale on -->
+### Use the GPU Operator path
 
 The Operator can create and manage the ServiceMonitor for you. Now that Step 2 installed the Prometheus Operator CRDs, enable it on the Operator, reusing the values you already set:
 
@@ -255,6 +253,8 @@ For memory-bound workloads such as large language model inference, `DCGM_FI_DEV_
 
 GPU utilization is useful, but it is often a lagging signal for inference. A model server can have a growing request queue while GPU utilization is still low, or a saturated key-value cache while core utilization looks healthy. Add serving metrics from your runtime and use them alongside DCGM metrics.
 
+Choose one owner for the workload's autoscaler. The following HPA and KEDA examples target a direct Deployment. If KServe manages the workload, configure its autoscaler through the `InferenceService` instead of creating a competing HPA or `ScaledObject`.
+
 Common serving metrics include:
 
 | Signal | Use when |
@@ -299,7 +299,7 @@ kubectl port-forward svc/kube-prometheus-kube-prome-prometheus 9090:9090 -n moni
 # Query your runtime metric in Prometheus, for example vllm:num_requests_waiting
 ```
 
-### HPA with Prometheus adapter
+### Scale a direct Deployment with HPA
 
 Add Prometheus Adapter rules for the runtime metric. Merge the serving rules into the same adapter values file you use for GPU metrics. This example maps vLLM waiting requests to a custom pod metric named `inference_queue_depth`.
 
@@ -366,7 +366,7 @@ kubectl apply -f inference-queue-hpa.yaml
 kubectl get hpa vllm-inference-hpa -n inference -w
 ```
 
-### KEDA with Prometheus
+### Scale a direct Deployment with KEDA
 
 KEDA is often a good fit when your serving signal is naturally expressed as a Prometheus query. [Install KEDA](https://keda.sh/docs/latest/deploy/) in the tenant cluster, then create a `ScaledObject` that queries Prometheus.
 
@@ -391,7 +391,9 @@ spec:
         query: sum(vllm:num_requests_waiting{namespace="inference",pod=~"vllm-inference-.*"})
 ```
 
-Use KEDA for query-driven scaling or scale-to-zero patterns. Use HPA with Prometheus Adapter when you want Kubernetes-native custom metrics and HPA behavior. In both cases, set conservative scale-down windows for model servers because loading large models is slow and repeated cold starts degrade response latency.
+Use KEDA for query-driven scaling or scale-to-zero patterns. The example keeps one warm replica because `minReplicaCount` is `1`. Set it to `0` only after you design and test the endpoint's cold-start path.
+
+Use HPA with Prometheus Adapter when you want Kubernetes-native custom metrics and HPA behavior. In both cases, set conservative scale-down windows. Loading large models is slow, and repeated cold starts degrade response latency.
 
 ## Step 5: Create an HPA targeting GPU utilization
 
