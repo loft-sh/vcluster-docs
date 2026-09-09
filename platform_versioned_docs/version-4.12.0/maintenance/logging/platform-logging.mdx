@@ -99,3 +99,45 @@ kubectl logs -n vcluster-platform -l app=loft -f
 ```
 
 In high-availability deployments, multiple platform pods run concurrently. Pipe through a log aggregator, or target a specific pod, to avoid interleaved output from multiple replicas.
+
+## File logging
+
+Besides `stdout`, the platform pod can also write logs to a file. This is useful for tailing logs from a sidecar container instead of going through the container runtime's log driver.
+
+Enable file logging with the `logging.file.enabled` Helm value:
+
+```bash
+helm upgrade vcluster-platform vcluster-platform \
+  --repo https://charts.loft.sh \
+  --namespace vcluster-platform \
+  --reuse-values \
+  --set logging.file.enabled=true
+```
+
+The log path is fixed at `/var/log/vcluster-platform/platform.log` and isn't configurable. Enabling this setting adds a `platform-logs` `emptyDir` volume (1Gi size limit) to the pod and mounts it into the `manager` container at `/var/log/vcluster-platform`. The chart reserves both the `platform-logs` volume name and the `manager`/`audit` container names, so a custom `volumes`, `volumeMounts`, or `sidecarContainers` entry can't reuse them.
+
+Enabling `logging.file.enabled` only writes the file. Nothing reads it automatically, so add a sidecar container that mounts the reserved `platform-logs` volume to actually read it:
+
+```yaml title="values.yaml"
+logging:
+  file:
+    enabled: true
+sidecarContainers:
+  - name: log-reader
+    image: busybox
+    command: ["sh", "-c", "tail -F /var/log/vcluster-platform/platform.log"]
+    volumeMounts:
+      - name: platform-logs
+        mountPath: /var/log/vcluster-platform
+        readOnly: true
+```
+
+View the sidecar's output the same way as the `stdout` logs above, targeting the sidecar's container name instead:
+
+```bash
+kubectl logs -n vcluster-platform -l app=loft -c log-reader -f
+```
+
+:::info Distinct from tenant cluster file logging
+This is the platform's own process logging. vCluster charts v0.37 and later have a separate, unrelated `logging.file.enabled` option for tenant cluster logs, configured in `vcluster.yaml` rather than the platform's Helm values.
+:::
