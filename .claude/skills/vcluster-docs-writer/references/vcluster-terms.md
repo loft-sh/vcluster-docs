@@ -39,12 +39,23 @@ The open source project that provisions and manages tenant clusters.
 - Use when referring to the project or software itself
 - Example: "vCluster is an open source tool for creating tenant clusters"
 
-### vCluster Pro
-A single enhanced/paid/upgraded tenant cluster that uses Pro functionality (as labeled "Pro" in the docs).
+### "vCluster Pro" does not exist
 
-- Use when referring to paid/commercial features
-- Example: "This feature is available in vCluster Pro"
-- Example: "Deploy a vCluster Pro instance with advanced security features"
+There is no product, tier, or plan called "vCluster Pro". License-gated
+features are **Enterprise** features, unlocked through a vCluster Platform
+Enterprise plan (Dev, Prod, or Scale), not a separate "Pro" product a
+customer buys or deploys.
+
+- ❌ DON'T: "This feature is available in vCluster Pro"
+- ❌ DON'T: "Deploy a vCluster Pro instance with advanced security features"
+- ❌ DON'T: "This is a Pro feature" (still implies a "Pro" product/tier)
+- ✅ DO: "This is an Enterprise feature, available with a vCluster Platform license"
+- ✅ DO: "Enable this Enterprise feature by connecting to vCluster Platform"
+- The `vcluster-pro` container image, the `loft-sh/vcluster-pro` repository
+  name, and the `sidebar_class_name: pro` frontmatter value are unaffected
+  code/engineering identifiers — never change those. The `pro` sidebar class
+  renders as an "ENTERPRISE" badge (see `src/css/sidebar.scss`); the class
+  name is internal, the label a reader sees is "Enterprise".
 
 ### vCluster Platform
 The management platform and UI for managing tenant clusters across one or more Control Plane Clusters.
@@ -118,8 +129,8 @@ Deploy tenant clusters on a Control Plane Cluster.
 | vCluster | "Use vCluster to..." | "vClusters", "VCluster" |
 | tenant clusters | "Create tenant clusters" | "Create vClusters", "virtual clusters" |
 | Control Plane Cluster | "Deploy on a Control Plane Cluster" | "host cluster", "Host Cluster" |
-| vCluster Pro | "Upgrade to vCluster Pro" | "vCluster pro", "vcluster Pro" |
 | vCluster Platform | "Install vCluster Platform" | "vCluster platform", "Loft Platform" |
+| Enterprise feature | "This Enterprise feature requires a vCluster Platform license" | "vCluster Pro", "Pro feature", "Upgrade to vCluster Pro" (not a product) |
 | vcluster (CLI) | "`vcluster create`" | "`vCluster create`" |
 | K8s | "Deploy to K8s" | "K8S", "k8s" |
 | K3s | "Running on K3s" | "k3s", "K3S" |
@@ -142,5 +153,6 @@ Deploy tenant clusters on a Control Plane Cluster.
 ❌ "The `vCluster` CLI provides commands to create and manage vClusters"
 
 ### Product Comparison
-✅ "vCluster Pro offers enhanced security features for tenant clusters"
-❌ "vCluster pro offers enhanced security features for vClusters"
+✅ "This Enterprise feature offers enhanced security for tenant clusters, available with a vCluster Platform license"
+❌ "vCluster Pro offers enhanced security features for vClusters"
+❌ "This Pro feature offers enhanced security for tenant clusters"

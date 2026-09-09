@@ -397,10 +397,19 @@ creates. Use **tenant clusters**.
 ### Products
 
 - vCluster: open source project that provisions and manages tenant clusters
-- vCluster Pro: a single enhanced/paid/upgraded tenant cluster that uses Pro
-  functionality (as labeled "Pro")
 - vCluster Platform: the management platform and UI for managing tenant clusters
   across one or more Control Plane Clusters
+- vMetal: infrastructure orchestrator for bare-metal and VM provisioning beneath
+  tenant clusters
+- vNode: tenant-isolation container runtime
+
+"vCluster Pro" is not a product and should not be used. License-gated
+features are "Enterprise" features, unlocked via a vCluster Platform
+Enterprise plan (Dev/Prod/Scale), not a separate "Pro" product or tier. The
+`vcluster-pro` container image, the `loft-sh/vcluster-pro` repository name,
+and the `sidebar_class_name: pro` frontmatter value are code/engineering
+identifiers and are unaffected by this rule — that sidebar class renders as
+an "ENTERPRISE" badge.
 
 ### CLI
 
