@@ -58,7 +58,7 @@ header "Location" contains "/docs/vcluster/introduction/architecture#syncer"
 GET {{BASE_URL}}/docs/using-vclusters/kube-context
 HTTP 301
 [Asserts]
-header "Location" contains "https://www.vcluster.com/docs/vcluster/introduction/what-are-virtual-clusters#common-use-cases"
+header "Location" contains "https://www.vcluster.com/docs/vcluster/introduction/what-is-vcluster#common-use-cases"
 
 # Test 10: Config reference redirect
 GET {{BASE_URL}}/docs/config-reference/
@@ -76,7 +76,7 @@ header "Location" contains "https://www.vcluster.com/docs/vcluster/category/stor
 GET {{BASE_URL}}/docs/what-are-virtual-clusters/
 HTTP 301
 [Asserts]
-header "Location" contains "https://www.vcluster.com/docs/vcluster/introduction/what-are-virtual-clusters"
+header "Location" contains "https://www.vcluster.com/docs/vcluster/introduction/what-is-vcluster"
 
 # Test 13: Help & tutorials redirect
 GET {{BASE_URL}}/docs/help&tutorials/faq
