@@ -489,7 +489,7 @@ helm upgrade vcluster-platform vcluster-platform \
 
 ### Use a persistent database as platform audit backend
 
-Instead of the internal sqlite storage (see [View and export audit logs](#view-and-export-audit-logs)), the platform can write audit events to a persistent MySQL database. This is a `config.audit` setting, so you can configure it through the platform UI or Helm.
+Instead of the internal sqlite storage (see [View and export audit logs](#view-and-export-audit-logs)), the platform can write audit events to a persistent MySQL or PostgreSQL database. This is a `config.audit` setting, so you can configure it through the platform UI or Helm.
 
 Through the UI, go to **Platform > Platform Config > Config** and specify the following platform config setting:
 
@@ -507,7 +507,63 @@ config:
     dataStoreEndpoint: mysql://username:password@tcp(hostname:3306)/database-name
 ```
 
+For PostgreSQL, use a `postgres://` endpoint instead:
+
+```yaml title="values.yaml for a PostgreSQL audit datastore"
+config:
+  audit:
+    enabled: true
+    dataStoreEndpoint: postgres://username:password@hostname:5432/database-name
+```
+
 Apply the changes. Through the UI, they take effect automatically within about 10-15 seconds, with no platform restart required. Through Helm, `helm upgrade` restarts the platform pod as a side effect of the upgrade, though the setting itself takes effect through the same hot-reload mechanism either way.
+
+#### IAM authentication instead of a static password
+
+Set `config.audit.dataStoreIdentityProvider: aws` to authenticate with a short-lived IAM token instead of a static password. This works against a datastore with IAM database authentication enabled, such as RDS or Aurora. `aws` is the only supported value today, and it only applies to MySQL and PostgreSQL, not sqlite.
+
+```yaml title="values.yaml for IAM-authenticated audit datastore"
+config:
+  audit:
+    enabled: true
+    dataStoreEndpoint: mysql://iam-user@tcp(hostname:3306)/database-name
+    dataStoreIdentityProvider: aws
+```
+
+Omit the password from `dataStoreEndpoint` when using IAM authentication. The platform mints a new token periodically to stay ahead of expiry.
+
+#### Verify the datastore with a CA file
+
+Set `config.audit.dataStoreCAFile` to the path of a PEM-encoded CA bundle to verify the datastore's TLS certificate. The platform reads this file directly, so mount the Secret or ConfigMap containing it into the platform pod through the chart's top-level `volumes` and `volumeMounts`. This is the same approach as [`config.database`'s `caFile`](../../administer/clusters/advanced/external-database/external-database.mdx):
+
+```yaml title="values.yaml for a CA-verified audit datastore"
+volumes:
+  - name: audit-datastore-ca
+    secret:
+      secretName: audit-datastore-ca
+volumeMounts:
+  - name: audit-datastore-ca
+    mountPath: /etc/vcluster/audit-datastore-ca
+    readOnly: true
+config:
+  audit:
+    enabled: true
+    dataStoreEndpoint: postgres://username:password@hostname:5432/database-name
+    dataStoreCAFile: /etc/vcluster/audit-datastore-ca/ca.pem
+```
+
+The platform reads `dataStoreCAFile` once at startup. Rotating the mounted CA requires a platform pod restart to take effect.
+
+:::warning TLS precedence
+An explicit `sslmode=` (PostgreSQL) or `tls=` (MySQL) query parameter already present on `dataStoreEndpoint` always wins over `dataStoreCAFile`, silently. Remove the query parameter if you want `dataStoreCAFile` to take effect.
+
+Without an explicit override:
+
+- PostgreSQL defaults to `sslmode=require` (encrypted, but the server certificate isn't verified). Setting `dataStoreCAFile` upgrades this to `sslmode=verify-full`.
+- MySQL has no TLS by default, unless `dataStoreIdentityProvider` is set, in which case it defaults to `tls=skip-verify`. Setting `dataStoreCAFile` upgrades either case to full certificate verification.
+
+`dataStoreCAFile` applies regardless of `dataStoreIdentityProvider`, and has no effect on the internal sqlite backend.
+:::
 
 ## View and export audit logs
 

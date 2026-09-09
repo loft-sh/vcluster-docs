@@ -278,6 +278,20 @@ Before writing "CRD" in prose, check whether the sentence is about the
 defines. If it's an instance, don't say CRD — regardless of whether the verb
 is create, apply, deploy, back up, sync, or proxy.
 
+## Sidebar tier badges: category vs. page
+
+A `_category_.json` `className` (`pro`/`free`) renders on the section header
+only — it does not visually propagate to child pages. That's a rendering
+fact, not a bug to route around.
+
+- All pages under a category share one tier → badge the category only. Don't
+  also add matching `sidebar_class_name` to every child page.
+- Pages under a category have different tiers → don't badge the category.
+  Give each child page its own `sidebar_class_name` instead.
+
+Never do both. See `.claude/skills/feature-table-audit/SKILL.md` for the full
+audit workflow.
+
 ## SVG diagrams
 
 SVGs must be imported as React components, not using `require().default`:

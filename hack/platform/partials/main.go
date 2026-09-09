@@ -118,6 +118,44 @@ clusters:
 		SubResourceGetDescription: "If ingress endpoint is configured for the virtual cluster, you can retrieve the kube config for a virtual cluster like shown below.",
 	})
 
+	// VirtualClusterResourceUsage
+	util.GenerateObjectOverview(&util.ObjectInformation{
+		Title:                 "Retrieve Resource Usage",
+		Description:           "Retrieve aggregated node and GPU resource usage for the tenant cluster's attached nodes, including a per-vendor GPU breakdown.",
+		File:                  path.Join(util.BaseResourcesPath, "virtualclusterinstance/resourceusage.mdx"),
+		Name:                  "Virtual cluster resource usage",
+		SubResourceParentName: "VirtualClusterInstance",
+		Resource:              "virtualclusterinstances",
+		SubResource:           "resourceusage",
+		Object: &managementv1.VirtualClusterResourceUsage{
+			TypeMeta: metav1.TypeMeta{
+				Kind:       "VirtualClusterResourceUsage",
+				APIVersion: managementv1.SchemeGroupVersion.String(),
+			},
+			ObjectMeta: metav1.ObjectMeta{Namespace: "your-namespace"},
+			Status: managementv1.VirtualClusterResourceUsageStatus{
+				ResourceUsage: managementv1.VirtualClusterResourceUsageMap{
+					Nodes: 3,
+					Capacity: map[string]int{
+						"cpu":            48,
+						"nvidia.com/gpu": 4,
+					},
+					GPUs: []managementv1.GPUTypeUsage{
+						{
+							Vendor:      "amd",
+							Allocatable: 4,
+							Physical:    4,
+						},
+						{Vendor: "intel", Allocatable: 8, Physical: 8},
+						{Vendor: "nvidia", Allocatable: 4, Physical: 4},
+					},
+				},
+			},
+		},
+		SubResourceGet:            true,
+		SubResourceGetDescription: "You can retrieve the aggregated node and GPU resource usage for a tenant cluster's attached nodes through this API. `capacity` only ever reflects `nvidia.com/gpu`; use `gpus` for the cross-vendor breakdown.",
+	})
+
 	// VirtualClusterTemplate
 	util.GenerateObjectOverview(&util.ObjectInformation{
 		Title:       "Virtual Cluster Template",
@@ -573,6 +611,181 @@ spec:
 		Delete:   true,
 	})
 
+	// AppInstance
+	util.GenerateObjectOverview(&util.ObjectInformation{
+		Title:       "App Instance",
+		Name:        "AppInstance",
+		Resource:    "appinstances",
+		Description: "AppInstance deploys an App into a tenant cluster, space, or connected cluster, and reports the resulting Helm release status. It replaces the Task and HelmRelease resources removed in Platform 4.12. See [What are Apps](../../understand/what-are-apps.mdx) for the concept, [Upgrade to Platform 4.12](../../maintenance/upgrade-migrate/upgrade.mdx#upgrade-to-4-12) for migrating an existing app deployment, and [Retrieve App Instance Logs](appinstancelog.mdx) for the log subresource.",
+		File:        path.Join(util.BaseResourcesPath, "appinstance.mdx"),
+		Object: &managementv1.AppInstance{
+			TypeMeta: metav1.TypeMeta{
+				Kind:       "AppInstance",
+				APIVersion: managementv1.SchemeGroupVersion.String(),
+			},
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "my-argo-cd",
+				Namespace: "p-my-project",
+			},
+			Spec: managementv1.AppInstanceSpec{
+				AppInstanceSpec: storagev1.AppInstanceSpec{
+					DisplayName: "ArgoCD",
+					TemplateRef: &storagev1.AppInstanceTemplateRef{
+						Name: "my-app",
+					},
+					Destination: storagev1.AppInstanceDestination{
+						VirtualCluster: &storagev1.AppInstanceDestinationVirtualCluster{
+							Name:   "development",
+							Target: storagev1.AppInstanceDestinationVirtualClusterTargetVirtualCluster,
+						},
+					},
+					Owner: &storagev1.UserOrTeam{User: "admin"},
+				},
+			},
+		},
+		Project:  true,
+		Create:   true,
+		Retrieve: true,
+		Update:   true,
+		Delete:   true,
+	})
+
+	// AppInstanceLog
+	util.GenerateObjectOverview(&util.ObjectInformation{
+		Title:                 "Retrieve App Instance Logs",
+		Name:                  "App instance log",
+		SubResourceParentName: "AppInstance",
+		Resource:              "appinstances",
+		SubResource:           "log",
+		Description:           "Stream deployment logs for an AppInstance. Set the `follow` query parameter to `true` to continue streaming as new output is stored. Platform 4.12 doesn't apply the other fields exposed by AppInstanceLogOptions.",
+		File:                  path.Join(util.BaseResourcesPath, "appinstancelog.mdx"),
+		Object: &managementv1.AppInstanceLog{
+			TypeMeta: metav1.TypeMeta{
+				Kind:       "AppInstanceLog",
+				APIVersion: managementv1.SchemeGroupVersion.String(),
+			},
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "my-argo-cd",
+				Namespace: "p-my-project",
+			},
+		},
+		SubResourceGet:            true,
+		SubResourceGetDescription: "Stream the deployment logs for an AppInstance. Append `?follow=true` to continue streaming as new output is stored.",
+	})
+
+	// StackTemplate
+	util.GenerateObjectOverview(&util.ObjectInformation{
+		Title:       "Stack Template",
+		Name:        "StackTemplate",
+		Resource:    "stacktemplates",
+		Description: "StackTemplate is a reusable, parameterized task graph that a StackInstance deploys to a tenant cluster or control plane cluster. See [What are Stacks](../../understand/what-are-stacks.mdx) for the concept and [Create a Stack template](../../administer/templates/create-stack-templates.mdx) for the full task, parameter, and output syntax.",
+		File:        path.Join(util.BaseResourcesPath, "stacktemplate.mdx"),
+		Object: &managementv1.StackTemplate{
+			TypeMeta: metav1.TypeMeta{
+				Kind:       "StackTemplate",
+				APIVersion: managementv1.SchemeGroupVersion.String(),
+			},
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "example-platform",
+			},
+			Spec: managementv1.StackTemplateSpec{
+				StackTemplateSpec: storagev1.StackTemplateSpec{
+					DisplayName: "Example application platform",
+					Description: "Deploys a database before the API that uses it.",
+					StackTemplateDefinition: storagev1.StackTemplateDefinition{
+						Tasks: []storagev1.StackTask{
+							{
+								Name: "database",
+								App: &storagev1.StackAppTask{
+									TemplateRef: &storagev1.AppInstanceTemplateRef{Name: "postgresql"},
+								},
+							},
+							{
+								Name:      "api",
+								DependsOn: []string{"database"},
+								App: &storagev1.StackAppTask{
+									TemplateRef: &storagev1.AppInstanceTemplateRef{Name: "example-api"},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		Create:   true,
+		Retrieve: true,
+		Update:   true,
+		Delete:   true,
+	})
+
+	// StackInstance
+	util.GenerateObjectOverview(&util.ObjectInformation{
+		Title:       "Stack Instance",
+		Name:        "StackInstance",
+		Resource:    "stackinstances",
+		Description: "StackInstance deploys one inline or referenced task graph to a tenant cluster or control plane cluster and reports aggregate and per-task status. See [What are Stacks](../../understand/what-are-stacks.mdx) for the concept and [Use a Stack](../../use-platform/apps/use-stacks.mdx) for the installation and monitoring workflow.",
+		File:        path.Join(util.BaseResourcesPath, "stackinstance.mdx"),
+		Object: &managementv1.StackInstance{
+			TypeMeta: metav1.TypeMeta{
+				Kind:       "StackInstance",
+				APIVersion: managementv1.SchemeGroupVersion.String(),
+			},
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "example-platform",
+				Namespace: "p-my-project",
+			},
+			Spec: managementv1.StackInstanceSpec{
+				StackInstanceSpec: storagev1.StackInstanceSpec{
+					DisplayName: "Example application platform",
+					Destination: storagev1.StackDestination{
+						VirtualCluster: &storagev1.StackDestinationVirtualCluster{Name: "development"},
+					},
+					TemplateRef: &storagev1.StackTemplateRef{Name: "example-platform"},
+					PrunePolicy: storagev1.StackPrunePolicyRetain,
+					Owner:       &storagev1.UserOrTeam{User: "admin"},
+				},
+			},
+		},
+		Project:  true,
+		Create:   true,
+		Retrieve: true,
+		Update:   true,
+		Delete:   true,
+	})
+
+	// StackInstanceOutputs
+	outputValue := "10.0.0.12"
+	util.GenerateObjectOverview(&util.ObjectInformation{
+		Title:                 "Retrieve Stack Instance Outputs",
+		Name:                  "StackInstanceOutputs",
+		SubResourceParentName: "StackInstance",
+		Resource:              "stackinstances",
+		SubResource:           "outputs",
+		Description:           "Retrieve the outputs a StackTemplate publishes for a StackInstance. Reading this subresource requires separate `get` permission on `stackinstances/outputs`. See [Stack permissions](../../administer/users-permissions/permissions/stacks.mdx#permission-map) and [What are Stacks](../../understand/what-are-stacks.mdx) for the output-capture concept.",
+		File:                  path.Join(util.BaseResourcesPath, "stackinstanceoutputs.mdx"),
+		Object: &managementv1.StackInstanceOutputs{
+			TypeMeta: metav1.TypeMeta{
+				Kind:       "StackInstanceOutputs",
+				APIVersion: managementv1.SchemeGroupVersion.String(),
+			},
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "example-platform",
+				Namespace: "p-my-project",
+			},
+			Outputs: []managementv1.StackInstanceOutput{
+				{
+					Name:      "databaseAddress",
+					Task:      "database",
+					Sensitive: false,
+					State:     managementv1.StackOutputStateAvailable,
+					Value:     &outputValue,
+				},
+			},
+		},
+		SubResourceGet:            true,
+		SubResourceGetDescription: "Retrieve the published outputs of a StackInstance. Values captured from Secrets are marked sensitive.",
+	})
+
 	// Cluster
 	util.GenerateObjectOverview(&util.ObjectInformation{
 		Name:        "Cluster",
@@ -1001,13 +1214,16 @@ spec:
 			"| `sharedsecrets` | Shared secrets |\n" +
 			"| `spaceinstances` | Space instances |\n" +
 			"| `spacetemplates` | Space templates |\n" +
+			"| `stackinstances` | Project-scoped Stack instances |\n" +
+			"| `stackinstances/outputs` | Published Stack outputs |\n" +
+			"| `stacktemplates` | Cluster-scoped Stack templates |\n" +
 			"| `tasks` | Platform tasks |\n" +
 			"| `teams` | Teams |\n" +
 			"| `users` | Users |\n" +
 			"| `virtualclusterinstances` | Tenant cluster instances |\n" +
 			"| `virtualclustertemplates` | Tenant cluster templates |\n" +
 			"\n" +
-			"Common subresources include `projects/members`, `projects/templates`, `clusters/members`, `virtualclusterinstances/kubeconfig`, and `virtualclusterinstances/log`.\n" +
+			"Common subresources include `projects/members`, `projects/templates`, `clusters/members`, `stackinstances/outputs`, `virtualclusterinstances/kubeconfig`, and `virtualclusterinstances/log`.\n" +
 			"\n" +
 			"### Resource names\n" +
 			"\n" +
