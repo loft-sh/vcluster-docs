@@ -52,7 +52,13 @@ On a category (`_category_.json`):
 { "className": "free" }
 ```
 
-The category className labels the collapsible section header only — it does **not** propagate to pages inside the category. Individual pages need their own `sidebar_class_name`.
+The category className renders on the collapsible section header only — it does **not** visually propagate to pages inside the category (no CSS or theme code copies it onto child `<li>` items). That's a rendering fact, not a rule to work around by duplicating the badge onto every child page.
+
+**When to badge the category vs. individual pages:**
+- **Every page (and sub-category) under a category shares the same tier** → badge the category only, in `_category_.json`. Don't also add `sidebar_class_name` to each child page — that's redundant duplication, not a fix for a "propagation bug." A reader who expands the category already sees the tier on the header.
+- **Pages under a category carry different tiers** → don't badge the category at all. Give each child page its own `sidebar_class_name` instead.
+
+Never do both (a category badge plus matching per-page badges on every child) — that's redundant, and it's the mistake this skill used to make (PR #2648 added per-page `pro` badges to all 10 `platform/maintenance/observability/` pages under a category already badged `pro`; corrected in #2603 by removing the per-page badges instead of updating all 11 in lockstep).
 
 ### What the badges render
 
@@ -109,6 +115,8 @@ grep -rln "FeatureTable\|ProAdmonition" platform vcluster --include="*.mdx" \
       grep -q "sidebar_class_name" "$f" || echo "UNLABELED: $f"
     done
 ```
+
+Before treating a hit as a real gap, check whether its parent directory's `_category_.json` already carries a `className` — if so, and every sibling page under that category shares the same tier, the category badge already covers it and no per-page `sidebar_class_name` is needed (see the category-vs-page rule above).
 
 ### 3. Extract feature keys from unlabeled pages
 
