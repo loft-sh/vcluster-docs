@@ -118,6 +118,44 @@ clusters:
 		SubResourceGetDescription: "If ingress endpoint is configured for the virtual cluster, you can retrieve the kube config for a virtual cluster like shown below.",
 	})
 
+	// VirtualClusterResourceUsage
+	util.GenerateObjectOverview(&util.ObjectInformation{
+		Title:                 "Retrieve Resource Usage",
+		Description:           "Retrieve aggregated node and GPU resource usage for the tenant cluster's attached nodes, including a per-vendor GPU breakdown.",
+		File:                  path.Join(util.BaseResourcesPath, "virtualclusterinstance/resourceusage.mdx"),
+		Name:                  "Virtual cluster resource usage",
+		SubResourceParentName: "VirtualClusterInstance",
+		Resource:              "virtualclusterinstances",
+		SubResource:           "resourceusage",
+		Object: &managementv1.VirtualClusterResourceUsage{
+			TypeMeta: metav1.TypeMeta{
+				Kind:       "VirtualClusterResourceUsage",
+				APIVersion: managementv1.SchemeGroupVersion.String(),
+			},
+			ObjectMeta: metav1.ObjectMeta{Namespace: "your-namespace"},
+			Status: managementv1.VirtualClusterResourceUsageStatus{
+				ResourceUsage: managementv1.VirtualClusterResourceUsageMap{
+					Nodes: 3,
+					Capacity: map[string]int{
+						"cpu":            48,
+						"nvidia.com/gpu": 4,
+					},
+					GPUs: []managementv1.GPUTypeUsage{
+						{
+							Vendor:      "amd",
+							Allocatable: 4,
+							Physical:    4,
+						},
+						{Vendor: "intel", Allocatable: 8, Physical: 8},
+						{Vendor: "nvidia", Allocatable: 4, Physical: 4},
+					},
+				},
+			},
+		},
+		SubResourceGet:            true,
+		SubResourceGetDescription: "You can retrieve the aggregated node and GPU resource usage for a tenant cluster's attached nodes through this API. `capacity` only ever reflects `nvidia.com/gpu`; use `gpus` for the cross-vendor breakdown.",
+	})
+
 	// VirtualClusterTemplate
 	util.GenerateObjectOverview(&util.ObjectInformation{
 		Title:       "Virtual Cluster Template",
@@ -571,6 +609,68 @@ spec:
 		Retrieve: true,
 		Update:   true,
 		Delete:   true,
+	})
+
+	// AppInstance
+	util.GenerateObjectOverview(&util.ObjectInformation{
+		Title:       "App Instance",
+		Name:        "AppInstance",
+		Resource:    "appinstances",
+		Description: "AppInstance deploys an App into a tenant cluster, space, or connected cluster, and reports the resulting Helm release status. It replaces the Task and HelmRelease resources removed in Platform 4.12. See [What are Apps](../../understand/what-are-apps.mdx) for the concept, [Upgrade to Platform 4.12](../../maintenance/upgrade-migrate/upgrade.mdx#upgrade-to-4-12) for migrating an existing app deployment, and [Retrieve App Instance Logs](appinstancelog.mdx) for the log subresource.",
+		File:        path.Join(util.BaseResourcesPath, "appinstance.mdx"),
+		Object: &managementv1.AppInstance{
+			TypeMeta: metav1.TypeMeta{
+				Kind:       "AppInstance",
+				APIVersion: managementv1.SchemeGroupVersion.String(),
+			},
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "my-argo-cd",
+				Namespace: "p-my-project",
+			},
+			Spec: managementv1.AppInstanceSpec{
+				AppInstanceSpec: storagev1.AppInstanceSpec{
+					DisplayName: "ArgoCD",
+					TemplateRef: &storagev1.AppInstanceTemplateRef{
+						Name: "my-app",
+					},
+					Destination: storagev1.AppInstanceDestination{
+						VirtualCluster: &storagev1.AppInstanceDestinationVirtualCluster{
+							Name:   "development",
+							Target: storagev1.AppInstanceDestinationVirtualClusterTargetVirtualCluster,
+						},
+					},
+					Owner: &storagev1.UserOrTeam{User: "admin"},
+				},
+			},
+		},
+		Project:  true,
+		Create:   true,
+		Retrieve: true,
+		Update:   true,
+		Delete:   true,
+	})
+
+	// AppInstanceLog
+	util.GenerateObjectOverview(&util.ObjectInformation{
+		Title:                 "Retrieve App Instance Logs",
+		Name:                  "App instance log",
+		SubResourceParentName: "AppInstance",
+		Resource:              "appinstances",
+		SubResource:           "log",
+		Description:           "Stream deployment logs for an AppInstance. Set the `follow` query parameter to `true` to continue streaming as new output is stored. Platform 4.12 doesn't apply the other fields exposed by AppInstanceLogOptions.",
+		File:                  path.Join(util.BaseResourcesPath, "appinstancelog.mdx"),
+		Object: &managementv1.AppInstanceLog{
+			TypeMeta: metav1.TypeMeta{
+				Kind:       "AppInstanceLog",
+				APIVersion: managementv1.SchemeGroupVersion.String(),
+			},
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "my-argo-cd",
+				Namespace: "p-my-project",
+			},
+		},
+		SubResourceGet:            true,
+		SubResourceGetDescription: "Stream the deployment logs for an AppInstance. Append `?follow=true` to continue streaming as new output is stored.",
 	})
 
 	// StackTemplate
