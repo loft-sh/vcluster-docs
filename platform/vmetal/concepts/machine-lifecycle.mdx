@@ -1,0 +1,59 @@
+---
+title: Machine and Server Concepts
+sidebar_label: Machine and Server
+sidebar_position: 0
+description: The driver-neutral Machine and server model, including lifecycle, identity boundaries, and how vMetal, vCluster Platform, and vCluster fit together.
+toc_max_heading_level: 3
+---
+
+import MachineModelLifecycle from '@site/static/media/diagrams/machine-model-lifecycle.svg';
+import MachineTenantClusterFlow from '@site/static/media/diagrams/machine-tenant-cluster-flow.svg';
+
+A Machine is vMetal's claim on one server (physical or virtual, depending on the driver behind it). This page describes the Machine model at a driver-neutral level. For quick term definitions, see the [Glossary](../../reference/glossary.mdx).
+
+## Machine and server
+
+"Machine" and "server" refer to two different objects with two different lifetimes.
+
+A **server** is the physical or virtual host itself, the thing a driver provisions and hands out. Under the Metal3 driver, a server is a `BareMetalHost`. A server's identity is independent of any single request for it. It's registered once, inspected once, and then claimed, released, and claimed again many times over its life in the fleet.
+
+A **Machine** is vMetal's record of one claim on a server. It's created when a tenant cluster or administrator requests capacity, and it's deleted when that capacity is no longer needed. A Machine's identity doesn't outlive the claim. Once it's deleted, the server it claimed doesn't disappear. The driver cleans that server and returns it to the capacity pool, where a later, different Machine can claim it.
+
+This distinction matters because the two objects answer different questions. "Is this server healthy" is a question about the server, answered by checking its `BareMetalHost` status, BMC connectivity, and inspection results. "Is this Machine ready" is a question about the claim, answered by checking whether scheduling, provisioning, and joining have completed for the current request. A single server can pass through many Machines over its lifetime, each with its own independent lifecycle described below.
+
+## Machine lifecycle
+
+Every Machine, regardless of driver, passes through the same milestones:
+
+<figure>
+  <MachineModelLifecycle style={{width: '100%', height: 'auto'}} role="img" aria-label="Machine lifecycle from requested through scheduled, provisioned, joined, ready, and destroyed" />
+</figure>
+
+1. **Requested** - a tenant cluster or an administrator asks for capacity matching a node type, and the platform creates the Machine.
+2. **Scheduled** - vMetal selects an eligible server and claims it for this Machine.
+3. **Provisioned** - the driver behind that node type finishes preparing the server by installing an OS, configuring networking, and running any startup automation.
+4. **Joined** - for tenant-cluster capacity, the server has joined as a Kubernetes node. Machines requested directly by an administrator, outside a tenant cluster, skip this milestone.
+5. **Ready** - every prior milestone has been reached. This is a single point in time, not a span. A Machine doesn't sit in "ready" before doing anything else. By the time a Machine reaches Ready, the server it claimed is already serving workloads.
+6. **Destroyed** - the tenant cluster or administrator no longer needs the Machine, and the platform deletes it.
+
+Deleting a Machine doesn't delete the server it claimed. The driver cleans the server and returns it to the node type's capacity pool, where a later, different Machine can claim it. The exact mechanics and observable states behind each milestone are driver-specific. For the Metal3 driver's `BareMetalHost` states, see [Bare metal server lifecycle](../drivers/bare-metal/overview.mdx#server-lifecycle).
+
+## How a Machine reaches a tenant cluster
+
+<figure>
+  <MachineTenantClusterFlow style={{width: '100%', height: 'auto'}} role="img" aria-label="A tenant cluster requests capacity through Private Nodes or Auto Nodes, becoming a NodeClaim that the platform matches to a server" />
+</figure>
+
+A tenant cluster requests dedicated capacity through [Private Nodes](/docs/vcluster/deploy/worker-nodes/private-nodes/), either directly or automatically through [Auto Nodes](/docs/vcluster/deploy/worker-nodes/private-nodes/auto-nodes/). That request becomes a `NodeClaim`, the Kubernetes resource that implements a Machine. The platform selects an eligible server through the matching node type and claims it. The driver provisions the server, and it joins the tenant cluster as a standard Kubernetes node. Once joined, the Machine reaches Ready.
+
+## Who owns what
+
+| Layer | Owns |
+|---|---|
+| **vMetal** | Provisioning mechanics, driver dispatch, and the Machine and server lifecycles described above. |
+| **vCluster Platform** | Which node types exist, who can request them, and quotas. See [Node types and node providers](./machine-types-and-nodetypes.mdx) and [Manage allowed node types](../../administer/projects/allowed/node-types.mdx). |
+| **vCluster** | Requesting and releasing capacity for a tenant cluster through Private Nodes and Auto Nodes. |
+
+## Security and ownership boundaries
+
+Requesting a Machine is governed by project role and node-type restrictions rather than open to every tenant. The properties that shape how it's provisioned are constrained the same way. See [Manage allowed node types](../../administer/projects/allowed/node-types.mdx) for the current access model.

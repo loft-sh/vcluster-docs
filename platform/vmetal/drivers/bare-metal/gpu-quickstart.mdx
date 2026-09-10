@@ -1,0 +1,136 @@
+---
+title: GPU Quickstart
+sidebar_label: GPU Quickstart
+sidebar_position: 3
+description: Provision GPU bare metal servers as private nodes for AI workloads with the Metal3 driver.
+---
+
+This guide walks through provisioning GPU bare metal servers as private nodes in a tenant cluster, building on the NodeProvider and server registration from [Get started](./metal3.mdx#get-started). It covers GPU-specific prerequisites, node type configuration, and workload verification.
+
+If you need to choose a GPU presentation mode, read [GPU presentation modes](../../concepts/gpu-presentation-modes.mdx) first. That page covers bare metal PCIe devices, NVIDIA vGPU devices, MIG instances, AMD GPUs, and other accelerator types.
+
+## Prerequisites
+
+Complete [Get started](./metal3.mdx#get-started) first. You need a working NodeProvider with Metal3 deployed and at least one `BareMetalHost` in `available` state.
+
+You also need:
+
+- GPU servers that have passed Metal3 inspection and are in `available` state.
+- An OS image with GPU drivers pre-installed, cloud-init driver installation, or a vendor GPU Operator installed after provisioning.
+- For NVIDIA production fleets, the [NVIDIA GPU Operator](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/index.html) is the most common approach.
+- For AMD fleets, see the [AMD GPU device plugin](https://instinct.docs.amd.com/projects/k8s-device-plugin/en/latest/index.html) and [AMD GPU Operator](https://instinct.docs.amd.com/projects/gpu-operator/en/main/device_plugin/device-plugin.html) documentation.
+- [SSH keys](./metal3.mdx#ssh-and-user-data) configured as `SSHKey` resources if you need post-provision server access.
+
+## 1. Label your GPU servers
+
+Add labels to your `BareMetalHost` resources. The platform uses these labels to match servers to node types.
+
+```bash
+kubectl label baremetalhost server-01 -n metal3-system \
+  gpu-model=h100 \
+  gpu-count=8
+```
+
+These label keys are useful for GPU fleets:
+
+- `gpu-model` - GPU model, such as `h100`, `a100`, or `l40s`.
+- `gpu-count` - Number of GPUs per server.
+- `rack` or `datacenter` - Location for topology-aware scheduling.
+
+## 2. Create an OSImage
+
+An `OSImage` resource stores the OS image URL and checksum. Multiple node types can reference the same `OSImage` by name.
+
+```yaml
+apiVersion: management.loft.sh/v1
+kind: OSImage
+metadata:
+  name: ubuntu-noble-gpu
+spec:
+  properties:
+    metal3.vcluster.com/image-url: https://your-registry.example.com/ubuntu-noble-gpu-amd64.img
+    metal3.vcluster.com/image-checksum: sha256:abc123...
+    metal3.vcluster.com/image-checksum-type: sha256
+```
+
+```bash
+kubectl apply -f os-image.yaml
+```
+
+If you don't have a GPU-ready image, use a standard cloud image and install the vendor driver through `vcluster.com/user-data`. See [Configuration properties](./metal3.mdx#configuration-properties) for user data options.
+
+## 3. Configure a GPU node type
+
+Add a GPU node type to your NodeProvider. The `resources` field defines the capacity that Karpenter uses when selecting and provisioning this node type.
+
+```yaml
+nodeTypes:
+- name: "h100-8x"
+  displayName: "H100 8x GPU"
+  resources:
+    cpu: "64"
+    memory: 256Gi
+    nvidia.com/gpu: "8"
+  bareMetalHosts:
+    selector:
+      matchLabels:
+        gpu-model: h100
+        gpu-count: "8"
+  properties:
+    vcluster.com/os-image: ubuntu-noble-gpu
+    vcluster.com/ssh-keys: my-ssh-key
+```
+
+:::note
+The platform validates CPU and memory against the hardware inventory collected during Metal3 inspection. It doesn't validate GPU resources against hardware. Make sure the `nvidia.com/gpu` value matches the hardware and vendor resource name. After the node joins the tenant cluster, the vendor device plugin or GPU Operator advertises the actual GPU capacity to Kubernetes.
+:::
+
+For AMD GPUs or another accelerator vendor, use the resource name published by that vendor's Kubernetes integration. For example, an AMD GPU node type may advertise `amd.com/gpu` instead of `nvidia.com/gpu`.
+
+## 4. Create a tenant cluster with GPU private nodes
+
+Configure a vCluster to use the GPU node type as a private node.
+
+```yaml
+privateNodes:
+  enabled: true
+  autoNodes:
+    - provider: metal3-provider
+      static:
+        - name: gpu-nodes
+          quantity: 1
+          nodeTypeSelector:
+            - property: vcluster.com/node-type
+              value: h100-8x
+```
+
+The platform selects an available `h100-8x` server, installs the OS, and joins it to the tenant cluster as a worker node.
+
+## 5. Verify GPU access
+
+Once the node joins, verify the GPU is visible to the scheduler.
+
+```bash
+vcluster connect my-cluster
+kubectl get nodes -o json | jq '.items[].status.capacity | select(."nvidia.com/gpu")'
+```
+
+The output should show `"nvidia.com/gpu": "8"` in the node capacity. If it's missing, check that the vendor device plugin or GPU Operator is installed on the node. For AMD or another accelerator, query the resource name that the vendor Kubernetes integration advertises.
+
+## What the platform handles
+
+- Selecting a `BareMetalHost` that matches the node type label selector.
+- Allocating an IP and generating network configuration.
+- Generating cloud-init and joining the server to the tenant cluster.
+- Releasing the IP and returning the server to the pool on deprovision.
+
+## What you manage
+
+- Enrolling `BareMetalHost` resources and applying GPU labels.
+- Providing an OS image with GPU driver support, or installing drivers through cloud-init.
+- Deploying the vendor device plugin, DRA driver, or GPU Operator inside the tenant cluster.
+- Setting the correct accelerator resource name and count in the node type to match the hardware and device plugin.
+
+For fleet-scale label strategy, node type design, and day-2 lifecycle operations, see [GPU Fleet Operations](./gpu-fleet-operations.mdx).
+
+For how vCluster syncs GPU resources and DRA objects inside the tenant cluster, see [GPU and accelerator support in vCluster](/docs/vcluster/introduction/gpu-and-accelerator-support).
