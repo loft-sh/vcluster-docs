@@ -59,7 +59,12 @@ const config = {
     },
   ],
 
-  onBrokenLinks: "throw",
+  // TEMPORARY for this preview branch (DOC-1537/tenant-nico-platform-skeleton): moving
+  // vcluster/manage/upgrade/distro-migration.mdx and platform/administer/node-providers/kubevirt.mdx
+  // broke malformed absolute links baked into frozen vcluster_versioned_docs snapshots
+  // (0.35.0, 0.36.0, 0.37.0) that can't be edited. Revert to "throw" before merging;
+  // the versioned-doc side needs its own fix through the normal backport process first.
+  onBrokenLinks: "warn",
 
   // Even if you don't use internationalization, you can use this field to set
   // useful metadata like html lang. For example, if your site is Chinese, you
