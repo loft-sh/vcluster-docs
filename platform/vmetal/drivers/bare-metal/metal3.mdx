@@ -1,0 +1,682 @@
+---
+title: Metal3
+sidebar_label: Metal3
+sidebar_position: 5
+sidebar_class_name: pro
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+import FeatureTable from '@site/src/components/FeatureTable';
+import Flow, {Step} from "@site/src/components/Flow";
+import Metal3ProvisioningFlow from '@site/static/media/diagrams/metal3-provisioning-flow.svg';
+
+<FeatureTable names="auto-nodes-metal3" />
+
+The Metal3 provider allows you to provision bare metal servers as Machines using [Metal3](https://metal3.io/) and [Ironic](https://ironicbaremetal.org/).
+When a Machine is requested, the platform claims an available `BareMetalHost` resource and configures it with the requested OS image and user data. Ironic then handles the PXE boot and OS installation on the physical server.
+
+This enables you to offer different configurations of bare metal servers, all managed through BareMetalHost resources on a <GlossaryTerm term="control-plane-cluster">control plane cluster</GlossaryTerm>. Machines can be used as private nodes for tenant clusters or provisioned independently.
+
+<figure>
+  <Metal3ProvisioningFlow style={{width: '100%', height: 'auto'}} role="img" aria-label="A Machine request causes the Metal3 provider to select and configure an available BareMetalHost on the control plane cluster. Bare Metal Operator reconciles it, and Ironic powers the external physical server and installs its operating system. For private nodes, user data registers the server with a tenant cluster. Deleting the Machine clears provisioning data and returns the host to the available pool." />
+  <figcaption>The platform writes the requested state to an available BareMetalHost. Metal3 and Ironic provision the external server, which joins a tenant cluster only when requested as a private node. Deleting the Machine returns the host to the available pool.</figcaption>
+</figure>
+
+## Overview
+
+The Metal3 provider works by selecting available BareMetalHost resources on a control plane cluster and provisioning them with an OS image and user data configuration. Node types let you organize bare metal servers based on type, location, or other criteria.
+
+When the Machine is deleted, the platform powers the server off and clears its image, user data, and network data references. It restores pre-existing managed DHCP annotations and makes the BareMetalHost available for reuse.
+
+## How it works: Provisioning
+
+After the platform selects a BareMetalHost, it prepares the server for provisioning:
+
+1. The platform generates a user data configuration and stores it in a Kubernetes Secret on the control plane cluster.
+2. The provider sets the BareMetalHost's `userData` reference to this Secret and the image information from the configured [OSImage](../../images/os-images.mdx) or direct image properties.
+
+Ironic then provisions the server through power management, PXE boot, and an in-memory installer that writes the OS to disk. The server boots into the provisioned OS with the user data configuration applied.
+
+When a Machine is used as a private node for a <GlossaryTerm term="tenant-cluster">tenant cluster</GlossaryTerm>, the user data includes registration scripts that automatically join the server to the tenant cluster.
+
+## Infrastructure deployment
+
+The Metal3 provider can deploy the required infrastructure components on the control plane cluster. Each component can be individually enabled and customized with Helm values. You can also manage Metal3 and Ironic separately. When you enable the bundled DHCP server with external Ironic, configure `proxy.ironicHttpUrl` and either `proxy.ironicApiUrl` or `proxy.apiAdvertiseUrl`.
+
+<Tabs>
+<TabItem value="metal3" label="Metal3 & Ironic">
+
+Bare metal provisioning and lifecycle management. Deploys the Bare Metal Operator, Ironic, an IPA image server, and MariaDB as separate workloads.
+
+Install [cert-manager](https://cert-manager.io/) on the control plane cluster before enabling this component. The Bare Metal Operator uses it for admission webhooks, and internal components use it for mutual TLS (mTLS). The Platform UI checks this prerequisite and warns when it is missing.
+
+:::warning Upgrading from a Metal3 chart earlier than 0.6.0
+The default Metal3 chart version is `0.6.0`. This version replaces the legacy single-pod deployment with separate workloads and a MariaDB backend. Review this architecture and database change before upgrading an existing Metal3 deployment.
+
+To retain the legacy topology temporarily, pin `spec.metal3.deploy.metal3.version` to the version that is already deployed. The previous <GlossaryTerm term="vcluster">vCluster</GlossaryTerm> Platform default was `0.4.1`.
+:::
+
+The components use the following runtime topology:
+
+- Ironic conductors run active/active. They shard host ownership over a consistent hash ring and coordinate through JSON-RPC.
+- The managed MariaDB is a single-replica StatefulSet. For high availability, run an external MariaDB and set `mariadb.mode: external`.
+- The IPA image server serves public static boot content outside the mTLS mesh.
+
+**Helm values:**
+
+| Value | Description | Default |
+|---|---|---|
+| `ironic.replicas` | Number of Ironic conductors. Values greater than `1` run them active/active. | `2` |
+| `ironic.ipaAdvertiseIP` | Ironic LoadBalancer VIP advertised to the in-memory agent (IPA). Set it to enable real provisioning against physical hosts; empty keeps the Ironic API in-cluster only (for scale-out testing without a real host cycle). | `""` |
+| `ironic.service` | Applied as the Ironic Service spec, so any field can be set (for example `type: LoadBalancer`, `loadBalancerClass`, and a nested `metadata` map for annotations and labels). `name`, `namespace`, and `selector` are managed by the chart. Ports use chart defaults but can be replaced with a custom `ports` list. Empty leaves a default ClusterIP Service. | `{}` |
+| `ironic.image.registry` | Ironic container image registry. | `quay.io` |
+| `ironic.image.repository` | Ironic container image repository. | `metal3-io/ironic` |
+| `ironic.image.tag` | Ironic image tag | `release-35.0` |
+| `ipaImages.replicas` | Replicas of the IPA image server that serves the IPA kernel and initramfs. | `2` |
+| `mariadb.mode` | Database backend for Ironic: `statefulset` (single-replica managed MariaDB StatefulSet with its own PVC and cert-manager TLS) or `external` (connect to your own MariaDB). | `statefulset` |
+| `mariadb.externalHost` | Host Ironic connects to in `external` mode. Ignored otherwise. | `""` |
+| `mariadb.database` | Database name. | `ironic` |
+| `mariadb.username` | Database username Ironic uses. An empty value resolves to `ironic`. | `""` |
+| `mariadb.password` | Database password Ironic uses. In `statefulset` mode, an empty value generates a password on first install and preserves it across upgrades. In `external` mode, an empty value resolves to `ironic`. | Mode-dependent |
+| `mariadb.caCertSecretName` / `mariadb.caCertSecretKey` | `external` mode only. Secret and key holding the CA certificate used to verify the external MariaDB over TLS. When set, Ironic connects over TLS. | `""` / `ca.crt` |
+| `mariadb.persistence.size` | PVC size for the managed MariaDB in `statefulset` mode. | `10Gi` |
+| `bareMetalOperator.image.registry` | Bare Metal Operator image registry. | `quay.io` |
+| `bareMetalOperator.image.repository` | Bare Metal Operator image repository. | `metal3-io/baremetal-operator` |
+| `bareMetalOperator.image.tag` | Bare Metal Operator tag | `v0.13.1` |
+| `ipaDownloader.image.registry` | IPA image downloader registry. | `ghcr.io` |
+| `ipaDownloader.image.repository` | IPA image downloader repository. | `loft-sh/vcluster-platform-ipa-images` |
+| `ipaDownloader.image.tag` | IPA image downloader tag | `v0.2.2` |
+
+Set `ironic.ipaAdvertiseIP` to the VIP of the Ironic LoadBalancer Service so bare metal hosts can reach the Ironic agent endpoint during provisioning:
+
+```yaml
+deploy:
+  metal3:
+    enabled: true
+    helmValues: |
+      ironic:
+        replicas: 2
+        ipaAdvertiseIP: 192.168.100.10
+        service:
+          type: LoadBalancer
+          # The assigned address must match ipaAdvertiseIP.
+          loadBalancerIP: 192.168.100.10
+```
+
+For highly available MariaDB, run your own database and point Ironic at it:
+
+```yaml
+deploy:
+  metal3:
+    enabled: true
+    helmValues: |
+      mariadb:
+        mode: external
+        externalHost: mariadb.example.internal
+        database: ironic
+        username: ironic
+        password: <MARIADB-PASSWORD>
+```
+
+</TabItem>
+<TabItem value="dhcp" label="DHCP Server">
+
+Handles PXE and HTTP Boot by acting as a proxy between bare metal servers and Ironic, which may reside in a different network. When the provider deploys Metal3, the platform configures the boot-image endpoint. Configure `proxy.apiAdvertiseUrl` to send IPA directly to the bundled Ironic agent endpoint.
+
+The values below target the vcluster-platform-dhcp-server chart `v0.17.0`.
+
+**Deployment fields (NodeProvider `metal3.deploy.dhcp`):**
+
+| Field | Description | Default |
+|---|---|---|
+| `enabled` | Deploy the DHCP server. | `false` |
+| `chartRepo` | Override the Helm chart repository. | `oci://ghcr.io/loft-sh/charts` |
+| `chart` | Override the Helm chart name. | `vcluster-platform-dhcp-server` |
+| `version` | Override the Helm chart version. | `0.17.0` |
+| `helmValues` | Raw YAML passed as values to the chart. | — |
+
+**Helm values:**
+
+| Value | Description | Default |
+|---|---|---|
+| `image.registry` | Container image registry. | `ghcr.io` |
+| `image.repository` | Container image repository. | `loft-sh/vcluster-platform-dhcp-server` |
+| `image.tag` | Container image tag. | Chart app version |
+| `image.pullPolicy` | Image pull policy. | `Always` |
+| `imagePullSecrets` | Pull secrets for the image. | `[]` |
+| `replicas` | Number of DHCP server replicas. Only supported with a DHCP relay in front of the server, since without one every replica answers the same broadcast. Replies are stateless (addresses come from the BareMetalHost, not a lease database), so any replica can serve any client. Incompatible with `networkAttachmentDefinition.enabled`; run under `hostNetwork` or plain pod networking. | `1` |
+| `hostNetwork` | Run the pod on the host network. When `true`, the pod also runs as root and the Multus NetworkAttachmentDefinition isn't attached. | `false` |
+| `podAnnotations` / `podLabels` | Extra pod metadata. | `{}` |
+| `resources` | Container resource requests and limits. | `{}` |
+| `nodeSelector` / `tolerations` / `affinity` | Pod scheduling constraints. | `{}` / `[]` / `{}` |
+| `securityContext` | Container security context. Overridden to `runAsUser: 0` when `hostNetwork` is `true`. | `NET_BIND_SERVICE` capability, `runAsNonRoot: true`, `runAsUser: 1000` |
+| `extraArgs` | Extra arguments appended to the server binary. Use to set the IPA inspector and installer kernel parameters. | `[]` |
+| `extraEnv` | Extra environment variables on the server container. | `[]` |
+| `networkAttachmentDefinition.enabled` | Attach a Multus secondary interface so the pod sits on the provisioning L2 and can answer broadcast DHCP. Ignored under `hostNetwork`. Set to `false` for ordinary pod networking with no Multus dependency; this only works behind a DHCP relay, and you must set `dhcp.serverIP` and `http.advertiseUrl` to an address clients can reach (typically the `provisioningService` load balancer). | `true` |
+| `networkAttachmentDefinition.vip` | Virtual IP with prefix for the DHCP server. Injected into the NetworkAttachmentDefinition under `ipam.static`. Ignored when `hostNetwork: true`. | `192.168.100.3/24` |
+| `networkAttachmentDefinition.resourceName` | Device-plugin resource the NetworkAttachmentDefinition binds to, stamped as the `k8s.v1.cni.cncf.io/resourceName` annotation so Multus passes the allocated device ID to the CNI plugin (for SR-IOV or other device-plugin interfaces). Empty leaves the annotation off. | `""` |
+| `networkAttachmentDefinition.config` | CNI configuration JSON for the NetworkAttachmentDefinition. Use `bridge` if control plane cluster nodes have a bridge attached to the provisioning network. Use `macvlan` if the bare metal servers are on the same network as the control plane cluster nodes. | bridge `br0` |
+| `dhcp.serverIP` | IP the DHCP server advertises as itself. | `$(SERVER_IP)` (pod env) |
+| `dhcp.port` | DHCP listen port. | `67` |
+| `dhcp.listenAddr` | DHCP listen address. Set to `$(SERVER_IP):{{ .Values.dhcp.port }}` under `hostNetwork` to avoid answering on shared bridges. Rendered with `tpl`. | `0.0.0.0:67` |
+| `tftp.port` | TFTP listen port. | `69` |
+| `tftp.listenAddr` | TFTP listen address. Set to `""` to disable TFTP entirely (HTTP Boot still works). Rendered with `tpl`. | `$(SERVER_IP):69` |
+| `http.port` | HTTP boot file server port. | `8080` |
+| `http.listenAddr` | HTTP boot file server listen address. Rendered with `tpl`. | `$(SERVER_IP):8080` |
+| `http.advertiseUrl` | Base URL clients use to fetch boot files. Also the default for `proxy.apiAdvertiseUrl`. Rendered with `tpl`. | `http://$(SERVER_IP):8080` |
+| `https.listenAddr` | HTTPS boot file server listen address. Set it to enable HTTPS for Redfish virtual media. Bind to `0.0.0.0` when the BMC reaches the server through an interface other than `SERVER_IP`. Rendered with `tpl`. | `""` |
+| `https.port` | HTTPS boot file server port. | `8443` |
+| `https.extraSans` | Additional IP addresses or DNS names for the proxy TLS certificate. Include the address that BMCs use for Redfish virtual media. | `[]` |
+| `provisioningService.type` | Service type exposing the DHCP, TFTP, and HTTP ports so a DHCP relay can unicast to one address instead of relying on broadcast. Usually `LoadBalancer`. Empty leaves the Service out entirely. Needed for `replicas > 1`. | `""` |
+| `provisioningService` (spec) | Interpreted as the Service spec, so any field can be set (`loadBalancerClass`, `externalTrafficPolicy`, and so on). A nested `metadata` map is lifted out and applied to the object's metadata. `ports` defaults to the DHCP, TFTP, and HTTP ports and may be overridden, but an override replaces the defaults wholesale, so it must repeat every port; `name`, `namespace`, and `selector` are always the chart's. | `{}` |
+| `proxy.callbackPort` | IPA callback proxy port. | `8081` |
+| `proxy.callbackListenAddr` | IPA callback proxy listen address. Rendered with `tpl`. | `$(POD_IP):8081` |
+| `proxy.callbackAdvertiseUrl` | URL Ironic uses to reach the IPA callback proxy. Rendered with `tpl`. | `https://ipa-callback.<release-namespace>.svc.cluster.local` |
+| `proxy.apiAdvertiseUrl` | Ironic API base URL written into the IPA kernel parameters. Empty defaults to `http.advertiseUrl`, which routes IPA through this proxy. To bypass the proxy with bundled Metal3, first configure `ironic.ipaAdvertiseIP`, then set this value to its agent endpoint, such as `https://192.168.100.10:6388`. Port `6385` is the in-cluster mTLS endpoint and isn't directly accessible to IPA. For externally managed Ironic, use an API root reachable from the provisioning network. Setting this value makes `proxy.ironicApiUrl` unnecessary. Rendered with `tpl`. | `""` |
+| `proxy.ironicHttpUrl` | Ironic HTTP endpoint the proxy forwards image and boot-file requests to. Always required. | Set to the bundled IPA image service when Metal3 is enabled |
+| `proxy.ironicApiUrl` | Ironic API endpoint the proxy forwards to. Optional when `proxy.apiAdvertiseUrl` is set. The generated URL for the bundled charts targets a port that the Ironic Service doesn't expose, so configure the direct `proxy.apiAdvertiseUrl` path for physical host provisioning. | Generated when Metal3 is enabled |
+
+**Server flags (via `extraArgs`):**
+
+| Flag | Description |
+|---|---|
+| `--inspector-collectors` | Comma-separated list overriding the `ipa-inspection-collectors` kernel parameter in the inspector iPXE script. |
+| `--inspector-extra-kernel-param` | Extra kernel parameter appended to the inspector iPXE script. May be specified multiple times. |
+| `--installer-extra-kernel-param` | Extra kernel parameter appended to the installer iPXE script. May be specified multiple times. |
+| `--callback-insecure-skip-verify` | Skip TLS verification when the callback proxy forwards to IPA. |
+| `--api-advertise-url` | Ironic API base URL written into the IPA kernel parameters. Corresponds to `proxy.apiAdvertiseUrl`; defaults to the HTTP advertise URL. |
+| `--leader-election-id` | Name of the Lease electing which replica manages the proxy certificate Secret. The chart sets this flag automatically when `replicas` is greater than `1`; don't add it through `extraArgs`. The DHCP, TFTP, HTTP, and callback servers keep serving in every replica. |
+| `--tftp-single-port` | EXPERIMENTAL. Serve every TFTP transfer from the listen port instead of a per-transfer ephemeral port, so replies survive Service NAT. Required when TFTP traffic is reached through a Service. Some client firmware may reject replies from port 69, so it is off by default. |
+
+**Per-BareMetalHost DHCP annotations:**
+
+The DHCP server reads these annotations from the matched `BareMetalHost` to build the DHCP reply.
+
+| Annotation | Description |
+|---|---|
+| `metal3.vcluster.com/ip-address` | IPv4 address with prefix (CIDR) to lease. Required. |
+| `metal3.vcluster.com/gateway` | Default gateway. If unset, the first host address in the `ip-address` CIDR is used. |
+| `metal3.vcluster.com/dns-servers` | Comma-separated DNS servers. |
+| `metal3.vcluster.com/ntp-servers` | Comma-separated NTP servers. |
+
+Example with a bridge:
+
+```yaml
+deploy:
+  dhcp:
+    enabled: true
+    helmValues: |
+      networkAttachmentDefinition:
+        vip: 192.168.100.2/24
+        config: |
+          {
+            "cniVersion": "0.3.1",
+            "type": "bridge",
+            "bridge": "br0",
+            "isDefaultGateway": false
+          }
+```
+
+Example with macvlan (bare metal servers on the same network as the control plane cluster nodes):
+
+```yaml
+deploy:
+  dhcp:
+    enabled: true
+    helmValues: |
+      networkAttachmentDefinition:
+        vip: 10.0.0.2/24
+        config: |
+          {
+            "cniVersion": "0.3.1",
+            "type": "macvlan",
+            "master": "eth0",
+            "mode": "bridge"
+          }
+```
+
+Example with `hostNetwork` and custom IPA kernel parameters:
+
+```yaml
+deploy:
+  dhcp:
+    enabled: true
+    helmValues: |
+      hostNetwork: true
+      dhcp:
+        listenAddr: "$(SERVER_IP):67"
+      extraArgs:
+        - --inspector-extra-kernel-param=console=ttyS0,115200n8
+        - --installer-extra-kernel-param=console=ttyS0,115200n8
+```
+
+#### High availability and DHCP relay
+
+By default the DHCP server runs a single replica attached to the provisioning L2 through Multus, where it answers broadcast DHCP directly. This mode doesn't scale past one active answerer.
+
+To run more than one replica, place a DHCP relay in front of the server and expose it through a Service:
+
+- Set `replicas` greater than `1`.
+- Set `provisioningService.type: LoadBalancer` so the relay has a single unicast target that also serves boot files.
+- Point the relay at the `provisioningService` address, and set `dhcp.serverIP` and `http.advertiseUrl` to that same address so clients boot through the Service instead of from whichever replica answered.
+- Add the experimental `--tftp-single-port` so TFTP replies survive the Service NAT. The chart configures leader election automatically.
+- Disable Multus with `networkAttachmentDefinition.enabled: false`, since its static IPAM would hand the same VIP to every pod.
+
+```yaml
+deploy:
+  dhcp:
+    enabled: true
+    helmValues: |
+      replicas: 2
+      networkAttachmentDefinition:
+        enabled: false
+      dhcp:
+        serverIP: 192.168.100.20
+      http:
+        advertiseUrl: http://192.168.100.20:8080
+      provisioningService:
+        type: LoadBalancer
+        metadata:
+          annotations:
+            metallb.universe.tf/loadBalancerIPs: 192.168.100.20
+      extraArgs:
+        - --tftp-single-port
+```
+
+</TabItem>
+<TabItem value="multus" label="Multus">
+
+CNI plugin that enables attaching the DHCP server to a separate provisioning network.
+
+**Helm values:**
+
+| Value | Description | Default |
+|---|---|---|
+| `image.registry` | Container image registry | `ghcr.io` |
+| `image.repository` | Container image repository | `k8snetworkplumbingwg/multus-cni` |
+| `image.tag` | Container image tag | `v4.2.4-thick` |
+| `resources` | CPU and memory requests and limits for the main Multus container. The installer init container has its own fixed resources and isn't affected by this value. | `100m` CPU and `50Mi` memory |
+
+The platform installs Multus into `metal3.clusterRef.namespace`.
+
+```yaml
+deploy:
+  multus:
+    enabled: true
+```
+
+</TabItem>
+</Tabs>
+
+The DHCP server reads its lease data from BareMetalHost annotations. When network properties enable platform IPAM, the provider writes the allocated address and related network settings to those annotations.
+
+## Configuration
+
+A Metal3 `NodeProvider` configuration consists of a cluster reference, optional infrastructure deployment settings, and a list of node types.
+
+### Cluster reference
+
+The `clusterRef` specifies the control plane cluster where the platform installs Metal3 components and where the BareMetalHost resources live. This cluster must be connected to vCluster Platform.
+
+| Field | Description | Required |
+|---|---|---|
+| `clusterRef.cluster` | Name of the connected control plane cluster | Yes |
+| `clusterRef.namespace` | Namespace on the control plane cluster for Metal3 components and BareMetalHost resources | Yes |
+
+The cluster and namespace references are immutable after you create the provider. A connected control plane cluster can be referenced by only one Metal3 NodeProvider.
+
+:::info Ironic network access
+Ironic must have network access to the BMC addresses of the bare metal servers. Ensure the control plane cluster where Ironic is deployed can reach the BMC network (Redfish/IPMI endpoints).
+:::
+
+### Example
+
+This configuration deploys Metal3, Ironic, the DHCP server, and Multus, and defines a single node type that selects BareMetalHosts with the label `role: compute`.
+
+```yaml
+apiVersion: management.loft.sh/v1
+kind: NodeProvider
+metadata:
+  name: metal3-provider
+spec:
+  displayName: "Metal3 Bare Metal Provider"
+  metal3:
+    clusterRef:
+      cluster: bare-metal-cluster
+      namespace: metal3-system
+    deploy:
+      metal3:
+        enabled: true
+        helmValues: |
+          ironic:
+            # Expose the IPA API on a provisioning-network LoadBalancer VIP.
+            ipaAdvertiseIP: 192.168.100.10
+            service:
+              type: LoadBalancer
+              loadBalancerIP: 192.168.100.10
+      dhcp:
+        enabled: true
+        helmValues: |
+          networkAttachmentDefinition:
+            # Attach the DHCP server to the provisioning network.
+            vip: 192.168.100.2/24
+          proxy:
+            # Send IPA directly to the bundled non-mTLS agent endpoint.
+            apiAdvertiseUrl: https://192.168.100.10:6388
+      multus:
+        enabled: true
+    nodeTypes:
+    - name: "compute-node"
+      displayName: "Compute Node"
+      resources:
+        cpu: "32"
+        memory: 128Gi
+      bareMetalHosts:
+        selector:
+          matchLabels:
+            role: compute
+      properties:
+        vcluster.com/os-image: ubuntu-noble
+```
+
+## Get started
+
+This walkthrough covers the essential steps to go from a connected control plane cluster to a provisioned bare metal server.
+
+Before you begin:
+
+- Install cert-manager on the control plane cluster.
+- Connect each control plane cluster node to the provisioning network through a `br0` bridge, or replace the DHCP NetworkAttachmentDefinition configuration.
+- Configure a load balancer implementation that can assign `192.168.100.10` to the Ironic Service. Replace all example network addresses with addresses from your provisioning network.
+- Create an [OSImage](../../images/os-images.mdx#create-an-osimage) named `ubuntu-noble`, or change the node type to reference an existing Metal3-compatible OSImage.
+
+<Flow>
+<Step>
+Apply the NodeProvider.
+
+Create a NodeProvider that references your control plane cluster and defines at least one node type. The node type's label selector determines which BareMetalHosts it can claim.
+
+```yaml
+apiVersion: management.loft.sh/v1
+kind: NodeProvider
+metadata:
+  name: metal3-provider
+spec:
+  displayName: "Metal3 Bare Metal Provider"
+  metal3:
+    clusterRef:
+      cluster: bare-metal-cluster
+      namespace: metal3-system
+    deploy:
+      metal3:
+        enabled: true
+        helmValues: |
+          ironic:
+            # Expose the IPA API on a provisioning-network LoadBalancer VIP.
+            ipaAdvertiseIP: 192.168.100.10
+            service:
+              type: LoadBalancer
+              loadBalancerIP: 192.168.100.10
+      dhcp:
+        enabled: true
+        helmValues: |
+          networkAttachmentDefinition:
+            # Attach the DHCP server to the provisioning network.
+            vip: 192.168.100.2/24
+          proxy:
+            # Send IPA directly to the bundled non-mTLS agent endpoint.
+            apiAdvertiseUrl: https://192.168.100.10:6388
+      multus:
+        enabled: true
+    nodeTypes:
+    - name: "compute-node"
+      displayName: "Compute Node"
+      resources:
+        cpu: "32"
+        memory: 128Gi
+      bareMetalHosts:
+        selector:
+          matchLabels:
+            role: compute
+      properties:
+        vcluster.com/os-image: ubuntu-noble
+```
+
+```bash
+kubectl apply -f metal3-provider.yaml
+```
+
+Wait for Metal3 and Ironic to be running on the control plane cluster before creating BareMetalHost resources. The Metal3 webhook must be ready to validate them.
+</Step>
+
+<Step>
+Create BMC credentials.
+
+Create a Secret with the BMC username and password for your server. This Secret is referenced by the BareMetalHost resource.
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: server-01-bmc
+  namespace: metal3-system
+type: Opaque
+stringData:
+  username: admin
+  password: <BMC-PASSWORD>
+```
+
+```bash
+kubectl apply -f server-01-bmc-secret.yaml
+```
+</Step>
+
+<Step>
+Create a BareMetalHost.
+
+Register the physical server by creating a BareMetalHost resource. The `bmc.address` scheme determines which driver Metal3 uses, such as Redfish or IPMI. The `bootMACAddress` identifies the NIC used for PXE boot.
+
+```yaml
+apiVersion: metal3.io/v1alpha1
+kind: BareMetalHost
+metadata:
+  name: server-01
+  namespace: metal3-system
+  labels:
+    role: compute
+spec:
+  bmc:
+    address: redfish://192.168.1.100
+    credentialsName: server-01-bmc
+    disableCertificateVerification: true
+  bootMACAddress: "aa:bb:cc:dd:ee:01"
+```
+
+```bash
+kubectl apply -f server-01-bmh.yaml
+```
+
+The server moves through `registering` and `inspecting` states as Metal3 verifies BMC access and collects hardware inventory.
+</Step>
+
+<Step>
+Verify the server reaches available state.
+
+Once the BareMetalHost passes inspection, it transitions to `available`. This means the server is registered, its hardware inventory is collected, and it is ready for provisioning.
+
+```bash
+kubectl get baremetalhost -n metal3-system
+```
+
+```text
+NAME        STATE       CONSUMER   ONLINE   ERROR   AGE
+server-01   available              false            5m
+```
+</Step>
+
+<Step>
+Create a tenant cluster that claims the server.
+
+Create a tenant cluster with private nodes configured to use the Metal3 provider. The platform provisions a Machine, which claims the BareMetalHost and installs the OS through Ironic.
+
+```yaml
+privateNodes:
+  enabled: true
+  autoNodes:
+    - provider: metal3-provider
+      static:
+        - name: compute-nodes
+          quantity: 1
+          nodeTypeSelector:
+            - property: vcluster.com/node-type
+              value: compute-node
+```
+
+After provisioning completes, the server boots into the configured OS and joins the tenant cluster as a worker node.
+</Step>
+</Flow>
+
+## Define node types
+
+Each node type specifies which BareMetalHosts it can claim and what properties to apply during provisioning.
+
+### Select BareMetalHosts by label
+
+Use `bareMetalHosts.selector` to match BareMetalHosts by labels. The provider checks requested CPU and memory against the inspected BareMetalHost inventory. Other resource keys don't affect BareMetalHost selection, so use labels to select hardware such as GPUs.
+
+```yaml
+nodeTypes:
+- name: "gpu-server"
+  displayName: "GPU Server"
+  resources:
+    cpu: "64"
+    memory: 256Gi
+  bareMetalHosts:
+    selector:
+      matchLabels:
+        role: gpu
+        datacenter: us-east
+
+- name: "general-compute"
+  displayName: "General Compute"
+  resources:
+    cpu: "32"
+    memory: 128Gi
+  bareMetalHosts:
+    selector:
+      matchLabels:
+        role: compute
+```
+
+## Configuration properties
+
+Properties are key-value pairs on node types or Machines that control provisioning behavior.
+
+### Image configuration
+
+#### `vcluster.com/os-image`
+
+**Type:** `string`
+
+References an [OSImage](../../images/os-images.mdx) resource by name. The OSImage's properties are used to configure the image URL, checksum, and checksum type. This is the recommended way to configure OS images.
+
+#### `metal3.vcluster.com/image-url`
+
+**Type:** `string`
+**Required:** Yes (if not using `vcluster.com/os-image`)
+
+Direct URL to the OS image. Example: `https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img`
+
+#### `metal3.vcluster.com/image-checksum`
+
+**Type:** `string`
+**Required:** Yes (if not using `vcluster.com/os-image`)
+
+Checksum of the OS image for verification.
+
+#### `metal3.vcluster.com/image-checksum-type`
+
+**Type:** `string`
+
+Checksum algorithm. Supported values are `md5`, `sha256`, `sha512`, and `auto`. If omitted, Ironic defaults to `md5`. Set it to `auto` to have Ironic detect the algorithm from the checksum.
+
+### Network configuration
+
+#### `metal3.vcluster.com/network-cidr`
+
+**Type:** `string` (standard CIDR notation)
+
+Specifies the gateway IP and subnet for IP allocation. Use standard CIDR notation where the host portion is the gateway address. The platform allocates IPs from the resulting subnet using its built-in IPAM.
+
+Example: `10.0.0.1/24`
+
+#### `metal3.vcluster.com/network-ip-range`
+
+**Type:** `string` (comma-separated IP ranges)
+
+Restricts allocation to explicit IP ranges. The `metal3.vcluster.com/network-cidr` property remains required because it supplies the gateway and prefix. Keep every range within that subnet. Format: `IP1-IP2,IP3-IP4`
+
+Example: `10.0.0.20-10.0.0.30,10.0.0.40-10.0.0.50`
+
+#### `metal3.vcluster.com/dns-servers`
+
+**Type:** `string` (comma-separated)
+
+DNS servers to configure on the provisioned server. Example: `8.8.8.8,8.8.4.4`
+
+#### `metal3.vcluster.com/network-data`
+
+**Type:** `string`
+
+Complete custom network-data configuration for the installed operating system. When set, it replaces the network-data document that the provider would generate. CIDR and IP range properties still control address allocation and provisioning DHCP.
+
+#### `vcluster.com/network-data-template-config`
+
+**Type:** `string`
+
+References a [MachineConfigTemplate](../../images/machine-config-templates.mdx) by name. The provider renders the template's `networkDataTemplate` into a cloud-init `network-config` document when `metal3.vcluster.com/network-data` isn't set. See [Machine Config Templates](../../images/machine-config-templates.mdx) for the template syntax and available variables.
+
+### Network environment
+
+#### `vcluster.com/network-environment`
+
+**Type:** `string`
+
+Names the network environment, a [NodeEnvironment](../../concepts/machine-types-and-nodetypes.mdx#node-environments) resource whose properties are merged into the NodeClaim's effective property set. The platform resolves this from the merged properties of NodeProvider, NodeType, and NodeClaim. When set, this property takes precedence over the typed `NodeClaim.spec.environmentRef` field.
+
+### Server pinning
+
+#### `metal3.vcluster.com/server-name`
+
+**Type:** `string`
+
+Pins a Machine to a specific BareMetalHost by name. This is useful when creating a Machine directly and you want to target a particular server. Set this property on the Machine, not on the node type.
+
+### SSH and user data
+
+#### `vcluster.com/ssh-keys`
+
+**Type:** `string` (comma-separated)
+
+References [SSHKey](../../images/ssh-keys.mdx) resources by name. The public keys are included in the user data during provisioning.
+
+#### `vcluster.com/user-data`
+
+**Type:** `string`
+
+Custom cloud-init configuration merged with the generated user data. Accepts any valid cloud-config directives, including `packages`, `write_files`, and `runcmd`. The platform's provisioning commands are appended after any user-supplied `runcmd` entries.
+
+Takes precedence over `vcluster.com/user-data-template-config`.
+
+#### `vcluster.com/user-data-template-config`
+
+**Type:** `string`
+
+References a [MachineConfigTemplate](../../images/machine-config-templates.mdx) by name. The provider renders the template's `cloudInitTemplate` into a cloud-config document when `vcluster.com/user-data` isn't set. See [Machine Config Templates](../../images/machine-config-templates.mdx) for the template syntax and available variables.
+
+The platform always merges resolved SSH keys into the cloud-config. For a tenant cluster worker, it also appends the join command. For a tenant cluster control plane machine, it appends the control plane installation commands. Independently provisioned Machines receive no tenant cluster registration command.
+
+## Try it yourself
+
+The community and experimental [vCluster Bare Metal with KubeVirt](https://github.com/loft-sh/vcluster-bare-metal-with-kubevirt) guide runs the Metal3 provisioning flow locally with KubeVirt VMs as fake bare metal servers. It sets up a [vind](/docs/vcluster/deploy/control-plane/docker-container/basics) (vCluster in Docker) cluster, a Metal3 NodeProvider, and simulated BareMetalHosts with Redfish BMC endpoints. No physical hardware is required.
