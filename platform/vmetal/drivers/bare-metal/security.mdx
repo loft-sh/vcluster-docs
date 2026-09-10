@@ -21,7 +21,7 @@ apiVersion: v1
 kind: Secret
 metadata:
   name: server-01-bmc-credentials
-  namespace: <nodeprovider-namespace>
+  namespace: <metal3-namespace>
 type: Opaque
 stringData:
   username: admin
@@ -32,22 +32,24 @@ Use a distinct Secret per server or per logical group of servers. A single share
 
 ### Rotate BMC credentials
 
-Rotating a BMC credential doesn't disturb an already-provisioned server. The BMO uses BMC credentials only for active operations (power on/off, boot device change, hardware inspection). A server in `provisioned` state is running its OS and isn't subject to ongoing BMC calls.
+Rotating a BMC credential doesn't modify the OS or workloads on an already-provisioned server. BMO still uses the credential to observe and manage hardware state, so a mismatch can temporarily set the BareMetalHost's operational status to `error` and prevent power or lifecycle operations.
 
-To rotate: update the BMC password on the server's BMC management interface, then update the Kubernetes Secret with the new password. The BMO picks up the new credentials on its next reconcile cycle. You don't need to restart the Metal3 pod or deprovision the server.
+To rotate, update the BMC password on the server's BMC management interface, then update the Kubernetes Secret with the new password. Keep the interval between those changes as short as possible. BMO picks up the new credentials during reconciliation; you don't need to restart its Deployment or deprovision the server.
 
-If the BareMetalHost enters an error state after rotation (for example, a brief out-of-sync window between old and new passwords), annotate it to trigger a retry:
+Check the BareMetalHost after the Secret update:
 
 ```bash
-kubectl annotate baremetalhost <name> -n <namespace> \
-  baremetalhost.metal3.io/reboot='{"force":false}' --overwrite
+kubectl get baremetalhost <name> -n <namespace>
+kubectl describe baremetalhost <name> -n <namespace>
 ```
+
+An error does not move the host into a separate provisioning state. BMO leaves it in its current provisioning state and retries reconciliation. If the error remains, verify the Secret contents and BMC reachability before attempting another lifecycle operation.
 
 ### Disable certificate verification only as a last resort
 
 The `spec.bmc.disableCertificateVerification: true` field tells Ironic to skip TLS certificate validation when connecting to the BMC over HTTPS. Don't set this in production: it allows a man-in-the-middle to intercept BMC traffic, including credentials.
 
-If your BMC uses a self-signed certificate or an internal CA, add that CA to Ironic's trust store instead of disabling verification. Pass the CA bundle to the Ironic container using the NodeProvider's `metal3.deploy.metal3.helmValues` field:
+If your BMC uses a self-signed certificate or an internal CA, add that CA to Ironic's BMC trust directory instead of disabling verification. The Ironic image combines certificates mounted under `/certs/ca/bmc` into the CA bundle it uses for BMC connections. Mount the CA Secret through the NodeProvider's `metal3.deploy.metal3.helmValues` field:
 
 ```yaml
 spec:
@@ -57,12 +59,9 @@ spec:
         enabled: true
         helmValues: |
           ironic:
-            extraEnv:
-            - name: IRONIC_CACERT_FILE
-              value: /etc/ironic/ca/ca.crt
             extraVolumeMounts:
             - name: bmc-ca
-              mountPath: /etc/ironic/ca
+              mountPath: /certs/ca/bmc
               readOnly: true
             extraVolumes:
             - name: bmc-ca
@@ -70,7 +69,7 @@ spec:
                 secretName: bmc-ca-bundle
 ```
 
-Create the `bmc-ca-bundle` Secret in the NodeProvider namespace with the PEM-encoded CA certificate under key `ca.crt`.
+Create the `bmc-ca-bundle` Secret in the Metal3 release namespace on the control plane cluster, with the PEM-encoded CA certificate under key `ca.crt`. This is the namespace configured by the NodeProvider's `clusterRef`. Don't set `IRONIC_CACERT_FILE` for this purpose; that variable configures trust for the Ironic API rather than the BMC endpoints.
 
 ## Trust the OS image pipeline
 
