@@ -1,0 +1,249 @@
+---
+title: GPU Fleet Operations
+sidebar_label: GPU Fleet Operations
+sidebar_position: 6.5
+description: Design node types, label GPU servers, and manage a GPU bare metal fleet with the Metal3 driver.
+---
+
+import GpuFleetAllocation from '@site/static/media/diagrams/vmetal-gpu-fleet-allocation.svg';
+
+This guide covers fleet design and day-2 operations for GPU bare metal servers managed by the Metal3 driver. For initial NodeProvider setup and provisioning a single GPU server, start with the [GPU Quickstart](./gpu-quickstart.mdx). For passthrough, vGPU, MIG, AMD GPUs, and other accelerators, see [GPU presentation modes](../../concepts/gpu-presentation-modes.mdx).
+
+## Label strategy
+
+Labels on `BareMetalHost` resources drive node type selection. The platform's label selector matches servers to node types, so a consistent labeling scheme is the foundation of a manageable fleet.
+
+### Recommended labels
+
+| Label | Example values | Purpose |
+|---|---|---|
+| `gpu-model` | `h100`, `a100`, `l40s` | GPU model identifier |
+| `gpu-count` | `8`, `4`, `2` | Number of GPUs per server |
+| `rack` | `rack-a`, `rack-b` | Physical location |
+| `datacenter` | `us-east-1`, `eu-west-1` | Site identifier |
+| `nvlink-domain` | `nvlink-0`, `nvlink-1` | NVLink fabric group for multi-server NVLink topologies |
+
+Apply labels when registering servers:
+
+```bash
+kubectl label baremetalhost server-01 -n metal3-system \
+  gpu-model=h100 \
+  gpu-count=8 \
+  rack=rack-a \
+  datacenter=us-east-1
+```
+
+### Update labels without re-provisioning
+
+You can update labels on a `BareMetalHost` at any time. Label changes don't trigger re-provisioning. The platform reads labels only when selecting a server for a new Machine claim, so labels on a claimed server have no effect until you delete the Machine and provision a new one.
+
+```bash
+kubectl label baremetalhost server-01 -n metal3-system nvlink-domain=nvlink-0 --overwrite
+```
+
+## Node type design
+
+<figure>
+  <GpuFleetAllocation style={{width: '100%', height: 'auto'}} role="img" aria-label="Node types route Machine requests to eligible BareMetalHosts by label selector" />
+</figure>
+
+### One node type per hardware profile
+
+Define a separate node type for each distinct GPU hardware profile. Servers with different GPU models, GPU counts, or CPU configurations should have distinct node types with matching selectors.
+
+```yaml
+nodeTypes:
+- name: "h100-8x"
+  displayName: "H100 8-GPU"
+  resources:
+    cpu: "96"
+    memory: 768Gi
+    nvidia.com/gpu: "8"
+  bareMetalHosts:
+    selector:
+      matchLabels:
+        gpu-model: h100
+        gpu-count: "8"
+  properties:
+    vcluster.com/os-image: ubuntu-noble-gpu
+
+- name: "a100-4x"
+  displayName: "A100 4-GPU"
+  resources:
+    cpu: "64"
+    memory: 256Gi
+    nvidia.com/gpu: "4"
+  bareMetalHosts:
+    selector:
+      matchLabels:
+        gpu-model: a100
+        gpu-count: "4"
+  properties:
+    vcluster.com/os-image: ubuntu-noble-gpu
+```
+
+For device-plugin based GPUs, use the resource name advertised by the vendor device plugin. NVIDIA fleets commonly use `nvidia.com/gpu`. AMD GPU fleets may use `amd.com/gpu`. Other accelerator vendors publish their own resource names.
+
+### Per-tenant node types
+
+AI Clouds often dedicate capacity to specific tenants by combining hardware labels with a tenant label:
+
+```bash
+kubectl label baremetalhost server-01 -n metal3-system tenant=customer-a
+```
+
+Then define a node type whose selector includes both hardware and tenant attributes:
+
+```yaml
+nodeTypes:
+- name: "customer-a-h100-8x"
+  displayName: "Customer A H100 8-GPU"
+  resources:
+    cpu: "96"
+    memory: 768Gi
+    nvidia.com/gpu: "8"
+  bareMetalHosts:
+    selector:
+      matchLabels:
+        gpu-model: h100
+        gpu-count: "8"
+        tenant: customer-a
+  properties:
+    vcluster.com/os-image: ubuntu-noble-gpu
+```
+
+Only servers labeled `tenant: customer-a` match this node type, even if their hardware labels also match another tenant's node type. To enforce this at the platform level and prevent a project from accidentally requesting a node type it shouldn't have access to, set `spec.allowedNodeTypes` on the Project. See [Manage allowed node types](../../../administer/projects/allowed/node-types.mdx).
+
+Properties defined at the node type level are merged with NodeProvider defaults at provisioning time. For how property precedence works, see [Node types and node providers](../../concepts/machine-types-and-nodetypes.mdx#property-merging).
+
+Node types are also composable along orthogonal dimensions. For example, you might create one set by hardware profile and another set by tenant. A server labeled with both dimensions matches both types simultaneously, and tenants select from the pool that combines whichever dimensions apply to their request.
+
+### Capacity and cost
+
+Capacity for a node type is the number of available `BareMetalHost` resources matching its label selector. The platform tracks how many servers are provisioned and marks the node type unavailable once every matching host is in use.
+
+Karpenter uses each node type's cost to pick the cheapest matching type when a request matches more than one. See [Cost](../../concepts/machine-types-and-nodetypes.mdx#cost) for the default cost formula. Override cost explicitly to control scheduling preference independently of resource counts:
+
+```yaml
+nodeTypes:
+- name: "h100-8x"
+  cost: 500000
+  resources:
+    cpu: "96"
+    memory: 768Gi
+    nvidia.com/gpu: "8"
+```
+
+A lower cost makes the node type preferred over higher-cost alternatives when both match.
+
+## Understand scheduling behavior
+
+### GPU resources inside a tenant cluster
+
+When a bare metal server joins a tenant cluster as a private node, workloads inside the tenant cluster schedule to the node using standard Kubernetes resource requests:
+
+```yaml
+resources:
+  limits:
+    nvidia.com/gpu: "1"
+```
+
+For GPU scheduling with extended resources, the vendor device plugin or GPU Operator must run inside the tenant cluster. Without it, the node doesn't advertise the accelerator resource to the scheduler, even if the node type specifies it. For Dynamic Resource Allocation (DRA), the vendor DRA driver advertises devices through DRA objects such as `DeviceClass` and `ResourceClaim` rather than simple pod resource limits.
+
+For how vCluster syncs GPU resources and DRA objects across the tenant cluster boundary, see [GPU and accelerator support in vCluster](/docs/vcluster/introduction/gpu-and-accelerator-support).
+
+### Choose a device plugin or GPU Operator
+
+The NVIDIA device plugin is a lightweight DaemonSet that discovers GPUs and exposes them to the Kubernetes scheduler. Deploy it directly when you control the driver installation and want minimal overhead.
+
+The [NVIDIA GPU Operator](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/index.html) manages the device plugin, driver installation, container runtime configuration, and monitoring. It's the most common approach when the OS image doesn't include drivers. For MIG-specific configuration, see the [GPU Operator with MIG](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/gpu-operator-mig.html) documentation.
+
+AMD GPUs and other accelerators follow the same Kubernetes pattern when they use extended resources, using the vendor's own driver, operator, or device plugin. See the [AMD GPU device plugin](https://instinct.docs.amd.com/projects/k8s-device-plugin/en/latest/index.html) and [AMD GPU Operator](https://instinct.docs.amd.com/projects/gpu-operator/en/main/device_plugin/device-plugin.html) documentation.
+
+## Fleet lifecycle
+
+### Rotate OS images
+
+To update the OS image across a fleet, create a new `OSImage` resource with the updated URL and checksum, then update the node type's `vcluster.com/os-image` property to reference it. Don't edit the existing `OSImage` in place: updating an existing resource doesn't trigger re-provisioning for running Machines.
+
+The node type change causes drift. The platform detects that running Machines no longer match the node type and rolls them over automatically, deprovisioning and re-provisioning servers with the updated image.
+
+### Heterogeneous GPU fleets
+
+A single NodeProvider can manage servers with different GPU models. Define one node type per hardware profile and use label selectors to route requests to the right servers. The platform selects the cheapest matching type when multiple types satisfy a request.
+
+```yaml
+nodeTypes:
+- name: "h100-8x"
+  bareMetalHosts:
+    selector:
+      matchLabels:
+        gpu-model: h100
+- name: "a100-4x"
+  bareMetalHosts:
+    selector:
+      matchLabels:
+        gpu-model: a100
+```
+
+Tenants request a specific node type by name using `nodeTypeSelector`. If the tenant omits a selector, the platform picks the cheapest available type.
+
+### Server pinning
+
+Pin a Machine to a specific physical server when a workload requires a particular server, such as a node in a specific NVLink fabric or a server with a known hardware configuration. Set `metal3.vcluster.com/server-name` on the Machine, not on the node type:
+
+```yaml
+privateNodes:
+  enabled: true
+  autoNodes:
+    - provider: metal3-provider
+      static:
+        - name: pinned-gpu
+          quantity: 1
+          nodeTypeSelector:
+            - property: vcluster.com/node-type
+              value: h100-8x
+          properties:
+            metal3.vcluster.com/server-name: server-01
+```
+
+The platform claims only the named server. If that server is unavailable, provisioning fails rather than selecting a different server.
+
+## Inference provider capacity
+
+Inference providers sell managed model endpoints backed by this fleet. The fleet is the GPU capacity layer behind those endpoints: the Metal3 driver provisions and reclaims the bare metal servers, vCluster Platform places tenant clusters and private nodes on them, and the [inference serving stack](/docs/vcluster/integrations/model-serving) runs inside the tenant cluster. A direct deployment or inference control plane owns the endpoint workloads, routes, and autoscalers.
+
+For the full inference provider journey, including tenancy model, endpoint routing, and day-2 operations, see the [Inference Provider production path](/docs/vcluster/production-guide/inference-provider).
+
+### Map hardware SKUs to serving tiers
+
+A serving tier is a customer-facing GPU class, such as `h100-dedicated` or `l40s-shared`. Model one node type per serving tier. The node type fixes the GPU model, GPU count, CPU, memory, and OS image that back that tier.
+
+Define the tiers your product sells. The table below is one example layout, not a fixed catalog:
+
+| Example tier | Node type traits | Typical use |
+|---|---|---|
+| High-throughput dedicated | 8-GPU H100 or H200, NVLink-aware labels | Large models, reserved single-tenant capacity |
+| Mid-range shared | 2-GPU or 4-GPU L40S or A100 | Mixed model sizes, shared serving pools |
+| Entry or burst | Single-GPU L4 or L40S | Small models, low-cost tiers, scale-to-zero endpoints |
+
+Keep MIG, vGPU, and Dynamic Resource Allocation decisions in the vendor stack and the OS image, not in the driver. For how each presentation mode reaches the tenant cluster, see [GPU presentation modes](../../concepts/gpu-presentation-modes.mdx).
+
+### Plan warm pools against on-demand provisioning
+
+Provisioning a bare metal server isn't instant. It includes BMC verification, hardware inspection, PXE boot, OS installation, and the node join. For endpoint tiers with a latency or readiness target, decide how much GPU capacity to keep warm against how much to provision on demand.
+
+| Strategy | Use when | Tradeoff |
+|---|---|---|
+| Warm pool | You sell low-latency tiers or expect frequent endpoint creation | Servers stay provisioned and joined, so endpoints schedule fast. Idle GPU capacity costs money. |
+| On-demand | You sell low-cost tiers or create endpoints infrequently | Lowest idle cost. Customers wait for provisioning and model load before the endpoint is ready. |
+
+To keep a warm pool, provision GPU servers ahead of demand and leave them claimed to a tenant cluster or a standby pool, so new endpoints schedule onto nodes that already advertise GPU resources. Surface the difference between "waiting for capacity" and "loading a model" in your product so customers understand endpoint readiness.
+
+### Operate serving tiers
+
+Serving tiers are node types, so running them over time reuses the fleet mechanics on this page rather than a separate workflow.
+
+- **Reserve a dedicated tier** - bind labeled servers to one customer with [per-tenant node types](#per-tenant-node-types), and enforce the boundary with `spec.allowedNodeTypes`. Shared tiers draw from a common pool.
+- **Add or move capacity** - add a node type for a new tier, or re-label a `BareMetalHost` to move a server between tiers. Label changes need no re-provisioning and apply on the next claim.
+- **Reshape or retire a tier** - editing or removing a node type causes drift, so the platform rolls the affected servers. Drain that tier's endpoints first, and stage the rollout one tier at a time. See [Rotating OS images](#rotate-os-images).

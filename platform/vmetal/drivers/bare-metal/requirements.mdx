@@ -1,0 +1,94 @@
+---
+title: Requirements
+sidebar_label: Requirements
+sidebar_position: 2
+description: Network, hardware, and BMC requirements for the Metal3 driver.
+---
+
+This page covers the network, hardware, and BMC requirements for the Metal3 driver. Other vMetal drivers have their own requirements, documented on their own pages.
+
+## Hardware requirements
+
+- Each server must have a **BMC** (Baseboard Management Controller) that supports Redfish or IPMI.
+- Each server must have a **NIC configured for PXE boot** with a known MAC address.
+- The control plane cluster running Metal3 and Ironic must have **network access to the BMC endpoints** of all managed servers.
+
+## Network requirements
+
+Metal3 distinguishes three logical network zones:
+
+- **BMC network** - out-of-band management traffic. Ironic connects to BMC endpoints over Redfish or IPMI to power servers on and off, set boot order, and monitor hardware status. This is typically a dedicated management VLAN or subnet, and it can be routable from the provisioning network or fully isolated, depending on your security requirements.
+- **Provisioning network** - PXE boot traffic. Bare metal servers boot the Ironic Python Agent installer from this network, which fetches the OS image from Ironic or an external HTTP source.
+- **Tenant network** - the network provisioned servers use after PXE boot. For servers joining a tenant cluster, Kubernetes node and workload traffic runs here.
+
+The provisioning and tenant networks can share a segment. When they do, apply security measures such as a DHCP relay to guard against unauthorized DHCP responses during PXE boot. Sharing the BMC network with other segments is technically possible but not recommended.
+
+### Connectivity requirements
+
+| Traffic | Source | Destination | Protocol |
+|---|---|---|---|
+| BMC power / boot control | Ironic | BMC endpoint | Redfish: TCP 443 or 80 |
+| BMC power / boot control | Ironic | BMC endpoint | IPMI: UDP 623 |
+| PXE DHCP (broadcast) | Bare metal server | DHCP proxy | UDP 67 |
+| TFTP boot | Bare metal server | DHCP proxy | UDP 69 |
+| HTTP (IPA image, iPXE, API proxy) | Bare metal server | DHCP proxy | TCP 8080 |
+
+TFTP isn't required for servers that use HTTP Boot instead of TFTP-based iPXE. For the DHCP server's own deployment options (bridge, macvlan, or host network), see [DHCP Server](./metal3.mdx#infrastructure-deployment).
+
+The tenant network must provide access to the tenant cluster's API endpoint and to required DNS, registry, and workload services, the same as any Kubernetes node network.
+
+## BMC requirements
+
+Common address formats:
+
+- **Redfish**: `redfish://<host>[:<port>]/<system-id>` (HTTPS, the default) or `redfish+http://<host>[:<port>]/<system-id>` (unencrypted, development only). Consult the server vendor for its Redfish system ID.
+- **IPMI**: `ipmi://<host>[:<port>]`. The port defaults to `623`.
+
+Avoid `redfish+http://` in production. It sends BMC credentials and commands without transport encryption. For vendor-specific drivers, boot methods, firmware constraints, and address formats, see [Supported hardware](https://book.metal3.io/bmo/supported_hardware) in the Metal3 Bare Metal Operator documentation.
+
+### What Metal3 does over the BMC connection
+
+Ironic uses the BMC connection to read and change power state and to select the boot device. Hardware inventory is collected by the Ironic Python Agent (IPA) after Metal3 boots the server into the inspection ramdisk. It isn't read from the BMC. The deployed BMO and Ironic stack can also configure RAID and update firmware with supported drivers and hardware, but vMetal doesn't currently request those operations.
+
+### Privilege scope
+
+Use a dedicated BMC service account with permission to read power state, power the server on and off, reset it, and set its boot device. Don't assume a vendor's Operator role is sufficient. With an `ipmi://` address, the BMO version shipped by default requests the IPMI `ADMINISTRATOR` privilege level. To request `OPERATOR` instead, append `?privilegelevel=OPERATOR` to the BMC address and verify all lifecycle operations against your firmware. Redfish role names and permission mappings vary by vendor.
+
+### Redfish versus IPMI
+
+Redfish is the more modern, more consistently structured protocol. Prefer it when your hardware supports it. Redfish conformance varies by vendor and firmware version, so confirm that the address scheme and features you plan to use, such as virtual media, support your hardware. IPMI is older and exposes fewer capabilities through BMO's generic IPMI driver. For example, that driver doesn't provide RAID or firmware interfaces.
+
+Self-signed or vendor-issued BMC certificates are common. Avoid disabling certificate verification (`spec.bmc.disableCertificateVerification`) in production. Add the BMC's CA to Ironic's trust store instead.
+
+## Handoff checklist for a data center or colocation provider
+
+Share this checklist with whoever racks and cables the servers, if that isn't your own team:
+
+- [ ] Each server has a BMC reachable from the control plane cluster, over Redfish or IPMI.
+- [ ] Dedicated BMC service accounts have the power and boot-device permissions described above; any IPMI privilege-level override has been tested.
+- [ ] Each server's PXE NIC and its MAC address are documented.
+- [ ] The provisioning network allows DHCP, TFTP, and HTTP traffic, per [Connectivity requirements](#connectivity-requirements).
+- [ ] Each server can fetch its OS image URL over HTTP or HTTPS without credentials supplied separately from the URL.
+- [ ] The tenant network can reach the tenant cluster API endpoint and required DNS and registry services.
+- [ ] The BMC network is reachable from the control plane cluster, on its own segment or routed as required.
+- [ ] Cabling for the BMC, provisioning, and tenant networks is documented per server, especially where they run on separate physical NICs.
+
+## Platform requirements
+
+- An active vCluster Platform installation with a license plan that includes vMetal.
+- The control plane cluster where Metal3 and Ironic are deployed must be [connected to the platform](../../../administer/clusters/connect-cluster.mdx).
+- `BareMetalHost` resources and their associated Secrets must be in the same namespace as the Metal3 components.
+
+## Known limits
+
+- Servers in `error` state require manual investigation. Check the `BareMetalHost` status conditions for details.
+- Provisioning a server involves a full PXE boot cycle, which takes longer than VM-based provisioning. Expect several minutes depending on hardware, network speed, and OS image size.
+- The OS image must be reachable over HTTP or HTTPS from the bare metal server itself, not just from the control plane cluster. The server's IPA downloads it directly. The platform passes the image URL and checksum to Metal3 but doesn't supply separate authentication headers or credentials for the download.
+
+## Managed Kubernetes restrictions
+
+When using managed Kubernetes services as the control plane cluster for Metal3:
+
+- **GKE Autopilot**: Not supported as a control plane cluster because of restrictions on privileged workloads and host networking.
+- **EKS Auto Mode / Fargate**: Not supported as a control plane cluster. Use standard managed node groups instead.
+- Ensure the managed cluster's nodes can reach the BMC network. This may require VPC peering, VPN, or direct network connectivity.

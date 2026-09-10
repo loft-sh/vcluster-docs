@@ -1,0 +1,79 @@
+---
+title: GPU Presentation Modes
+sidebar_label: GPU Presentation Modes
+sidebar_position: 3
+description: Understand how bare metal passthrough, vGPU, MIG, and accelerator resources are exposed on vMetal nodes.
+---
+
+vMetal provisions physical servers. It doesn't virtualize GPUs, partition GPUs, or install a specific accelerator driver by itself. The server hardware, OS image, driver stack, and vendor [device plugin](https://kubernetes.io/docs/concepts/extend-kubernetes/compute-storage-net/device-plugins/) or [Dynamic Resource Allocation](https://kubernetes.io/docs/concepts/scheduling-eviction/dynamic-resource-allocation/) driver determine GPU presentation.
+
+When a vMetal Machine joins a tenant cluster as a private node, Kubernetes sees the installed OS and device stack. For how vCluster syncs the resulting resources into the tenant cluster, see [GPU and accelerator support in vCluster](/docs/vcluster/introduction/gpu-and-accelerator-support).
+
+## Responsibility boundary
+
+| Layer | Responsible component |
+|---|---|
+| Server power, BMC communication, inspection, PXE boot, OS installation | [Metal3](https://metal3.io/documentation.html), [Ironic](https://book.metal3.io/ironic/introduction.html), and vMetal |
+| OS image selection and cloud-init user data | vMetal `OSImage`, NodeProvider, NodeType, and Machine properties |
+| GPU driver, kernel modules, container runtime configuration | OS image, cloud-init, or vendor operator |
+| GPU discovery and Kubernetes resource advertisement | Vendor device plugin, GPU Operator, or DRA driver |
+| Tenant Kubernetes API, workload scheduling, and object sync | vCluster |
+
+## Bare metal passthrough
+
+Bare metal passthrough is the default vMetal model. There's no hypervisor between the workload node and the physical GPU. The provisioned OS sees the PCIe devices directly, and the vendor driver and device plugin expose those devices to Kubernetes.
+
+Use this model for dedicated GPU servers, AI training nodes, inference nodes, and other workloads that need direct device access and predictable performance. If you run an inference provider, passthrough is the common choice for dedicated serving tiers. See [Inference provider capacity](../drivers/bare-metal/gpu-fleet-operations.mdx#inference-provider-capacity) for fleet design and the [Inference Provider production path](/docs/vcluster/production-guide/inference-provider) for the full journey.
+
+## NVIDIA vGPU
+
+[NVIDIA vGPU](https://docs.nvidia.com/vgpu/latest/) requires the NVIDIA vGPU software stack and compatible hardware licensing. vMetal doesn't create vGPU profiles or configure the vGPU manager. If you need vGPU, include the required NVIDIA vGPU host or guest driver configuration in the OS image or post-provision setup, then install the Kubernetes components that expose the resulting resources to the tenant cluster.
+
+Use this model only when your NVIDIA vGPU architecture is already defined at the OS and driver layer.
+
+## NVIDIA MIG
+
+Configure NVIDIA [Multi-Instance GPU (MIG)](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/gpu-operator-mig.html) through the NVIDIA driver stack and GPU Operator or device plugin. vMetal can provision the node image that contains the required driver support, but the NVIDIA components control MIG strategy, partitioning, and exposed resource names.
+
+After MIG is configured, Kubernetes workloads request the resources advertised by the NVIDIA plugin, such as full GPU or MIG-specific resource names.
+
+## AMD and other accelerators
+
+vMetal can provision AMD GPU servers and other accelerator servers the same way it provisions NVIDIA servers. The provisioned node must install the correct vendor driver, and it must run a Kubernetes integration that advertises the device. Examples include:
+
+- AMD GPUs exposed by the [AMD GPU device plugin](https://instinct.docs.amd.com/projects/k8s-device-plugin/en/latest/index.html) or [AMD GPU Operator](https://instinct.docs.amd.com/projects/gpu-operator/en/main/device_plugin/device-plugin.html) as resources such as `amd.com/gpu`.
+- Vendor-specific AI accelerators exposed through a device plugin.
+- FPGAs, DPUs, NICs, or other PCIe devices exposed through a device plugin or DRA driver.
+
+For device-plugin based accelerators, use the vendor's resource name in the node type's `resources` field and in workload requests. For DRA-based accelerators, install the vendor DRA driver and configure the required DRA objects, such as `DeviceClass`, `ResourceClaim`, and `ResourceClaimTemplate`.
+
+## OS image guidance
+
+Choose one of these patterns:
+
+- Build a GPU-ready OS image with the driver stack pre-installed.
+- Use a standard OS image and install drivers through `vcluster.com/user-data` during cloud-init.
+- Install the vendor operator after the node joins the tenant cluster.
+
+For production fleets, prefer repeatable OS images or deterministic cloud-init configuration. Changing an `OSImage` resource doesn't modify running Machines. To roll out a new driver or presentation mode, create a new `OSImage`, update the node type to reference it, and let the platform roll Machines to the new image. See [Rotate OS images](../drivers/bare-metal/gpu-fleet-operations.mdx#rotate-os-images) for the rollout workflow.
+
+## Validate
+
+After the node joins the tenant cluster, validate the presentation mode from Kubernetes:
+
+```bash
+kubectl describe node <node-name>
+kubectl get node <node-name> -o jsonpath='{.status.capacity}'
+```
+
+The advertised resource names should match the driver and plugin configuration. If the expected extended resource is missing, troubleshoot the OS image, driver, container runtime configuration, and vendor plugin first. For DRA, validate the vendor DRA driver and DRA objects instead of looking only for an extended resource in node capacity.
+
+## External references
+
+- [Metal3 documentation](https://metal3.io/documentation.html)
+- [Ironic in Metal3](https://book.metal3.io/ironic/introduction.html)
+- [Kubernetes device plugins](https://kubernetes.io/docs/concepts/extend-kubernetes/compute-storage-net/device-plugins/)
+- [Kubernetes Dynamic Resource Allocation](https://kubernetes.io/docs/concepts/scheduling-eviction/dynamic-resource-allocation/)
+- [NVIDIA vGPU documentation](https://docs.nvidia.com/vgpu/latest/)
+- [NVIDIA GPU Operator with MIG](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/gpu-operator-mig.html)
+- [AMD GPU device plugin for Kubernetes](https://instinct.docs.amd.com/projects/k8s-device-plugin/en/latest/index.html)
