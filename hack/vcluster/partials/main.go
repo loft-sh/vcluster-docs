@@ -8,6 +8,7 @@ import (
 	"path"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/ghodss/yaml"
 	"github.com/invopop/jsonschema"
@@ -81,6 +82,8 @@ var paths = []string{
 	"sync/toHost/serviceAccounts",
 	"sync/toHost/priorityClasses",
 	"sync/toHost/podDisruptionBudgets",
+	"sync/toHost/resourceClaims",
+	"sync/toHost/resourceClaimTemplates",
 	"sync/toHost",
 	"sync/fromHost/storageClasses",
 	"sync/fromHost/volumeSnapshotClasses",
@@ -95,6 +98,7 @@ var paths = []string{
 	"sync/fromHost/csiDrivers",
 	"sync/fromHost/configMaps",
 	"sync/fromHost/secrets",
+	"sync/fromHost/deviceClasses",
 	"sync/fromHost",
 	"sync",
 	"rbac",
@@ -209,7 +213,16 @@ func main() {
 	// converts that into a build-break with the full list of dangling keys.
 	validateExtras(schema, defaults)
 
-	for _, p := range paths {
+	renderPaths := append([]string(nil), paths...)
+	// sleepMode predates the sleep configuration and still exists in older
+	// schemas (for example, v0.30). Generate it when present without emitting a
+	// permanent missing-path warning for current schemas where sleep replaces it.
+	if _, err := util.RenderFromPath(schema, "sleepMode", defaults); err == nil {
+		renderPaths = append(renderPaths, "sleepMode")
+	}
+
+	written := map[string]bool{}
+	for _, p := range renderPaths {
 		content, err := util.RenderFromPath(schema, p, defaults)
 		if err != nil {
 			fmt.Printf("Warning: Skipping path %q: %v\n", p, err)
@@ -224,7 +237,84 @@ func main() {
 		if err := os.WriteFile(filePath, []byte(final), os.ModePerm); err != nil {
 			panic(fmt.Errorf("failed to write %q: %w", filePath, err))
 		}
+		written[filePath] = true
 	}
+
+	checkOrphans(outputDir, written)
+}
+
+// legacyOrphanTargets grandfathers generated partials that were already stale
+// before this check existed. The exemptions are scoped to the exact versioned
+// output directories that currently contain the files; using only the relative
+// file names would also hide new orphans in current and future documentation.
+// Remove a target once its backport PR deletes or renames all three files.
+var legacyOrphanTargets = map[string]map[string]bool{
+	"vcluster_versioned_docs/version-0.35.0/_partials/config": legacyOrphanFiles(),
+	"vcluster_versioned_docs/version-0.36.0/_partials/config": legacyOrphanFiles(),
+	"vcluster_versioned_docs/version-0.37.0/_partials/config": legacyOrphanFiles(),
+}
+
+func legacyOrphanFiles() map[string]bool {
+	return map[string]bool{
+		"sleepMode.mdx":                          true,
+		"sync/toHost/resourceclaims.mdx":         true,
+		"sync/toHost/resourceclaimtemplates.mdx": true,
+	}
+}
+
+func isLegacyOrphan(outputDir, relativePath string) bool {
+	target := filepath.ToSlash(filepath.Clean(outputDir))
+	for legacyTarget, files := range legacyOrphanTargets {
+		if target == legacyTarget || strings.HasSuffix(target, "/"+legacyTarget) {
+			return files[filepath.ToSlash(relativePath)]
+		}
+	}
+	return false
+}
+
+// checkOrphans panics if outputDir contains a generated partial that this run
+// did not (re)write, unless it's a known legacy orphan (see
+// legacyOrphanTargets).
+// That situation means a `paths` entry was removed, or - the failure mode
+// DOC-1739 found - a file was hand-authored (or a `paths` entry silently
+// dropped, e.g. by a schema rename) and never wired back into the `paths`
+// list, so routine regeneration has been quietly unable to keep it in sync.
+// `Warning: Skipping path` only fires for entries that ARE in `paths` but
+// fail to resolve against the schema; it can't detect an entry that was
+// never added, so this walk is the only thing that catches that case.
+func checkOrphans(outputDir string, written map[string]bool) {
+	var orphans []string
+	err := filepath.WalkDir(outputDir, func(filePath string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() || filepath.Ext(filePath) != ".mdx" {
+			return nil
+		}
+		if written[filePath] {
+			return nil
+		}
+		rel, relErr := filepath.Rel(outputDir, filePath)
+		if relErr == nil && isLegacyOrphan(outputDir, rel) {
+			fmt.Printf("Warning: %q is a known pre-existing orphan (DOC-1739); not failing the build\n", filePath)
+			return nil
+		}
+		orphans = append(orphans, filePath)
+		return nil
+	})
+	if err != nil {
+		panic(fmt.Errorf("failed to walk %q for orphaned partials: %w", outputDir, err))
+	}
+	if len(orphans) == 0 {
+		return
+	}
+	sort.Strings(orphans)
+	panic(fmt.Sprintf(
+		"%d generated partial(s) exist under %q but were not (re)written this run: %v\n"+
+			"Either add the corresponding schema path to `paths` in hack/vcluster/partials/main.go, "+
+			"or delete the stale file if it's no longer needed.",
+		len(orphans), outputDir, orphans,
+	))
 }
 
 // validateExtras panics if any pathExtras key fails to resolve in the
