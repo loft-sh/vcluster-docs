@@ -2,7 +2,7 @@
 # check-redirects.sh — Validate and fix netlify.toml redirects.
 #
 # Modes:
-#   pr (default):  Check deleted/renamed files have redirects + validate platform-ui-links.
+#   pr (default):  Check current and stable route changes + validate platform-ui-links.
 #   --fix:         Auto-generate missing redirects for moved/deleted files in netlify.toml.
 #   --audit:       Validate ALL redirect targets against the file tree.
 #
@@ -68,6 +68,32 @@ for m in re.finditer(pattern, content, re.DOTALL):
 }
 
 # --------------------------------------------------------------------------
+# Read the configured stable version for a docs plugin.
+# --------------------------------------------------------------------------
+get_stable_version() {
+    local product="$1"
+    local ref="${2:-}"
+    local config=""
+
+    if [[ -n "$ref" ]]; then
+        config="$(git show "${ref}:docusaurus.config.js" 2>/dev/null || true)"
+    elif [[ -f "${REPO_ROOT}/docusaurus.config.js" ]]; then
+        config="$(<"${REPO_ROOT}/docusaurus.config.js")"
+    fi
+
+    awk -v id="$product" '
+        $0 ~ ("id: \"" id "\"") { in_plugin = 1 }
+        in_plugin && /lastVersion:/ {
+            line = $0
+            sub(/^.*lastVersion:[[:space:]]*"/, "", line)
+            sub(/".*$/, "", line)
+            print line
+            exit
+        }
+    ' <<<"$config"
+}
+
+# --------------------------------------------------------------------------
 # Check if a URL path resolves to an actual file
 # --------------------------------------------------------------------------
 url_resolves() {
@@ -82,27 +108,39 @@ url_resolves() {
     local rel="${url#/docs/}"
 
     # /next/ = current source
+    local is_current=0
     case "$rel" in
-        vcluster/next/*) rel="vcluster/${rel#vcluster/next/}" ;;
-        platform/next/*) rel="platform/${rel#platform/next/}" ;;
+        vcluster/next/*) rel="vcluster/${rel#vcluster/next/}"; is_current=1 ;;
+        platform/next/*) rel="platform/${rel#platform/next/}"; is_current=1 ;;
     esac
 
-    # Versioned paths -> versioned_docs folders
+    # Versioned and unversioned stable paths -> versioned_docs folders
     local versioned_rel=""
-    case "$rel" in
-        vcluster/[0-9]*.*)
-            local ver="${rel#vcluster/}"
-            ver="${ver%%/*}"
-            local rest="${rel#vcluster/${ver}/}"
-            versioned_rel="vcluster_versioned_docs/version-${ver}/${rest}"
-            ;;
-        platform/[0-9]*.*)
-            local ver="${rel#platform/}"
-            ver="${ver%%/*}"
-            local rest="${rel#platform/${ver}/}"
-            versioned_rel="platform_versioned_docs/version-${ver}/${rest}"
-            ;;
-    esac
+    if [[ "$is_current" -eq 0 ]]; then
+        case "$rel" in
+            vcluster/[0-9]*.*)
+                local ver="${rel#vcluster/}"
+                ver="${ver%%/*}"
+                local rest="${rel#vcluster/${ver}/}"
+                versioned_rel="vcluster_versioned_docs/version-${ver}/${rest}"
+                ;;
+            platform/[0-9]*.*)
+                local ver="${rel#platform/}"
+                ver="${ver%%/*}"
+                local rest="${rel#platform/${ver}/}"
+                versioned_rel="platform_versioned_docs/version-${ver}/${rest}"
+                ;;
+            vcluster/*|platform/*)
+                local product="${rel%%/*}"
+                local rest="${rel#*/}"
+                local stable_version=""
+                stable_version="$(get_stable_version "$product")"
+                if [[ -n "$stable_version" && "$stable_version" != "current" ]]; then
+                    versioned_rel="${product}_versioned_docs/version-${stable_version}/${rest}"
+                fi
+                ;;
+        esac
+    fi
 
     local paths_to_check=("$rel")
     [[ -n "$versioned_rel" ]] && paths_to_check=("$versioned_rel")
@@ -139,6 +177,8 @@ has_redirect_coverage() {
 
     while IFS= read -r pattern; do
         [[ "$pattern" != *"*"* ]] && continue
+        # The branded 404 catch-all is not redirect coverage.
+        [[ "$pattern" == "/*" ]] && continue
         if [[ "$pattern" == *'/*' && "$pattern" != *'*'*'*' ]]; then
             local prefix="${pattern%\*}"
             if [[ "$url" == "${prefix}"* ]]; then
@@ -150,12 +190,41 @@ has_redirect_coverage() {
     return 1
 }
 
+redirect_target_for_url() {
+    local url="$1"
+
+    while IFS=$'\t' read -r pattern target; do
+        if [[ "$pattern" == "$url" ]]; then
+            echo "$target"
+            return 0
+        fi
+        [[ "$pattern" == "/*" ]] && continue
+        if [[ "$pattern" == */\* ]]; then
+            local prefix="${pattern%\*}"
+            if [[ "$url" == "${prefix}"* ]]; then
+                local splat="${url#${prefix}}"
+                target="${target//:splat/${splat}}"
+                echo "$target"
+                return 0
+            fi
+        fi
+    done < <(parse_redirects)
+
+    return 1
+}
+
 file_to_url() {
     local url="$1"
     url="${url%.mdx}"
     url="${url%.md}"
     url="${url%/index}"
-    echo "/docs/${url}"
+    case "$url" in
+        vcluster/*|platform/*)
+            local product="${url%%/*}"
+            echo "/docs/${product}/next/${url#*/}"
+            ;;
+        *) echo "/docs/${url}" ;;
+    esac
 }
 
 get_base_ref() {
@@ -295,9 +364,9 @@ guess_destination() {
     fi
 
     case "$filepath" in
-        vcluster/*) echo "/docs/vcluster" ;;
-        platform/*) echo "/docs/platform" ;;
-        *) echo "/docs/vcluster" ;;
+        vcluster/*) echo "/docs/vcluster/next" ;;
+        platform/*) echo "/docs/platform/next" ;;
+        *) echo "/docs/vcluster/next" ;;
     esac
 }
 
@@ -388,11 +457,133 @@ check_platform_ui_targets() {
     fi
 }
 
+stable_routes_at_ref() {
+    local product="$1"
+    local version="$2"
+    local ref="$3"
+    local prefix="${product}_versioned_docs/version-${version}/"
+
+    git ls-tree -r --name-only "$ref" -- "${prefix%/}" 2>/dev/null | while IFS= read -r filepath; do
+        [[ "$filepath" != *.md && "$filepath" != *.mdx ]] && continue
+        local route="${filepath#${prefix}}"
+        [[ "$route" =~ (^|/)_ ]] && continue
+
+        local slug=""
+        slug="$(git show "${ref}:${filepath}" 2>/dev/null | awk '
+            NR == 1 && $0 == "---" { in_frontmatter = 1; next }
+            in_frontmatter && $0 == "---" { exit }
+            in_frontmatter && /^slug:[[:space:]]*/ {
+                line = $0
+                sub(/^slug:[[:space:]]*/, "", line)
+                gsub(/["\047]/, "", line)
+                print line
+                exit
+            }
+        ')"
+        if [[ -n "$slug" ]]; then
+            local url="/docs/${product}/${slug#/}"
+            echo "${url%/}"
+            continue
+        fi
+
+        route="${route%.mdx}"
+        route="${route%.md}"
+        route="${route%/index}"
+        echo "/docs/${product}/${route}"
+    done | sort -u
+}
+
 # --------------------------------------------------------------------------
-# CHECK C: All redirect targets resolve (audit mode)
+# CHECK C: Stable-version cutovers preserve unversioned routes
+# --------------------------------------------------------------------------
+check_stable_cutovers() {
+    header "Check C: Stable-version cutovers preserve unversioned routes"
+    local base_ref base_commit
+    base_ref="$(get_base_ref)"
+    if [[ -z "$base_ref" ]]; then
+        warn "Cannot find base ref. Skipping stable-version cutover check."
+        return
+    fi
+    base_commit="$(git merge-base "$base_ref" HEAD 2>/dev/null || true)"
+    if [[ -z "$base_commit" ]]; then
+        warn "Cannot find merge base with ${base_ref}. Skipping stable-version cutover check."
+        return
+    fi
+
+    local product
+    for product in vcluster platform; do
+        local old_version new_version
+        old_version="$(get_stable_version "$product" "$base_commit")"
+        new_version="$(get_stable_version "$product")"
+
+        if [[ -z "$old_version" || -z "$new_version" ]]; then
+            info "No comparable stable-version configuration for ${product}."
+            continue
+        fi
+        if [[ "$old_version" == "$new_version" ]]; then
+            ok "${product} stable version is unchanged (${new_version})."
+            continue
+        fi
+        if [[ "$old_version" == "current" || "$new_version" == "current" ]]; then
+            warn "Cannot compare ${product} cutover involving the current source (${old_version} -> ${new_version})."
+            continue
+        fi
+
+        info "${product} stable version changed: ${old_version} -> ${new_version}"
+        local old_routes new_routes removed_routes
+        old_routes="$(stable_routes_at_ref "$product" "$old_version" "$base_commit")"
+        new_routes="$(stable_routes_at_ref "$product" "$new_version" HEAD)"
+
+        if [[ -z "$old_routes" ]]; then
+            error "Cannot enumerate ${product} ${old_version} stable routes from the PR base."
+            continue
+        fi
+        if [[ -z "$new_routes" ]]; then
+            error "Cannot enumerate ${product} ${new_version} stable routes from HEAD."
+            continue
+        fi
+
+        removed_routes="$(comm -23 <(printf '%s\n' "$old_routes") <(printf '%s\n' "$new_routes"))"
+        if [[ -z "$removed_routes" ]]; then
+            ok "All ${product} ${old_version} unversioned routes remain in ${new_version}."
+            continue
+        fi
+
+        local missing=0 total=0
+        while IFS= read -r url; do
+            [[ -z "$url" ]] && continue
+            total=$((total + 1))
+            if is_allowlisted "$url"; then
+                ok "Former stable route is allowlisted: ${url}"
+                continue
+            fi
+
+            local target=""
+            target="$(redirect_target_for_url "$url" || true)"
+            if [[ -z "$target" ]]; then
+                missing=$((missing + 1))
+                error "No unversioned redirect for route removed during ${product} stable cutover: ${url}"
+                info "Add a redirect from this unversioned URL to its ${new_version} replacement."
+            elif url_resolves "$target"; then
+                ok "Unversioned redirect exists for former stable route: ${url} -> ${target}"
+            else
+                missing=$((missing + 1))
+                error "Broken unversioned redirect for route removed during ${product} stable cutover: ${url}"
+                info "Target does not resolve in ${new_version}: ${target}"
+            fi
+        done <<<"$removed_routes"
+
+        if [[ "$missing" -eq 0 ]]; then
+            ok "All ${total} removed ${product} stable routes have unversioned redirects."
+        fi
+    done
+}
+
+# --------------------------------------------------------------------------
+# AUDIT: All redirect targets resolve
 # --------------------------------------------------------------------------
 check_all_targets() {
-    header "Check C: All redirect targets resolve"
+    header "Audit: All redirect targets resolve"
     local count=0 broken=0 ui_broken=0 other_broken=0
 
     while IFS=$'\t' read -r from_url to_url; do
@@ -533,6 +724,7 @@ case "$MODE" in
     pr)
         check_pr_deletions
         check_platform_ui_targets
+        check_stable_cutovers
         check_chains
         ;;
     --fix|fix)
@@ -547,7 +739,7 @@ case "$MODE" in
     *)
         echo "Usage: $0 [pr|--fix|--audit]"
         echo ""
-        echo "  pr       Check PR for missing redirects (default, used in CI)"
+        echo "  pr       Check PR for current and stable route redirects (default, used in CI)"
         echo "  --fix    Auto-generate missing redirects for moved/deleted files"
         echo "  --audit  Validate ALL redirect targets against the file tree"
         exit 1
