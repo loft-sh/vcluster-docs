@@ -59,6 +59,24 @@ add_redirect() {
 EOF
 }
 
+write_docusaurus_config() {
+    local vcluster_version="$1" platform_version="$2"
+    cat > docusaurus.config.js <<EOF
+module.exports = {
+  plugins: [
+    ["@docusaurus/plugin-content-docs", {
+      id: "vcluster",
+      lastVersion: "${vcluster_version}",
+    }],
+    ["@docusaurus/plugin-content-docs", {
+      id: "platform",
+      lastVersion: "${platform_version}",
+    }],
+  ],
+};
+EOF
+}
+
 commit_all() { git add -A && git commit -q -m "${1:-commit}"; }
 
 cleanup() { cd "$ORIGINAL_DIR" && rm -rf "$1"; }
@@ -339,6 +357,144 @@ test_pr_no_changes() {
     assert_contains "$out" "No doc files deleted or renamed" "no changes reported"
     cleanup "$dir"
 }; test_pr_no_changes
+
+# =========================================================================
+echo -e "\n${BOLD}--- Stable-version cutovers ---${NC}"
+# =========================================================================
+
+test_stable_cutover_requires_unversioned_redirects() {
+    local dir; dir="$(setup_test_repo)"; cd "$dir"
+    mkdir -p vcluster_versioned_docs/version-0.37.0/configure
+    mkdir -p platform_versioned_docs/version-4.12.0/administer
+    echo "# Old vCluster" > vcluster_versioned_docs/version-0.37.0/configure/old-page.mdx
+    echo "# Old Platform" > platform_versioned_docs/version-4.12.0/administer/old-page.mdx
+    write_docusaurus_config "0.37.0" "4.12.0"
+    create_netlify_toml; seal_initial_state
+
+    mkdir -p vcluster_versioned_docs/version-0.38.0/configure
+    mkdir -p platform_versioned_docs/version-4.13.0/administer
+    echo "# New vCluster" > vcluster_versioned_docs/version-0.38.0/configure/new-page.mdx
+    echo "# New Platform" > platform_versioned_docs/version-4.13.0/administer/new-page.mdx
+    write_docusaurus_config "0.38.0" "4.13.0"
+    commit_all "release cutover"
+
+    local out; out=$(run_script_rc pr); local ec=$?
+    assert_exit 1 "$ec" "stable cutover without redirects -> exit 1"
+    assert_contains "$out" "/docs/vcluster/configure/old-page" "reports removed vCluster stable route"
+    assert_contains "$out" "/docs/platform/administer/old-page" "reports removed Platform stable route"
+    cleanup "$dir"
+}; test_stable_cutover_requires_unversioned_redirects
+
+test_stable_cutover_accepts_unversioned_redirects() {
+    local dir; dir="$(setup_test_repo)"; cd "$dir"
+    mkdir -p vcluster_versioned_docs/version-0.37.0/configure
+    mkdir -p platform_versioned_docs/version-4.12.0/administer
+    echo "# Old vCluster" > vcluster_versioned_docs/version-0.37.0/configure/old-page.mdx
+    echo "# Old Platform" > platform_versioned_docs/version-4.12.0/administer/old-page.mdx
+    write_docusaurus_config "0.37.0" "4.12.0"
+    create_netlify_toml; seal_initial_state
+
+    mkdir -p vcluster_versioned_docs/version-0.38.0/configure
+    mkdir -p platform_versioned_docs/version-4.13.0/administer
+    echo "# New vCluster" > vcluster_versioned_docs/version-0.38.0/configure/new-page.mdx
+    echo "# New Platform" > platform_versioned_docs/version-4.13.0/administer/new-page.mdx
+    write_docusaurus_config "0.38.0" "4.13.0"
+    add_redirect "/docs/vcluster/configure/old-page" "/docs/vcluster/configure/new-page"
+    add_redirect "/docs/platform/administer/old-page" "/docs/platform/administer/new-page"
+    commit_all "release cutover with redirects"
+
+    local out; out=$(run_script_rc pr); local ec=$?
+    assert_exit 0 "$ec" "stable cutover with redirects -> exit 0"
+    assert_contains "$out" "All 1 removed vcluster stable routes have unversioned redirects" "accepts vCluster redirect"
+    assert_contains "$out" "All 1 removed platform stable routes have unversioned redirects" "accepts Platform redirect"
+    cleanup "$dir"
+}; test_stable_cutover_accepts_unversioned_redirects
+
+test_stable_cutover_accepts_wildcard_redirect() {
+    local dir; dir="$(setup_test_repo)"; cd "$dir"
+    mkdir -p platform_versioned_docs/version-4.12.0/administer/legacy
+    echo "# Old Platform" > platform_versioned_docs/version-4.12.0/administer/legacy/page.mdx
+    write_docusaurus_config "0.37.0" "4.12.0"
+    create_netlify_toml; seal_initial_state
+
+    mkdir -p platform_versioned_docs/version-4.13.0/vmetal
+    echo "# New Platform" > platform_versioned_docs/version-4.13.0/vmetal/page.mdx
+    write_docusaurus_config "0.37.0" "4.13.0"
+    add_redirect "/docs/platform/administer/legacy/*" "/docs/platform/vmetal/:splat"
+    commit_all "release cutover with wildcard redirect"
+
+    local out; out=$(run_script_rc pr); local ec=$?
+    assert_exit 0 "$ec" "stable cutover with wildcard redirect -> exit 0"
+    assert_contains "$out" "/docs/platform/vmetal/page" "resolves wildcard target"
+    cleanup "$dir"
+}; test_stable_cutover_accepts_wildcard_redirect
+
+test_stable_cutover_rejects_broken_redirect_target() {
+    local dir; dir="$(setup_test_repo)"; cd "$dir"
+    mkdir -p platform_versioned_docs/version-4.12.0/administer
+    echo "# Old Platform" > platform_versioned_docs/version-4.12.0/administer/old-page.mdx
+    write_docusaurus_config "0.37.0" "4.12.0"
+    create_netlify_toml; seal_initial_state
+
+    mkdir -p platform_versioned_docs/version-4.13.0/administer
+    echo "# New Platform" > platform_versioned_docs/version-4.13.0/administer/new-page.mdx
+    write_docusaurus_config "0.37.0" "4.13.0"
+    add_redirect "/docs/platform/administer/old-page" "/docs/platform/administer/missing-page"
+    commit_all "release cutover with broken redirect"
+
+    local out; out=$(run_script_rc pr); local ec=$?
+    assert_exit 1 "$ec" "stable cutover with broken target -> exit 1"
+    assert_contains "$out" "Broken unversioned redirect" "reports broken stable redirect"
+    assert_contains "$out" "/docs/platform/administer/missing-page" "reports broken stable target"
+    cleanup "$dir"
+}; test_stable_cutover_rejects_broken_redirect_target
+
+test_stable_cutover_uses_frontmatter_slug() {
+    local dir; dir="$(setup_test_repo)"; cd "$dir"
+    mkdir -p platform_versioned_docs/version-4.12.0/introduction
+    cat > platform_versioned_docs/version-4.12.0/introduction/platform_intro.mdx <<'MDX'
+---
+slug: /
+---
+# Old Platform home
+MDX
+    write_docusaurus_config "0.37.0" "4.12.0"
+    create_netlify_toml; seal_initial_state
+
+    mkdir -p platform_versioned_docs/version-4.13.0/introduction
+    echo "# New Platform" > platform_versioned_docs/version-4.13.0/introduction/new-home.mdx
+    write_docusaurus_config "0.37.0" "4.13.0"
+    commit_all "release cutover changing home route"
+
+    local out; out=$(run_script_rc pr); local ec=$?
+    assert_exit 1 "$ec" "stable cutover honors frontmatter slug -> exit 1"
+    assert_contains "$out" "No unversioned redirect for route removed during platform stable cutover: /docs/platform" "reports slug URL instead of file path"
+    assert_not_contains "$out" "platform_intro" "does not report file-based URL when slug is set"
+    cleanup "$dir"
+}; test_stable_cutover_uses_frontmatter_slug
+
+test_stable_cutover_preserves_matching_routes() {
+    local dir; dir="$(setup_test_repo)"; cd "$dir"
+    mkdir -p vcluster_versioned_docs/version-0.37.0/configure
+    mkdir -p platform_versioned_docs/version-4.12.0/administer
+    echo "# Old vCluster" > vcluster_versioned_docs/version-0.37.0/configure/same-page.mdx
+    echo "# Old Platform" > platform_versioned_docs/version-4.12.0/administer/same-page.mdx
+    write_docusaurus_config "0.37.0" "4.12.0"
+    create_netlify_toml; seal_initial_state
+
+    mkdir -p vcluster_versioned_docs/version-0.38.0/configure
+    mkdir -p platform_versioned_docs/version-4.13.0/administer
+    echo "# New vCluster" > vcluster_versioned_docs/version-0.38.0/configure/same-page.mdx
+    echo "# New Platform" > platform_versioned_docs/version-4.13.0/administer/same-page.mdx
+    write_docusaurus_config "0.38.0" "4.13.0"
+    commit_all "release cutover preserving routes"
+
+    local out; out=$(run_script_rc pr); local ec=$?
+    assert_exit 0 "$ec" "stable cutover preserving routes -> exit 0"
+    assert_contains "$out" "All vcluster 0.37.0 unversioned routes remain in 0.38.0" "recognizes preserved vCluster routes"
+    assert_contains "$out" "All platform 4.12.0 unversioned routes remain in 4.13.0" "recognizes preserved Platform routes"
+    cleanup "$dir"
+}; test_stable_cutover_preserves_matching_routes
 
 # =========================================================================
 echo -e "\n${BOLD}--- Platform-UI-link validation ---${NC}"
