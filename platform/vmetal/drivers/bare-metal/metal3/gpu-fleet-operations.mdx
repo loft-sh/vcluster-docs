@@ -1,13 +1,13 @@
 ---
 title: GPU Fleet Operations
 sidebar_label: GPU Fleet Operations
-sidebar_position: 6.5
+sidebar_position: 8
 description: Design node types, label GPU servers, and manage a GPU bare metal fleet with the Metal3 driver.
 ---
 
 import GpuFleetAllocation from '@site/static/media/diagrams/vmetal-gpu-fleet-allocation.svg';
 
-This guide covers fleet design and day-2 operations for GPU bare metal servers managed by the Metal3 driver. For initial NodeProvider setup and provisioning a single GPU server, start with the [GPU Quickstart](./gpu-quickstart.mdx). For passthrough, vGPU, MIG, AMD GPUs, and other accelerators, see [GPU presentation modes](../../concepts/gpu-presentation-modes.mdx).
+This guide covers fleet design and day-2 operations for GPU bare metal servers managed by the Metal3 driver. For initial NodeProvider setup and provisioning a single GPU server, start with the [GPU Quickstart](./gpu-quickstart.mdx). For passthrough, vGPU, MIG, AMD GPUs, and other accelerators, see [GPU presentation modes](../../../concepts/gpu-presentation-modes.mdx).
 
 ## Label strategy
 
@@ -84,9 +84,9 @@ nodeTypes:
 
 For device-plugin based GPUs, use the resource name advertised by the vendor device plugin. NVIDIA fleets commonly use `nvidia.com/gpu`. AMD GPU fleets may use `amd.com/gpu`. Other accelerator vendors publish their own resource names.
 
-### Per-tenant node types
+### Dedicated hardware pools
 
-AI Clouds often dedicate capacity to specific tenants by combining hardware labels with a tenant label:
+AI clouds often dedicate capacity to a customer by combining hardware labels with an operator-defined customer label:
 
 ```bash
 kubectl label baremetalhost server-01 -n metal3-system tenant=customer-a
@@ -112,17 +112,19 @@ nodeTypes:
     vcluster.com/os-image: ubuntu-noble-gpu
 ```
 
-Only servers labeled `tenant: customer-a` match this node type. The label doesn't stop those servers from matching another node type with a broader selector. Make the selectors for reserved and shared pools mutually exclusive so another node type can't claim reserved capacity. To control which node types each project can request, also set `spec.allowedNodeTypes` on the Project. This controls project access to node types; it doesn't resolve overlapping BareMetalHost selectors. See [Manage allowed node types](../../../administer/projects/allowed/node-types.mdx).
+Only servers labeled `tenant: customer-a` match this node type. This operator-defined label selects infrastructure. It doesn't create a Platform Tenant boundary or exclusively assign the capacity.
 
-Properties defined at the node type level are merged with NodeProvider defaults at provisioning time. For how property precedence works, see [Node types and node providers](../../concepts/machine-types-and-nodetypes.mdx#property-merging).
+Make the selectors for reserved and shared pools mutually exclusive so another node type can't claim reserved capacity. A Platform administrator must also make the node type available within the intended Tenant boundary. A Tenant administrator can narrow that set for a Project with `spec.allowedNodeTypes`. Project policy can't expand the Tenant boundary. See [Manage allowed node types](../../../../administer/projects/allowed/node-types.mdx).
 
-Node types are also composable along orthogonal dimensions. For example, you might create one set by hardware profile and another set by tenant. A server labeled with both dimensions matches both types simultaneously, and tenants select from the pool that combines whichever dimensions apply to their request.
+Properties defined at the node type level are merged with NodeProvider defaults at provisioning time. For how property precedence works, see [Node types and node providers](../../../concepts/machine-types-and-nodetypes.mdx#property-merging).
+
+Node types are also composable along orthogonal dimensions. For example, you might create one set by hardware profile and another by an operator-defined customer allocation. A server labeled with both dimensions matches both types simultaneously. Platform Tenant and Project boundaries then determine which matching node types a user may consume.
 
 ### Capacity and cost
 
 Capacity for a node type is the number of available `BareMetalHost` resources matching its label selector. The platform tracks how many servers are provisioned and marks the node type unavailable once every matching host is in use.
 
-Karpenter uses each node type's cost to pick the cheapest matching type when a request matches more than one. See [Cost](../../concepts/machine-types-and-nodetypes.mdx#cost) for the default cost formula. Override cost explicitly to control scheduling preference independently of resource counts:
+Karpenter uses each node type's cost to pick the cheapest matching type when a request matches more than one. See [Cost](../../../concepts/machine-types-and-nodetypes.mdx#cost) for the default cost formula. Override cost explicitly to control scheduling preference independently of resource counts:
 
 ```yaml
 nodeTypes:
@@ -227,7 +229,7 @@ Define the tiers your product sells. The table below is one example layout, not 
 | Mid-range shared | 2-GPU or 4-GPU L40S or A100 | Mixed model sizes, shared serving pools |
 | Entry or burst | Single-GPU L4 or L40S | Small models, low-cost tiers, scale-to-zero endpoints |
 
-Keep MIG, vGPU, and Dynamic Resource Allocation decisions in the vendor stack and the OS image, not in the driver. For how each presentation mode reaches the tenant cluster, see [GPU presentation modes](../../concepts/gpu-presentation-modes.mdx).
+Keep MIG, vGPU, and Dynamic Resource Allocation decisions in the vendor stack and the OS image, not in the driver. For how each presentation mode reaches the tenant cluster, see [GPU presentation modes](../../../concepts/gpu-presentation-modes.mdx).
 
 ### Plan warm pools against on-demand provisioning
 
@@ -244,6 +246,6 @@ To keep a warm pool, provision GPU servers ahead of demand and leave them claime
 
 Serving tiers are node types, so running them over time reuses the fleet mechanics on this page rather than a separate workflow.
 
-- **Reserve a dedicated tier** - bind labeled servers to one customer with [per-tenant node types](#per-tenant-node-types), and enforce the boundary with `spec.allowedNodeTypes`. Shared tiers draw from a common pool.
+- **Reserve a dedicated tier** - select labeled servers with a [dedicated hardware pool](#dedicated-hardware-pools), make the node type available only to the intended Tenant, and narrow Project access with `spec.allowedNodeTypes`. Shared tiers draw from a common pool.
 - **Add or move capacity** - add a node type for a new tier, or re-label a `BareMetalHost` to move a server between tiers. Label changes need no re-provisioning and apply on the next claim.
 - **Reshape or retire a tier** - node type changes apply to new Machines but don't automatically roll existing Metal3 Machines. Drain that tier's endpoints first, then replace its Machines in a controlled sequence. See [Roll out a new OS image](#roll-out-a-new-os-image).
