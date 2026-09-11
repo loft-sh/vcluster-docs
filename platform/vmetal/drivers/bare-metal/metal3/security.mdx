@@ -1,8 +1,8 @@
 ---
 title: Production and Security
 sidebar_label: Production and Security
-sidebar_position: 8
-description: Secure BMC credentials, harden OS image trust, enforce project isolation, and understand the tenant isolation boundary in Metal3 production deployments.
+sidebar_position: 10
+description: Secure BMC credentials, harden OS image trust, enforce resource boundaries, and understand isolation in Metal3 production deployments.
 toc_max_heading_level: 2
 ---
 
@@ -97,17 +97,19 @@ Platform admins create `OSImage` resources with the URL and checksum. Node types
 
 Ironic doesn't natively verify image signatures. Checksum verification confirms integrity against a known-good value but doesn't prove provenance. Where image provenance matters, mitigate this by generating checksums in your image build pipeline and storing them alongside the image in your artifact registry, restricting write access to the image storage so that only your build system can publish new images, and restricting which OS image names and URLs can be referenced by the `OSImage` resource.
 
-## RBAC and project isolation
+## RBAC and resource boundaries
 
 ### Which roles control what
 
 `NodeProvider` and `NodeType` resources are cluster-scoped and non-namespaced. Only platform admins can create or modify them; tenants have no direct access to these objects.
 
-Project roles determine what members of a project can do with `NodeClaim` (Machine) resources. See [Project Membership](../../../administer/users-permissions/permissions/project.mdx) for the current default Project Admin, Project User, and Project Viewer roles and how to customize them. No project role grants access to `NodeProvider` or `NodeType` resources: tenants can request and observe Machines but can't change the infrastructure configuration behind them.
+Project roles determine what members of a Project can do with `NodeClaim` (Machine) resources. See [Project Membership](../../../../administer/users-permissions/permissions/project.mdx) for the default Project Admin, Project User, and Project Viewer roles. No Project role grants permission to change the infrastructure configuration behind a Machine.
+
+RBAC answers what an actor may do. Tenant and Project resource boundaries answer which infrastructure resources the actor may see or consume. Effective access is the intersection of role permissions, the Tenant boundary, and the Project boundary.
 
 ### Restrict which node types a project can claim
 
-By default, projects can reference any node type when creating a Machine. Restrict this with `spec.allowedNodeTypes` on the Project. See [Manage allowed node types](../../../administer/projects/allowed/node-types.mdx) for the field reference and examples.
+A Platform administrator defines the maximum set of node types available to a Tenant. A Tenant administrator can narrow that set for a Project with `spec.allowedNodeTypes`. A Project can't restore access to a node type outside its Tenant boundary. See [Manage allowed node types](../../../../administer/projects/allowed/node-types.mdx) for Project-level examples.
 
 ### Prevent cross-project server access
 
@@ -119,7 +121,9 @@ Each Machine claim maps to a `NodeClaim` resource in the project's namespace (`l
 
 ### What the Metal3 driver provides
 
-Each Machine claims one physical server. The platform allocates that server exclusively to one Machine, and therefore one project, at a time: no two projects share the same CPU, memory, or storage on a provisioned server, and no hypervisor layer sits between the workload and the hardware. This is real physical isolation between projects, not the tenancy model [shared nodes](/docs/vcluster/deploy/worker-nodes/host-nodes) give tenants on a control plane cluster's own node pool.
+Each Machine claims one physical server. The platform allocates that server exclusively to one Machine and tenant cluster at a time. No other Machine shares its CPU, memory, or storage, and no hypervisor layer sits between the workload and the hardware. This is physical compute isolation, unlike the tenancy model [shared nodes](/docs/vcluster/deploy/worker-nodes/host-nodes) provide on a control plane cluster's node pool.
+
+This physical allocation is separate from management-plane resource boundaries. Tenant and Project policy controls who may consume the Machine or its node type. The Metal3 driver enforces the lifecycle of the claimed server.
 
 This model suits workloads with strict requirements for physical resource predictability, PCIe device exclusivity (GPUs, FPGAs, DPUs), or regulatory requirements that prohibit shared compute.
 
@@ -131,11 +135,11 @@ This model suits workloads with strict requirements for physical resource predic
 
 ### When to add vNode
 
-Add [vNode](https://www.vnode.com/docs/) as the container runtime when workloads scheduled onto a Metal3-provisioned node need privileged capabilities (Docker-in-Docker, `hostPID`, raw device access) but you don't fully trust what they do with those capabilities, for example because they run user-supplied inference code. vNode uses Linux user namespaces and seccomp to sandbox pods at the node level, so a container running as root inside vNode doesn't have real root on the host kernel. This hardens workloads on a single node; it doesn't change the cross-project isolation Metal3 already provides by dedicating one server per Machine.
+Add [vNode](https://www.vnode.com/docs/) as the container runtime when workloads scheduled onto a Metal3-provisioned node need privileged capabilities (Docker-in-Docker, `hostPID`, raw device access) but you don't fully trust what they do with those capabilities, for example because they run user-supplied inference code. vNode uses Linux user namespaces and seccomp to sandbox pods at the node level, so a container running as root inside vNode doesn't have real root on the host kernel. This hardens workloads on a single node; it doesn't change the physical isolation Metal3 provides by dedicating one server per Machine.
 
 ### When physical isolation is the right answer
 
-Physical dedication (one project per server) is already Metal3's default. It's the right answer, with no further mitigation needed, when workloads require direct kernel access that vNode can't proxy (such as custom kernel modules or bare metal DPDK), when compliance requirements mandate physical isolation and disallow any software-layer sharing, or when performance isolation requirements are absolute, with no noisy-neighbor risk at the kernel scheduler level.
+Physical dedication (one Machine per server) is already Metal3's default. It's the right answer, with no further mitigation needed, when workloads require direct kernel access that vNode can't proxy (such as custom kernel modules or bare metal DPDK), when compliance requirements mandate physical isolation and disallow any software-layer sharing, or when performance isolation requirements are absolute, with no noisy-neighbor risk at the kernel scheduler level.
 
 ## Harden the control plane cluster
 
@@ -189,7 +193,7 @@ This confines Metal3 and Ironic to nodes that have BMC network access, so no oth
 
 ### Enable audit logging on the control plane cluster
 
-This is separate from the platform's own [audit logging](../../../configure/platform-configs/audit.mdx) feature, which records activity through the platform API. It doesn't see direct `kubectl` access to the control plane cluster's own API server, so enable native Kubernetes audit logging there as well, with a policy that captures write operations on both `secrets` and `baremetalhosts`:
+This is separate from the platform's own [audit logging](../../../../configure/platform-configs/audit.mdx) feature, which records activity through the platform API. It doesn't see direct `kubectl` access to the control plane cluster's own API server, so enable native Kubernetes audit logging there as well, with a policy that captures write operations on both `secrets` and `baremetalhosts`:
 
 ```yaml
 rules:
