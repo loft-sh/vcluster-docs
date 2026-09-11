@@ -82,27 +82,50 @@ url_resolves() {
     local rel="${url#/docs/}"
 
     # /next/ = current source
+    local is_current=0
     case "$rel" in
-        vcluster/next/*) rel="vcluster/${rel#vcluster/next/}" ;;
-        platform/next/*) rel="platform/${rel#platform/next/}" ;;
+        vcluster/next/*) rel="vcluster/${rel#vcluster/next/}"; is_current=1 ;;
+        platform/next/*) rel="platform/${rel#platform/next/}"; is_current=1 ;;
     esac
 
-    # Versioned paths -> versioned_docs folders
+    # Versioned and unversioned stable paths -> versioned_docs folders
     local versioned_rel=""
-    case "$rel" in
-        vcluster/[0-9]*.*)
-            local ver="${rel#vcluster/}"
-            ver="${ver%%/*}"
-            local rest="${rel#vcluster/${ver}/}"
-            versioned_rel="vcluster_versioned_docs/version-${ver}/${rest}"
-            ;;
-        platform/[0-9]*.*)
-            local ver="${rel#platform/}"
-            ver="${ver%%/*}"
-            local rest="${rel#platform/${ver}/}"
-            versioned_rel="platform_versioned_docs/version-${ver}/${rest}"
-            ;;
-    esac
+    if [[ "$is_current" -eq 0 ]]; then
+        case "$rel" in
+            vcluster/[0-9]*.*)
+                local ver="${rel#vcluster/}"
+                ver="${ver%%/*}"
+                local rest="${rel#vcluster/${ver}/}"
+                versioned_rel="vcluster_versioned_docs/version-${ver}/${rest}"
+                ;;
+            platform/[0-9]*.*)
+                local ver="${rel#platform/}"
+                ver="${ver%%/*}"
+                local rest="${rel#platform/${ver}/}"
+                versioned_rel="platform_versioned_docs/version-${ver}/${rest}"
+                ;;
+            vcluster/*|platform/*)
+                local product="${rel%%/*}"
+                local rest="${rel#*/}"
+                local stable_version=""
+                if [[ -f "${REPO_ROOT}/docusaurus.config.js" ]]; then
+                    stable_version="$(awk -v id="$product" '
+                        $0 ~ ("id: \"" id "\"") { in_plugin = 1 }
+                        in_plugin && /lastVersion:/ {
+                            line = $0
+                            sub(/^.*lastVersion:[[:space:]]*\"/, "", line)
+                            sub(/\".*$/, "", line)
+                            print line
+                            exit
+                        }
+                    ' "${REPO_ROOT}/docusaurus.config.js")"
+                fi
+                if [[ -n "$stable_version" && "$stable_version" != "current" ]]; then
+                    versioned_rel="${product}_versioned_docs/version-${stable_version}/${rest}"
+                fi
+                ;;
+        esac
+    fi
 
     local paths_to_check=("$rel")
     [[ -n "$versioned_rel" ]] && paths_to_check=("$versioned_rel")
@@ -139,6 +162,8 @@ has_redirect_coverage() {
 
     while IFS= read -r pattern; do
         [[ "$pattern" != *"*"* ]] && continue
+        # The branded 404 catch-all is not redirect coverage.
+        [[ "$pattern" == "/*" ]] && continue
         if [[ "$pattern" == *'/*' && "$pattern" != *'*'*'*' ]]; then
             local prefix="${pattern%\*}"
             if [[ "$url" == "${prefix}"* ]]; then
@@ -155,7 +180,13 @@ file_to_url() {
     url="${url%.mdx}"
     url="${url%.md}"
     url="${url%/index}"
-    echo "/docs/${url}"
+    case "$url" in
+        vcluster/*|platform/*)
+            local product="${url%%/*}"
+            echo "/docs/${product}/next/${url#*/}"
+            ;;
+        *) echo "/docs/${url}" ;;
+    esac
 }
 
 get_base_ref() {
@@ -295,9 +326,9 @@ guess_destination() {
     fi
 
     case "$filepath" in
-        vcluster/*) echo "/docs/vcluster" ;;
-        platform/*) echo "/docs/platform" ;;
-        *) echo "/docs/vcluster" ;;
+        vcluster/*) echo "/docs/vcluster/next" ;;
+        platform/*) echo "/docs/platform/next" ;;
+        *) echo "/docs/vcluster/next" ;;
     esac
 }
 
