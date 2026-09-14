@@ -256,9 +256,7 @@ var legacyOrphanTargets = map[string]map[string]bool{
 
 func legacyOrphanFiles() map[string]bool {
 	return map[string]bool{
-		"sleepMode.mdx":                          true,
-		"sync/toHost/resourceclaims.mdx":         true,
-		"sync/toHost/resourceclaimtemplates.mdx": true,
+		"sleepMode.mdx": true,
 	}
 }
 

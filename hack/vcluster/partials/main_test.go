@@ -21,8 +21,14 @@ func TestIsLegacyOrphan(t *testing.T) {
 		{
 			name:         "tracked version absolute target",
 			outputDir:    filepath.Join(string(filepath.Separator), "tmp", "checkout", "vcluster_versioned_docs", "version-0.35.0", "_partials", "config"),
-			relativePath: filepath.Join("sync", "toHost", "resourceclaims.mdx"),
+			relativePath: "sleepMode.mdx",
 			want:         true,
+		},
+		{
+			name:         "resourceClaims no longer grandfathered",
+			outputDir:    "vcluster_versioned_docs/version-0.37.0/_partials/config",
+			relativePath: filepath.Join("sync", "toHost", "resourceclaims.mdx"),
+			want:         false,
 		},
 		{
 			name:         "current docs target",
