@@ -247,7 +247,7 @@ func main() {
 // before this check existed. The exemptions are scoped to the exact versioned
 // output directories that currently contain the files; using only the relative
 // file names would also hide new orphans in current and future documentation.
-// Remove a target once its backport PR deletes or renames all three files.
+// Remove a target once its backport PR deletes or renames sleepMode.mdx.
 var legacyOrphanTargets = map[string]map[string]bool{
 	"vcluster_versioned_docs/version-0.35.0/_partials/config": legacyOrphanFiles(),
 	"vcluster_versioned_docs/version-0.36.0/_partials/config": legacyOrphanFiles(),
@@ -256,9 +256,7 @@ var legacyOrphanTargets = map[string]map[string]bool{
 
 func legacyOrphanFiles() map[string]bool {
 	return map[string]bool{
-		"sleepMode.mdx":                          true,
-		"sync/toHost/resourceclaims.mdx":         true,
-		"sync/toHost/resourceclaimtemplates.mdx": true,
+		"sleepMode.mdx": true,
 	}
 }
 
