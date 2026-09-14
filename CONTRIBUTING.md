@@ -47,7 +47,9 @@ npm run serve
 ```
 
 Before making a pull request, it's recommended to run this command to
-fix any broken links that may have been introduced.
+fix any broken links that may have been introduced. A build doesn't catch
+every kind of broken link, so also see
+[Checking links before you push](#checking-links-before-you-push).
 
 ## AI-assisted PR review
 
@@ -381,7 +383,78 @@ EOF
 
 Use
 [inline comments](https://docusaurus.io/docs/markdown-features/code-blocks#highlighting-with-comments)
-in the code to highlight lines. See .
+in the code to highlight lines.
+
+### Links and imports
+
+Link to another page in the same docs section with a relative path to the
+source file, including the `.mdx` suffix. The suffix is what tells Docusaurus
+to rewrite the link at build time. Without it, the raw string survives into the
+compiled bundle and the browser resolves it against the current page URL when
+clicked, which produces a different path. The server-rendered HTML still looks
+correct, so this kind of break is invisible to `curl`, `git grep`, and static
+inspection. It only shows up on click.
+
+- Correct: `[Projects](../understand/what-are-projects.mdx)`
+- Correct, for a directory target: `[Networking](../networking/README.mdx)`
+- Broken: `[Projects](../understand/what-are-projects)`
+- Broken: `[Networking](../networking/)`
+
+Relative paths also work on GitHub, survive slug changes, and track file moves,
+so prefer them over `/docs/` URL paths inside a section.
+
+Link across sections, such as from Platform to vCluster, with a `/docs/`
+absolute path. The two sections are separate Docusaurus plugin instances, so
+relative file paths don't resolve between them.
+
+- `[vCluster docs](/docs/vcluster)`
+- `[Sleep mode](/docs/vcluster/configure/vcluster-yaml/sleep-mode)`
+
+#### Links inside partials and fragments
+
+Calculate the path from the partial or fragment file itself, not from a page
+that imports it. Reusable content gets imported from pages at different depths,
+so a path that works from one importer breaks from another.
+
+Markdown link syntax isn't parsed inside a JSX expression. When reusable
+content needs to link from within JSX, use the `VersionAwareDocLink` component
+so the link keeps the reader's docs version.
+
+```jsx
+import VersionAwareDocLink from '@site/src/components/VersionAwareDocLink';
+
+<VersionAwareDocLink product="vcluster" to="/security">security baseline</VersionAwareDocLink>
+```
+
+A cross-product link targets the other product's stable docs, because Platform
+and vCluster version independently.
+
+#### Import paths
+
+Choose the import path based on what you're importing and whether that content
+should freeze with a docs version.
+
+| Importing | Use | Why |
+| --- | --- | --- |
+| React or theme components | `@site/src/` or `@theme/` | Not version-specific |
+| Same-product partials and fragments | a relative path | Versioning copies the docs tree, so each snapshot stays self-contained |
+| Intentionally global content | `@site/docs/_partials/` | Updates every docs version at once |
+| Cross-product content | `@site/<other-product>/` | Tracks the other product's current content, which is the only option because the version lines don't match up |
+
+A same-product `@site/` import keeps resolving to the live tree even from a
+versioned page, so an archived page ends up showing current content. CI rejects
+those.
+
+#### Checking links before you push
+
+A production build catches links that point at nothing. It doesn't catch a link
+that resolves at build time but breaks on click, so run the link checks too.
+
+```bash
+npm run build                      # links to missing pages
+npm run validate-mdx-links         # click-time breaks in live docs
+npm run validate-reusable-imports  # same-product live imports
+```
 
 ### vCluster terms
 
@@ -590,7 +663,10 @@ var pathExtras = map[string]Extras{
 }
 ```
 
-`Before` lands above the rendered schema content, `After` below.
+`Before` lands above the rendered schema content, `After` below. Links in
+this prose follow the same rules as any other partial, so use a relative path
+with the `.mdx` suffix, calculated from where the generated file lands. That
+depth is the same for live and versioned output.
 The map keys are validated against the live schema before any output
 is written; a rename or removal upstream panics the generator with the
 full list of dangling keys, so the prose can be migrated explicitly
@@ -612,6 +688,6 @@ when:
 
 ### Quick rule of thumb
 
-- One schema path, one or two paragraphs of prose → `pathExtras`.
+- One schema path with one or two paragraphs of prose → `pathExtras`.
 - Multi-paragraph prose, multiple references, own structure → separate
   partial, imported manually.

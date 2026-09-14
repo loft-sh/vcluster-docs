@@ -33,7 +33,7 @@ var pathExtras = map[string]Extras{
 	"controlPlane/distro": {
 		After: "\n\n:::tip K3s to K8s migration\n" +
 			"Starting with vCluster 0.25.0, migration from K3s to K8s is supported. " +
-			"For more details, see the [K3s to K8s migration guide](/docs/vcluster/manage/upgrade/distro-migration).\n" +
+			"For more details, see the [K3s to K8s migration guide](../../../manage/upgrade/distro-migration.mdx).\n" +
 			":::\n",
 	},
 	"controlPlane/standalone/joinNode": {

@@ -4,9 +4,12 @@ on:
   pull_request:
     branches: [main]
     paths:
+      - 'platform/**/*.mdx'
+      - 'platform_versioned_docs/**/*.mdx'
       - 'vcluster/**/*.mdx'
       - 'vcluster_versioned_docs/**/*.mdx'
       - 'scripts/find-spa-broken-links.py'
+      - 'scripts/validate-reusable-imports.py'
 
   workflow_dispatch:
 
@@ -23,20 +26,30 @@ jobs:
         with:
           python-version: '3.14'
 
-      - name: Scan main docs for bare relative links
-        run: python3 scripts/find-spa-broken-links.py vcluster
+      - name: Scan live docs for bare relative links
+        run: python3 scripts/find-spa-broken-links.py
 
-      # Only the newest versioned folder is enforced. Older versions predate
-      # the fix and contain pre-existing bare links that would fail CI.
-      # Each release cut produces a clean snapshot of vcluster/ (already
-      # enforced above), so the latest version is automatically picked up
-      # without workflow edits.
-      - name: Find latest versioned docs folder
-        id: latest-version
-        run: |
-          latest=$(ls -d vcluster_versioned_docs/version-* | sort -V | tail -1)
-          echo "path=$latest" >> "$GITHUB_OUTPUT"
-          echo "Scanning $latest"
+      - name: Validate reusable content imports
+        run: python3 scripts/validate-reusable-imports.py
 
+      # Only the newest versioned folder of each product is enforced, and it is
+      # held to the same bar as the live tree via --enforce-reusable: the
+      # newest snapshot is a copy of vcluster/ or platform/, already enforced
+      # above, so a release cut cannot introduce findings. Older versions
+      # predate the fix and are never edited, so they stay out of CI.
+      # The latest version is picked up automatically without workflow edits.
       - name: Scan latest versioned docs for bare relative links
-        run: python3 scripts/find-spa-broken-links.py "${{ steps.latest-version.outputs.path }}"
+        run: |
+          paths=()
+          for tree in vcluster_versioned_docs platform_versioned_docs; do
+            latest=$(ls -d "$tree"/version-* 2>/dev/null | sort -V | tail -1)
+            if [ -n "$latest" ]; then
+              paths+=("$latest")
+            fi
+          done
+          if [ ${#paths[@]} -eq 0 ]; then
+            echo "No versioned docs folders found" >&2
+            exit 1
+          fi
+          echo "Scanning ${paths[*]}"
+          python3 scripts/find-spa-broken-links.py --enforce-reusable "${paths[@]}"
