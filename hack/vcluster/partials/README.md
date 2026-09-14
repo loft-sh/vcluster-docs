@@ -85,16 +85,18 @@ the stale file if the field is genuinely gone.
 ### Legacy orphans
 
 `legacyOrphanTargets` in `main.go` grandfathers a small set of files that were
-already stale before this check existed. The exemptions are scoped to the
+already stale before this check existed. The exemption is scoped to the
 specific `vcluster_versioned_docs/version-0.35.0` through `version-0.37.0`
-output directories, which still carry a `sleepMode.mdx` and lowercase
-`resourceclaims.mdx` / `resourceclaimtemplates.mdx` from before DOC-1739.
-Repository policy requires versioned docs changes to go through the automatic,
-label-driven backport process, so those directories can't be cleaned up in the
-source change that introduces the check. A matching file in those targets
-prints a warning instead of failing the build; the same relative file anywhere
-else remains an error. Remove a target entry once its backport PR deletes or
-renames all three files.
+output directories, which still carry a `sleepMode.mdx` predating `sleep`
+(see DOC-1739). The lowercase `resourceclaims.mdx` / `resourceclaimtemplates.mdx`
+orphans DOC-1739 also grandfathered were resolved directly (DOC-1776): the
+versioned DRA pages now import the generator's camelCase partials, so no
+exemption remains for those. Repository policy requires versioned docs
+changes to go through the automatic, label-driven backport process; this was
+an exception because there was no main-branch fix to backport from. A
+matching file in those targets prints a warning instead of failing the build;
+the same relative file anywhere else remains an error. Remove a target entry
+once its backport PR deletes or renames `sleepMode.mdx` too.
 
 ## CI integration
 
