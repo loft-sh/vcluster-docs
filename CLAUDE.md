@@ -72,10 +72,51 @@ they work on GitHub, survive slug changes, and track moves.
 - **Correct:** `[vCluster docs](/docs/vcluster)`
 - **Correct:** `[Sleep mode](/docs/vcluster/configure/vcluster-yaml/sleep-mode)`
 
-**Imports** (components, partials): Use `@site/` prefix:
+**Imports:** Choose the path based on what is being imported and whether the
+content must be frozen with a docs version:
 
-- `import Flow from '@site/src/components/Flow'`
-- `import Partial from '@site/vcluster/_partials/example.mdx'`
+- React and theme components: use `@site/src/` or `@theme/`.
+  - `import Flow from '@site/src/components/Flow'`
+- Same-product partials and fragments: use a relative path. Docusaurus copies
+  versioned docs verbatim, so an `@site/<product>/...` import would keep
+  resolving to the live tree instead of the versioned copy.
+  - `import Partial from '../../_partials/example.mdx'`
+- Intentionally global content: use `@site/docs/_partials/`. These imports
+  update every docs version that uses them.
+  - `import Prerequisites from '@site/docs/_partials/base-prerequisites.mdx'`
+- Cross-product content: use `@site/<other-product>/...` only when tracking the
+  other product's current content is intentional. Platform and vCluster have
+  independent version lines, so there is no implicit matching version.
+  - `import InstallCLI from '@site/vcluster/_partials/deploy/install-cli.mdx'`
+
+**Links inside partials and fragments:** For same-product docs, link to the
+relative Markdown source file and include the `.mdx` suffix. Calculate the path
+from the partial or fragment file, not from a page that imports it. Docusaurus
+then compiles the link to the target slug and preserves the reader's docs
+version. A suffix-less relative URL is left for the browser to resolve against
+the importing page and can break when the reusable content is imported from a
+different depth.
+
+- Correct: `[High availability](../../deploy/control-plane/high-availability.mdx)`
+- Broken: `[High availability](./high-availability)`
+
+Markdown link syntax is not parsed inside a JSX expression, so reusable content
+that links from within JSX uses `VersionAwareDocLink` instead. It resolves the
+version segment Docusaurus actually serves, which is no segment for the last
+version and `/next` for the current one. Never build those URLs by hand from the
+version name.
+
+```jsx
+import VersionAwareDocLink from '@site/src/components/VersionAwareDocLink';
+
+<VersionAwareDocLink product="vcluster" to="/security">security baseline</VersionAwareDocLink>
+```
+
+A same-product link keeps the reader's version. A cross-product link targets
+the other product's stable (`lastVersion`) docs, because Platform and vCluster
+version independently and stable never sends a reader of released docs into
+unreleased ones. Note this differs from a cross-product `@site/` import, which
+does pull the other product's current source.
 
 **Debugging broken links:**
 
