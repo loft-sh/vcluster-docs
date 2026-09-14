@@ -1,0 +1,99 @@
+---
+title: Operations
+sidebar_label: Operations
+sidebar_position: 7
+description: Add and remove bare metal servers, check fleet capacity, and perform common day-2 management tasks with the Metal3 driver.
+toc_max_heading_level: 3
+---
+
+import InterpolatedCodeBlock from '@site/src/components/InterpolatedCodeBlock';
+import PageVariables from '@site/src/components/PageVariables';
+
+Day-2 operations for the Metal3 driver center on managing `BareMetalHost` resources on the control plane cluster. This page covers adding and removing servers, checking fleet capacity, and where to find guidance for other common tasks.
+
+Set your namespace once. Every command on this page updates automatically.
+
+<PageVariables
+  NAMESPACE="my-metal3-namespace"
+/>
+
+## Add servers
+
+A physical server joins the pool by creating a `BareMetalHost` resource and a Secret containing its BMC credentials, both in the NodeProvider's namespace on the control plane cluster. See [Add servers](./server-lifecycle.mdx#add-servers) for the full field reference and bulk registration.
+
+After creation, the BMO begins registration immediately. The server moves through `registering` -> `inspecting` -> `available` automatically. Inspection collects hardware inventory and typically takes a few minutes. The server isn't eligible for provisioning until it reaches `available`.
+
+### Verify a server is ready
+
+<InterpolatedCodeBlock
+  code={`kubectl get baremetalhost server-01 -n [[GLOBAL:NAMESPACE]] \\
+  -o jsonpath='{.status.provisioning.state}'`}
+/>
+
+A response of `available` means the server is ready to claim. See [Troubleshooting](./troubleshooting.mdx) if the server stalls in `registering` or `inspecting`.
+
+### Check hardware details
+
+After inspection, the BareMetalHost records the server's hardware inventory:
+
+<InterpolatedCodeBlock
+  code={`kubectl get baremetalhost server-01 -n [[GLOBAL:NAMESPACE]] \\
+  -o jsonpath='{.status.hardwareDetails}' | jq .`}
+/>
+
+This includes CPU count, memory, NIC information, and disk inventory. Verify it matches the expected hardware before the server is provisioned into production.
+
+## Remove servers
+
+### Permanent removal
+
+If a Machine holds the server, delete it from the vCluster Platform UI or API first. The platform deprovisions the server and returns it to `available`. Then delete the BareMetalHost:
+
+<InterpolatedCodeBlock
+  code={`kubectl delete baremetalhost server-01 -n [[GLOBAL:NAMESPACE]]`}
+/>
+
+After the BareMetalHost is deleted, also delete its BMC credential Secret if it is no longer needed.
+
+If you delete a provisioned BareMetalHost directly without first deleting the Machine, the platform marks the NodeClaim as failed on the next reconcile, but the server doesn't go through the normal deprovisioning cycle, so the disk isn't cleaned before physical removal.
+
+### Temporarily withhold a server
+
+To prevent a server from being claimed for new Machines without removing it from the cluster, add a label that no node type selector matches:
+
+```bash
+kubectl label baremetalhost server-01 -n <namespace> maintenance=true
+```
+
+Label changes don't affect servers that are already provisioned. A server already claimed by a Machine remains claimed until that Machine is deleted. Remove the label to return the server to the eligible pool:
+
+```bash
+kubectl label baremetalhost server-01 -n <namespace> maintenance-
+```
+
+## Check fleet capacity
+
+Get a view of all servers and their current states:
+
+<InterpolatedCodeBlock
+  code={`kubectl get baremetalhost -n [[GLOBAL:NAMESPACE]] \\
+  -o custom-columns='NAME:.metadata.name,STATE:.status.provisioning.state,ERROR:.status.errorMessage'`}
+/>
+
+Count available servers:
+
+<InterpolatedCodeBlock
+  code={`kubectl get baremetalhost -n [[GLOBAL:NAMESPACE]] -o json | \\
+  jq '[.items[] | select(.status.provisioning.state=="available")] | length'`}
+/>
+
+A server in `available` is ready for a new Machine request. A server in `provisioning` or `provisioned` is claimed. A server in `error` needs attention before it can be used again. See [Troubleshooting](./troubleshooting.mdx) for how to resolve error states.
+
+## Other day-2 tasks
+
+| Task | Where to find it |
+|---|---|
+| Update OS images across a fleet | [GPU Fleet Operations](./gpu-fleet-operations.mdx#roll-out-a-new-os-image) |
+| Update server labels | [GPU Fleet Operations](./gpu-fleet-operations.mdx#label-strategy) |
+| Expand the IP address pool | [Troubleshooting](./troubleshooting.mdx#ip-allocation-issues) |
+| Rotate BMC credentials | [Production and Security](./security.mdx#rotate-bmc-credentials) |

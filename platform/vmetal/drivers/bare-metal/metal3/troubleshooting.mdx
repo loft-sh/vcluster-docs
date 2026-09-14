@@ -1,0 +1,205 @@
+---
+title: Troubleshooting
+sidebar_label: Troubleshooting
+sidebar_position: 9
+description: Diagnose and resolve common Metal3 provisioning failures, IP allocation issues, and BareMetalHost state problems.
+toc_max_heading_level: 3
+---
+
+import InterpolatedCodeBlock from '@site/src/components/InterpolatedCodeBlock';
+import PageVariables from '@site/src/components/PageVariables';
+import TroubleshootingDecisionTree from '@site/static/media/diagrams/vmetal-troubleshooting-decision-tree.svg';
+
+This guide covers how to diagnose and resolve common Metal3 provisioning failures. Start by identifying the state your server is in using [Bare metal server lifecycle](./server-lifecycle.mdx#server-lifecycle), then jump to the matching section below.
+
+Set your namespace and server name once. Every command on this page updates automatically.
+
+<PageVariables
+  NAMESPACE="my-metal3-namespace"
+  BMH_NAME="my-baremetalhost-name"
+/>
+
+<figure>
+  <TroubleshootingDecisionTree style={{width: '100%', height: 'auto'}} role="img" aria-label="Decision tree for diagnosing a BareMetalHost stuck in registering, inspecting, provisioning, deprovisioning, or error" />
+</figure>
+
+## Common failures
+
+### Stuck in `registering`
+
+The BareMetalHost stays in `registering` when the Bare Metal Operator (BMO) can't reach the BMC.
+
+Check BMO logs for connection errors:
+
+<InterpolatedCodeBlock
+  code={`kubectl logs deployment/bare-metal-operator -n [[GLOBAL:NAMESPACE]] -c bare-metal-operator | grep [[GLOBAL:BMH_NAME]]`}
+/>
+
+Verify:
+- The BMC address in `spec.bmc.address` is reachable from the control plane cluster.
+- Firewall rules allow traffic from the Bare Metal Operator and Ironic workloads to the BMC port (623 for IPMI, 443 for Redfish).
+- The Secret referenced by `spec.bmc.credentialsName` contains valid `username` and `password` keys.
+
+### Stuck in `inspecting`
+
+The BareMetalHost stays in `inspecting` when the server can't boot into the IPA ramdisk and phone home to Ironic. Work through these checks in order. Each one narrows the failure to a specific layer.
+
+#### Check the BMC console
+
+The BMC console shows the server's boot sequence directly. Because it's out-of-band, it works even if the Metal3 setup is misconfigured.
+
+Access the console through the BMC web interface or using `ipmitool`:
+
+```bash
+ipmitool -I lanplus -H <bmc-address> -U <user> -P <pass> sol activate
+```
+
+You should see this sequence:
+
+1. The server powers on or reboots (triggered by Metal3 over BMC).
+2. The firmware attempts a network boot on the provisioning NIC.
+3. The NIC gets a DHCP lease.
+4. The server downloads a kernel and initramfs over TFTP or HTTP.
+
+If the server doesn't power on or reboot, the problem is BMC access. Check the BMC address, network reachability from the Bare Metal Operator and Ironic workloads, and the credentials in the Secret referenced by `spec.bmc.credentialsName`.
+
+If the server powers on but stalls during network boot, check the DHCP server logs next.
+
+#### Check DHCP server logs
+
+The DHCP server logs every request and response it sees. It's the most targeted tool for diagnosing a stuck network boot.
+
+<InterpolatedCodeBlock
+  code={`kubectl logs -n [[GLOBAL:NAMESPACE]] -l app=dhcp-proxy`}
+/>
+
+The logs include DHCP requests from the server, including requests from MACs that don't match any registered `BareMetalHost` (a sign of a wrong `spec.bootMACAddress`), DHCP responses, TFTP requests for the bootloader, and HTTP requests for the kernel and initramfs images.
+
+If no entries appear for the server, the DHCP broadcast isn't reaching the pod. Check that the DHCP server is attached to the provisioning network using a Multus NetworkAttachmentDefinition, or that it's running with `hostNetwork: true` for flat networks. See [Network configuration](./networking.mdx).
+
+#### Check ramdisk and Ironic logs
+
+The `ramdisk-logs` container tails IPA log files as they arrive. If no logs appear, the server never contacted Ironic.
+
+<InterpolatedCodeBlock
+  code={`kubectl logs statefulset/ironic -n [[GLOBAL:NAMESPACE]] -c ramdisk-logs
+kubectl logs statefulset/ironic -n [[GLOBAL:NAMESPACE]] -c ironic`}
+/>
+
+Look for errors related to the server's MAC address or IPMI/Redfish operations.
+
+Other causes include a wrong boot MAC (`spec.bootMACAddress` must match the NIC used for PXE boot; the DHCP server logs show requests from unmatched MACs), or a failed IPA image download. The `ipa-images` Deployment downloads and serves the kernel and initramfs independently from Ironic. Inspect it with `kubectl describe deployment/ipa-images -n <namespace>` and `kubectl logs deployment/ipa-images -n <namespace>`.
+
+### Stuck in `provisioning`
+
+The BareMetalHost stays in `provisioning` when Ironic can't complete the OS installation. Check Ironic logs:
+
+<InterpolatedCodeBlock
+  code={`kubectl logs statefulset/ironic -n [[GLOBAL:NAMESPACE]] -c ironic`}
+/>
+
+Common causes:
+
+- **Image URL unreachable.** The server's IPA agent downloads the OS image directly. It must be reachable from the bare metal server's provisioning or tenant network, not just from the control plane cluster. Test the URL from a host on the same routed network as the server.
+- **Checksum mismatch.** Ironic verifies the downloaded image against `spec.image.checksum`. A wrong checksum fails provisioning with a checksum error in the Ironic logs.
+- **Wrong `rootDeviceHint`.** If a server has multiple disks, Ironic may target the wrong one. Set `spec.rootDeviceHints` on the `BareMetalHost` to target the correct disk by size, WWN, or device name.
+
+To force a re-provision, delete the Machine from the vCluster Platform UI or API. The platform deprovisions the BareMetalHost and returns it to `available`; a new Machine request then triggers a fresh attempt. Don't manually edit the BareMetalHost's `spec.image` field while a Machine holds the claim: the platform manages that field and reconciles it on the next cycle.
+
+### Stuck in `deprovisioning`
+
+When a Machine is deleted, the platform removes the image reference from the BareMetalHost and sets it offline. The BMO then triggers a cleaning cycle that wipes the disk and returns the server to `available`. The BMC must remain reachable from Metal3 throughout, and the cleaning ramdisk must be able to reach Ironic and the DHCP proxy when booting. Cleaning can take several minutes on servers with many disks or large disk capacities.
+
+<InterpolatedCodeBlock
+  code={`kubectl logs deployment/bare-metal-operator -n [[GLOBAL:NAMESPACE]] -c bare-metal-operator | grep -i "clean\\|deprovi"
+kubectl logs statefulset/ironic -n [[GLOBAL:NAMESPACE]] -c ironic | grep -i "clean"`}
+/>
+
+If a server is physically removed or permanently unavailable, first delete the Machine that claims it through the vCluster Platform UI or API. After the Machine teardown completes, delete the `BareMetalHost` resource from inventory. If normal teardown can't complete because the server is unreachable, resolve the stuck Machine before removing the inventory record.
+
+### Error state
+
+A BareMetalHost whose operational status is `error` remains in its current provisioning state while BMO retries reconciliation. Read the error details and events first:
+
+<InterpolatedCodeBlock
+  code={`kubectl get baremetalhost [[GLOBAL:BMH_NAME]] -n [[GLOBAL:NAMESPACE]] -o jsonpath='{.status.errorMessage}'
+kubectl get baremetalhost [[GLOBAL:BMH_NAME]] -n [[GLOBAL:NAMESPACE]] -o jsonpath='{.status.errorType}'
+kubectl describe baremetalhost [[GLOBAL:BMH_NAME]] -n [[GLOBAL:NAMESPACE]]`}
+/>
+
+- **Monitor a transient error** such as a network blip or temporary BMC unresponsiveness. BMO retries without a manual annotation. If the error remains, verify connectivity and inspect the BMO and Ironic logs before changing the host.
+- **Fix credentials** when the error reports wrong BMC credentials. Update the referenced Secret with the correct values. BMO reads the changed Secret during reconciliation and retries without reprovisioning the server.
+- **Stop and create a new Machine** when the error is a checksum mismatch or image URL failure. The image URL and checksum are written to Ironic's database at provisioning time, so updating the `OSImage` resource doesn't affect an in-flight Machine. Delete the Machine to stop provisioning, then create a new one with corrected image configuration.
+- **Delete and recreate the BareMetalHost** when the underlying hardware configuration is wrong, such as a bad BMC address or incorrect boot MAC.
+
+## IP allocation issues
+
+The platform stores IP allocations in a ConfigMap named `ipam-default` in the loft management namespace (typically `loft`). If Machine creation fails with a `failed to allocate IP` error, check here.
+
+The error appears in the platform logs and in Machine events, as `failed to allocate IP: CIDR exhausted; no free addresses left` (CIDR mode) or `failed to allocate IP: all ranges exhausted; no free addresses left` (explicit range mode).
+
+Inspect current allocations:
+
+```bash
+kubectl get configmap ipam-default -n loft -o yaml
+```
+
+The ConfigMap data is a flat map of `<ip>: NodeClaim/<namespace>/<name>` entries, one per allocated address:
+
+```yaml
+data:
+  10.10.1.2: NodeClaim/loft-p-myproject/machine-abc
+  10.10.1.3: NodeClaim/loft-p-myproject/machine-def
+```
+
+**Leaked IPs from a failed deprovision.** If the platform deleted a Machine but didn't release its IP (for example, a crash during cleanup), the entry remains in the ConfigMap even though the NodeClaim no longer exists. To clean up: list active NodeClaims (`kubectl get nodeclaims -A`), compare against the ConfigMap entries, and edit the ConfigMap (`kubectl edit configmap ipam-default -n loft`) to remove entries whose NodeClaim no longer exists.
+
+**CIDR or range too small.** If the number of Machines regularly exceeds the available address space, expand the range using the `metal3.vcluster.com/network-cidr` or `metal3.vcluster.com/network-ip-range` property. See [Network configuration](./networking.mdx#ipam).
+
+## Webhook readiness
+
+The Metal3 `ValidatingWebhook` validates every `BareMetalHost` create and update. It runs in the `bare-metal-operator` container on port 9443, reached through the `bare-metal-operator-webhook` Service, and defaults to `failurePolicy: Fail`. If the webhook endpoint is unreachable when you create a BareMetalHost, the API server rejects the request and the BareMetalHost is never created.
+
+Check whether the BMO container is ready:
+
+<InterpolatedCodeBlock
+  code={`kubectl get deployment bare-metal-operator -n [[GLOBAL:NAMESPACE]]
+kubectl get pods -n [[GLOBAL:NAMESPACE]] -l app=bare-metal-operator`}
+/>
+
+If a pod isn't ready, inspect its events and the configured readiness probe:
+
+<InterpolatedCodeBlock
+  code={`kubectl describe pods -n [[GLOBAL:NAMESPACE]] -l app=bare-metal-operator`}
+/>
+
+Check the ValidatingWebhookConfiguration for the current CA bundle and service endpoint:
+
+```bash
+kubectl get validatingwebhookconfiguration bare-metal-operator -o yaml
+```
+
+## Log locations
+
+Metal3 0.6.0 deploys separate workloads on the control plane cluster, in the namespace configured in the NodeProvider's `clusterRef`.
+
+| Component | Container | Log command |
+|---|---|---|
+| Ironic | `ironic` StatefulSet, `ironic` container | `kubectl logs statefulset/ironic -n <namespace> -c ironic` |
+| Bare Metal Operator | `bare-metal-operator` Deployment | `kubectl logs deployment/bare-metal-operator -n <namespace> -c bare-metal-operator` |
+| IPA ramdisk output | `ironic` StatefulSet, `ramdisk-logs` container | `kubectl logs statefulset/ironic -n <namespace> -c ramdisk-logs` |
+| IPA kernel and initramfs server | `ipa-images` Deployment | `kubectl logs deployment/ipa-images -n <namespace>` |
+| Managed database | `mariadb` StatefulSet | `kubectl logs statefulset/mariadb -n <namespace>` |
+
+First inspect BareMetalHost events on the control plane cluster:
+
+<InterpolatedCodeBlock
+  code={`kubectl describe baremetalhost [[GLOBAL:BMH_NAME]] -n [[GLOBAL:NAMESPACE]]`}
+/>
+
+Then, on the management cluster, inspect NodeClaim events for platform-level failures such as no available hosts, an IPAM failure, or an image resolution error:
+
+<InterpolatedCodeBlock
+  code={`kubectl get nodeclaims -A
+kubectl describe nodeclaim <nodeclaim-name> -n <project-namespace>`}
+/>

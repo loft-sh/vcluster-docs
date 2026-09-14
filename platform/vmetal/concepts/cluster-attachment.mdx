@@ -1,0 +1,70 @@
+---
+title: Cluster Attachment
+sidebar_label: Cluster Attachment
+sidebar_position: 2
+description: How vMetal servers join tenant clusters as private nodes.
+---
+
+import TenantIsolation from '@site/static/media/diagrams/tenant-isolation-model.svg';
+import MachineLifecycle from '@site/static/media/diagrams/vmetal-machine-lifecycle.svg';
+
+When a tenant cluster requests nodes, vMetal provisions servers and joins them to that cluster automatically. Each server appears in the cluster as a standard Kubernetes node. For the driver-neutral Machine model behind this, see [Machine and server concepts](./machine-lifecycle.mdx).
+
+<figure>
+  <TenantIsolation style={{width: '100%', height: 'auto'}} role="img" aria-label="A private node is allocated exclusively to one tenant cluster; whether the underlying physical host is shared depends on the infrastructure driver" />
+</figure>
+
+## Private nodes
+
+When vMetal provisions capacity for a tenant cluster, the resulting Kubernetes worker is a [private node](/docs/vcluster/deploy/worker-nodes/private-nodes/). The platform assigns that node exclusively to one tenant cluster at a time. The infrastructure boundary depends on the driver: Metal3 can provide an entire physical server, while KubeVirt and Terraform can provide a VM whose physical host might run other VMs.
+
+Private nodes appear in the tenant cluster alongside any virtual nodes from vCluster. Schedule workloads to private nodes using standard Kubernetes node selectors and resource requests.
+
+## How joining works
+
+The platform generates cloud-init user data for each Machine. For private nodes, cloud-init runs a bootstrap script downloaded from the vCluster server. The script installs the container runtime and kubelet, then runs `kubeadm join` with a dedicated join token for the target tenant cluster. After the driver finishes creating or preparing the host, cloud-init runs the script automatically.
+
+The server registers with the tenant cluster's API server and begins accepting workloads. The join happens without manual intervention. This is a different, automated path from [joining a manually provisioned node](/docs/vcluster/deploy/worker-nodes/private-nodes/join), which uses a CLI-issued join token and a script you run yourself.
+
+## Machine lifecycle and cluster lifecycle
+
+A Machine exists for as long as the cluster needs that node. When scale-down removes a node or the cluster is deleted, the platform deletes the Machine. This triggers deprovisioning through the driver. For example, the Metal3 driver cleans the server and returns it to the `available` pool.
+
+If a Machine fails, it isn't automatically replaced. Investigate the server's status conditions, resolve the issue, and return it to an available state before the platform can use it again. See [Bare metal server lifecycle](../drivers/bare-metal/metal3/server-lifecycle.mdx#server-lifecycle) for the Metal3 driver's states.
+
+<figure>
+  <MachineLifecycle style={{width: '100%', height: 'auto'}} role="img" aria-label="A Machine's lifecycle tracks its tenant cluster's lifecycle, triggering deprovisioning on scale-down or cluster deletion" />
+</figure>
+
+## Node resources
+
+After joining, the server is a standard Kubernetes node. The resources it advertises depend on what software runs on it.
+
+vMetal doesn't set GPU or accelerator resources. Device plugins running on the node advertise them to the kubelet. For GPU nodes, deploy the NVIDIA GPU Operator or an equivalent. vMetal provisions the server with the correct OS. The device plugin discovers the hardware and reports it to the scheduler.
+
+To target GPU nodes, use standard Kubernetes resource requests:
+
+```yaml
+resources:
+  limits:
+    nvidia.com/gpu: "1"
+```
+
+## Configure private nodes
+
+Configure private nodes in the tenant cluster spec. The `autoNodes` field tells the platform to provision and maintain a specific count of nodes from a given provider and node type:
+
+```yaml
+privateNodes:
+  enabled: true
+  autoNodes:
+    - provider: metal3-provider
+      static:
+        - name: gpu-nodes
+          quantity: 2
+          nodeTypeSelector:
+            - property: vcluster.com/node-type
+              value: gpu-node
+```
+
+The platform creates and deletes Machines to match the requested quantity. For all available fields, see [Node types and node providers](./machine-types-and-nodetypes.mdx).
