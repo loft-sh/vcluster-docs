@@ -22,26 +22,11 @@ IMPORT_PATTERN = re.compile(
     re.MULTILINE,
 )
 
-# Historical snapshots are not edited after release. These four imports
-# predate this check; keeping the baseline explicit makes any new use fail CI.
-HISTORICAL_BASELINE = {
-    (
-        "platform_versioned_docs/version-4.12.0/reference/platform-cli.mdx",
-        "@site/platform/_partials/reference/platform-cli-commands.mdx",
-    ),
-    (
-        "vcluster_versioned_docs/version-0.35.0/configure/vcluster-yaml/integrations/cert-manager.mdx",
-        "/vcluster/_fragments/integrations/cert-manager.mdx",
-    ),
-    (
-        "vcluster_versioned_docs/version-0.36.0/configure/vcluster-yaml/integrations/cert-manager.mdx",
-        "/vcluster/_fragments/integrations/cert-manager.mdx",
-    ),
-    (
-        "vcluster_versioned_docs/version-0.37.0/configure/vcluster-yaml/integrations/cert-manager.mdx",
-        "/vcluster/_fragments/integrations/cert-manager.mdx",
-    ),
-}
+# Versioned snapshots that legitimately import live same-product reusable
+# content. Empty by design: the four entries this check was written against
+# (DOC-1043) were version-locked instead of baselined. Add an entry only with a
+# recorded reason, and the stale-entry check below forces removal once fixed.
+HISTORICAL_BASELINE: set[tuple[str, str]] = set()
 
 
 def is_same_product_reusable_import(specifier: str, product: str) -> bool:

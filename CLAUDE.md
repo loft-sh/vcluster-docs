@@ -100,6 +100,24 @@ different depth.
 - Correct: `[High availability](../../deploy/control-plane/high-availability.mdx)`
 - Broken: `[High availability](./high-availability)`
 
+Markdown link syntax is not parsed inside a JSX expression, so reusable content
+that links from within JSX uses `VersionAwareDocLink` instead. It resolves the
+version segment Docusaurus actually serves, which is no segment for the last
+version and `/next` for the current one. Never build those URLs by hand from the
+version name.
+
+```jsx
+import VersionAwareDocLink from '@site/src/components/VersionAwareDocLink';
+
+<VersionAwareDocLink product="vcluster" to="/security">security baseline</VersionAwareDocLink>
+```
+
+A same-product link keeps the reader's version. A cross-product link targets
+the other product's stable (`lastVersion`) docs, because Platform and vCluster
+version independently and stable never sends a reader of released docs into
+unreleased ones. Note this differs from a cross-product `@site/` import, which
+does pull the other product's current source.
+
 **Debugging broken links:**
 
 1. CD into the versioned folder matching the error path
