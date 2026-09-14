@@ -1,142 +1,165 @@
 #!/usr/bin/env python3
+"""Find relative Markdown links that can break during SPA navigation.
+
+Docusaurus rewrites relative links ending in .md or .mdx at build time. Bare
+relative paths survive in the client bundle and are resolved against the page
+URL when clicked. In reusable partials and fragments, the result can also vary
+with the importing page's depth.
+
+With no arguments, both live documentation roots are checked. Explicit roots
+may be supplied to audit a particular live or versioned documentation tree.
 """
-find-spa-broken-links.py
 
-Finds relative markdown links without .mdx/.md suffix whose build-time URL
-(resolved against file path) differs from click-time URL (resolved against
-page URL). A mismatch means the link 404s on SPA click.
-
-Mechanism: Docusaurus rewrites relative markdown links to absolute routes at
-build time, but only if they end in .mdx/.md. Without the suffix, the raw
-string survives into the compiled bundle and the browser resolves it against
-window.location at click time. The trailing slash on page URLs causes path
-resolution to differ from file-path-based resolution.
-
-Usage:
-    python3 scripts/find-spa-broken-links.py [ROOT_DIR]
-
-    ROOT_DIR defaults to vcluster_versioned_docs/version-0.33.0
-    Also accepts 'vcluster' for main/next docs.
-
-Exit codes:
-    0 - no broken links found
-    1 - broken links found (CI blocker)
-"""
+from pathlib import Path
 import re
 import sys
-import pathlib
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit
 
-ROOT = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else 'vcluster_versioned_docs/version-0.33.0')
-PROD_PREFIX = '/docs/vcluster'
 
-# Known broken links that cannot take .mdx suffix without breaking the build.
-# These are pre-existing issues where the target file doesn't exist (auto-generated
-# CLI pages), has a numbered filename prefix (1-control-plane-components.mdx), or
-# the target directory was removed (quick-start). Each entry is (file_suffix, link).
+LIVE_ROOTS = {"platform", "vcluster"}
+DEFAULT_ROOTS = ("platform", "vcluster")
+LINK_PATTERN = re.compile(r"\]\(((?:\.\./|\./)[^)\s]+)\)")
+
+# These targets cannot simply receive an .mdx suffix. They point to generated,
+# renamed, or removed pages and are tracked separately from DOC-1043.
 KNOWN_EXCEPTIONS = {
-    ('deploy/control-plane/binary/basics.mdx', '../../../cli/vcluster_platform_connect_vcluster'),
-    ('deploy/control-plane/binary/high-availability.mdx', '../../../cli/vcluster_platform_connect_vcluster'),
-    ('introduction/oss-vs-free.mdx', '../quick-start'),
-    ('hardening-guide/host-nodes/self-assessment.mdx', './control-plane-components'),
-    ('hardening-guide/host-nodes/self-assessment.mdx', './etcd'),
-    ('hardening-guide/host-nodes/self-assessment.mdx', './control-plane'),
-    ('hardening-guide/host-nodes/self-assessment.mdx', './worker-node'),
-    ('hardening-guide/host-nodes/self-assessment.mdx', './policies'),
-    ('hardening-guide/private-nodes/self-assessment.mdx', './control-plane-components'),
-    ('hardening-guide/private-nodes/self-assessment.mdx', './etcd'),
-    ('hardening-guide/private-nodes/self-assessment.mdx', './control-plane'),
-    ('hardening-guide/private-nodes/self-assessment.mdx', './worker-node'),
-    ('hardening-guide/private-nodes/self-assessment.mdx', './policies'),
+    ("deploy/control-plane/binary/basics.mdx", "../../../cli/vcluster_platform_connect_vcluster"),
+    ("deploy/control-plane/binary/high-availability.mdx", "../../../cli/vcluster_platform_connect_vcluster"),
+    ("introduction/oss-vs-free.mdx", "../quick-start"),
+    ("hardening-guide/host-nodes/self-assessment.mdx", "./control-plane-components"),
+    ("hardening-guide/host-nodes/self-assessment.mdx", "./etcd"),
+    ("hardening-guide/host-nodes/self-assessment.mdx", "./control-plane"),
+    ("hardening-guide/host-nodes/self-assessment.mdx", "./worker-node"),
+    ("hardening-guide/host-nodes/self-assessment.mdx", "./policies"),
+    ("hardening-guide/private-nodes/self-assessment.mdx", "./control-plane-components"),
+    ("hardening-guide/private-nodes/self-assessment.mdx", "./etcd"),
+    ("hardening-guide/private-nodes/self-assessment.mdx", "./control-plane"),
+    ("hardening-guide/private-nodes/self-assessment.mdx", "./worker-node"),
+    ("hardening-guide/private-nodes/self-assessment.mdx", "./policies"),
 }
 
 
-def file_to_url(p):
-    rel = p.relative_to(ROOT).as_posix()
-    if rel.endswith('.mdx'):
-        rel = rel[:-4]
-    if rel.endswith('/README'):
-        rel = rel[:-7]
-    if rel == 'README':
-        rel = ''
-    u = PROD_PREFIX + '/' + rel
-    return u if u.endswith('/') else u + '/'
+def root_details(root: Path) -> tuple[str, str, bool]:
+    """Return product, URL prefix, and whether this is a live docs root."""
+    name = root.name
+    root_string = root.as_posix()
+
+    if "platform_versioned_docs" in root_string:
+        product = "platform"
+    elif "vcluster_versioned_docs" in root_string:
+        product = "vcluster"
+    elif name in LIVE_ROOTS:
+        product = name
+    else:
+        raise ValueError(
+            f"Cannot infer docs product from {root}. Use a platform or vcluster docs root."
+        )
+
+    is_live = name == product
+    version = ""
+    if not is_live and name.startswith("version-"):
+        version = f"/{name.removeprefix('version-')}"
+
+    return product, f"/docs/{product}{version}", is_live
 
 
-def resolve_build(p, link):
-    t = (p.parent / link).resolve()
+def file_to_url(path: Path, root: Path, url_prefix: str) -> str:
+    relative = path.relative_to(root).as_posix().removesuffix(".mdx")
+    if relative.endswith("/README"):
+        relative = relative.removesuffix("README")
+    elif relative == "README":
+        relative = ""
+    url = f"{url_prefix}/{relative}"
+    return url if url.endswith("/") else f"{url}/"
+
+
+def resolve_build(path: Path, link_path: str, root: Path, url_prefix: str) -> str:
+    target = (path.parent / link_path).resolve()
     try:
-        rel = t.relative_to(ROOT.resolve()).as_posix()
+        relative = target.relative_to(root.resolve()).as_posix()
     except ValueError:
-        return '<outside>'
-    return PROD_PREFIX + '/' + rel + ('/' if link.endswith('/') else '')
+        return "<outside>"
+    return f"{url_prefix}/{relative}"
 
 
-# Match relative markdown links like ](../path) or ](./path)
-pattern = re.compile(r'\]\((\.\./[^)#\s]+|\.\/[^)#\s]+)\)')
+def scan(root: Path) -> tuple[int, int, int]:
+    product, url_prefix, is_live = root_details(root)
+    reusable = []
+    broken = []
+    coincidental = []
 
-live = []
-fragment = []
-coincidental = []
+    for path in sorted(root.rglob("*.mdx")):
+        relative_file = path.relative_to(root).as_posix()
+        is_reusable = any(part in {"_fragments", "_partials"} for part in path.parts)
+        page_url = file_to_url(path, root, url_prefix)
 
-for p in sorted(ROOT.rglob('*.mdx')):
-    is_fragment = '_fragments/' in str(p) or '_partials/' in str(p)
-    page_url = file_to_url(p)
-
-    for ln, line in enumerate(p.read_text().splitlines(), 1):
-        # Skip lines inside import statements or JSX component props
-        stripped = line.strip()
-        if stripped.startswith('import '):
-            continue
-
-        for m in pattern.finditer(line):
-            t = m.group(1)
-
-            # Skip links that already have .mdx/.md suffix
-            if re.search(r'\.(mdx|md)$', t):
+        for line_number, line in enumerate(path.read_text().splitlines(), 1):
+            if line.strip().startswith("import "):
                 continue
 
-            # Skip external-looking paths and anchors
-            if t.startswith('http') or t.startswith('#'):
-                continue
+            for match in LINK_PATTERN.finditer(line):
+                link = match.group(1)
+                link_path = urlsplit(link).path
+                if link_path.endswith((".md", ".mdx")):
+                    continue
+                if any(
+                    relative_file.endswith(exception_file) and link == exception_link
+                    for exception_file, exception_link in KNOWN_EXCEPTIONS
+                ):
+                    continue
 
-            # Check if this link is in the known-exceptions list
-            rel_file = str(p).replace(str(ROOT) + '/', '')
-            is_exception = any(
-                rel_file.endswith(f) and t == link
-                for f, link in KNOWN_EXCEPTIONS
-            )
-            if is_exception:
-                continue
+                build_url = resolve_build(path, link_path, root, url_prefix).rstrip("/")
+                click_url = urljoin(f"https://example.invalid{page_url}", link)
+                click_url = urlsplit(click_url).path.rstrip("/")
+                entry = (relative_file, line_number, link, build_url, click_url)
 
-            b = resolve_build(p, t).rstrip('/')
-            c = urljoin('https://x' + page_url, t).replace('https://x', '').rstrip('/')
+                if is_reusable:
+                    reusable.append(entry)
+                elif build_url != click_url:
+                    broken.append(entry)
+                else:
+                    coincidental.append(entry)
 
-            entry = (rel_file, ln, t, b, c)
+    print(f"\n{root} ({product}, {'live' if is_live else 'historical'}):")
+    print(f"  PAGE-BROKEN: {len(broken)}")
+    for filename, line_number, link, build_url, click_url in broken:
+        print(
+            f"    {filename}:{line_number}  {link}  -> {click_url} "
+            f"(expected {build_url})"
+        )
 
-            if is_fragment:
-                fragment.append(entry)
-            elif b != c:
-                live.append(entry)
-            else:
-                coincidental.append(entry)
+    print(f"  REUSABLE-BARE: {len(reusable)}")
+    for filename, line_number, link, build_url, click_url in reusable:
+        status = "MISMATCH" if build_url != click_url else "depth-dependent"
+        print(f"    {filename}:{line_number}  {link}  [{status}]")
 
-# Output
-print(f'LIVE-BROKEN: {len(live)}')
-for f, ln, t, b, c in live:
-    print(f'  {f}:{ln}  {t}  ->  click goes to {c}  (expected {b})')
+    print(f"  COINCIDENTAL: {len(coincidental)}")
+    for filename, line_number, link, _, _ in coincidental:
+        print(f"    {filename}:{line_number}  {link}")
 
-if fragment:
-    print(f'\nFRAGMENT/PARTIAL: {len(fragment)}')
-    for f, ln, t, b, c in fragment:
-        status = 'MISMATCH' if b != c else 'coincidental'
-        print(f'  {f}:{ln}  {t}  [{status}]')
+    # Existing version snapshots are immutable. Report their reusable findings
+    # without blocking; live roots must remain clean so future snapshots are safe.
+    blockers = len(broken) + (len(reusable) if is_live else 0)
+    return blockers, len(reusable), len(coincidental)
 
-if coincidental:
-    print(f'\nCOINCIDENTAL (work by URL-depth accident): {len(coincidental)}')
-    for f, ln, t, b, c in coincidental:
-        print(f'  {f}:{ln}  {t}')
 
-print(f'\nTotal: {len(live)} broken, {len(fragment)} fragment, {len(coincidental)} coincidental')
+def main() -> int:
+    roots = [Path(value) for value in sys.argv[1:]] or [Path(value) for value in DEFAULT_ROOTS]
+    missing = [str(root) for root in roots if not root.is_dir()]
+    if missing:
+        print(f"Missing docs root(s): {', '.join(missing)}", file=sys.stderr)
+        return 2
 
-sys.exit(1 if live else 0)
+    totals = [scan(root) for root in roots]
+    blockers = sum(item[0] for item in totals)
+    reusable = sum(item[1] for item in totals)
+    coincidental = sum(item[2] for item in totals)
+    print(
+        f"\nTotal: {blockers} blocking, {reusable} reusable, "
+        f"{coincidental} coincidental"
+    )
+    return 1 if blockers else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
