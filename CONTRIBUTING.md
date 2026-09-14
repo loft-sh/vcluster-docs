@@ -435,7 +435,7 @@ Choose the import path based on what you're importing and whether that content
 should freeze with a docs version.
 
 | Importing | Use | Why |
-|---|---|---|
+| --- | --- | --- |
 | React or theme components | `@site/src/` or `@theme/` | Not version-specific |
 | Same-product partials and fragments | a relative path | Versioning copies the docs tree, so each snapshot stays self-contained |
 | Intentionally global content | `@site/docs/_partials/` | Updates every docs version at once |
