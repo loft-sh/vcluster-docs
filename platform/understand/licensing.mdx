@@ -7,14 +7,11 @@ description: How vCluster Platform retrieves, caches, and refreshes its license,
 
 import InterpolatedCodeBlock from '@site/src/components/InterpolatedCodeBlock';
 
-vCluster Platform holds the license for a deployment. A license controls two things:
-
-1. Which features are enabled.
-2. Limits on how many of certain resources you can create.
+vCluster Platform holds the license for a deployment. The license determines which features are enabled and sets limits on how many of certain resources you can create.
 
 Tenant clusters don't hold licenses of their own. They read a list of enabled features from the platform. Every licensing question therefore comes down to how the platform obtained its license and whether tenant clusters can reach the platform to read features from it.
 
-This page explains both, along with what each component caches and how licensing degrades when it becomes unavailable. To set up a specific mode rather than understand the model, start with [air-gapped installation with an offline license key](../install/air-gapped/with-offline-license-key.mdx).
+This page explains how that works, what each component caches, and how licensing degrades when it becomes unavailable. For the setup procedures themselves, see the air-gapped guides for an [offline license key](../install/air-gapped/with-offline-license-key.mdx) or an [offline license server](../install/air-gapped/with-offline-license-server.mdx).
 
 ## How the platform obtains its license
 
@@ -34,7 +31,7 @@ To find out which mode a running platform is in, see [Inspect and debug licensin
 
 ### Instance identity
 
-In online and offline license server modes, the platform identifies itself with two things.
+In online and offline license server modes, the platform identifies itself to the license server with:
 
 - The UID of the `kube-system` namespace in the control plane cluster.
 - A short-lived token signed with the private key from the `loft-cert` Secret, sent along with that Secret's certificate.
@@ -52,12 +49,14 @@ A tenant cluster reads its enabled features from the platform rather than from a
 | Online | A platform host and access key are both available | The platform's management API `Features` endpoint |
 | Standalone | `controlPlane.standalone.enabled` is set | `Feature` resources in the control plane cluster |
 | In-cluster API | `Feature` resources exist in the control plane cluster and the tenant cluster has RBAC to list them | `Feature` resources in the control plane cluster |
-| Offline | A key is set but no host is set | A signed offline license key, verified locally |
+| Offline | A key is set but no platform host | A signed offline license key, verified locally |
 | None | Nothing above is detected | No Enterprise features are enabled |
 
 The control plane logs the type it chose at startup, for example `detected license type {"licenseType": "Online"}`.
 
-Online is the common case. The control plane reads the platform connection from the `vcluster-platform-api-key` Secret in the tenant cluster's host namespace, unless an environment variable overrides it. It resolves the access key in this order.
+Online is the common case. By default, the control plane reads the platform connection from the `vcluster-platform-api-key` Secret in the tenant cluster's host namespace. To point it at a different Secret, set `platform.apiKey.secretName` and `platform.apiKey.namespace` in `vcluster.yaml`.
+
+Within whichever Secret applies, the control plane resolves the access key in this order.
 
 1. The `LICENSE` environment variable.
 2. The `LOFT_PLATFORM_ACCESS_KEY` environment variable.
@@ -77,10 +76,12 @@ Only the platform contacts the license server. Neither connected cluster agents 
 | Source | Destination | Protocol and port | Purpose |
 | --- | --- | --- | --- |
 | Platform pods | `admin.loft.sh` | HTTPS, TCP `443` | License retrieval every 6 hours, and usage snapshots every 15 minutes |
-| Tenant cluster control plane pods | Platform endpoint | HTTPS, TCP `443`, or TCP `10443` when in the same cluster | Feature retrieval and registration |
+| Tenant cluster control plane pods | Platform endpoint | HTTPS, TCP `443` | Feature retrieval and registration |
 | Connected cluster agents | None for licensing | Not applicable | Agents don't perform license validation |
 
 In offline license key mode, no egress to `admin.loft.sh` is required at all. In offline license server mode, the platform reaches the in-cluster license server instead, at the address given in `LICENSE_SERVER`.
+
+The platform Service listens on port `443` and forwards to port `10443` on the platform pods. Kubernetes NetworkPolicy matches the pod port rather than the Service port, so an egress rule targeting platform pods directly has to allow `10443`.
 
 The tenant cluster path is the same connection used for the rest of platform communication, so it needs no licensing-specific firewall rules. For the full connectivity model, see [Platform communication and connectivity](./platform_communication.mdx).
 
@@ -97,8 +98,6 @@ Every component caches what it last retrieved, so a licensing outage doesn't imm
 | Tenant cluster, in-cluster API | Polled with backoff starting at 30 seconds, capped at 5 minutes | None | Not applicable |
 | Tenant cluster, offline | Re-checked locally every hour | None needed, the key is in the environment | Until the key expires |
 
-Two details are worth calling out, because both surprise people.
-
 The online tenant cluster path isn't polled. The control plane retrieves features at startup and then only when the credentials Secret changes. A license change made in the platform reaches a running tenant cluster on the next control plane restart, not on a timer.
 
 The platform's one-minute cycle in offline license key mode doesn't contact anything. It re-reads current resource usage, so limits are enforced against live counts.
@@ -113,7 +112,7 @@ Behavior depends on which component lost access and for how long.
 
 **The platform's offline license key is near or past expiry.** Starting 90 days before expiry, the platform raises an expiration warning announcement. After the key expires, a 30-day grace period follows during which the platform keeps working. Once that grace period ends, the instance blocks all create requests.
 
-**The platform is over a resource limit.** Creating more of that resource is blocked while usage stays above the limit. Deleting enough of the resource clears the block automatically. At 90% of a limit, the platform raises a warning announcement before anything is blocked.
+**The platform is over a resource limit.** Creating more of that resource is blocked while usage stays above the limit. Deleting enough of the resource clears the block automatically. In offline license key mode, the platform evaluates limits itself and raises a warning announcement once usage passes 90%. In online mode, the license server decides which limits apply and which announcements to return.
 
 **A tenant cluster can't reach the platform.** It falls back to its cached feature list, which stays valid for 7 days. A tenant cluster that has never retrieved features and has no cache fails at startup instead of falling back.
 
@@ -129,10 +128,16 @@ Expiration, limit, and feature warnings surface in the platform UI. See [Inbox](
 
 View the current license in the platform UI under **Admin > Platform Config > License and Billing**.
 
-Retrieve the same data through the API. The `extended` parameter forces a refresh instead of returning the cached license.
+Retrieve the same data through the API. This reports the license the platform currently holds, without contacting the license server.
 
 ```bash title="Read the platform's current license"
 kubectl get licenses.management.loft.sh license -o yaml
+```
+
+To make the platform retrieve a fresh license first, add the `extended=true` query parameter. It's a URL parameter rather than a field, so `kubectl get` can't set it and the request has to go through `--raw`.
+
+```bash title="Force a license refresh, then read the result"
+kubectl get --raw '/apis/management.loft.sh/v1/licenses/license?extended=true'
 ```
 
 Confirm which license server the platform is using. The platform logs this once at startup, so this also tells you which mode it's in.
