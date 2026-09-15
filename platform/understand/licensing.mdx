@@ -42,19 +42,17 @@ The `loft-license-cache` Secret isn't part of the platform's identity. It holds 
 
 ## How tenant clusters receive features
 
-A tenant cluster reads its enabled features from the platform rather than from a license server. The control plane detects which mechanism is available at startup and picks one.
+In the normal connected model, a tenant cluster reads its enabled features from the platform. The control plane detects which licensing mechanism is available at startup and selects it.
 
 | Type | Detected when | Features come from |
 | --- | --- | --- |
 | Online | A platform host and access key are both available, and FIPS mode is off | The platform's management API `Features` endpoint |
-| Standalone | `controlPlane.standalone.enabled` is set | `Feature` resources in the control plane cluster |
-| In-cluster API | `Feature` resources exist in the control plane cluster and the tenant cluster has RBAC to list them | `Feature` resources in the control plane cluster |
 | Offline | A key is set but no platform host | A signed offline license key, verified locally |
+| Standalone | `controlPlane.standalone.enabled` is set | All Enterprise features stay enabled. Built-in allowances and `Feature` resources determine license warnings |
+| In-cluster API | `Feature` resources exist in the control plane cluster and the tenant cluster has RBAC to list them | `Feature` resources in the control plane cluster |
 | None | Nothing above is detected | No Enterprise features are enabled |
 
-The control plane logs the type it chose at startup, for example `detected license type {"licenseType": "Online"}`.
-
-FIPS mode is the exception worth knowing about. With FIPS enabled, a host and access key don't select the online type, and detection falls through to the remaining rows. A tenant cluster that looks correctly configured can land on standalone, in-cluster API, or none. Check the logged type before assuming the credentials are at fault.
+In production builds, the control plane evaluates these types in the order shown and selects the first match. It logs the selected type at startup, for example `detected license type {"licenseType": "Online"}`.
 
 Online is the common case. By default, the control plane reads the platform connection from the `vcluster-platform-api-key` Secret in the tenant cluster's host namespace. To point it at a different Secret, set `platform.apiKey.secretName` and `platform.apiKey.namespace` in `vcluster.yaml`.
 
@@ -71,19 +69,28 @@ It resolves the host from `LOFT_PLATFORM_HOST` first, then from the Secret's `ho
 The host recorded in the Secret must be reachable from inside the control plane cluster. Logging in through a port-forward records a `localhost` address that the tenant cluster pod can't reach, so feature retrieval fails. See [Resolve Pro feature license errors](/docs/vcluster/troubleshoot/pro-feature-license-error).
 :::
 
+Two cases trip people up when the detected type isn't what they expected.
+
+FIPS mode is the first. With FIPS enabled, a host and access key don't select the online type, and detection falls through to the remaining rows. A tenant cluster that looks correctly configured can land on standalone, in-cluster API, or none. Check the logged type before assuming the credentials are at fault.
+
+The second is that the standalone deployment mode and the standalone license type aren't synonymous. With FIPS off, a standalone deployment configured with a platform host and access key selects the online type first. It uses the non-expiring file cache described below.
+
+The standalone type also doesn't disable Enterprise features. It allows the standalone and Private Nodes features by default. For other Enterprise features, `Feature` resources in the standalone cluster determine whether `kubectl` requests receive an unlicensed-use warning.
+
 ## Required network access
 
 Only the platform contacts the license server. Neither connected cluster agents nor tenant clusters do.
 
 | Source | Destination | Protocol and port | Purpose |
 | --- | --- | --- | --- |
-| Platform pods | `admin.loft.sh` | HTTPS, TCP `443` | License retrieval every 6 hours, usage snapshots every 15 minutes, and analytics every 30 minutes |
+| Platform pods | `admin.loft.sh` | HTTPS, TCP `443` | License retrieval every 6 hours and usage snapshots every 15 minutes |
+| Platform pods | Analytics endpoint from the license response | As specified by the endpoint URL | Analytics every 30 minutes when there has been activity |
 | Tenant cluster control plane pods | Platform endpoint | HTTPS, TCP `443` | Feature retrieval and registration |
 | Connected cluster agents | None for licensing | Not applicable | Agents don't perform license validation |
 
-In offline license key mode, no egress to `admin.loft.sh` is required at all. In offline license server mode, the platform reaches the in-cluster license server instead, at the address given in `LICENSE_SERVER`.
+In offline license key mode, no egress to `admin.loft.sh` is required at all. For license retrieval in offline license server mode, the platform reaches the in-cluster server at the address given in `LICENSE_SERVER`.
 
-The analytics calls go to an endpoint the license server names in its response. They only happen when there has been activity since the last one, and a license response naming no analytics endpoint stops them entirely.
+Analytics calls go to the exact endpoint URL named in the license response, which isn't necessarily `admin.loft.sh`. They only happen when there has been activity since the last call. A response with no analytics endpoint stops them entirely.
 
 The platform Service listens on port `443` and forwards to port `10443` on the platform pods. Kubernetes NetworkPolicy matches the pod port rather than the Service port, so an egress rule targeting platform pods directly has to allow `10443`.
 
@@ -91,14 +98,15 @@ The tenant cluster path is the same connection used for the rest of platform com
 
 ## Cache and refresh behavior
 
-Every component caches what it last retrieved, so a licensing outage doesn't immediately take the deployment down.
+The online platform and tenant cluster paths cache their last successful results. These caches keep a temporary licensing outage from immediately taking those components down.
 
 | Component | Refresh trigger | Cache location | Cache lifetime |
 | --- | --- | --- | --- |
 | Platform in online or license server mode | Every 6 hours | `loft-license-cache` Secret in the platform namespace | Reloaded at startup, with a 7-day grace period after retrieval starts failing |
 | Platform in offline license key mode | Re-evaluated locally every minute | None needed, the key is in the environment | Until the key expires, plus a 30-day grace period |
 | Tenant cluster, online | At startup, and whenever the credentials Secret changes | `<vcluster-name>-features-list` Secret in the host namespace, encrypted | 7 days |
-| Standalone control plane | At startup, and whenever the credentials Secret changes | `platform/feature-cache.json` in the data directory | Doesn't expire |
+| Standalone deployment, online type | At startup, and whenever the credentials Secret changes | `platform/feature-cache.json` in the data directory | Doesn't expire |
+| Standalone type | Polled with backoff starting at 30 seconds, capped at 5 minutes | None | Not applicable |
 | Tenant cluster, in-cluster API | Polled with backoff starting at 30 seconds, capped at 5 minutes | None | Not applicable |
 | Tenant cluster, offline | Re-checked locally every hour | None needed, the key is in the environment | Until the key expires |
 
@@ -169,7 +177,7 @@ Look for retrieval failures in the platform logs. Each of these lines carries a 
 kubectl logs -n vcluster-platform -l app=loft | grep -i "error retrieving license" | cut -c1-260
 ```
 
-An occasional failure here is normal and needs no action. The platform keeps serving from its cached license and retries on the next cycle. Only a run of failures spanning more than 7 days ends with the platform exiting.
+An occasional failure here normally needs no action. The platform keeps serving from its cached license and retries on the next cycle. Outside the restart and timestamp edge cases above, only failures spanning more than 7 days make the platform exit.
 
 ### In a tenant cluster
 

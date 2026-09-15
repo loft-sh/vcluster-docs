@@ -62,3 +62,25 @@ short note on what the docs claim because of it.
 The `expected` value is compared as a literal string against the text after the
 `=`, so write it exactly as the Go source does. `time.Hour * 6` and `6 *
 time.Hour` are the same duration but won't compare equal.
+
+## What this can't catch
+
+The check matches `name = value` declarations. Anything the docs state that
+isn't expressed that way in Go is invisible to it and will drift silently:
+
+- **Struct literal fields.** The retry backoff the standalone and in-cluster API
+  license types use is a `wait.Backoff{Duration: 30 * time.Second, Cap: 5 *
+  time.Minute, ...}` literal, so the documented "30 seconds, capped at 5
+  minutes" isn't pinned.
+- **Function bodies.** `getStandaloneAllowedFeatures()` returns the map that
+  decides which features standalone allows by default, which the docs name as
+  standalone and Private Nodes. A change there won't be flagged.
+- **Control flow.** The order `detectLicenseType` evaluates license types in,
+  and conditions like the `!fips140.Enabled()` guard on the online type, are
+  documented but unpinnable.
+- **Inline literals on older branches.** See the note above about
+  `release-4.12`.
+
+Widening the matcher to cover these would mean parsing Go rather than grepping
+it. That's a larger tool than this needs to be, so treat the list above as
+places to re-verify by hand when the licensing docs change.
