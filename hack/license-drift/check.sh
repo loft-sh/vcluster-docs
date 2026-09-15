@@ -37,6 +37,26 @@ done
 
 command -v jq >/dev/null 2>&1 || { echo "error: jq is required" >&2; exit 2; }
 
+if [[ ! -f "${MANIFEST}" ]]; then
+  echo "error: manifest not found: ${MANIFEST}" >&2
+  exit 2
+fi
+
+# Render the manifest up front rather than piping jq straight into the loop.
+# In `done < <(jq ...)` the exit status of jq is invisible to set -e, so a
+# malformed or restructured constants.json would yield zero records and the
+# script would cheerfully report "checked 0 constants ... no drift". Capturing
+# first lets a jq failure, or an empty constant set, fail loudly instead.
+if ! records="$(jq -er '.constants[] | [.repo, .file, .name, .expected, .documented_as] | @tsv' "${MANIFEST}")"; then
+  echo "error: could not read constants from ${MANIFEST} (invalid JSON, or .constants missing/empty)" >&2
+  exit 2
+fi
+
+if [[ -z "${records//[[:space:]]/}" ]]; then
+  echo "error: ${MANIFEST} declares no constants to check" >&2
+  exit 2
+fi
+
 drift=0
 missing=0
 checked=0
@@ -80,7 +100,7 @@ while IFS=$'\t' read -r repo file name expected documented_as; do
       "${repo}/${file}" "${name}" "${expected}" "${actual}" "${documented_as}"
     drift=$((drift + 1))
   fi
-done < <(jq -r '.constants[] | [.repo, .file, .name, .expected, .documented_as] | @tsv' "${MANIFEST}")
+done <<< "${records}"
 
 echo
 echo "checked ${checked} constants: ${drift} drifted, ${missing} not found"
