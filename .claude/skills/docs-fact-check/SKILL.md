@@ -29,17 +29,50 @@ to other pages.
 
 ## Requirements
 
-You need the product source checked out locally. Platform behavior lives in
-`~/git/vcluster/loft-enterprise`, vCluster behavior in `~/git/vcluster/vcluster-pro`.
-Development happens in `vcluster-pro`. `loft-sh/vcluster` is the auto-synced public
-OSS mirror, so verify against `vcluster-pro` unless the claim is specifically about
-what ships in OSS.
+You need the product source checked out locally. Which repo depends on the claim:
 
-Without that source, you cannot do this pass. Say so and report the claims as
-unverified. Do not fall back to inferring behavior from the prose under review,
-from other docs pages, or from what the feature name implies. An unverified claim
-reported as unverified is useful. An unverified claim reported as correct is the
-failure this skill exists to prevent.
+| Claim is about | Repo |
+|----------------|------|
+| Platform behavior | `loft-sh/loft-enterprise` |
+| vCluster behavior | `loft-sh/vcluster-pro` |
+
+Development happens in `vcluster-pro`. `loft-sh/vcluster` is the auto-synced
+public OSS mirror, so verify against `vcluster-pro` unless the claim is
+specifically about what ships in OSS.
+
+### Finding them
+
+Don't assume a checkout path. People lay their repos out differently, and a
+wrong guess reads as "the source isn't available" when it's just somewhere else.
+Look for them, then confirm what you found:
+
+```bash
+for n in vcluster-pro loft-enterprise; do
+  for d in "$(git rev-parse --show-toplevel)/.." "$HOME/git" "$HOME/src" "$HOME/code"; do
+    [ -d "$d/$n/.git" ] && echo "$n -> $(cd "$d/$n" && pwd)" && break
+  done
+done
+```
+
+Confirm by remote, not by directory name, since a directory called
+`vcluster-pro` can be anything:
+
+```bash
+git -C <path> remote get-url origin   # expect loft-sh/vcluster-pro
+```
+
+If you don't find it, **ask the user where the repo is checked out**. Ask once,
+early, before starting the verification work, so you aren't interrupting a pass
+halfway through. Don't search the whole home directory, and don't proceed on a
+guess.
+
+### When you can't get to the source
+
+Without it, you cannot do this pass. Say so and report the claims as unverified.
+Do not fall back to inferring behavior from the prose under review, from other
+docs pages, or from what the feature name implies. An unverified claim reported
+as unverified is useful. An unverified claim reported as correct is the failure
+this skill exists to prevent.
 
 ## Scope to the right ref
 
