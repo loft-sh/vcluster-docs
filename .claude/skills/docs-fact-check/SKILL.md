@@ -27,30 +27,53 @@ Skip it when there's nothing to verify against source: copy edits, link fixes,
 formatting, regenerated reference partials, or a page that only routes readers
 to other pages.
 
-## Requirements
+## Finding the source
 
-You need the product source checked out locally. Which repo depends on the claim:
+Two ways to reach it. Prefer a local checkout when there is one, because
+grepping a whole repo is faster than paging an API, but `gh` reaches any
+`loft-sh` repo without a checkout and is a first-class path, not a consolation
+prize.
 
-| Claim is about | Repo |
-|----------------|------|
+### Which repo owns the claim
+
+The org has over 200 repos, so treat this as a starting point rather than a map.
+
+| Claim is about | Start with |
+|----------------|-----------|
 | Platform behavior | `loft-sh/loft-enterprise` |
 | vCluster behavior | `loft-sh/vcluster-pro` |
+| What ships in OSS specifically | `loft-sh/vcluster` |
+| Licensing, entitlements, feature gates | `loft-sh/admin-apis` |
+| Which tier a feature belongs to | `loft-sh/plans` |
+| Platform API types | `loft-sh/api` |
+| Certified stack definitions | `loft-sh/certified-stacks` |
 
 Development happens in `vcluster-pro`. `loft-sh/vcluster` is the auto-synced
 public OSS mirror, so verify against `vcluster-pro` unless the claim is
 specifically about what ships in OSS.
 
-### Finding them
+When the table doesn't cover the claim, or you're guessing between two repos,
+search the org instead of picking one:
+
+```bash
+gh search code --owner loft-sh "<exact string from the page>" --limit 10 \
+  --json repository,path -q '.[] | "\(.repository.nameWithOwner): \(.path)"'
+```
+
+Searching for a quoted log line, annotation key, or flag name usually lands
+directly on the owning repo. That's faster than reasoning about which repo
+*should* own it, and it doesn't go wrong when the answer is a repo you didn't
+know existed.
+
+### Local checkouts
 
 Don't assume a checkout path. People lay their repos out differently, and a
 wrong guess reads as "the source isn't available" when it's just somewhere else.
-Look for them, then confirm what you found:
+Look for the repo you need, substituting its name:
 
 ```bash
-for n in vcluster-pro loft-enterprise; do
-  for d in "$(git rev-parse --show-toplevel)/.." "$HOME/git" "$HOME/src" "$HOME/code"; do
-    [ -d "$d/$n/.git" ] && echo "$n -> $(cd "$d/$n" && pwd)" && break
-  done
+for d in "$(git rev-parse --show-toplevel)/.." "$HOME/git" "$HOME/src" "$HOME/code"; do
+  [ -d "$d/<repo>/.git" ] && echo "$(cd "$d/<repo>" && pwd)" && break
 done
 ```
 
@@ -61,18 +84,39 @@ Confirm by remote, not by directory name, since a directory called
 git -C <path> remote get-url origin   # expect loft-sh/vcluster-pro
 ```
 
-If you don't find it, **ask the user where the repo is checked out**. Ask once,
-early, before starting the verification work, so you aren't interrupting a pass
-halfway through. Don't search the whole home directory, and don't proceed on a
-guess.
+Don't search the whole home directory. If the bounded look fails, fall through
+to `gh` rather than asking, since `gh` needs no checkout at all.
 
-### When you can't get to the source
+### Reading source through gh
 
-Without it, you cannot do this pass. Say so and report the claims as unverified.
-Do not fall back to inferring behavior from the prose under review, from other
-docs pages, or from what the feature name implies. An unverified claim reported
-as unverified is useful. An unverified claim reported as correct is the failure
-this skill exists to prevent.
+No checkout required, and reads can be pinned to a ref, which matters for
+unmerged work:
+
+```bash
+gh api "repos/loft-sh/<repo>/contents/<path>?ref=<branch-or-sha>" \
+  --jq '.content' | base64 -d
+gh search code --repo loft-sh/<repo> "<term>" --limit 10 --json path -q '.[].path'
+```
+
+Code search covers private repos your token can read. It indexes default
+branches, so for an unmerged feature read the PR patch or fetch files at the
+head ref instead of relying on search.
+
+### When to ask
+
+Ask the user when you can't work out which repo owns the behavior after
+searching, or when a repo you need isn't readable with their `gh` auth. Ask
+once, early, before starting verification, so you aren't interrupting a pass
+halfway through. Don't ask for a checkout path you could have found, and don't
+proceed on a guess.
+
+### When neither path works
+
+If you can reach no source at all, you cannot do this pass. Say so and report
+the claims as unverified. Do not fall back to inferring behavior from the prose
+under review, from other docs pages, or from what the feature name implies. An
+unverified claim reported as unverified is useful. An unverified claim reported
+as correct is the failure this skill exists to prevent.
 
 ## Scope to the right ref
 

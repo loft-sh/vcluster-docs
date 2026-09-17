@@ -48,9 +48,11 @@ wrong, or unverified. None of the three passes below can tell you whether a page
 is true, and a beautifully sequenced page that documents behavior the code
 doesn't have is worse than a rough one that's right.
 
-If you can't run it, because the product source isn't available, say so in your
-report and mark the technical claims unverified. Don't skip the gate silently,
-and don't let a clean style pass imply the content was checked.
+That skill finds the source itself, through a local checkout or through `gh`,
+so "I don't have the code" is rarely the real answer. In the rare case it can't
+reach any source, say so in your report and mark the technical claims
+unverified. Don't skip the gate silently, and don't let a clean style pass imply
+the content was checked.
 
 ## Pass 1: Style
 
