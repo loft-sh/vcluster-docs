@@ -18,6 +18,18 @@ rewrites invalidate style nits. Run them in order and keep the findings separate
 Before any of them, verify the facts. A beautifully structured page that documents
 behavior the code doesn't have is worse than a rough one that's true.
 
+## Dependencies
+
+When this skill is loaded, also invoke: `vcluster-docs-writer`
+
+That skill owns the house style rules, partials discovery, link validation, and
+versioning workflows. This skill covers only what a review adds on top:
+verification, sequencing, and reader fit. Where the two disagree, the writer
+skill's `references/style-guide.md` wins.
+
+Repo conventions live in `CLAUDE.md` and `CONTRIBUTING.md`. Cite those rather
+than restating a rule, so a reviewer reads the current version of it.
+
 ## Pass 0: Verify the claims (gate)
 
 Never review prose about a feature without reading the implementation. Engineer-authored
@@ -25,26 +37,32 @@ pages are the common case here, and they're usually right about intent and wrong
 edge behavior.
 
 1. Find the source. Platform behavior lives in `~/git/vcluster/loft-enterprise`,
-   vCluster behavior in `~/git/vcluster/vcluster-pro` (see `reference_vcluster_repo_merged`).
+   vCluster behavior in `~/git/vcluster/vcluster-pro`. Development happens in
+   `vcluster-pro`. `loft-sh/vcluster` is the auto-synced public OSS mirror, so
+   verify against `vcluster-pro` unless the claim is specifically about what
+   ships in OSS.
 2. **Scope to the right ref.** This is where reviews go wrong. If the feature is
    unmerged, `main` will show the *old* behavior and you'll conclude the feature
    doesn't exist. Check for an open PR first:
    ```bash
    gh pr list --state all --search "<feature name>" --limit 10 \
      --json number,title,state,headRefName,mergedAt
-   gh pr diff <N> > /tmp/pr.diff   # read the patch, not main
+   gh pr diff <N> > <scratchpad>/pr.diff   # read the patch, not main
    ```
 3. Verify each claim individually against the code, chart templates, and tests.
-   Chart defaults live in `chart/values.yaml`; env plumbing in
-   `chart/templates/deployment.yaml`; behavior in the Go path the env feeds.
+   Chart defaults live in `chart/values.yaml`, env plumbing in
+   `chart/templates/deployment.yaml`, behavior in the Go path the env feeds.
 4. Quote log strings, annotation keys, and default values from source. Don't
    paraphrase them from the prose under review.
+5. If you check rendered output on a deploy preview instead of source, put
+   `/next/` after the route base, as in `/docs/platform/next/...`. A bare
+   `/docs/platform/...` preview URL serves the released version, not the branch,
+   so the page you are reviewing is not the page you are looking at.
 
 ### Shipping gate
 
 If the feature is unmerged, say so as a blocker. Docs must not ship ahead of the
-feature (`feedback_dont_document_unshipped_features`). Also check whether anything
-mechanically prevents the merge:
+feature. Also check whether anything mechanically prevents the merge:
 
 ```bash
 gh pr view <N> --json isDraft,reviewDecision,mergeable,mergeStateStatus
@@ -61,8 +79,15 @@ Grep the diff for text that renders literally to readers. Placeholders inside
 copy-pasteable command:
 
 ```bash
-git diff main...HEAD | grep -nE "TODO|FIXME|XXX|PLACEHOLDER|[A-Z_]{8,}"
+git fetch origin main   # a stale local main hides or invents findings
+git diff origin/main...HEAD -U0 | grep -E '^\+' \
+  | grep -E "TODO|FIXME|XXX|PLACEHOLDER|CHANGEME|[A-Z_]{8,}"
 ```
+
+Scan added lines only. Without `^\+`, every placeholder the PR *removed* reports
+as a find. `[A-Z_]{8,}` is deliberately loose, so expect legitimate hits from
+version tokens and `InterpolatedCodeBlock` variable names. Read the surrounding
+diff hunk before flagging one.
 
 Version tokens (`__PLATFORM_VERSION__`) resolve to the *current* version, so they
 cannot express "requires X or later" for unshipped work. Don't substitute one in.
@@ -71,21 +96,25 @@ If the version isn't knowable yet, leave a visible placeholder with a
 
 ## Pass 1: Style
 
-Delegate the house rules to `vcluster-docs-writer` rather than restating them, then
-check the items automation misses.
+`vcluster-docs-writer` owns the rules. This pass checks what its automation
+doesn't reach.
 
 ```bash
 vale <changed files>   # global Homebrew binary, no npx
 ```
 
-Vale passing is necessary, not sufficient. It does not catch:
+Vale passing is necessary, not sufficient. Three groups it misses.
 
-- **Em dashes and mid-sentence colons.** Reserved for structural use (lists, tables,
-  code). Use periods and commas in prose.
-- **Contractions.** House style prefers don't / doesn't / can't. Watch for automated
-  passes that strip them.
-- **Sentence length.** Roughly 25 words; 26 to 28 occasionally. Split dense
-  multi-clause sentences.
+**House rules with no vale rule behind them.** Check each against the writer
+skill's `references/style-guide.md` rather than from memory. Every one of them
+has carve-outs, and the guide is the only place those stay current.
+
+- Punctuation: em dashes, semicolons, and mid-sentence colons in prose.
+- Contractions.
+- Sentence length.
+
+**Mechanical damage, usually introduced by the edit itself.**
+
 - **Comma splices** introduced while rewording.
 - **Curly apostrophes** pasted in from elsewhere. Straight quotes dominate the repo.
 - **Sentence casing** in `title` and `sidebar_label`. A page that changes one and not
@@ -96,8 +125,27 @@ Vale passing is necessary, not sufficient. It does not catch:
   that says "two upgrades" pointing at a procedure that says "two restarts").
 - **Admonition titles that no longer match their content** after an edit.
 
-Fix pre-existing warnings in files you touch, except in versioned-doc snapshots
-(`feedback_vale_all_warnings`).
+**Repo conventions that reviews catch late.** Each is a section in `CLAUDE.md`,
+named in parentheses. Read the section before flagging, since several have
+carve-outs.
+
+- **Hand edits under `vcluster_versioned_docs/version-*` or
+  `platform_versioned_docs/version-*`.** Blocking. CI backports from main, so
+  the change belongs on main with a `backport-vX.XX` label
+  (`.github/workflows/backport-docs.yml`). ("Versioned docs")
+- **Retired terminology**, such as virtual cluster, host cluster, and
+  multi-tenancy. ("Repositioning terminology")
+- **CR versus CRD**, decided by the manifest's `kind` and not by the verb.
+  ("CR vs CRD terminology")
+- **Sidebar tier badges** on the category or on each page, never both.
+  ("Sidebar tier badges: category vs. page")
+- **SVGs imported as React components**, not `require().default`. ("SVG diagrams")
+- **Link form**: relative with the `.mdx` suffix within a section, `/docs/`
+  absolute across sections. ("Link resolution")
+- **Vale corrections applied to paths, commands, or code** rather than prose.
+  ("Vale linting: paths vs prose")
+
+Fix pre-existing warnings in files you touch. Leave versioned-doc snapshots alone.
 
 ## Pass 2: Readability
 
@@ -133,7 +181,8 @@ prose serves one and fails the other.
 
 - **Routing walls.** Several consecutive paragraphs that each say "if you have X, go
   to Y" should be a scannable decision list keyed on what the reader has. Don't put
-  `GlossaryTerm` in table cells (`feedback_glossary_table_restriction`).
+  `GlossaryTerm` in a table cell, which triggers a horizontal-scroll rendering
+  bug. Wrap the next prose occurrence instead.
 - **Missing success criteria.** Can the reader tell it worked? Every procedure needs
   a verification step. Check that a page's newest section didn't skip the "you should
   now be able to..." that its older siblings have.
@@ -154,15 +203,28 @@ prose serves one and fails the other.
 1. Re-run `vale` and an MDX compile check. Passes 2 and 3 cause rewrites that
    reintroduce style problems.
    ```bash
-   node -e "const {compile}=require('@mdx-js/mdx');const fs=require('fs');
-   (async()=>{for(const f of process.argv.slice(1)){try{await compile(fs.readFileSync(f,'utf8'),{jsx:true});console.log('OK  ',f)}catch(e){console.log('FAIL',f,e.message)}}})()" <files>
+   node --input-type=module -e "import {compile} from '@mdx-js/mdx';import fs from 'node:fs';
+   for (const f of process.argv.slice(1)) {try {await compile(fs.readFileSync(f,'utf8'),{jsx:true});console.log('OK  ',f)} catch(e) {console.log('FAIL',f,e.message)}}" <files>
    ```
+   Keep `--input-type=module`. `@mdx-js/mdx` is ESM-only, so `require()` throws
+   `ERR_REQUIRE_ESM` on the Node 20 that several workflows in `.github/workflows/`
+   pin, even though the repo itself needs Node 22 or later.
+
    Files using `<!-- vale off -->` fail this bare compile. That's expected, since the
    site configures those as `format: 'md'`. Compare against the file at `HEAD` before
    treating a failure as yours.
-2. Verify every relative link resolves and every anchor exists, including anchors you
-   created this pass. Links need the `.mdx` suffix (see CLAUDE.md).
-3. Don't commit or push unless asked.
+2. Run the link checks rather than tracing links by hand. These are the same ones
+   CI runs, documented under "Checking links before you push" in `CONTRIBUTING.md`:
+   ```bash
+   npm run validate-mdx-links         # click-time breaks in live docs
+   npm run validate-reusable-imports  # same-product live imports
+   npm run check-redirects            # only when a page moved or was renamed
+   ```
+   `npm run build` also catches links to missing pages, but it peaks around 10 GB
+   of memory. Reach for it only when the checks above aren't enough.
+3. Verify by hand the things no validator covers: anchors you created this pass,
+   and anchors in links pointing at headings you renamed.
+4. Don't commit or push unless asked.
 
 ## Reporting
 
