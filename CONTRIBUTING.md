@@ -59,6 +59,7 @@ in a PR comment to trigger a review.
 Example commands:
 
 - `@claude review this PR` - get a focused review
+- `@claude fact check this page` - verify the technical claims against the code
 - `@claude fix the linting issues` - ask for specific changes
 - `@claude update the examples to use the new API` - request targeted updates
 
