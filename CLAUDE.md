@@ -28,10 +28,15 @@ When reviewing PRs with `@claude`, use these MCP servers based on PR content:
 Always use these tools proactively when the PR content warrants it - don't wait
 to be asked.
 
-For a thorough review of a docs change, use the `docs-three-pass-review` skill.
-It verifies technical claims against source first, then runs style, readability,
-and usability as separate passes. See
-`.claude/skills/docs-three-pass-review/SKILL.md`.
+Two skills cover docs review, and they're deliberately separate:
+
+- `docs-fact-check` verifies claims against the implementation at the right ref.
+  Needs the product source checked out. See `.claude/skills/docs-fact-check/SKILL.md`.
+- `docs-review` runs style, readability, and usability as three separate passes.
+  See `.claude/skills/docs-review/SKILL.md`.
+
+Run the fact check first when a change asserts anything about behavior. If the
+source isn't available, report the claims as unverified rather than skipping it.
 
 ## Vale linting: paths vs prose
 

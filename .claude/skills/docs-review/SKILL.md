@@ -1,9 +1,9 @@
 ---
-name: docs-three-pass-review
-description: Review a docs change in three distinct passes - style, readability, and usability - after verifying every technical claim against source. Use when reviewing a docs PR or branch, when asked for a thorough or multi-pass docs review, or when reviewing a page an engineer wrote about a feature they built.
+name: docs-review
+description: Review a docs page or docs PR for style, readability, and usability in three separate passes. Use whenever asked to review, critique, check over, or give feedback on documentation, a docs PR, a docs branch, or an .mdx page, including a quick look at a draft.
 ---
 
-# Docs three-pass review
+# Docs review
 
 One review, three passes, each asking a different question. Running them together
 produces mush, because style nits crowd out structural problems and structural
@@ -15,8 +15,18 @@ rewrites invalidate style nits. Run them in order and keep the findings separate
 | Readability | Is the right information available at the right time, in an understandable form? |
 | Usability | Does this serve the need the reader arrived with? |
 
-Before any of them, verify the facts. A beautifully structured page that documents
-behavior the code doesn't have is worse than a rough one that's true.
+## When to use this
+
+Use all three passes for anything a reader executes or relies on: a new or
+substantially rewritten page, a procedure, a feature page, a troubleshooting
+guide, or a draft an engineer wrote about their own work.
+
+Scale down for small changes. A copy edit, a link fix, a version bump, or a
+regenerated reference partial needs Pass 1 and the close-out checks, not a
+structural read of the whole page. Say which passes you ran.
+
+Don't use it for non-docs files. Reviewing a script, a workflow, or a skill
+definition is a code review, not this.
 
 ## Dependencies
 
@@ -24,75 +34,23 @@ When this skill is loaded, also invoke: `vcluster-docs-writer`
 
 That skill owns the house style rules, partials discovery, link validation, and
 versioning workflows. This skill covers only what a review adds on top:
-verification, sequencing, and reader fit. Where the two disagree, the writer
-skill's `references/style-guide.md` wins.
+sequencing, reader fit, and the mechanical damage an edit introduces. Where the
+two disagree, the writer skill's `references/style-guide.md` wins.
 
 Repo conventions live in `CLAUDE.md` and `CONTRIBUTING.md`. Cite those rather
 than restating a rule, so a reviewer reads the current version of it.
 
-## Pass 0: Verify the claims (gate)
+## Before you start: are the claims true?
 
-Never review prose about a feature without reading the implementation. Engineer-authored
-pages are the common case here, and they're usually right about intent and wrong about
-edge behavior.
+If the change asserts anything about behavior, run `docs-fact-check` first. It
+reads the implementation at the right ref and reports each claim as correct,
+wrong, or unverified. None of the three passes below can tell you whether a page
+is true, and a beautifully sequenced page that documents behavior the code
+doesn't have is worse than a rough one that's right.
 
-1. Find the source. Platform behavior lives in `~/git/vcluster/loft-enterprise`,
-   vCluster behavior in `~/git/vcluster/vcluster-pro`. Development happens in
-   `vcluster-pro`. `loft-sh/vcluster` is the auto-synced public OSS mirror, so
-   verify against `vcluster-pro` unless the claim is specifically about what
-   ships in OSS.
-2. **Scope to the right ref.** This is where reviews go wrong. If the feature is
-   unmerged, `main` will show the *old* behavior and you'll conclude the feature
-   doesn't exist. Check for an open PR first:
-   ```bash
-   gh pr list --state all --search "<feature name>" --limit 10 \
-     --json number,title,state,headRefName,mergedAt
-   gh pr diff <N> > <scratchpad>/pr.diff   # read the patch, not main
-   ```
-3. Verify each claim individually against the code, chart templates, and tests.
-   Chart defaults live in `chart/values.yaml`, env plumbing in
-   `chart/templates/deployment.yaml`, behavior in the Go path the env feeds.
-4. Quote log strings, annotation keys, and default values from source. Don't
-   paraphrase them from the prose under review.
-5. If you check rendered output on a deploy preview instead of source, put
-   `/next/` after the route base, as in `/docs/platform/next/...`. A bare
-   `/docs/platform/...` preview URL serves the released version, not the branch,
-   so the page you are reviewing is not the page you are looking at.
-
-### Shipping gate
-
-If the feature is unmerged, say so as a blocker. Docs must not ship ahead of the
-feature. Also check whether anything mechanically prevents the merge:
-
-```bash
-gh pr view <N> --json isDraft,reviewDecision,mergeable,mergeStateStatus
-```
-
-An approved, non-draft, `MERGEABLE`/`CLEAN` PR can be merged today regardless of what
-a review comment says. Flag that to the author rather than converting it to draft
-yourself, since that neutralizes existing approvals.
-
-### Placeholder check
-
-Grep the diff for text that renders literally to readers. Placeholders inside
-`InterpolatedCodeBlock` defaults are the dangerous kind, because they land in a
-copy-pasteable command:
-
-```bash
-git fetch origin main   # a stale local main hides or invents findings
-git diff origin/main...HEAD -U0 | grep -E '^\+' \
-  | grep -E "TODO|FIXME|XXX|PLACEHOLDER|CHANGEME|[A-Z_]{8,}"
-```
-
-Scan added lines only. Without `^\+`, every placeholder the PR *removed* reports
-as a find. `[A-Z_]{8,}` is deliberately loose, so expect legitimate hits from
-version tokens and `InterpolatedCodeBlock` variable names. Read the surrounding
-diff hunk before flagging one.
-
-Version tokens (`__PLATFORM_VERSION__`) resolve to the *current* version, so they
-cannot express "requires X or later" for unshipped work. Don't substitute one in.
-If the version isn't knowable yet, leave a visible placeholder with a
-`{/* TODO before merge */}` comment rather than a plausible-looking guess.
+If you can't run it, because the product source isn't available, say so in your
+report and mark the technical claims unverified. Don't skip the gate silently,
+and don't let a clean style pass imply the content was checked.
 
 ## Pass 1: Style
 
@@ -124,6 +82,19 @@ has carve-outs, and the guide is the only place those stay current.
 - **Terminology drift** between a signpost and the section it points at (a warning
   that says "two upgrades" pointing at a procedure that says "two restarts").
 - **Admonition titles that no longer match their content** after an edit.
+- **Placeholders that render literally to readers.** The ones inside
+  `InterpolatedCodeBlock` defaults are the dangerous kind, because they land in a
+  copy-pasteable command:
+  ```bash
+  git fetch origin main   # a stale local main hides or invents findings
+  git diff origin/main...HEAD -U0 | grep -E '^\+' \
+    | grep -E "TODO|FIXME|XXX|PLACEHOLDER|CHANGEME|[A-Z_]{8,}"
+  ```
+  Scan added lines only. Without `^\+`, every placeholder the PR *removed* reports
+  as a find. `[A-Z_]{8,}` is deliberately loose, so expect legitimate hits from
+  version tokens and `InterpolatedCodeBlock` variable names. Read the surrounding
+  diff hunk before flagging one. A placeholder standing in for an unreleased
+  version number is `docs-fact-check`'s call, not this pass's.
 
 **Repo conventions that reviews catch late.** Each is a section in `CLAUDE.md`,
 named in parentheses. Read the section before flagging, since several have
@@ -232,14 +203,29 @@ Group findings by pass, not by file, so the author can triage structural problem
 separately from wording. Within each pass, lead with what changes the reader's
 outcome. Use `file.mdx:line` references.
 
-Separate **blocking** (unmerged feature, placeholder in a copy-pasteable command,
-wrong technical claim) from **fix now** from **optional**. State plainly what you
-changed versus what you're only flagging, and call out anything you deliberately
-left alone and why, such as reordering that would add diff noise to an approved PR.
+Separate **blocking** from **fix now** from **optional**. Blocking findings in
+this skill are the ones that mislead a reader who follows the page: a placeholder
+in a copy-pasteable command, a missing restore-the-safe-state step, a caveat
+placed after the procedure it invalidates. Accuracy verdicts come from
+`docs-fact-check`. Report them in their own section rather than folding them into
+a pass, so the author can see at a glance which findings are about what the page
+says versus how it says it.
+
+State plainly what you changed versus what you're only flagging, and call out
+anything you deliberately left alone and why, such as reordering that would add
+diff noise to an approved PR. Say which passes you ran, especially when you
+scaled down for a small change.
 
 ## Delegating
 
-If you fan this out to subagents, give each one the ref to verify against. A subagent
-told only "check the admin recovery feature" will scope itself to `main` and report
-that the feature doesn't exist. Treat a confident "this doesn't exist" as a scoping
-error until you've confirmed the agent read the right ref.
+The three passes fan out cleanly, one subagent per pass, because each asks a
+different question about the same text. Give each one the page and the pass, not
+a general instruction to review.
+
+What doesn't fan out cleanly is Pass 2. Sequencing findings need the whole page
+read in order, so an agent given only the diff will miss the caveat that arrives
+three sections too late. Hand it the full file.
+
+If you also delegate the accuracy gate, see the delegating note in
+`docs-fact-check`. Subagents scope themselves to `main` unless told otherwise,
+which is how a shipped feature gets reported as nonexistent.

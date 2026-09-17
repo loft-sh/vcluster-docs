@@ -1,0 +1,123 @@
+---
+name: docs-fact-check
+description: Verify that a docs page describes what the code actually does, by reading the implementation at the right ref. Use when asked whether a page is accurate or correct, to fact check or verify claims, to confirm defaults, flags, log strings, or behavior against source, or before publishing a page an engineer wrote about a feature they built.
+---
+
+# Docs fact check
+
+Check prose against the implementation, not against how plausible it sounds.
+A well-written page that documents behavior the code doesn't have is worse than
+a rough one that's true, because confident prose stops the reader from checking.
+
+This is a standalone pass. `docs-review` covers style, readability, and
+usability, and expects this one to have run first when a change makes technical
+claims.
+
+## When to use this
+
+Use it when the change asserts something about behavior:
+
+- A page about a feature, especially one an engineer wrote about their own work.
+- Any claim about defaults, flags, env vars, annotation keys, log output, CLI
+  output, API fields, or chart values.
+- A procedure whose steps only work if the described behavior holds.
+- Anything that says "always", "never", "automatically", or "by default".
+
+Skip it when there's nothing to verify against source: copy edits, link fixes,
+formatting, regenerated reference partials, or a page that only routes readers
+to other pages.
+
+## Requirements
+
+You need the product source checked out locally. Platform behavior lives in
+`~/git/vcluster/loft-enterprise`, vCluster behavior in `~/git/vcluster/vcluster-pro`.
+Development happens in `vcluster-pro`. `loft-sh/vcluster` is the auto-synced public
+OSS mirror, so verify against `vcluster-pro` unless the claim is specifically about
+what ships in OSS.
+
+Without that source, you cannot do this pass. Say so and report the claims as
+unverified. Do not fall back to inferring behavior from the prose under review,
+from other docs pages, or from what the feature name implies. An unverified claim
+reported as unverified is useful. An unverified claim reported as correct is the
+failure this skill exists to prevent.
+
+## Scope to the right ref
+
+This is where fact checks go wrong. If the feature is unmerged, `main` shows the
+*old* behavior and you conclude the feature doesn't exist. Check for an open PR
+before reading anything:
+
+```bash
+gh pr list --state all --search "<feature name>" --limit 10 \
+  --json number,title,state,headRefName,mergedAt
+gh pr diff <N> > <scratchpad>/pr.diff   # read the patch, not main
+```
+
+Treat a confident "this doesn't exist" as a scoping error until you have
+confirmed you read the right ref.
+
+## Verify each claim
+
+1. Verify claims individually. A page is not correct in aggregate, and one wrong
+   default invalidates the procedure around it.
+2. Read the layer the claim is actually about. Chart defaults live in
+   `chart/values.yaml`, env plumbing in `chart/templates/deployment.yaml`,
+   behavior in the Go path the env feeds. A default documented from
+   `values.yaml` can still be overridden before it reaches the code.
+3. Quote log strings, annotation keys, flag names, and default values from
+   source. Don't paraphrase them from the prose under review, and don't
+   normalize capitalization or punctuation to match the surrounding sentence.
+4. Check the tests. They often state the edge behavior the implementation
+   leaves implicit, and they're where "what happens if it's already set" is
+   usually answered.
+5. If you check rendered output on a deploy preview instead of source, put
+   `/next/` after the route base, as in `/docs/platform/next/...`. A bare
+   `/docs/platform/...` preview URL serves the released version, not the branch,
+   so the page you are checking is not the page you are looking at.
+
+Engineer-authored pages are the common case, and they're usually right about
+intent and wrong about edge behavior. Give the happy path a quick read and spend
+the time on the branches, the defaults, and the "if it already exists" cases.
+
+## Shipping gate
+
+If the feature is unmerged, say so as a blocker. Docs must not ship ahead of the
+feature. Also check whether anything mechanically prevents the merge:
+
+```bash
+gh pr view <N> --json isDraft,reviewDecision,mergeable,mergeStateStatus
+```
+
+An approved, non-draft, `MERGEABLE`/`CLEAN` PR can be merged today regardless of what
+a review comment says. Flag that to the author rather than converting it to draft
+yourself, since that neutralizes existing approvals.
+
+Version claims about unshipped work need care. The `__PLATFORM_VERSION__` and
+`__VCLUSTER_VERSION__` tokens resolve to the *current* version, so they cannot
+express "requires X or later" for something that hasn't shipped. Don't substitute
+one in. If the version isn't knowable yet, leave a visible placeholder with a
+`{/* TODO before merge */}` comment rather than a plausible-looking guess.
+
+## Reporting
+
+Report per claim, not per file. For each one, give the claim as the page states
+it, the verdict, and the source that settles it as `path:line` at a named ref.
+
+Three verdicts, and keep them distinct:
+
+- **Wrong.** The code does something else. Blocking, and quote what it does instead.
+- **Unverified.** You couldn't reach the source, or the feature is unmerged.
+  Blocking to publish, but it is not a claim of incorrectness.
+- **Correct.** Say which ref you confirmed it at, since that's what makes the
+  check repeatable when the code moves.
+
+Distinguishing wrong from unverified matters more than it looks. Collapsing them
+sends an author rewriting prose that was right all along.
+
+## Delegating
+
+If you fan this out to subagents, give each one the ref to verify against, in the
+prompt, explicitly. A subagent told only "check the admin recovery feature" will
+scope itself to `main` and report that the feature doesn't exist. Treat a
+confident "this doesn't exist" from a subagent as a scoping error until you've
+confirmed the agent read the right ref.
