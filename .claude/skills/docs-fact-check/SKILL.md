@@ -20,6 +20,9 @@ Use it when the change asserts something about behavior:
 - A page about a feature, especially one an engineer wrote about their own work.
 - Any claim about defaults, flags, env vars, annotation keys, log output, CLI
   output, API fields, or chart values.
+- Any claim about the UI: nav paths, button text, tab names, field labels. A
+  click-through procedure is as falsifiable as a config default, and it rots
+  faster.
 - A procedure whose steps only work if the described behavior holds.
 - Anything that says "always", "never", "automatically", or "by default".
 
@@ -147,6 +150,23 @@ confirmed you read the right ref.
 4. Check the tests. They often state the edge behavior the implementation
    leaves implicit, and they're where "what happens if it's already set" is
    usually answered.
+5. **A grep hit is not proof.** Finding the string somewhere in the source tells
+   you it exists, not that it plays the role the page claims. A nav path of
+   `Tenant Management > Cluster Templates` matched for years because "tenant"
+   and "management" each appear somewhere in the UI tree, long after the section
+   was renamed. Confirm the string appears in the position the claim puts it in,
+   not merely in the repo.
+6. **Some strings can't be grepped at all.** Labels built from a prop, template
+   names rendered from resources, and anything assembled at runtime have no
+   literal to find. Not finding one is not evidence it's wrong. This is the
+   clearest case for the unverified verdict, and calling it wrong sends an author
+   chasing a rename that never happened.
+7. **Verify in the reader's configuration, not just the default.** A claim can be
+   true in one state and false in another: a tab bar that collapses to a redirect
+   when only one sibling feature is enabled, a field that only renders under a
+   license tier, a flag that only exists on one distribution. Ask which states the
+   page's reader can be in, then check the claim holds in each. Static analysis
+   is blind here, so this is where a human-read page beats a script.
 5. If you check rendered output on a deploy preview instead of source, put
    `/next/` after the route base, as in `/docs/platform/next/...`. A bare
    `/docs/platform/...` preview URL serves the released version, not the branch,
@@ -155,6 +175,26 @@ confirmed you read the right ref.
 Engineer-authored pages are the common case, and they're usually right about
 intent and wrong about edge behavior. Give the happy path a quick read and spend
 the time on the branches, the defaults, and the "if it already exists" cases.
+
+### UI claims
+
+Platform docs wrap UI tokens in `<NavStep>`, `<Button>`, `<Label>`, `<Input>`,
+and `<Field>`, and there's a report that checks them against the UI source:
+
+```bash
+npm run report-platform-ui-drift
+# checkout elsewhere:
+node scripts/report-platform-ui-drift.js --ui-src <path-to-loft-enterprise>/ui/src
+```
+
+It defaults to `loft-enterprise` as a sibling of this repo, so pass `--ui-src`
+when it's somewhere else rather than concluding the source is unavailable.
+
+`platform-ui-drift` owns this end to end, including which unmatched tokens are
+known false positives, how to confirm a nav path in the sidebar config, and the
+fix patterns. Invoke that skill instead of grepping the UI tree yourself. Bring
+points 5 through 7 above with you: its report produces leads, not verdicts, and
+the conditional-rendering case is one it can't detect at all.
 
 ## Shipping gate
 
