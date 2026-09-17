@@ -1,0 +1,224 @@
+---
+title: How licensing works
+sidebar_label: Licensing
+sidebar_position: 12
+description: How vCluster Platform retrieves, caches, and refreshes its license, how tenant clusters receive their licensed features, and what happens when licensing is unavailable.
+---
+
+import InterpolatedCodeBlock from '@site/src/components/InterpolatedCodeBlock';
+
+vCluster Platform holds the license for a deployment. The license determines which features are enabled and sets limits on how many of certain resources you can create.
+
+In the normal connected model, tenant clusters hold no license of their own. They read a list of enabled features from the platform. Most licensing questions therefore come down to how the platform obtained its license and whether tenant clusters can reach the platform to read features from it. A tenant cluster can instead be given its own offline license key, which the sections below cover separately.
+
+This page explains how that works, what each component caches, and how licensing degrades when it becomes unavailable. For the setup procedures themselves, see the air-gapped guides for an [offline license key](../install/air-gapped/with-offline-license-key.mdx) or an [offline license server](../install/air-gapped/with-offline-license-server.mdx).
+
+## How the platform obtains its license
+
+The platform selects one of three licensing modes at startup, based on environment variables set on the platform deployment.
+
+| Mode | Enabled by | Source of the license |
+| --- | --- | --- |
+| Online | Default, no configuration needed | `https://admin.loft.sh/license/v2` |
+| Offline license key | `LICENSE_KEY` environment variable | The key itself, a signed token verified locally against a built-in public key |
+| Offline license server | `LICENSE_SERVER` environment variable | An in-cluster license server that serves the same API as the hosted one |
+
+Offline license key mode never contacts a license server. The platform decodes and verifies the key in-process, so use this mode when no egress is possible at all.
+
+A fourth variable, `LICENSE_TOKEN`, doesn't change the mode. It supplies a static token that the platform sends when it requests a license, so the instance doesn't need interactive activation. The platform logs `LICENSE_TOKEN env var is set, platform activation is not required` at startup when it's present.
+
+To find out which mode a running platform is in, see [Inspect and debug licensing](#inspect-and-debug-licensing).
+
+### Instance identity
+
+In online and offline license server modes, the platform identifies itself to the license server with:
+
+- The UID of the `kube-system` namespace in the control plane cluster.
+- A short-lived token signed with the private key from the `loft-cert` Secret, sent along with that Secret's certificate.
+
+This pairing ties a license to one platform instance. If the `loft-cert` Secret is lost, the platform generates a new identity and the existing license no longer matches it. Preserve that Secret across reinstalls and migrations. See [Restore license](../maintenance/backup-restore/preserve-license.mdx) for the backup and restore procedure.
+
+The `loft-license-cache` Secret isn't part of the platform's identity. It holds a cached copy of the license response and the platform rebuilds it automatically, so it doesn't need to be migrated.
+
+## How tenant clusters receive features
+
+In the normal connected model, a tenant cluster reads its enabled features from the platform. The control plane detects which licensing mechanism is available at startup and selects it.
+
+| Type | Detected when | Features come from |
+| --- | --- | --- |
+| Online | A platform host and access key are both available, and FIPS mode is off | The platform's management API `Features` endpoint |
+| Offline | A key is set but no platform host | A signed offline license key, verified locally |
+| Standalone | `controlPlane.standalone.enabled` is set | All Enterprise features stay enabled. Built-in allowances and `Feature` resources determine license warnings |
+| In-cluster API | `Feature` resources exist in the control plane cluster and the tenant cluster has RBAC to list them | `Feature` resources in the control plane cluster |
+| None | Nothing above is detected | No Enterprise features are enabled |
+
+In production builds, the control plane evaluates these types in the order shown and selects the first match. It logs the selected type at startup, for example `detected license type {"licenseType": "Online"}`.
+
+Online is the common case. By default, the control plane reads the platform connection from the `vcluster-platform-api-key` Secret in the tenant cluster's host namespace. To point it at a different Secret, set `platform.apiKey.secretName` and `platform.apiKey.namespace` in `vcluster.yaml`.
+
+Within whichever Secret applies, the control plane resolves the access key in this order.
+
+1. The `LICENSE` environment variable.
+2. The `LOFT_PLATFORM_ACCESS_KEY` environment variable.
+3. The only key in the Secret, if the Secret holds exactly one key.
+4. The `license` key in the Secret, then the `accessKey` key.
+
+It resolves the host from `LOFT_PLATFORM_HOST` first, then from the Secret's `host` key.
+
+:::warning Use an address the pod can reach
+The host recorded in the Secret must be reachable from inside the control plane cluster. Logging in through a port-forward records a `localhost` address that the tenant cluster pod can't reach, so feature retrieval fails. See [Resolve Pro feature license errors](/docs/vcluster/troubleshoot/pro-feature-license-error).
+:::
+
+Two cases trip people up when the detected type isn't what they expected.
+
+FIPS mode is the first. With FIPS enabled, a host and access key don't select the online type, and detection falls through to the remaining rows. A tenant cluster that looks correctly configured can land on standalone, in-cluster API, or none. Check the logged type before assuming the credentials are at fault.
+
+The second is that the standalone deployment mode and the standalone license type aren't synonymous. With FIPS off, a standalone deployment configured with a platform host and access key selects the online type first. It uses the non-expiring file cache described below.
+
+The standalone type also doesn't disable Enterprise features. It allows the standalone and Private Nodes features by default. For other Enterprise features, `Feature` resources in the standalone cluster determine whether `kubectl` requests receive an unlicensed-use warning.
+
+## Required network access
+
+Only the platform contacts the license server. Neither connected cluster agents nor tenant clusters do.
+
+| Source | Destination | Protocol and port | Purpose |
+| --- | --- | --- | --- |
+| Platform pods | `admin.loft.sh` | HTTPS, TCP `443` | License retrieval every 6 hours and usage snapshots every 15 minutes |
+| Platform pods | Analytics endpoint from the license response | As specified by the endpoint URL | Analytics every 30 minutes when there has been activity |
+| Tenant cluster control plane pods | Platform endpoint | HTTPS, TCP `443` | Feature retrieval and registration |
+| Connected cluster agents | None for licensing | Not applicable | Agents don't perform license validation |
+
+In offline license key mode, no egress to `admin.loft.sh` is required at all. For license retrieval in offline license server mode, the platform reaches the in-cluster server at the address given in `LICENSE_SERVER`.
+
+Analytics calls go to the exact endpoint URL named in the license response, which isn't necessarily `admin.loft.sh`. They only happen when there has been activity since the last call. A response with no analytics endpoint stops them entirely.
+
+The platform Service listens on port `443` and forwards to port `10443` on the platform pods. Kubernetes NetworkPolicy matches the pod port rather than the Service port, so an egress rule targeting platform pods directly has to allow `10443`.
+
+The tenant cluster path is the same connection used for the rest of platform communication, so it needs no licensing-specific firewall rules. For the full connectivity model, see [Platform communication and connectivity](./platform_communication.mdx).
+
+## Cache and refresh behavior
+
+The online platform and tenant cluster paths cache their last successful results. These caches keep a temporary licensing outage from immediately taking those components down.
+
+| Component | Refresh trigger | Cache location | Cache lifetime |
+| --- | --- | --- | --- |
+| Platform in online or license server mode | Every 6 hours | `loft-license-cache` Secret in the platform namespace | Reloaded at startup, with a 7-day grace period after retrieval starts failing |
+| Platform in offline license key mode | Re-evaluated locally every minute | None needed, the key is in the environment | Until the key expires, plus a 30-day grace period |
+| Tenant cluster, online | At startup, and whenever the credentials Secret changes | `<vcluster-name>-features-list` Secret in the host namespace, encrypted | 7 days |
+| Standalone deployment, online type | At startup, and whenever the credentials Secret changes | `platform/feature-cache.json` in the data directory | Doesn't expire |
+| Standalone type | Polled with backoff starting at 30 seconds, capped at 5 minutes | None | Not applicable |
+| Tenant cluster, in-cluster API | Polled with backoff starting at 30 seconds, capped at 5 minutes | None | Not applicable |
+| Tenant cluster, offline | Re-checked locally every hour | None needed, the key is in the environment | Until the key expires |
+
+The online tenant cluster path isn't polled. The control plane retrieves features at startup and then only when the credentials Secret changes. A license change made in the platform reaches a running tenant cluster on the next control plane restart, not on a timer.
+
+The platform's one-minute cycle in offline license key mode doesn't contact anything. It re-reads current resource usage, so limits are enforced against live counts.
+
+The tenant cluster feature cache is encrypted with a key derived from the vCluster Service UID. A tampered Secret therefore can't grant features the platform never returned.
+
+## What happens when licensing is unavailable
+
+Behavior depends on which component lost access and for how long.
+
+**The platform can't reach the license server.** It keeps running on the cached license and retries every 6 hours. If no retrieval succeeds within 7 days of the last successful one, the platform process exits rather than running unlicensed. A platform that restarts mid-outage measures that window from a stored timestamp that trails by up to 6 hours, so it gets slightly less than the full 7 days.
+
+A platform that has never retrieved a license has nothing to fall back on. It exits instead of starting unlicensed, which is the intended behavior rather than a grace period problem.
+
+**The platform's offline license key is near or past expiry.** Starting 90 days before expiry, the platform raises an expiration warning announcement. After the key expires, a 30-day grace period follows during which the platform keeps working. Once that grace period ends, the instance blocks all create requests.
+
+**The platform is over a resource limit.** Creating more of that resource is blocked while usage stays above the limit. Deleting enough of the resource clears the block automatically. In offline license key mode, the platform evaluates limits itself and raises a warning announcement once usage passes 90%. In online mode, the license server decides which limits apply and which announcements to return.
+
+**A tenant cluster on the online type can't reach the platform.** A control plane that's already running is unaffected. The online path holds its feature set in memory and doesn't poll, so losing the platform changes nothing until the control plane restarts. The cached feature list matters at startup and on a credentials-triggered reload. At those points the control plane tries the platform first and falls back to the cache. A cache older than 7 days is rejected, and a control plane that has never retrieved features has no cache at all. Either case fails initialization rather than starting unlicensed.
+
+**A tenant cluster on the standalone or in-cluster API type can't reach the platform.** These types read `Feature` resources from the control plane cluster rather than from the platform, so losing the platform doesn't interrupt them. What changes their feature set is the platform updating those resources, which a disconnected platform stops doing. On the standalone type, Enterprise features stay enabled either way, so what changes is whether requests get an unlicensed-use warning.
+
+**A tenant cluster's own offline license key expires.** The control plane warns for the last 30 days and then exits once the key expires. This path has no grace period, unlike the platform's offline key mode.
+
+**The licensed feature set changes.** The platform restarts itself to apply the new set.
+
+Expiration, limit, and feature warnings surface in the platform UI. See [Inbox](../administer/inbox.mdx).
+
+## Inspect and debug licensing
+
+### In the platform
+
+View the current license in the platform UI under **Admin > Platform Config > License and Billing**.
+
+Retrieve the same data through the API. This reports the license the platform currently holds, without contacting the license server.
+
+```bash title="Read the platform's current license"
+kubectl get licenses.management.loft.sh license -o yaml
+```
+
+To make the platform retrieve a fresh license first, add the `extended=true` query parameter. It's a URL parameter rather than a field, so `kubectl get` can't set it and the request has to go through `--raw`.
+
+```bash title="Force a license refresh, then read the result"
+kubectl get --raw '/apis/management.loft.sh/v1/licenses/license?extended=true'
+```
+
+Confirm which license server the platform is using. The platform logs this once at startup, so this also tells you which mode it's in.
+
+```bash title="Check the configured license server"
+kubectl logs -n vcluster-platform -l app=loft | grep "Using license server"
+```
+
+Check the cached license and the instance identity Secrets.
+
+```bash title="Inspect licensing Secrets"
+kubectl get secret loft-license-cache -n vcluster-platform -o jsonpath='{.data.updatedAt}' | base64 -d
+kubectl get secret loft-cert -n vcluster-platform
+```
+
+Use `updatedAt` to confirm the cache exists, not to work out how much grace period is left. The platform writes the timestamp it held *before* the current retrieval, so the stored value trails the real one by a refresh cycle. After the very first write it reads `0001-01-01T00:00:00Z`, because there was no previous retrieval to record.
+
+:::note Grace period is measured from the stored value
+On restart, the platform reloads `updatedAt` and measures the 7-day grace period from it. Because the value trails, a restart during a license server outage gets up to 6 hours less grace than the constant implies. A `0001-01-01T00:00:00Z` value is handled safely. The platform treats it as unset and falls back to the Secret's creation timestamp, so the grace period still runs from roughly the first successful retrieval. Tracked as [ENGPLAT-1069](https://linear.app/loft/issue/ENGPLAT-1069).
+:::
+
+Look for retrieval failures in the platform logs. Each of these lines carries a full stack trace in an `errorVerbose` field, so truncate them to keep the output readable.
+
+```bash title="Check for license retrieval errors"
+kubectl logs -n vcluster-platform -l app=loft | grep -i "error retrieving license" | cut -c1-260
+```
+
+An occasional failure here normally needs no action. The platform keeps serving from its cached license and retries on the next cycle. Outside the restart and timestamp edge cases above, only failures spanning more than 7 days make the platform exit.
+
+### In a tenant cluster
+
+Confirm which license type the control plane selected, and which features it enabled.
+
+<InterpolatedCodeBlock
+  code={'kubectl logs -n [[VAR:NAMESPACE:my-namespace]] [[VAR:NAME:my-vcluster]]-0 | grep -A5 "detected license type\\|Enabled features"'}
+  language="bash"
+  title="Check the tenant cluster's license type and features"
+/>
+
+A healthy online tenant cluster logs the host it connected to, followed by the features it enabled.
+
+```text title="Startup log on a licensed control plane"
+loader/loader.go  Using online license with host  loft.vcluster-platform
+online/license.go  Enabled features:
+online/license.go  dra-sync
+```
+
+Confirm the credentials Secret and the feature cache both exist.
+
+<InterpolatedCodeBlock
+  code={'kubectl get secret vcluster-platform-api-key -n [[VAR:NAMESPACE:my-namespace]]\n' +
+        'kubectl get secret [[VAR:NAME:my-vcluster]]-features-list -n [[VAR:NAMESPACE:my-namespace]]'}
+  language="bash"
+  title="Verify the credentials Secret and feature cache"
+/>
+
+The feature cache is encrypted and can't be read directly. Its presence and age are what matter, because the cache expires 7 days after it was written.
+
+A control plane can crashloop with an error naming a feature the license doesn't allow. The cause is usually a missing credentials Secret rather than a plan limitation. See [Resolve Pro feature license errors](/docs/vcluster/troubleshoot/pro-feature-license-error).
+
+## Related resources
+
+- [Restore license](../maintenance/backup-restore/preserve-license.mdx)
+- [Air-gapped installation with an offline license key](../install/air-gapped/with-offline-license-key.mdx)
+- [Air-gapped installation with an offline license server](../install/air-gapped/with-offline-license-server.mdx)
+- [Platform communication and connectivity](./platform_communication.mdx)
+- [Inbox](../administer/inbox.mdx)
+- [Resolve Pro feature license errors](/docs/vcluster/troubleshoot/pro-feature-license-error)
