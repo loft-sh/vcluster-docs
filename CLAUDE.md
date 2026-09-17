@@ -28,6 +28,11 @@ When reviewing PRs with `@claude`, use these MCP servers based on PR content:
 Always use these tools proactively when the PR content warrants it - don't wait
 to be asked.
 
+For a thorough review of a docs change, use the `docs-three-pass-review` skill.
+It verifies technical claims against source first, then runs style, readability,
+and usability as separate passes. See
+`.claude/skills/docs-three-pass-review/SKILL.md`.
+
 ## Vale linting: paths vs prose
 
 Vale rules apply to PROSE TEXT ONLY. When vale suggests capitalizing
