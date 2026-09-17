@@ -152,6 +152,44 @@ against that. Someone on a password-reset page is locked out and scanning under
 pressure. Someone on a config reference is comparing options at leisure. The same
 prose serves one and fails the other.
 
+### Naming the reader
+
+There's a trap in the sentence above. You infer the reader from the page, then
+judge the page against that reader, so a page written for the wrong person will
+read as well-targeted and this pass will ratify the mistake. Three habits guard
+against it.
+
+1. **State the reader as an assumption, in the report, not as a finding.** One
+   line is enough: "Reviewed as: an operator who is locked out and working under
+   time pressure." An author can correct a stated assumption in a sentence. An
+   unstated one silently shapes every finding under it.
+2. **Name the runner-up you rejected.** A password rotation page plausibly
+   serves both emergency recovery and scheduled compliance rotation. Say which
+   you assumed and which you set aside. The rejected reader is usually where the
+   real structural disagreement lives, and surfacing it is what lets the author
+   overrule you cheaply.
+3. **Ask when the two readers want different pages.** Not merely when you're
+   unsure. Uncertainty that doesn't change the recommendation isn't worth a
+   question. Divergence is: if one reader needs the fix first and the other needs
+   the consequences first, you can't review the ordering without knowing which
+   one dominates. Ask before the pass, not after you've written findings against
+   a guess.
+
+Check the cheap signals before asking: the page intro, prerequisites, sidebar
+position, what links in, and whether sibling pages state an audience. This repo
+has no `audience` frontmatter, so there's no metadata to look up and no
+in-repo ground truth to fall back on.
+
+The docs team maintains persona definitions in Notion under
+[Docs > Personas](https://app.notion.com/p/3a5109408069816ca099c2dd6aef9309),
+covering the role set, the lenses layered over it, and a production-path matrix.
+Consult those rather than inventing a reader. That work is still settling, so
+read it at the source and treat it as authoritative over any summary, here or
+elsewhere. The pages are internal and access-gated, so external contributors
+should fall back to habits 1 and 2, which are the part that actually matters.
+
+### What to look for
+
 - **Routing walls.** Several consecutive paragraphs that each say "if you have X, go
   to Y" should be a scannable decision list keyed on what the reader has. Don't put
   `GlossaryTerm` in a table cell, which triggers a horizontal-scroll rendering
@@ -212,6 +250,10 @@ placed after the procedure it invalidates. Accuracy verdicts come from
 `docs-fact-check`. Report them in their own section rather than folding them into
 a pass, so the author can see at a glance which findings are about what the page
 says versus how it says it.
+
+Open with one line naming the reader you reviewed against and the runner-up you
+rejected. Every Pass 3 finding depends on it, and it's the cheapest thing in the
+report for an author to overrule.
 
 State plainly what you changed versus what you're only flagging, and call out
 anything you deliberately left alone and why, such as reordering that would add
