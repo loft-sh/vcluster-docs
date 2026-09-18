@@ -12,12 +12,24 @@ import TroubleshootingDecisionTree from '@site/static/media/diagrams/vmetal-trou
 
 This guide covers how to diagnose and resolve common Metal3 provisioning failures. Start by identifying the state your server is in using [Bare metal server lifecycle](./server-lifecycle.mdx#server-lifecycle), then jump to the matching section below.
 
-Set your namespace and server name once. Every command on this page updates automatically.
+Set the project, Machine, BareMetalHost namespace, and BareMetalHost name once. Every interpolated command on this page updates automatically.
 
 <PageVariables
+  PROJECT="my-project"
+  MACHINE="my-machine"
   NAMESPACE="my-metal3-namespace"
   BMH_NAME="my-baremetalhost-name"
 />
+
+This page uses up to three Kubernetes contexts.
+
+| Context | Use it for |
+|---|---|
+| `<management-context>` | vCluster Platform resources, including `NodeClaim`, `SSHKey`, and the `ipam-default` ConfigMap. |
+| `<control-plane-context>` | Metal3 resources, including `BareMetalHost`, BMC Secrets, webhooks, and component logs. |
+| `<tenant-context>` | Kubernetes nodes and workloads in a tenant cluster. |
+
+The control plane context is the cluster referenced by `NodeProvider.spec.metal3.clusterRef.cluster`. Replace each placeholder with a name from `kubectl config get-contexts`.
 
 <figure>
   <TroubleshootingDecisionTree style={{width: '100%', height: 'auto'}} role="img" aria-label="Decision tree for diagnosing a BareMetalHost stuck in registering, inspecting, provisioning, deprovisioning, or error" />
@@ -32,7 +44,7 @@ The BareMetalHost stays in `registering` when the Bare Metal Operator (BMO) can'
 Check BMO logs for connection errors:
 
 <InterpolatedCodeBlock
-  code={`kubectl logs deployment/bare-metal-operator -n [[GLOBAL:NAMESPACE]] -c bare-metal-operator | grep [[GLOBAL:BMH_NAME]]`}
+  code={`kubectl --context <control-plane-context> logs deployment/bare-metal-operator -n [[GLOBAL:NAMESPACE]] -c bare-metal-operator | grep [[GLOBAL:BMH_NAME]]`}
 />
 
 Verify:
@@ -70,7 +82,7 @@ If the server powers on but stalls during network boot, check the DHCP server lo
 The DHCP server logs every request and response it sees. It's the most targeted tool for diagnosing a stuck network boot.
 
 <InterpolatedCodeBlock
-  code={`kubectl logs -n [[GLOBAL:NAMESPACE]] -l app=dhcp-proxy`}
+  code={`kubectl --context <control-plane-context> logs -n [[GLOBAL:NAMESPACE]] -l app=dhcp-proxy`}
 />
 
 The logs include DHCP requests from the server, including requests from MACs that don't match any registered `BareMetalHost` (a sign of a wrong `spec.bootMACAddress`), DHCP responses, TFTP requests for the bootloader, and HTTP requests for the kernel and initramfs images.
@@ -82,20 +94,20 @@ If no entries appear for the server, the DHCP broadcast isn't reaching the pod. 
 The `ramdisk-logs` container tails IPA log files as they arrive. If no logs appear, the server never contacted Ironic.
 
 <InterpolatedCodeBlock
-  code={`kubectl logs statefulset/ironic -n [[GLOBAL:NAMESPACE]] -c ramdisk-logs
-kubectl logs statefulset/ironic -n [[GLOBAL:NAMESPACE]] -c ironic`}
+  code={`kubectl --context <control-plane-context> logs statefulset/ironic -n [[GLOBAL:NAMESPACE]] -c ramdisk-logs
+kubectl --context <control-plane-context> logs statefulset/ironic -n [[GLOBAL:NAMESPACE]] -c ironic`}
 />
 
 Look for errors related to the server's MAC address or IPMI/Redfish operations.
 
-Other causes include a wrong boot MAC (`spec.bootMACAddress` must match the NIC used for PXE boot; the DHCP server logs show requests from unmatched MACs), or a failed IPA image download. The `ipa-images` Deployment downloads and serves the kernel and initramfs independently from Ironic. Inspect it with `kubectl describe deployment/ipa-images -n <namespace>` and `kubectl logs deployment/ipa-images -n <namespace>`.
+Other causes include a wrong boot MAC (`spec.bootMACAddress` must match the NIC used for PXE boot; the DHCP server logs show requests from unmatched MACs), or a failed IPA image download. The `ipa-images` Deployment downloads and serves the kernel and initramfs independently from Ironic. Inspect it with `kubectl --context <control-plane-context> describe deployment/ipa-images -n <namespace>` and `kubectl --context <control-plane-context> logs deployment/ipa-images -n <namespace>`.
 
 ### Stuck in `provisioning`
 
 The BareMetalHost stays in `provisioning` when Ironic can't complete the OS installation. Check Ironic logs:
 
 <InterpolatedCodeBlock
-  code={`kubectl logs statefulset/ironic -n [[GLOBAL:NAMESPACE]] -c ironic`}
+  code={`kubectl --context <control-plane-context> logs statefulset/ironic -n [[GLOBAL:NAMESPACE]] -c ironic`}
 />
 
 Common causes:
@@ -108,11 +120,11 @@ To force a re-provision, delete the Machine from the vCluster Platform UI, or de
 
 ### Stuck in `deprovisioning`
 
-When a Machine's `NodeClaim` is deleted, the platform removes the image reference from the BareMetalHost and sets it offline. The BMO then triggers a cleaning cycle that wipes the disk and returns the server to `available`. The BMC must remain reachable from Metal3 throughout, and the cleaning ramdisk must be able to reach Ironic and the DHCP proxy when booting. Cleaning can take several minutes on servers with many disks or large disk capacities.
+When a Machine's `NodeClaim` is deleted, the platform removes the image reference from the BareMetalHost and sets it offline. The BMO then triggers automated cleaning and returns the server to `available`. With the default `metadata` cleaning mode, this removes disk metadata such as partition tables. It isn't a full-disk secure erase, and the `disabled` mode skips automated cleaning altogether. See [Reuse and reprovisioning](./server-lifecycle.mdx#reuse-and-reprovisioning) before choosing a mode for sensitive workloads. The BMC must remain reachable from Metal3 throughout, and the cleaning ramdisk must be able to reach Ironic and the DHCP proxy when booting. Cleaning can take several minutes on servers with many disks or large disk capacities.
 
 <InterpolatedCodeBlock
-  code={`kubectl logs deployment/bare-metal-operator -n [[GLOBAL:NAMESPACE]] -c bare-metal-operator | grep -i "clean\\|deprovi"
-kubectl logs statefulset/ironic -n [[GLOBAL:NAMESPACE]] -c ironic | grep -i "clean"`}
+  code={`kubectl --context <control-plane-context> logs deployment/bare-metal-operator -n [[GLOBAL:NAMESPACE]] -c bare-metal-operator | grep -i "clean\\|deprovi"
+kubectl --context <control-plane-context> logs statefulset/ironic -n [[GLOBAL:NAMESPACE]] -c ironic | grep -i "clean"`}
 />
 
 If a server is physically removed or permanently unavailable, first delete the Machine that claims it through the vCluster Platform UI, or delete its `NodeClaim` through the API. After the Machine teardown completes, delete the `BareMetalHost` resource from inventory. If normal teardown can't complete because the server is unreachable, resolve the stuck `NodeClaim` before removing the inventory record.
@@ -122,15 +134,117 @@ If a server is physically removed or permanently unavailable, first delete the M
 A BareMetalHost whose operational status is `error` remains in its current provisioning state while BMO retries reconciliation. Read the error details and events first:
 
 <InterpolatedCodeBlock
-  code={`kubectl get baremetalhost [[GLOBAL:BMH_NAME]] -n [[GLOBAL:NAMESPACE]] -o jsonpath='{.status.errorMessage}'
-kubectl get baremetalhost [[GLOBAL:BMH_NAME]] -n [[GLOBAL:NAMESPACE]] -o jsonpath='{.status.errorType}'
-kubectl describe baremetalhost [[GLOBAL:BMH_NAME]] -n [[GLOBAL:NAMESPACE]]`}
+  code={`kubectl --context <control-plane-context> get baremetalhost [[GLOBAL:BMH_NAME]] -n [[GLOBAL:NAMESPACE]] -o jsonpath='{.status.errorMessage}'
+kubectl --context <control-plane-context> get baremetalhost [[GLOBAL:BMH_NAME]] -n [[GLOBAL:NAMESPACE]] -o jsonpath='{.status.errorType}'
+kubectl --context <control-plane-context> describe baremetalhost [[GLOBAL:BMH_NAME]] -n [[GLOBAL:NAMESPACE]]`}
 />
 
 - **Monitor a transient error** such as a network blip or temporary BMC unresponsiveness. BMO retries without a manual annotation. If the error remains, verify connectivity and inspect the BMO and Ironic logs before changing the host.
 - **Fix credentials** when the error reports wrong BMC credentials. Update the referenced Secret with the correct values. BMO reads the changed Secret during reconciliation and retries without reprovisioning the server.
 - **Stop and create a new Machine** when the error is a checksum mismatch or image URL failure. The image URL and checksum are written to Ironic's database at provisioning time, so updating the `OSImage` resource doesn't affect an in-flight request. Delete the Machine in the UI, or delete its `NodeClaim` through the API, then create a new one with corrected image configuration.
-- **Delete and recreate the BareMetalHost** when the underlying hardware configuration is wrong, such as a bad BMC address or incorrect boot MAC.
+- **Correct the BareMetalHost configuration** when the BMC address, credentials reference, or boot MAC is wrong. Edit the resource in place when the field permits it. If you must recreate the host, release its Machine first and wait for the `NodeClaim` to finish deleting before recreating it. Deleting a claimed BareMetalHost doesn't by itself clean up the claim.
+
+## Outcome-specific failures
+
+Use these checks after Metal3 reports the `BareMetalHost` as provisioned. First, map the Machine to its underlying host.
+
+The `NodeClaim` records the `BareMetalHost` name in the `metal3.vcluster.com/claimed-node` annotation:
+
+<InterpolatedCodeBlock
+  code={`kubectl --context <management-context> get nodeclaim [[GLOBAL:MACHINE]] \\
+  -n loft-p-[[GLOBAL:PROJECT]] \\
+  -o jsonpath='{.metadata.annotations.metal3\\.vcluster\\.com/claimed-node}'`}
+/>
+
+To look up the mapping in the other direction, select the `BareMetalHost` by the `metal3.vcluster.com/node-claim` label:
+
+<InterpolatedCodeBlock
+  code={`kubectl --context <control-plane-context> get baremetalhost \\
+  -n [[GLOBAL:NAMESPACE]] \\
+  -l 'metal3.vcluster.com/node-claim=[[GLOBAL:MACHINE]],vcluster.com/project=[[GLOBAL:PROJECT]]'`}
+/>
+
+If the first command returns a host other than this page's BareMetalHost name, update that page variable before running the remaining interpolated commands.
+
+### Machine is available but SSH fails
+
+An [independently provisioned machine](../../../deploy/independently-provisioned-machines.mdx) can be `Available` even when SSH access fails. `Available` means the operating system was provisioned and the platform completed the claim. It doesn't test an SSH login.
+
+1. Inspect the `NodeClaim` on the management cluster. Confirm that the IP annotation is present and that the claim references the expected node type.
+
+   <InterpolatedCodeBlock
+     code={`kubectl --context <management-context> get nodeclaim [[GLOBAL:MACHINE]] \\
+     -n loft-p-[[GLOBAL:PROJECT]] -o yaml`}
+   />
+
+2. Confirm that every cluster-scoped `SSHKey` named by the node type exists and contains the intended public key.
+
+   ```bash
+   kubectl --context <management-context> get sshkey <ssh-key-name> -o yaml
+   ```
+
+3. Inspect the cloud-init payload generated for the host. The Secret is on the control plane cluster. Treat the decoded payload as sensitive, because it contains bootstrap configuration.
+
+   <InterpolatedCodeBlock
+     code={`kubectl --context <control-plane-context> get secret vcluster-userdata-[[GLOBAL:BMH_NAME]] \\
+     -n [[GLOBAL:NAMESPACE]] -o jsonpath='{.data.userData}' | base64 --decode`}
+   />
+
+4. Use the BMC console to inspect cloud-init when SSH is unavailable.
+
+   ```bash
+   sudo cloud-init status --long
+   sudo tail -n 200 /var/log/cloud-init-output.log
+   sudo journalctl -u cloud-final --no-pager
+   ```
+
+5. Verify that you're using the image's correct login user, that TCP port 22 is reachable, and that the reported IP belongs to the server. A successful provision doesn't validate routing or firewall policy between the operator and that IP.
+
+### Worker Machine is provisioned but not joined
+
+For a [tenant cluster worker](../../../deploy/tenant-cluster-nodes.mdx), `Provisioned=True` with `Joined=False` means the operating system installation finished but the bootstrap process didn't register the node with the tenant cluster.
+
+1. Read the `NodeClaim` conditions and events on the management cluster.
+
+   <InterpolatedCodeBlock
+     code={`kubectl --context <management-context> describe nodeclaim [[GLOBAL:MACHINE]] \\
+     -n loft-p-[[GLOBAL:PROJECT]]`}
+   />
+
+2. Use SSH or the BMC console to check cloud-init.
+
+   ```bash
+   sudo cloud-init status --long
+   sudo tail -n 200 /var/log/cloud-init-output.log
+   sudo journalctl -u cloud-final --no-pager
+   ```
+
+3. From the server, verify DNS and network access to the vCluster Platform bootstrap endpoint and the tenant Kubernetes API endpoint. Bootstrap can't finish if either endpoint is unreachable or its certificate name can't be resolved.
+
+4. Check whether the node registered in the tenant cluster.
+
+   ```bash
+   kubectl --context <tenant-context> get nodes -o wide
+   ```
+
+### Control plane Machine is available but the cluster is offline
+
+The platform can mark a [control plane Machine](../../../deploy/control-plane-machines.mdx) `Available` after provisioning completes even if the vCluster service on the server fails to start. The cluster controller's `VirtualClusterReady` condition isn't sufficient evidence either. For a standalone control plane, it can report that the requested Machine objects were created before the servers finish provisioning. Verify the service on the server and connect to the cluster API.
+
+1. Use SSH or the BMC console to inspect cloud-init and the vCluster systemd service.
+
+   ```bash
+   sudo cloud-init status --long
+   sudo tail -n 200 /var/log/cloud-init-output.log
+   sudo systemctl status vcluster --no-pager
+   sudo journalctl -u vcluster --no-pager -n 200
+   ```
+
+2. Verify that `/etc/vcluster` exists and that `/etc/systemd/system/vcluster.service` was created. If either is missing, use the cloud-init output to find the failed bootstrap step.
+
+3. Confirm the host meets the control plane prerequisites. Those are root access, `systemd`, `curl`, `iptables`, and the raised inotify limits listed in the [standalone node requirements](/docs/vcluster/deploy/control-plane/binary/node-requirements). Also verify DNS and network access to vCluster Platform and, for a multi-node control plane, the other control plane Machines.
+
+4. Check the tenant cluster status and events from the management cluster. A ready Machine alone doesn't prove that the cluster API is online.
 
 ## IP allocation issues
 
@@ -141,7 +255,7 @@ The error appears in the platform logs and in `NodeClaim` events, as `failed to 
 Inspect current allocations:
 
 ```bash
-kubectl get configmap ipam-default -n loft -o yaml
+kubectl --context <management-context> get configmap ipam-default -n loft -o yaml
 ```
 
 The ConfigMap data is a flat map of `<ip>: NodeClaim/<namespace>/<name>` entries, one per allocated address:
@@ -152,7 +266,7 @@ data:
   10.10.1.3: NodeClaim/loft-p-myproject/machine-def
 ```
 
-**Leaked IPs from a failed deprovision.** If the platform deleted a Machine but didn't release its IP (for example, a crash during cleanup), the entry remains in the ConfigMap even though the NodeClaim no longer exists. To clean up: list active NodeClaims (`kubectl get nodeclaims -A`), compare against the ConfigMap entries, and edit the ConfigMap (`kubectl edit configmap ipam-default -n loft`) to remove entries whose NodeClaim no longer exists.
+**Leaked IPs from a failed deprovision.** If the platform deleted a Machine but didn't release its IP (for example, a crash during cleanup), the entry remains in the ConfigMap even though the NodeClaim no longer exists. To clean up: list active NodeClaims (`kubectl --context <management-context> get nodeclaims -A`), compare against the ConfigMap entries, and edit the ConfigMap (`kubectl --context <management-context> edit configmap ipam-default -n loft`) to remove entries whose NodeClaim no longer exists.
 
 **CIDR or range too small.** If the number of Machines regularly exceeds the available address space, expand the range using the `metal3.vcluster.com/network-cidr` or `metal3.vcluster.com/network-ip-range` property. See [Network configuration](./networking.mdx#ipam).
 
@@ -163,20 +277,20 @@ The Metal3 `ValidatingWebhook` validates every `BareMetalHost` create and update
 Check whether the BMO container is ready:
 
 <InterpolatedCodeBlock
-  code={`kubectl get deployment bare-metal-operator -n [[GLOBAL:NAMESPACE]]
-kubectl get pods -n [[GLOBAL:NAMESPACE]] -l app=bare-metal-operator`}
+  code={`kubectl --context <control-plane-context> get deployment bare-metal-operator -n [[GLOBAL:NAMESPACE]]
+kubectl --context <control-plane-context> get pods -n [[GLOBAL:NAMESPACE]] -l app=bare-metal-operator`}
 />
 
 If a pod isn't ready, inspect its events and the configured readiness probe:
 
 <InterpolatedCodeBlock
-  code={`kubectl describe pods -n [[GLOBAL:NAMESPACE]] -l app=bare-metal-operator`}
+  code={`kubectl --context <control-plane-context> describe pods -n [[GLOBAL:NAMESPACE]] -l app=bare-metal-operator`}
 />
 
 Check the ValidatingWebhookConfiguration for the current CA bundle and service endpoint:
 
 ```bash
-kubectl get validatingwebhookconfiguration bare-metal-operator -o yaml
+kubectl --context <control-plane-context> get validatingwebhookconfiguration bare-metal-operator -o yaml
 ```
 
 ## Log locations
@@ -185,21 +299,21 @@ Metal3 0.6.0 deploys separate workloads on the control plane cluster, in the nam
 
 | Component | Container | Log command |
 |---|---|---|
-| Ironic | `ironic` StatefulSet, `ironic` container | `kubectl logs statefulset/ironic -n <namespace> -c ironic` |
-| Bare Metal Operator | `bare-metal-operator` Deployment | `kubectl logs deployment/bare-metal-operator -n <namespace> -c bare-metal-operator` |
-| IPA ramdisk output | `ironic` StatefulSet, `ramdisk-logs` container | `kubectl logs statefulset/ironic -n <namespace> -c ramdisk-logs` |
-| IPA kernel and initramfs server | `ipa-images` Deployment | `kubectl logs deployment/ipa-images -n <namespace>` |
-| Managed database | `mariadb` StatefulSet | `kubectl logs statefulset/mariadb -n <namespace>` |
+| Ironic | `ironic` StatefulSet, `ironic` container | `kubectl --context <control-plane-context> logs statefulset/ironic -n <namespace> -c ironic` |
+| Bare Metal Operator | `bare-metal-operator` Deployment | `kubectl --context <control-plane-context> logs deployment/bare-metal-operator -n <namespace> -c bare-metal-operator` |
+| IPA ramdisk output | `ironic` StatefulSet, `ramdisk-logs` container | `kubectl --context <control-plane-context> logs statefulset/ironic -n <namespace> -c ramdisk-logs` |
+| IPA kernel and initramfs server | `ipa-images` Deployment | `kubectl --context <control-plane-context> logs deployment/ipa-images -n <namespace>` |
+| Managed database | `mariadb` StatefulSet | `kubectl --context <control-plane-context> logs statefulset/mariadb -n <namespace>` |
 
 First inspect BareMetalHost events on the control plane cluster:
 
 <InterpolatedCodeBlock
-  code={`kubectl describe baremetalhost [[GLOBAL:BMH_NAME]] -n [[GLOBAL:NAMESPACE]]`}
+  code={`kubectl --context <control-plane-context> describe baremetalhost [[GLOBAL:BMH_NAME]] -n [[GLOBAL:NAMESPACE]]`}
 />
 
 Then, on the management cluster, inspect NodeClaim events for platform-level failures such as no available hosts, an IPAM failure, or an image resolution error:
 
 <InterpolatedCodeBlock
-  code={`kubectl get nodeclaims -A
-kubectl describe nodeclaim <nodeclaim-name> -n <project-namespace>`}
+  code={`kubectl --context <management-context> get nodeclaims -A
+kubectl --context <management-context> describe nodeclaim <nodeclaim-name> -n <project-namespace>`}
 />
