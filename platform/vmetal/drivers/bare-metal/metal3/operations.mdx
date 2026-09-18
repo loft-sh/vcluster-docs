@@ -9,7 +9,7 @@ toc_max_heading_level: 3
 import InterpolatedCodeBlock from '@site/src/components/InterpolatedCodeBlock';
 import PageVariables from '@site/src/components/PageVariables';
 
-Day-2 operations for the Metal3 driver center on managing `BareMetalHost` resources on the control plane cluster. This page covers adding and removing servers, checking fleet capacity, and where to find guidance for other common tasks.
+Day-2 operations for the Metal3 driver center on managing `BareMetalHost` resources on the control plane cluster. This page covers adding and removing servers, checking fleet capacity, and where to find guidance for other common tasks. Commands on this page use `<control-plane-context>`, the cluster referenced by `NodeProvider.spec.metal3.clusterRef.cluster`.
 
 Set your namespace once. Every command on this page updates automatically.
 
@@ -26,7 +26,7 @@ After creation, the BMO begins registration immediately. The server moves throug
 ### Verify a server is ready
 
 <InterpolatedCodeBlock
-  code={`kubectl get baremetalhost server-01 -n [[GLOBAL:NAMESPACE]] \\
+  code={`kubectl --context <control-plane-context> get baremetalhost server-01 -n [[GLOBAL:NAMESPACE]] \\
   -o jsonpath='{.status.provisioning.state}'`}
 />
 
@@ -37,7 +37,7 @@ A response of `available` means the server is ready to claim. See [Troubleshooti
 After inspection, the BareMetalHost records the server's hardware inventory:
 
 <InterpolatedCodeBlock
-  code={`kubectl get baremetalhost server-01 -n [[GLOBAL:NAMESPACE]] \\
+  code={`kubectl --context <control-plane-context> get baremetalhost server-01 -n [[GLOBAL:NAMESPACE]] \\
   -o jsonpath='{.status.hardwareDetails}' | jq .`}
 />
 
@@ -50,25 +50,35 @@ This includes CPU count, memory, NIC information, and disk inventory. Verify it 
 If a Machine holds the server, delete it from the vCluster Platform UI, or delete its `NodeClaim` through the API, first. The platform deprovisions the server and returns it to `available`. Then delete the BareMetalHost.
 
 <InterpolatedCodeBlock
-  code={`kubectl delete baremetalhost server-01 -n [[GLOBAL:NAMESPACE]]`}
+  code={`kubectl --context <control-plane-context> delete baremetalhost server-01 -n [[GLOBAL:NAMESPACE]]`}
 />
 
-After the BareMetalHost is deleted, also delete its BMC credential Secret if it is no longer needed.
+After the normal sequence, the Machine and its `NodeClaim` are already gone and the platform has released the IP address. Deleting the now-unclaimed `BareMetalHost` only removes the server from inventory.
 
-If you delete a provisioned BareMetalHost directly without first deleting the Machine or its `NodeClaim`, the platform marks the `NodeClaim` as failed on the next reconcile, but the server doesn't go through the normal deprovisioning cycle, so the disk isn't cleaned before physical removal.
+Also delete its BMC credential Secret if it is no longer needed.
+
+<InterpolatedCodeBlock
+  code={`kubectl --context <control-plane-context> delete secret server-01-bmc -n [[GLOBAL:NAMESPACE]]`}
+/>
+
+If the server is permanently unreachable and can't complete normal deprovisioning, delete the `BareMetalHost` first, then delete its Machine. During Machine deletion, the driver treats the missing host as already removed, releases the IP, and finishes deleting the `NodeClaim`. The server doesn't go through the normal deprovisioning cycle, so its disk isn't cleaned. Don't use this sequence for a reachable server that can be deprovisioned normally.
 
 ### Temporarily withhold a server
 
-To prevent a server from being claimed for new Machines without removing it from the cluster, add a label that no node type selector matches:
+To stop an available server being claimed for new Machines, break the selectors that match it. Remove or change a label that every matching node type selector requires. The server stays registered. For example, if the server is eligible because its `role` is `compute`, remove that label:
 
 ```bash
-kubectl label baremetalhost server-01 -n <namespace> maintenance=true
+kubectl --context <control-plane-context> label baremetalhost server-01 \
+  -n <namespace> role-
 ```
 
-Label changes don't affect servers that are already provisioned. A server already claimed by a Machine remains claimed until that Machine is deleted. Remove the label to return the server to the eligible pool:
+Merely adding a `maintenance=true` label doesn't exclude a server unless every applicable node type selector explicitly requires that label not to exist. Label changes don't affect servers that are already provisioned. A server already claimed by a Machine remains claimed until that Machine is deleted.
+
+Restore the selection label to return the server to the eligible pool:
 
 ```bash
-kubectl label baremetalhost server-01 -n <namespace> maintenance-
+kubectl --context <control-plane-context> label baremetalhost server-01 \
+  -n <namespace> role=compute
 ```
 
 ## Check fleet capacity
@@ -76,14 +86,14 @@ kubectl label baremetalhost server-01 -n <namespace> maintenance-
 Get a view of all servers and their current states:
 
 <InterpolatedCodeBlock
-  code={`kubectl get baremetalhost -n [[GLOBAL:NAMESPACE]] \\
+  code={`kubectl --context <control-plane-context> get baremetalhost -n [[GLOBAL:NAMESPACE]] \\
   -o custom-columns='NAME:.metadata.name,STATE:.status.provisioning.state,ERROR:.status.errorMessage'`}
 />
 
 Count available servers:
 
 <InterpolatedCodeBlock
-  code={`kubectl get baremetalhost -n [[GLOBAL:NAMESPACE]] -o json | \\
+  code={`kubectl --context <control-plane-context> get baremetalhost -n [[GLOBAL:NAMESPACE]] -o json | \\
   jq '[.items[] | select(.status.provisioning.state=="available")] | length'`}
 />
 
@@ -93,6 +103,8 @@ A server in `available` is ready for a new Machine request. A server in `provisi
 
 | Task | Where to find it |
 |---|---|
+| Release an independently provisioned machine and reclaim its server | [Independently provisioned machines](../../../deploy/independently-provisioned-machines.mdx#6-release-the-machine) |
+| Understand what scale-down does to a tenant cluster node | [Tenant cluster nodes](../../../deploy/tenant-cluster-nodes.mdx#4-change-how-many-nodes-you-have) |
 | Update OS images across a fleet | [GPU Fleet Operations](./gpu-fleet-operations.mdx#roll-out-a-new-os-image) |
 | Update server labels | [GPU Fleet Operations](./gpu-fleet-operations.mdx#label-strategy) |
 | Expand the IP address pool | [Troubleshooting](./troubleshooting.mdx#ip-allocation-issues) |

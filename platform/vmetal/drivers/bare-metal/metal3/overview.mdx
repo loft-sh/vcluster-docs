@@ -19,13 +19,15 @@ When a Machine is requested, the platform claims an available `BareMetalHost` re
 This enables you to offer different configurations of bare metal servers, all managed through BareMetalHost resources on a <GlossaryTerm term="control-plane-cluster">control plane cluster</GlossaryTerm>. Machines can be used as private nodes for tenant clusters or provisioned independently.
 
 <figure>
-  <Metal3ProvisioningFlow style={{width: '100%', height: 'auto'}} role="img" aria-label="A Machine request causes the Metal3 provider to select and configure an available BareMetalHost on the control plane cluster. Bare Metal Operator reconciles it, and Ironic powers the external physical server and installs its operating system. For private nodes, user data registers the server with a tenant cluster. Deleting the Machine clears provisioning data and returns the host to the available pool." />
-  <figcaption>The platform writes the requested state to an available BareMetalHost. Metal3 and Ironic provision the external server, which joins a tenant cluster only when requested as a private node. Deleting the Machine returns the host to the available pool.</figcaption>
+  <Metal3ProvisioningFlow style={{width: '100%', height: 'auto'}} role="img" aria-label="A Machine request causes the Metal3 provider to select and configure an available BareMetalHost on the control plane cluster. Bare Metal Operator reconciles it, and Ironic powers the external physical server and installs its operating system. Joining a tenant cluster as a worker is one of three outcomes; a server can instead carry a tenant cluster control plane or stay an independently provisioned machine reached over SSH. Deleting the Machine clears provisioning data and returns the host to the available pool." />
+  <figcaption>The platform writes the requested state to an available BareMetalHost, and Metal3 and Ironic provision the external server. The worker outcome shown here is one of three. Deleting the Machine returns the host to the available pool.</figcaption>
 </figure>
 
 ## Overview
 
 The Metal3 provider works by selecting available BareMetalHost resources on a control plane cluster and provisioning them with an OS image and user data configuration. Node types let you organize bare metal servers based on type, location, or other criteria.
+
+What happens once the operating system boots depends on what you requested the Machine for. The server can join a tenant cluster as a worker, carry that cluster's own control plane, or be a server you reach over SSH with no Kubernetes on it. Everything before that point is identical. See [Two use cases, three outcomes](../../../overview.mdx#two-use-cases-three-outcomes).
 
 When the Machine is deleted, the platform powers the server off and clears its image, user data, and network data references. It waits for the BareMetalHost to return to its original reusable state, restores pre-existing managed DHCP annotations, and then releases any address allocated by platform IPAM. A later Machine can reuse the host and address after that cleanup completes.
 
@@ -40,7 +42,15 @@ After the platform selects a BareMetalHost, it prepares the server for provision
 
 Ironic then provisions the server through power management, PXE boot, and an in-memory installer that writes the OS to disk. The server boots into the provisioned OS with the user data and network data configuration applied.
 
-When a Machine is used as a private node for a <GlossaryTerm term="tenant-cluster">tenant cluster</GlossaryTerm>, the user data includes registration scripts that automatically join the server to the tenant cluster.
+The platform always merges the resolved SSH keys into that user data. What it appends alongside them depends on the Machine:
+
+| Machine | The platform also appends | Result |
+|---|---|---|
+| Worker for a <GlossaryTerm term="tenant-cluster">tenant cluster</GlossaryTerm> | A registration script that joins the server to that cluster | A Kubernetes node in that cluster |
+| Control plane for a tenant cluster | The vCluster install script | A server running the cluster's control plane as a systemd service |
+| Requested on its own | Nothing further | A provisioned server you reach over SSH |
+
+See [Independently provisioned machines](../../../deploy/independently-provisioned-machines.mdx), [Control plane machines](../../../deploy/control-plane-machines.mdx), and [Tenant cluster nodes](../../../deploy/tenant-cluster-nodes.mdx) for each path.
 
 ## Infrastructure deployment
 
@@ -384,14 +394,24 @@ spec:
 
 ## Get started
 
-This walkthrough covers the essential steps to go from a connected control plane cluster to a provisioned bare metal server.
+This walkthrough covers the essential steps to go from a connected control plane cluster to a provisioned bare metal server. Steps 1 through 4 apply to every use of vMetal. Step 5 is a branch point.
+
+The walkthrough spans two clusters, so every command names its context. `NodeProvider`, `OSImage`, `SSHKey`, and `NodeClaim` are management cluster resources. `BareMetalHost` and BMC Secrets live on the control plane cluster named by `clusterRef.cluster`. Replace each placeholder with a name from `kubectl config get-contexts`.
 
 Before you begin:
 
+- Confirm your hardware, BMCs, and network meet the driver's [requirements](./requirements.mdx). The BMC has to be reachable from the control plane cluster, and each server needs a NIC that can PXE boot on the provisioning network.
 - Install cert-manager on the control plane cluster.
 - Connect each control plane cluster node to the provisioning network through a `br0` bridge, or replace the DHCP NetworkAttachmentDefinition configuration.
 - Configure a load balancer implementation that can assign `192.168.100.10` to the Ironic Service. Replace all example network addresses with addresses from your provisioning network.
 - Create an [OSImage](../../../images/os-images.mdx#create-an-osimage) named `ubuntu-noble`, or change the node type to reference an existing Metal3-compatible OSImage.
+- Check your license. vMetal requires a license that includes it, and requesting a Machine without a tenant cluster additionally requires the `machine-management` feature. In the platform, navigate to **Admin > License and Billing**.
+
+:::warning Decide on SSH access before you provision anything
+SSH keys are injected into the server's cloud-init at provision time. A server that's already provisioned doesn't pick up a key you add afterwards, so you'd have to release and reprovision it.
+
+Add `vcluster.com/ssh-keys` to the node type in step 1 if you'll want shell access to these servers, even when they're destined to become Kubernetes nodes. It's how you inspect a node whose kubelet never came up. See [Register an SSH key](../../../deploy/independently-provisioned-machines.mdx#1-register-an-ssh-key).
+:::
 
 <Flow>
 <Step>
@@ -446,7 +466,7 @@ spec:
 ```
 
 ```bash
-kubectl apply -f metal3-provider.yaml
+kubectl --context <management-context> apply -f metal3-provider.yaml
 ```
 
 Wait for Metal3 and Ironic to be running on the control plane cluster before creating BareMetalHost resources. The Metal3 webhook must be ready to validate them.
@@ -470,7 +490,7 @@ stringData:
 ```
 
 ```bash
-kubectl apply -f server-01-bmc-secret.yaml
+kubectl --context <control-plane-context> apply -f server-01-bmc-secret.yaml
 ```
 </Step>
 
@@ -489,14 +509,14 @@ metadata:
     role: compute
 spec:
   bmc:
-    address: redfish://192.168.1.100
+    address: redfish://192.168.1.100/redfish/v1/Systems/1
     credentialsName: server-01-bmc
     disableCertificateVerification: true
   bootMACAddress: "aa:bb:cc:dd:ee:01"
 ```
 
 ```bash
-kubectl apply -f server-01-bmh.yaml
+kubectl --context <control-plane-context> apply -f server-01-bmh.yaml
 ```
 
 The server moves through `registering` and `inspecting` states as Metal3 verifies BMC access and collects hardware inventory.
@@ -508,7 +528,7 @@ Verify the server reaches available state.
 Once the BareMetalHost passes inspection, it transitions to `available`. This means the server is registered, its hardware inventory is collected, and it is ready for provisioning.
 
 ```bash
-kubectl get baremetalhost -n metal3-system
+kubectl --context <control-plane-context> get baremetalhost -n metal3-system
 ```
 
 ```text
@@ -518,24 +538,26 @@ server-01   available              false            5m
 </Step>
 
 <Step>
-Create a tenant cluster that claims the server.
+Claim the server.
 
-Create a tenant cluster with private nodes configured to use the Metal3 provider. The platform provisions a Machine, which claims the BareMetalHost and installs the OS through Ironic.
+Everything to this point is the same whatever you do with the capacity. From here, what you claim the server for decides which guide to follow. All three create a `NodeClaim`, use the same node types and the same server pool, and differ by a field or two on the request.
 
-```yaml
-privateNodes:
-  enabled: true
-  autoNodes:
-    - provider: metal3-provider
-      static:
-        - name: compute-nodes
-          quantity: 1
-          nodeTypeSelector:
-            - property: vcluster.com/node-type
-              value: compute-node
-```
+| You want | Follow |
+|---|---|
+| A server you reach over SSH, with no Kubernetes on it | [Independently provisioned machines](../../../deploy/independently-provisioned-machines.mdx) |
+| A tenant cluster whose control plane runs on your own hardware | [Control plane machines](../../../deploy/control-plane-machines.mdx) |
+| Dedicated worker capacity for an existing tenant cluster | [Tenant cluster nodes](../../../deploy/tenant-cluster-nodes.mdx) |
 
-After provisioning completes, the server boots into the configured OS and joins the tenant cluster as a worker node.
+Underneath, the three differ only in what the platform sets on the Machine and in the cloud-init it generates:
+
+| | Independently provisioned | Worker | Control plane |
+|---|---|---|---|
+| `spec.vClusterRef` | Empty | Names the cluster | Names the cluster |
+| `spec.controlPlane` | `false` | `false` | `true` |
+| Cloud-init appends | Nothing beyond SSH keys | A join command | The vCluster install script |
+| Result | A server you reach over SSH | A worker node in the cluster | The cluster's control plane |
+
+In every case the platform selects an eligible server, allocates an IP, renders cloud-init, and hands the server to Ironic for provisioning. Everything in steps 1 through 4 is identical across all three. See [Machine and server concepts](../../../concepts/machine-lifecycle.mdx) for the model behind them.
 </Step>
 </Flow>
 
@@ -669,7 +691,7 @@ References [SSHKey](../../../images/ssh-keys.mdx) resources by name. The public 
 
 **Type:** `string`
 
-Custom cloud-init configuration merged with the generated user data. Accepts any valid cloud-config directives, including `packages`, `write_files`, and `runcmd`. The platform's provisioning commands are appended after any user-supplied `runcmd` entries.
+Custom cloud-init configuration merged with the generated user data. Accepts any valid cloud-config directives, including `packages`, `write_files`, and `runcmd`. The platform appends to this document rather than replacing it. It always adds the resolved SSH keys, and adds a cluster registration command only when the Machine has a tenant cluster to register with. Anything the platform appends runs after your own `runcmd` entries.
 
 Takes precedence over `vcluster.com/user-data-template-config`.
 

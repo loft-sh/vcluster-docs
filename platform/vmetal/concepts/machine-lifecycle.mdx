@@ -26,14 +26,14 @@ This distinction matters because the two objects answer different questions. "Is
 Every Machine, regardless of driver, passes through the same milestones:
 
 <figure>
-  <MachineModelLifecycle style={{width: '100%', height: 'auto'}} role="img" aria-label="Machine lifecycle from requested through scheduled, provisioned, joined, ready, and destroyed" />
+  <MachineModelLifecycle style={{width: '100%', height: 'auto'}} role="img" aria-label="Machine lifecycle from requested through scheduled, provisioned, joined, ready, and destroyed, where joined is satisfied without a worker join for independent and control plane Machines" />
 </figure>
 
 1. **Requested** - a tenant cluster or an administrator asks for capacity matching a node type, and the platform creates a `NodeClaim` for the Machine.
 2. **Scheduled** - vMetal selects an eligible node type and driver. The driver either claims existing inventory or creates new infrastructure.
-3. **Provisioned** - the driver finishes preparing the capacity, which can include creating a VM, installing an OS, configuring networking, and running startup automation.
-4. **Joined** - for tenant-cluster capacity, the server has joined as a Kubernetes node. Machines requested directly by an administrator, outside a tenant cluster, skip this milestone.
-5. **Ready** - every prior milestone has been reached. This is a single point in time, not a span. A Machine doesn't sit in "ready" before doing anything else. By the time a Machine reaches Ready, the server it claimed is already serving workloads.
+3. **Provisioned** - the driver finishes preparing the capacity, which can include creating a VM, installing an OS, configuring networking, and supplying startup configuration. This condition doesn't prove that cloud-init or the services it starts succeeded inside the OS.
+4. **Joined** - for tenant-cluster worker capacity, the server has joined as a Kubernetes node. For Machines requested outside a tenant cluster and Machines that run a control plane, no worker join is required, so the platform marks this condition satisfied after provisioning.
+5. **Ready** - the platform's required milestones are satisfied. For a worker, that includes joining the tenant cluster. For an independent or control plane Machine, `Joined` is satisfied without a worker join, so verify SSH access or cluster API health separately.
 6. **Destroyed** - the tenant cluster or administrator no longer needs the Machine, and the platform deletes its `NodeClaim`.
 
 Teardown is driver-specific. Metal3 cleans the claimed physical server and returns it to the available inventory. KubeVirt deletes the `VirtualMachine`, and Terraform runs its destroy workflow. For the Metal3 driver's `BareMetalHost` states, see [Bare metal server lifecycle](../drivers/bare-metal/metal3/server-lifecycle.mdx#server-lifecycle).
@@ -45,6 +45,22 @@ Teardown is driver-specific. Metal3 cleans the claimed physical server and retur
 </figure>
 
 A tenant cluster requests dedicated capacity through [Private Nodes](/docs/vcluster/deploy/worker-nodes/private-nodes/), either directly or automatically through [Auto Nodes](/docs/vcluster/deploy/worker-nodes/private-nodes/auto-nodes/). That request becomes a `NodeClaim`, the Kubernetes resource that represents the Machine request and tracks its lifecycle. The platform selects an eligible node type and driver. The driver claims or creates the underlying capacity, provisions it, and joins it to the tenant cluster as a standard Kubernetes node. Once joined, the `NodeClaim` reaches the `Available` phase.
+
+## Machines that run a control plane
+
+A Machine can carry a tenant cluster's control plane instead of joining one as a worker. The platform installs vCluster on the provisioned server as a systemd service. The cluster's API server runs there rather than as a workload on another cluster.
+
+These Machines reach Provisioned the same way as any other. They differ in ordering. A worker waits for its tenant cluster to be online before provisioning, because it needs a live API server to join. A control plane Machine doesn't wait, because it's what brings that API server up.
+
+See [Control plane machines](../deploy/control-plane-machines.mdx).
+
+## Independently provisioned machines
+
+An administrator can request a Machine directly, with no tenant cluster attached. The Machine goes through the same Requested, Scheduled, and Provisioned milestones, and the same server selection and cleanup. Because there's no cluster to join, the platform marks Joined satisfied after provisioning without running a join operation. What you get is a provisioned server reachable over SSH.
+
+This is the same Machine model, not a separate one. The only difference is what the platform appends to the cloud-init it generates. Every Machine gets any SSH keys you configured. A worker also gets a Kubernetes join command, and a control plane Machine gets the vCluster install script, while an independently provisioned Machine gets nothing further.
+
+See [Independently provisioned machines](../deploy/independently-provisioned-machines.mdx) for the walkthrough.
 
 ## Who owns what
 
