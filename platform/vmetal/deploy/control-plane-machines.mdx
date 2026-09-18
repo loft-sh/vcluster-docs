@@ -1,0 +1,135 @@
+---
+title: Control plane machines
+sidebar_label: Control plane machines
+sidebar_position: 2
+description: Provision bare metal servers to run a tenant cluster's own control plane, with no existing Kubernetes cluster underneath it.
+toc_max_heading_level: 3
+---
+
+import InterpolatedCodeBlock from '@site/src/components/InterpolatedCodeBlock';
+import PageVariables from '@site/src/components/PageVariables';
+
+A tenant cluster's control plane usually runs as a workload on an existing Kubernetes cluster. It can instead run directly on machines that vMetal provisions. vCluster calls this a standalone control plane, and the platform installs it on the server as a systemd service rather than as pods. For what a standalone control plane is and how vCluster runs on the server it lands on, see [vCluster Standalone](/docs/vcluster/deploy/control-plane/binary).
+
+This is the path for an operator whose hardware is the starting point. You don't need a Kubernetes cluster to host tenant control planes, only the control plane cluster that runs Metal3 itself.
+
+Control plane machines are still Machines. They use the same node types, the same server pool, and the same lifecycle as any other. See [Machine and server concepts](../concepts/machine-lifecycle.mdx).
+
+<PageVariables
+  CLUSTER="my-cluster"
+  PROVIDER="metal3-provider"
+  NODE_TYPE="control-plane-node"
+/>
+
+## Before you begin
+
+Work through the [Metal3 get started walkthrough](../drivers/bare-metal/metal3/overview.mdx#get-started) steps 1 through 4 first, so you have a NodeProvider and servers in `available` state. Step 5 there is a branch point that routes to one of three guides. This is the one for servers that carry a tenant cluster's control plane, and it picks up where step 4 ends.
+
+The NodeProvider, tenant cluster configuration, and Machine commands in this guide use the **management cluster** context. SSH and systemd checks run on the provisioned server itself.
+
+You also need a node type whose servers are suitable for a control plane. Control planes want reliable, modestly sized machines rather than your largest GPU hosts. Select them by label the same way you would any other node type. See [Define node types](../drivers/bare-metal/metal3/overview.mdx#define-node-types).
+
+:::warning Decide this before you create the tenant cluster
+`controlPlane` is immutable on a Machine. You can't convert a worker Machine into a control plane Machine, or the reverse. The platform creates control plane Machines from the tenant cluster's own configuration, so the decision is made when you create the cluster.
+:::
+
+## 1. Define a control plane node type
+
+Add a node type for the servers you want control planes to land on.
+
+<!-- vale off -->
+<InterpolatedCodeBlock
+  code={`nodeTypes:
+- name: "[[GLOBAL:NODE_TYPE]]"
+  displayName: "Control Plane Node"
+  resources:
+    cpu: "8"
+    memory: 32Gi
+  bareMetalHosts:
+    selector:
+      matchLabels:
+        role: control-plane
+  properties:
+    vcluster.com/os-image: ubuntu-noble
+    vcluster.com/ssh-keys: ops-key`}
+  language="yaml"
+/>
+<!-- vale on -->
+
+The install script needs a Linux distribution with systemd, plus `curl`, `iptables`, and root access. The node also needs raised inotify watcher limits. Use an OS image that covers this, and see [Node requirements](/docs/vcluster/deploy/control-plane/binary/node-requirements) for the authoritative list. The script detects ARM and x86 hosts on its own.
+
+Include SSH keys. A control plane machine has no kubelet joining it to anything, so if the install fails you reach the server over SSH to read the logs. See [Register an SSH key](./independently-provisioned-machines.mdx#1-register-an-ssh-key).
+
+## 2. Create the tenant cluster in standalone mode
+
+Point the tenant cluster's control plane at your NodeProvider. The platform creates one Machine per requested control plane node and installs vCluster on each.
+
+<InterpolatedCodeBlock
+  code={`controlPlane:
+  standalone:
+    enabled: true
+    autoNodes:
+      provider: [[GLOBAL:PROVIDER]]
+      quantity: 3
+      nodeTypeSelector:
+        - property: vcluster.com/node-type
+          value: [[GLOBAL:PROVIDER]].[[GLOBAL:NODE_TYPE]]`}
+  language="yaml"
+/>
+
+The nesting is a fixed path the platform reads. Four values sit under it:
+
+- **`enabled`** selects standalone control plane mode. Without it, the platform doesn't create control plane Machines from `autoNodes`.
+- **`provider`** names the NodeProvider to claim servers from. The platform reports `NoControlPlaneNodeProvider` on the cluster and provisions nothing if you leave it out.
+- **`quantity`** is how many control plane machines to claim. It must be at least one. A quantity of zero is rejected with `NoControlPlaneNodeQuantity`.
+- **`nodeTypeSelector`** narrows which node type the machines come from. Without it, the platform picks from anything the provider offers. Match on the node type's fully qualified name, `<provider>.<node type>`. See [Request nodes from the tenant cluster](./tenant-cluster-nodes.mdx#2-request-nodes-from-the-tenant-cluster).
+
+Set `quantity` to three or more for a highly available control plane. The platform keeps the peer set and its PKI in sync across every control plane machine it creates, so members find each other without manual configuration. For the etcd and datastore implications of a multi-node control plane, see [High availability](/docs/vcluster/deploy/control-plane/binary/high-availability).
+
+## 3. Watch the control plane come up
+
+The platform names these Machines after the cluster, with a `-cp-` infix, and labels them `loft.sh/vcluster-control-plane` with the cluster name.
+
+<InterpolatedCodeBlock
+  code={`kubectl --context <management-context> get nodeclaims -n loft-p-my-project \\
+  -l loft.sh/vcluster-control-plane=my-cluster`}
+/>
+
+Control plane machines provision before the tenant cluster is reachable, which is the reverse of a worker. A worker Machine waits for the cluster to come online before it provisions, because it needs a live API server to join. A control plane Machine doesn't wait, because it's what brings the cluster online.
+
+For the same reason, a control plane Machine only needs its network environment's infrastructure to be ready. It doesn't wait for Kubernetes to be provisioned there, the way a worker does.
+
+The cluster controller reports `VirtualClusterSynced` and `VirtualClusterReady` after it has created the requested control plane Machine objects. Those conditions don't mean the servers have finished provisioning, so neither condition is proof the cluster is up. Keep watching the Machines until they reach `Available`.
+
+Then confirm the cluster itself answers, which is the only check that proves the control plane started:
+
+<InterpolatedCodeBlock
+  code={`vcluster connect [[GLOBAL:CLUSTER]]
+kubectl get --raw /readyz`}
+/>
+
+A response of `ok` means the API server on the provisioned machine is serving. If the Machines are `Available` but this fails, the server booted but the vCluster service didn't start. Follow [Control plane Machine is available but the cluster is offline](../drivers/bare-metal/metal3/troubleshooting.mdx#control-plane-machine-is-available-but-the-cluster-is-offline).
+
+## 4. Add workers
+
+A standalone control plane serves workers the same way any tenant cluster does. Add them from the same fleet or a different node type, through the same `privateNodes` configuration. See [Tenant cluster nodes](./tenant-cluster-nodes.mdx).
+
+Workers wait for the control plane to come online before they provision, so expect them to follow rather than arrive together.
+
+## Lifecycle
+
+Control plane Machines are owned by the tenant cluster that created them. Deleting the cluster deletes its control plane Machines, and the driver cleans those servers and returns them to the pool.
+
+Control plane Machines aren't drained on teardown the way workers are. The platform's graceful node drain applies to joined worker nodes, and a control plane Machine isn't one. Quiesce the cluster yourself before removing a control plane member.
+
+Reducing `quantity` doesn't remove existing control plane machines. The platform creates machines to reach the requested count and doesn't delete them to shrink it. Removing a control plane member is a deliberate operation on the cluster, not a value change. See [Manage a standalone control plane](/docs/vcluster/deploy/control-plane/binary/manage) for the node-level operations.
+
+The underlying server still follows the normal `BareMetalHost` lifecycle. See [Server lifecycle](../drivers/bare-metal/metal3/server-lifecycle.mdx#server-lifecycle).
+
+## Troubleshoot a control plane machine
+
+The install runs from cloud-init at first boot, so failures show up on the server rather than in the platform.
+
+- **The Machine provisions but the cluster never comes online.** Follow [Control plane Machine is available but the cluster is offline](../drivers/bare-metal/metal3/troubleshooting.mdx#control-plane-machine-is-available-but-the-cluster-is-offline). The script checks for `curl`, systemd, and root access up front and exits with a clear message when one is missing. It doesn't check the rest, so a missing `iptables` or an inotify limit left at the distribution default fails later and less obviously.
+- **The cluster reports `NoControlPlaneNodeProvider` or `NoControlPlaneNodeQuantity`.** The `controlPlane.standalone.autoNodes` section is missing a required field. Nothing is provisioned until you fix it.
+- **The Machine never leaves `Pending`.** No server matched the node type selector. Check that servers carrying the right labels are in `available` state. See [Troubleshooting](../drivers/bare-metal/metal3/troubleshooting.mdx).

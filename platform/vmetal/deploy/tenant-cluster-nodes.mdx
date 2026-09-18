@@ -1,0 +1,142 @@
+---
+title: Tenant cluster nodes
+sidebar_label: Tenant cluster nodes
+sidebar_position: 3
+description: Provision bare metal servers that join a tenant cluster as worker nodes.
+toc_max_heading_level: 3
+---
+
+import InterpolatedCodeBlock from '@site/src/components/InterpolatedCodeBlock';
+import PageVariables from '@site/src/components/PageVariables';
+
+A tenant cluster can take dedicated bare metal capacity. You declare how many nodes you want and which hardware they come from, and the platform provisions servers and joins them to the cluster as worker nodes. There's no manual `kubeadm` join and no agent to install.
+
+These are private nodes. The platform allocates each server to one cluster at a time, so no other tenant shares the hardware. For how the join works underneath, see [Cluster attachment](../concepts/cluster-attachment.mdx).
+
+<PageVariables
+  CLUSTER="my-cluster"
+  PROJECT="my-project"
+  PROVIDER="metal3-provider"
+  NODE_TYPE="compute-node"
+/>
+
+## Before you begin
+
+Work through the [Metal3 get started walkthrough](../drivers/bare-metal/metal3/overview.mdx#get-started) steps 1 through 4 first, so you have a NodeProvider and at least one `BareMetalHost` in `available` state. Step 5 there is a branch point that routes to one of three guides. This is the one for servers that join a cluster as workers, and it picks up where step 4 ends.
+
+Tenant cluster configuration and `NodeClaim` commands use the **management cluster** context. Commands that inspect, cordon, or drain Kubernetes nodes use the **tenant cluster** context. Keep a separate management-cluster shell open after connecting to the tenant cluster.
+
+You also need a tenant cluster to attach the nodes to. If its control plane should also run on vMetal hardware rather than on an existing Kubernetes cluster, set that up first. See [Control plane machines](./control-plane-machines.mdx), since that choice can't be changed later.
+
+## 1. Define a node type for worker capacity
+
+Node types are defined on the NodeProvider. Add one describing the hardware you want tenant clusters to draw from.
+
+<!-- vale off -->
+<InterpolatedCodeBlock
+  code={`nodeTypes:
+- name: "[[GLOBAL:NODE_TYPE]]"
+  displayName: "Compute Node"
+  resources:
+    cpu: "32"
+    memory: 128Gi
+  bareMetalHosts:
+    selector:
+      matchLabels:
+        role: compute
+  properties:
+    vcluster.com/os-image: ubuntu-noble
+    vcluster.com/ssh-keys: ops-key`}
+  language="yaml"
+/>
+<!-- vale on -->
+
+Include `vcluster.com/ssh-keys` even though these nodes are reachable through Kubernetes. Keys are injected at provision time and can't be added afterwards, and SSH is how you inspect a node whose kubelet never came up. See [Define node types](../drivers/bare-metal/metal3/overview.mdx#define-node-types) for the full set of node type fields.
+
+## 2. Request nodes from the tenant cluster
+
+Set `privateNodes` in the tenant cluster's configuration. This is the canonical form. Other pages that show this block are showing a variation on it.
+
+<InterpolatedCodeBlock
+  code={`privateNodes:
+  enabled: true
+  autoNodes:
+    - provider: [[GLOBAL:PROVIDER]]
+      static:
+        - name: compute-nodes
+          quantity: 3
+          nodeTypeSelector:
+            - property: vcluster.com/node-type
+              value: [[GLOBAL:PROVIDER]].[[GLOBAL:NODE_TYPE]]`}
+  language="yaml"
+/>
+
+- **`provider`** is the NodeProvider to claim servers from.
+- **`static`** is a list of named pools. Each pool holds a fixed node count, which is what makes it static.
+- **`quantity`** is how many nodes that pool should have. The platform creates and deletes Machines to match it.
+- **`nodeTypeSelector`** matches the node type by property. `vcluster.com/node-type` carries the node type's fully qualified name, which the platform generates as `<provider>.<node type>`. A bare node type name still matches today, but the platform is migrating to the qualified form, and that's what the API and the platform UI show you. List them with `kubectl --context <management-context> get nodetypes`.
+
+The platform creates one Machine per requested node, each claiming an eligible server. Machines wait for the tenant cluster to be online before they provision, because a node needs a live API server to join. For every field this block accepts, see the [Auto Nodes configuration reference](/docs/vcluster/configure/vcluster-yaml/private-nodes/auto-nodes).
+
+## 3. Verify the nodes joined
+
+<InterpolatedCodeBlock
+  code={`# Run from a management-cluster shell; this opens a tenant-cluster context.
+vcluster connect [[GLOBAL:CLUSTER]]
+kubectl get nodes`}
+/>
+
+Each provisioned server appears as a standard Kubernetes node. Watch the Machines from the platform side at the same time:
+
+<InterpolatedCodeBlock
+  code={`kubectl --context <management-context> get nodeclaims \\
+  -n loft-p-[[GLOBAL:PROJECT]]`}
+/>
+
+A Machine reaching `Available` with its `Joined` condition true means the server registered with the cluster. If a Machine provisions but never joins, the server booted but the bootstrap script didn't complete. Follow [Worker Machine is provisioned but not joined](../drivers/bare-metal/metal3/troubleshooting.mdx#worker-machine-is-provisioned-but-not-joined).
+
+## 4. Change how many nodes you have
+
+Edit `quantity` and apply. The platform adds Machines to reach a higher count and deletes them to reach a lower one.
+
+Scale-down drains before it destroys. When the platform deletes a Machine for a joined worker, it deletes the corresponding tenant cluster Node first. Karpenter owns a termination finalizer on that Node, so deleting it cordons the node, evicts its pods, and waits. The platform polls until the drain finishes, then destroys the server.
+
+The platform skips the drain and destroys immediately in these cases:
+
+- You set the `vcluster.com/skip-node-drain` annotation on the `NodeClaim`, which is what **Force delete** in the platform UI does.
+- The Machine is a [control plane machine](./control-plane-machines.mdx). Those aren't drained this way.
+- The Machine never joined a tenant cluster, so there's no Node to drain. This covers [independently provisioned machines](./independently-provisioned-machines.mdx).
+- The drain has run for 30 minutes without finishing. That backstop exists so a stuck or absent Karpenter can't block teardown forever.
+
+:::warning The backstop can cut a drain short
+The 30-minute limit is a hard stop, not a target. A node pool configured with `terminationGracePeriod: Never`, or a pod that refuses to evict, outlasts it and has its server destroyed mid-drain.
+
+For workloads that can't tolerate that, drain the node yourself and confirm the workloads rescheduled before you scale down.
+:::
+
+```bash
+# Tenant cluster context
+kubectl cordon <node-name>
+kubectl drain <node-name> --ignore-daemonsets --delete-emptydir-data
+```
+
+To keep node counts tracking demand instead of managing `quantity` by hand, use [Auto Nodes](/docs/vcluster/deploy/worker-nodes/private-nodes/auto-nodes/), which adds and removes nodes against configurable resource requirements. For the manual node operations available on a running cluster, see [Manage private nodes](/docs/vcluster/deploy/worker-nodes/private-nodes/manage).
+
+## 5. Release the nodes
+
+Set `quantity` to zero, remove the pool, or delete the tenant cluster. Each removes the Machines it owns.
+
+The driver then cleans each server and returns it to the available pool. A later Machine can claim it, including one belonging to a different project or cluster. Deleting a Machine never deletes the `BareMetalHost`. For what the server itself does during cleanup, see [Server lifecycle](../drivers/bare-metal/metal3/server-lifecycle.mdx#server-lifecycle).
+
+Releasing nodes is a scale-down to zero, so the same drain behavior and the same 30-minute backstop apply.
+
+## Related tasks
+
+| If you want to | Go to |
+|---|---|
+| Understand how the join works and what the platform generates | [Cluster attachment](../concepts/cluster-attachment.mdx) |
+| Apply reusable taints and labels to joined nodes | [Node profiles](../../administer/node-profiles/overview.mdx) |
+| Attach GPU servers instead of general compute | [GPU quickstart](../drivers/bare-metal/metal3/gpu-quickstart.mdx) |
+| Pin a node to one specific physical server | [Server pinning](../drivers/bare-metal/metal3/gpu-fleet-operations.mdx#server-pinning) |
+| Restrict which node types a project may claim | [Manage allowed node types](../../administer/projects/allowed/node-types.mdx) |
+| Inspect a node's underlying server | [Check fleet capacity](../drivers/bare-metal/metal3/operations.mdx#check-fleet-capacity) |
