@@ -66,6 +66,10 @@ See `references/style-guide.md` for complete writing guidelines.
 [Pod Identity](../../../../third-party-integrations/pod-identity/eks-pod-identity.mdx)
 ```
 
+**Build gates:** `onBrokenLinks: "throw"` and `onBrokenAnchors: "throw"`. Between them the build catches missing files and dead `#anchor` targets. Neither catches the silent-404 class, where a relative path without `.mdx` renders correct static HTML and only 404s when a user clicks it.
+
+Renaming a heading breaks every inbound `#anchor` to it. That now fails the build rather than shipping quietly, so run a real `npm run build` after any heading rename.
+
 **Debugging broken links efficiently:**
 ```bash
 cd vcluster_versioned_docs/version-X.X.X/path/from/error/
