@@ -78,23 +78,47 @@ Before fixing, confirm what the UI actually says. The UI source is at `../loft-e
 ### Nav paths
 
 ```bash
-# Section labels and item names
-cat ../loft-enterprise/ui/src/Layout/Sidebar/config/sections.tsx
+# Platform-scope section labels and item names
+cat ../loft-enterprise/ui/src/Layout/Sidebar/config/sections.ts
+
+# Project-scope and all-projects sections
+cat ../loft-enterprise/ui/src/Layout/Sidebar/config/project-section.tsx
+cat ../loft-enterprise/ui/src/Layout/Sidebar/config/all-projects-section.tsx
+
+# The one constant both cluster labels come from
+cat ../loft-enterprise/ui/src/constants/resource-labels.ts
 
 # Sub-nav tabs for a given view (e.g. clusters)
 cat ../loft-enterprise/ui/src/views/Clusters/hooks/useClusterTabs.tsx
 ```
 
-**Current sidebar structure (as of 2026-08-13):**
+Note the extension. The file was `sections.tsx` until the 2026-08-26 sidebar
+redesign and is `sections.ts` now, so a stale `cat` fails silently and invites
+the reader to trust whatever this page says instead.
 
-| Section label | Key items |
+**Platform-scope sidebar (verified against `origin/main` 2026-09-21):**
+
+| Section label | Items, in order |
 |---|---|
-| Infrastructure | Nodes & Providers, Control Plane Clusters, Connectors, Bare Metal Servers, KubeVirt, Operating System, VPN |
-| Management | Templates, Apps |
-| Access & Secrets | Users & Roles, Global Secrets |
-| Platform | Fleet Observability, Logs & Activity, Cost Control, Platform Config |
+| Bare Metal | Machines, Operating System, Networking |
+| Infra Management | Nodes & Providers, Control Plane Clusters, KubeVirt |
+| Tenant Management | Cluster Templates, Stacks & Apps, Apps |
+| Secrets & Credentials | Global Secrets, Connectors |
+| Platform | Cost Control, Fleet Observability, Logs & Activity, Users & Roles, Tenants, Platform Config |
+
+**Project-scope sidebar** (`project-section.tsx`, section label `Project`):
+Clusters, Namespaces, Instances, Secrets, Project Config.
+
+**All-projects sidebar** (`all-projects-section.tsx`, section label
+`All Projects`): Clusters, Namespaces, Instances.
 
 Control Plane Clusters sub-tabs: Control Plane Clusters, Cluster Access, Cluster Roles, VPN.
+
+Several items are conditional. `Tenants` needs `isAdmin && !isTenant &&
+showMultiTenancy`, `KubeVirt` and `Cost Control` and `Logs & Activity` are
+`defaultHidden`, and `Stacks & Apps` versus `Apps` are mutually exclusive on
+`canListStackTemplates`. An item missing from a screenshot is not proof it was
+removed.
 
 Both cluster nav labels now come from one constant,
 `ui/src/constants/resource-labels.ts`: `RESOURCE_LABELS.vcluster` renders as
@@ -104,15 +128,26 @@ Clusters` (formerly "Host Cluster"). Check that file first when a cluster label
 looks wrong; the nav and the Templates tabs both read from it, so they move
 together.
 
-The `Tenant Management` section was renamed `Management` and consolidated: the
-old `Cluster Templates`/`Namespace Templates`/`Argo CD Templates` nav items no
-longer exist as separate entries. Instead:
+`Tenant Management` is the current section label. It was renamed to
+`Management` once, and the 2026-08-26 sidebar redesign (`bb9896793a`) renamed it
+back while restructuring the whole sidebar. An earlier revision of this page
+recorded the rename and missed the revert, so treat the table above as the
+answer and re-derive it from source rather than trusting prose here.
 
-- `Templates` (`ui/src/views/Templates/TemplatesPageLayout.tsx`) has two tabs:
-  `Clusters` and `Namespaces`.
-- `Apps` (`ui/src/views/Templates/AppsPageLayout.tsx`) has two tabs: `ArgoCD Apps`
+The section is consolidated either way. `Cluster Templates` survives as a nav
+item, but the separate `Namespace Templates` and `Argo CD Templates` items are
+gone, folded into tabs on the pages they now share. Nav item name and page
+header differ here, so quote each from its own source:
+
+- Nav item `Cluster Templates` opens a page headed `Templates`
+  (`ui/src/views/Templates/TemplatesPageLayout.tsx`) with two tabs, `Clusters`
+  and `Namespaces`.
+- Nav item `Stacks & Apps` or `Apps`, whichever the entitlement shows, opens
+  `ui/src/views/Templates/AppsPageLayout.tsx` with two tabs, `ArgoCD Apps`
   (literally no space, unlike the "Argo CD" prose spelling elsewhere) and
-  `Helm Apps`.
+  `Helm Apps`. The two nav items are mutually exclusive on
+  `canListStackTemplates`, so a doc step naming only one is wrong for half of
+  installs.
 
 Both layouts hide the tab bar entirely when only one of the two sibling
 features is enabled (`tabs: visibleTabs.length > 1 ? visibleTabs : undefined`)
@@ -120,13 +155,17 @@ and redirect straight to the single remaining page instead — no tab bar
 renders, so there's nothing to click. Never write a bare "click the X tab"
 for these two pages; see "Conditionally hidden tabs" under Fix patterns below.
 
-So `Go to <NavStep>Tenant Management > Cluster Templates</NavStep>` becomes
-`Go to <NavStep>Management > Templates</NavStep> and click the
-<Label>Clusters</Label> tab`, and similarly for Namespaces and
-Argo CD Templates/Apps. This is a **common false negative**: the script
-matched `Tenant Management > *` paths for years because "tenant" and
-"management" each exist elsewhere in the UI source, not because the section
-still exists. Multi-part `NavStep` matches are leads, not proof — see above.
+So `Go to <NavStep>Tenant Management > Namespace Templates</NavStep>` becomes
+`Go to <NavStep>Tenant Management > Cluster Templates</NavStep> and, if shown,
+click the <Label>Namespaces</Label> tab`, and similarly for Argo CD
+Templates/Apps. The section and the `Cluster Templates` item both survive; the
+sibling template items do not.
+
+Multi-part `NavStep` matches are **leads, not proof**. The script matched
+`Tenant Management > *` paths for years because "tenant" and "management" each
+exist elsewhere in the UI source, whatever the section happened to be called at
+the time. Resolve every part of a path against `sections.ts` before deciding a
+finding is real or a false positive — see above.
 
 ### Button and label text
 
@@ -228,12 +267,12 @@ to click `Clusters`/`Namespaces` (Templates) or `ArgoCD Apps`/`Helm Apps`
 
 ```mdx
 <!-- Before -->
-Go to <NavStep>Management > Templates</NavStep> and click the
+Go to <NavStep>Tenant Management > Cluster Templates</NavStep> and click the
 <Label>Clusters</Label> tab.
 
 <!-- After -->
-Go to <NavStep>Management > Templates</NavStep> and, if shown, click the
-<Label>Clusters</Label> tab.
+Go to <NavStep>Tenant Management > Cluster Templates</NavStep> and, if shown,
+click the <Label>Clusters</Label> tab.
 ```
 
 For a step that references both tabs of a page in one sentence (for example
@@ -260,6 +299,15 @@ Common warnings triggered by drift fixes:
 - `via` → `using`
 
 ## Drift baseline (as of 2026-08-13)
+
+:::note Superseded
+The 2026-08-26 sidebar redesign (`bb9896793a`) landed after this baseline and
+changed the section labels again, and the cluster labels moved to
+`resource-labels.ts` after that. Entries below are an accurate record of what
+each sweep found on its own date, not a description of the current UI. "Nav
+paths" above is the current answer. Re-derive from source before acting on
+anything here.
+:::
 
 After the Management/Templates/Apps sidebar restructuring sweep, the report stands at 10 unmatched tokens (all in the "known expected" table above) and 0 instruction phrases. Any new findings above this baseline represent genuine drift introduced since that date.
 
