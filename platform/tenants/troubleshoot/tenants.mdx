@@ -1,0 +1,184 @@
+---
+title: Troubleshoot Tenants
+sidebar_label: Tenants
+sidebar_class_name: pro
+description: Diagnose why a Tenant can't see granted inventory, why a name or membership write is refused, and why a Tenant can't be created.
+---
+
+import NavStep from "@site/src/components/NavStep";
+import Label from "@site/src/components/Label";
+
+Effective access is the intersection of three layers, so start by working out
+which one is denying.
+
+| Layer | Symptom | Where to go |
+|-------|---------|-------------|
+| Tenant boundary | A whole kind is missing, or specific instances are | This page |
+| Project boundary | The Tenant can reach it but a project member can't | [allowed node types](../administer/projects/allowed/node-types.mdx), [clusters](../administer/projects/allowed/clusters.mdx), [templates](../administer/projects/allowed/templates.mdx) |
+| Quotas and admission | The object is visible but creating it is refused | [Troubleshoot quota denials](./quota-admission.mdx) |
+
+The rest of this page covers the Tenant boundary. It assumes platform admin
+access, since a Tenant can't read Tenants.
+
+Start with the resolved boundary. The platform works it out on every request and
+writes the result to the Tenant's status, one entry per resource.
+
+```bash
+kubectl get tenant acme -o jsonpath='{.status.boundary}' | jq
+```
+
+Each entry reports whether the Tenant can create its own instances, what happens
+to the platform's instances that no selector matches, and which selectors are in
+effect. The platform recomputes this per request, so a grant you just saved is
+already reflected here even if an open UI view still shows the old inventory.
+See the
+[boundary reference](../administer/tenants/tenant-boundary-reference.mdx) for
+what each field means.
+
+## A Tenant can't see something you granted
+
+Work down this table. The first two causes account for most reports.
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| Capability is on, nothing visible | No `allow` is set, or its selectors match nothing | Add an `allow`, or widen the selector |
+| Some instances visible, others not | The missing instances don't carry the label your selector requires | Label them, or grant by name where the capability supports it |
+| Nothing visible at all, including the Tenant's own | The capability is present but `enabled: false` | Set `enabled: true` |
+| A whole resource is missing, and no capability covers it | The shipped default hides the platform's instances of that kind | For a machine or a network environment, assign one exclusively. Other kinds have no grant path |
+
+Two rules cause most of the confusion.
+
+**Enabling a capability grants nothing on its own.** `enabled: true` with no
+`allow` means the capability is available and no instance is selected, so the
+Tenant sees an empty list rather than an error.
+
+**Label selectors are a conjunction.** An instance has to carry every pair to
+match, so an instance carrying no labels never matches a label selector. Check
+the labels on the instance, not just the selector on the Tenant.
+
+```bash
+kubectl get osimage ubuntu-2404 -o jsonpath='{.metadata.labels}' | jq
+```
+
+## A Tenant can see a node provider you didn't grant
+
+This is expected. Granting a node type makes the node provider that node type
+belongs to reachable, because the grant would be unusable otherwise.
+
+It appears in the Tenant's status boundary as a derived grant rather than as
+something you wrote.
+
+```bash
+kubectl get tenant acme -o jsonpath='{.status.boundary}' \
+  | jq '.[] | select(.resource == "nodeproviders")'
+```
+
+Derived grants are recalculated, so revoking the node type removes the provider
+with it. Writing a name into `derived` by hand grants nothing.
+
+## A write is refused
+
+### Name must start with the Tenant prefix
+
+```text
+SSHKey.management.loft.sh "build" is invalid: metadata.name: Invalid value:
+"build": must start with "acme--": this kind is cluster-scoped, so its name is
+shared with every tenant on the platform
+```
+
+Cluster-scoped resources a Tenant creates are named `<tenant>--<name>`. The
+error names the exact prefix required. Namespace-scoped resources aren't
+affected, and neither are resources a platform admin grants or assigns.
+
+### A user and a team belong to different Tenants
+
+```text
+cannot add user "acme--dev" to this team: the user belongs to tenant "acme",
+and this team belongs to the platform
+```
+
+A user is bound to one Tenant and stays there. A tenant user can't join a
+platform team, and a platform user can't join a Tenant's team. The same check
+runs from both directions, so writing the user can be refused as well as writing
+the team.
+
+```text
+cannot write user "acme--dev" while a team already names it: the user belongs to
+tenant "acme", and this team belongs to the platform
+```
+
+The refusal doesn't name the team, because the caller may not be entitled to see
+it.
+
+### A hostname is already claimed
+
+```text
+hostname is already claimed by another Tenant
+```
+
+Each hostname resolves to one Tenant. The error doesn't say which Tenant holds
+it, because one Tenant isn't entitled to know about another. As a platform admin
+you can find it:
+
+```bash
+kubectl get tenants -o json \
+  | jq -r '.items[] | select(.status.hostnames[]?.hostname == "acme.example.com") | .metadata.name'
+```
+
+## A Tenant can't be created
+
+### License limits
+
+```text
+cannot create tenant, because tenant license limit of 10 would be exceeded
+```
+
+```text
+cannot create tenant, because its bootstrap admin user would exceed the user
+license limit of 50
+```
+
+Two separate limits apply. Creating a Tenant always creates its admin user, so
+the user limit is checked as well as the Tenant limit.
+
+Both are checked on create only, so reaching either limit still leaves the
+Tenants you have editable and deletable.
+
+### The Multi-Tenancy feature isn't licensed
+
+Creating or changing a Tenant needs the Multi-Tenancy feature. Click
+<NavStep>Platform > Platform Config</NavStep> and check the
+<Label>License and Billing</Label> tab.
+
+### The name is rejected
+
+A Tenant name is a DNS label, capped at 32 characters, and can't contain `--`.
+See
+[name rules](../administer/tenants/tenant-boundary-reference.mdx#tenant-names).
+
+## A Tenant is stuck deleting
+
+A Tenant that's already being deleted can still have its finalizers removed
+without the Multi-Tenancy feature, so a lapsed license can't strand it. That
+exemption covers metadata-only updates. A change to the Tenant's spec is still
+refused, even during deletion.
+
+## A tenant admin can't do something they should
+
+A tenant admin holds full rights inside the boundary, so a refusal usually means
+the action reaches outside it rather than that a role is missing.
+
+The quickest check is to look at the platform as they do. Click
+<NavStep>Platform > Users & Roles</NavStep>, find the Tenant's admin user, and
+impersonate it. A banner shows while you're impersonating. Impersonation needs
+the management admin role or the `Impersonator` management role. See
+[Impersonate a user](../administer/users-permissions/managing-users/impersonate.mdx).
+
+Things that are outside the boundary by design, whatever the role:
+
+- Registering a control plane cluster
+- Creating templates or stacks
+- Creating connectors
+- Seeing or editing any other Tenant
+
+See [current limitations](../administer/tenants/overview.mdx#current-limitations).
