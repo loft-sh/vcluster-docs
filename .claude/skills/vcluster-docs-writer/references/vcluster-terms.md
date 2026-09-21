@@ -14,30 +14,80 @@
 
 **Critical Rule**: A trademark **cannot be used in plural form**.
 
-- ✅ DO: "Create multiple virtual clusters"
+- ✅ DO: "Create multiple clusters"
 - ✅ DO: "Deploy vCluster instances"
-- ✅ DO: "Use vCluster to create virtual clusters"
+- ✅ DO: "Use vCluster to create clusters"
 - ❌ DON'T: "vClusters" (legally incorrect)
 - ❌ DON'T: "Deploy multiple vClusters"
 
-### Tenant Clusters
+### Clusters
 
-When talking about the **actual clusters that vCluster creates**, use the term **"tenant clusters"** (plural allowed because it's a descriptive term, not a trademark). "Virtual clusters" is the legacy term and should not be used in new or edited prose.
+When talking about the **actual clusters that vCluster creates**, use the plain
+term **"cluster"** (plural allowed because it's a descriptive term, not a
+trademark). Both "virtual cluster" and "tenant cluster" are legacy terms and
+should not be used in new or edited prose.
 
-- ✅ DO: "Create three tenant clusters"
-- ✅ DO: "Each tenant cluster runs in isolation"
-- ✅ DO: "List all tenant clusters in the namespace"
+The Tenant primitive claims the word "tenant" for the customer organization, so
+the cluster gives the word back. The product already shipped this:
+`ui/src/constants/resource-labels.ts` in `loft-sh/loft-enterprise` renders
+`vcluster` as "cluster".
+
+- ✅ DO: "Create three clusters"
+- ✅ DO: "Each cluster runs in isolation"
+- ✅ DO: "List all clusters in the namespace"
 - ❌ DON'T: "Create three vClusters"
 - ❌ DON'T: "Each vCluster runs in isolation"
-- ❌ DON'T: "virtual clusters" (legacy term, retired)
+- ❌ DON'T: "virtual clusters" or "tenant clusters" (legacy terms, retired)
+
+### Tenants
+
+A **Tenant** is a customer organization, not a cluster. It sits above Projects
+and is the boundary a platform admin grants inventory to. Capitalize it only
+when naming the API resource, the same way "Project" is capitalized.
+
+The hierarchy, in order:
+
+1. A **system admin** installs Platform onto a Kubernetes cluster, which becomes
+   the **control plane cluster**.
+2. A **platform admin** creates **Tenants**.
+3. A **tenant admin** divides the Tenant boundary across **Projects**.
+4. A **project user** creates a **cluster**.
+
+- ✅ DO: "The platform admin creates a Tenant for each customer"
+- ✅ DO: "Each tenant admin manages their own projects"
+- ❌ DON'T: "tenant" as a shorthand for a cluster
+- ❌ DON'T: shorten "tenant cluster" to "tenant" (both terms are retired anyway)
+
+### Isolation has two layers
+
+Pick the one that matches what is being separated. They are not interchangeable.
+
+- **tenant isolation** — the Tenant boundary. One customer organization's
+  inventory, identities, and configuration separated from another's, inside the
+  management plane.
+- **cluster isolation** — workload, control plane, node, and network separation.
+  Private nodes, vNode, resource proxy ownership labels, per-class sync scoping.
+
+Most existing prose that says "tenant isolation" means the cluster layer and
+should become "cluster isolation".
+
+**"Multi-Tenancy" is the product and license feature display name and stays.**
+It appears on the Platform License page and in `loft-sh/plans`. Never rewrite
+it. A lowercase "multi-tenancy" or "multitenancy" descriptor, by contrast, is
+always one of the two isolation terms.
+
+- ✅ DO: "Multi-Tenancy is available in the Scale plan"
+- ✅ DO: "Tenant isolation keeps one customer's inventory out of another's view"
+- ✅ DO: "Private nodes give the strongest cluster isolation"
+- ❌ DON'T: "multi-tenancy" or "multitenancy" as a descriptor in prose
 
 ## Products
 
 ### vCluster
-The open source project that provisions and manages tenant clusters.
+The open source project that provisions and manages clusters.
 
 - Use when referring to the project or software itself
-- Example: "vCluster is an open source tool for creating tenant clusters"
+- Example: "vCluster is an open source tool for creating clusters"
 
 ### "vCluster Pro" does not exist
 
@@ -58,10 +108,10 @@ customer buys or deploys.
   name is internal, the label a reader sees is "Enterprise".
 
 ### vCluster Platform
-The management platform and UI for managing tenant clusters across one or more Control Plane Clusters.
+The management platform and UI for managing clusters and Tenants across one or more control plane clusters.
 
 - Use when referring to the management/control plane software
-- Example: "Access the vCluster Platform UI to manage your tenant clusters"
+- Example: "Access the vCluster Platform UI to manage your clusters"
 - Example: "Install vCluster Platform in your Kubernetes cluster"
 
 ## CLI
@@ -111,15 +161,15 @@ Use these product names with correct capitalization:
 Deploy multiple vClusters to your K8S cluster.
 Each vCluster can run different workloads.
 Use the vCluster CLI to manage your vClusters.
-Deploy virtual clusters on the host cluster.
+Deploy tenant clusters on the host cluster.
 ```
 
 ### ✅ CORRECT:
 ```markdown
-Deploy multiple tenant clusters to your K8s cluster using vCluster.
-Each tenant cluster can run different workloads.
-Use the vcluster CLI to manage your tenant clusters.
-Deploy tenant clusters on a Control Plane Cluster.
+Deploy multiple clusters to your K8s cluster using vCluster.
+Each cluster can run different workloads.
+Use the vcluster CLI to manage your clusters.
+Deploy clusters on a control plane cluster.
 ```
 
 ## Quick Reference Table
@@ -127,8 +177,12 @@ Deploy tenant clusters on a Control Plane Cluster.
 | Term | Correct Usage | Incorrect Usage |
 |------|---------------|-----------------|
 | vCluster | "Use vCluster to..." | "vClusters", "VCluster" |
-| tenant clusters | "Create tenant clusters" | "Create vClusters", "virtual clusters" |
-| Control Plane Cluster | "Deploy on a Control Plane Cluster" | "host cluster", "Host Cluster" |
+| cluster | "Create clusters" | "Create vClusters", "virtual clusters", "tenant clusters" |
+| control plane cluster | "Deploy on a control plane cluster" | "host cluster", "Host Cluster" |
+| Tenant | "Create a Tenant for each customer" | "tenant" meaning a cluster |
+| tenant isolation | "Tenant isolation separates customer organizations" | using it for workload separation |
+| cluster isolation | "Private nodes give the strongest cluster isolation" | "multi-tenancy", "multitenancy" |
+| Multi-Tenancy | "Multi-Tenancy is in the Scale plan" (feature name) | rewriting the feature name to "tenant isolation" |
 | vCluster Platform | "Install vCluster Platform" | "vCluster platform", "Loft Platform" |
 | Enterprise feature | "This Enterprise feature requires a vCluster Platform license" | "vCluster Pro", "Pro feature", "Upgrade to vCluster Pro" (not a product) |
 | vcluster (CLI) | "`vcluster create`" | "`vCluster create`" |
@@ -144,15 +198,15 @@ Deploy tenant clusters on a Control Plane Cluster.
 ❌ "Deploy vClusters on AWS EKS"
 
 ### Feature Description
-✅ "vCluster allows you to create multiple tenant clusters on a Control Plane Cluster"
+✅ "vCluster allows you to create multiple clusters on a control plane cluster"
 ❌ "vCluster allows you to create multiple vClusters within a single host cluster"
-❌ "vCluster allows you to create multiple virtual clusters within a single host cluster"
+❌ "vCluster allows you to create multiple tenant clusters within a single host cluster"
 
 ### CLI Reference
-✅ "The `vcluster` CLI provides commands to create and manage tenant clusters"
+✅ "The `vcluster` CLI provides commands to create and manage clusters"
 ❌ "The `vCluster` CLI provides commands to create and manage vClusters"
 
 ### Product Comparison
-✅ "This Enterprise feature offers enhanced security for tenant clusters, available with a vCluster Platform license"
+✅ "This Enterprise feature offers enhanced security for clusters, available with a vCluster Platform license"
 ❌ "vCluster Pro offers enhanced security features for vClusters"
-❌ "This Pro feature offers enhanced security for tenant clusters"
+❌ "This Pro feature offers enhanced security for clusters"

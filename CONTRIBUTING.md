@@ -185,7 +185,7 @@ to highlight important information.
 :::note Additional context: The `vcluster create` command automatically creates
 a new namespace if it doesn't exist. :::
 
-:::tip Use `vcluster` CLI to quickly deploy a tenant cluster. :::
+:::tip Use `vcluster` CLI to quickly deploy a cluster. :::
 
 :::info The default configuration uses minimal resources suitable for testing.
 :::
@@ -466,15 +466,35 @@ vCluster products.
 trademark, for example, it cannot be used in plural. **Do not use "vClusters"**.
 
 Never use vCluster or vClusters when talking about a cluster that vCluster
-creates. Use **tenant clusters**.
+creates. Use **clusters**. Both "virtual cluster" and "tenant cluster" are
+retired: the Tenant primitive claims the word "tenant" for the customer
+organization, so the cluster gives it back.
+
+### The hierarchy
+
+1. A **system admin** installs Platform onto a Kubernetes cluster, which becomes
+   the **control plane cluster**.
+2. A **platform admin** creates **Tenants**.
+3. A **tenant admin** divides the Tenant boundary across **Projects**.
+4. A **project user** creates a **cluster**.
+
+A **Tenant** is a customer organization, never a cluster. Capitalize it only
+when naming the API resource, the same way "Project" is.
+
+Isolation has two layers and they are not interchangeable. **Tenant isolation**
+is the Tenant boundary, separating one customer organization's inventory,
+identities, and configuration from another's. **Cluster isolation** is workload,
+control plane, node, and network separation. "Multi-Tenancy" is the product and
+license feature display name and is never rewritten; a lowercase
+"multi-tenancy" descriptor is always one of the two isolation terms.
 
 ### Products
 
-- vCluster: open source project that provisions and manages tenant clusters
-- vCluster Platform: the management platform and UI for managing tenant clusters
-  across one or more Control Plane Clusters
+- vCluster: open source project that provisions and manages clusters
+- vCluster Platform: the management platform and UI for managing clusters and
+  Tenants across one or more control plane clusters
 - vMetal: infrastructure orchestrator for bare-metal and VM provisioning beneath
-  tenant clusters
+  clusters
 - vNode: tenant-isolation container runtime
 
 "vCluster Pro" is not a product and should not be used. License-gated

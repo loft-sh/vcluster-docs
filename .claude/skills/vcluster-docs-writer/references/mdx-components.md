@@ -62,21 +62,21 @@ Use `<Flow>` and `<Step>` components for multi-step procedures:
   </Step>
 
   <Step>
-    ### Step 2: Create a virtual cluster
+    ### Step 2: Create a cluster
 
-    Create your first virtual cluster:
+    Create your first cluster:
 
     ```bash
     vcluster create my-vcluster
     ```
 
-    This creates a new virtual cluster named `my-vcluster` in the current namespace.
+    This creates a new cluster named `my-vcluster` in the current namespace.
   </Step>
 
   <Step>
     ### Step 3: Connect to the cluster
 
-    The CLI automatically connects you to the virtual cluster. Verify the connection:
+    The CLI automatically connects you to the cluster. Verify the connection:
 
     ```bash
     kubectl get namespaces
@@ -108,7 +108,7 @@ import Highlight from '@site/src/components/Highlight/Highlight';
 | `color` prop | Hex | Use for |
 |---|---|---|
 | _(none)_ | `#E6E7E9` | Control plane cluster steps (default) |
-| `"secondary"` | `#FFE0CC` | Tenant cluster steps |
+| `"secondary"` | `#FFE0CC` | Cluster steps |
 | `"success"` | `--ifm-color-success-lightest` | Admonition-aligned: light green |
 | `"info"` | `--ifm-color-info-lightest` | Admonition-aligned: light blue |
 | `"warning"` | `--ifm-color-warning-lightest` | Admonition-aligned: light yellow |
@@ -116,13 +116,15 @@ import Highlight from '@site/src/components/Highlight/Highlight';
 
 Text color is always `#050B24` (brand black) regardless of background.
 
-### Convention: "Tenant Cluster" always uses `secondary`
+### Convention: "Cluster" always uses `secondary`
 
-Every step that runs inside a tenant cluster must use `color="secondary"`. Default (no color) is used for control plane cluster steps. This pairing creates a consistent visual distinction across all multi-environment walkthroughs.
+Every step that runs inside a cluster must use `color="secondary"`. Default (no color) is used for control plane cluster steps. This pairing creates a consistent visual distinction across all multi-environment walkthroughs.
+
+Six existing pages still carry the old `Tenant Cluster` label across 19 highlights. They convert with the rest of the terminology cleanup ticket, not page by page. Use `Cluster` in anything new.
 
 ```mdx
 <Step>
-  <Highlight color="secondary">Tenant Cluster</Highlight> Verify the resource was created
+  <Highlight color="secondary">Cluster</Highlight> Verify the resource was created
 
   ```bash
   kubectl --context="${VCLUSTER_CTX}" get pods

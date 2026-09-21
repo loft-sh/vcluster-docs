@@ -94,14 +94,22 @@ cat ../loft-enterprise/ui/src/views/Clusters/hooks/useClusterTabs.tsx
 | Access & Secrets | Users & Roles, Global Secrets |
 | Platform | Fleet Observability, Logs & Activity, Cost Control, Platform Config |
 
-Control Plane Clusters sub-tabs: Host Clusters, Cluster Access, Cluster Roles, VPN.
+Control Plane Clusters sub-tabs: Control Plane Clusters, Cluster Access, Cluster Roles, VPN.
+
+Both cluster nav labels now come from one constant,
+`ui/src/constants/resource-labels.ts`: `RESOURCE_LABELS.vcluster` renders as
+`Cluster`/`Clusters` (what a project user creates, formerly "Tenant Cluster")
+and `RESOURCE_LABELS.cluster` renders as `Control Plane Cluster`/`Control Plane
+Clusters` (formerly "Host Cluster"). Check that file first when a cluster label
+looks wrong; the nav and the Templates tabs both read from it, so they move
+together.
 
 The `Tenant Management` section was renamed `Management` and consolidated: the
 old `Cluster Templates`/`Namespace Templates`/`Argo CD Templates` nav items no
 longer exist as separate entries. Instead:
 
 - `Templates` (`ui/src/views/Templates/TemplatesPageLayout.tsx`) has two tabs:
-  `Tenant Clusters` and `Namespaces`.
+  `Clusters` and `Namespaces`.
 - `Apps` (`ui/src/views/Templates/AppsPageLayout.tsx`) has two tabs: `ArgoCD Apps`
   (literally no space, unlike the "Argo CD" prose spelling elsewhere) and
   `Helm Apps`.
@@ -114,7 +122,7 @@ for these two pages; see "Conditionally hidden tabs" under Fix patterns below.
 
 So `Go to <NavStep>Tenant Management > Cluster Templates</NavStep>` becomes
 `Go to <NavStep>Management > Templates</NavStep> and click the
-<Label>Tenant Clusters</Label> tab`, and similarly for Namespaces and
+<Label>Clusters</Label> tab`, and similarly for Namespaces and
 Argo CD Templates/Apps. This is a **common false negative**: the script
 matched `Tenant Management > *` paths for years because "tenant" and
 "management" each exist elsewhere in the UI source, not because the section
@@ -215,17 +223,17 @@ drift, since it wouldn't match what the tab says on screen.
 `TemplatesPageLayout.tsx` and `AppsPageLayout.tsx` only render a tab bar when
 both sibling features are enabled; with just one enabled, the page redirects
 straight there and no tab exists to click. Any instruction that tells a user
-to click `Tenant Clusters`/`Namespaces` (Templates) or `ArgoCD Apps`/`Helm Apps`
+to click `Clusters`/`Namespaces` (Templates) or `ArgoCD Apps`/`Helm Apps`
 (Apps) needs the click to be conditional:
 
 ```mdx
 <!-- Before -->
 Go to <NavStep>Management > Templates</NavStep> and click the
-<Label>Tenant Clusters</Label> tab.
+<Label>Clusters</Label> tab.
 
 <!-- After -->
 Go to <NavStep>Management > Templates</NavStep> and, if shown, click the
-<Label>Tenant Clusters</Label> tab.
+<Label>Clusters</Label> tab.
 ```
 
 For a step that references both tabs of a page in one sentence (for example
