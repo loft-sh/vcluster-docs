@@ -364,6 +364,13 @@ const config = {
       mermaid: {
         theme: { light: "default", dark: "dark" },
         options: {
+          // mermaid v12 changed two defaults that silently restyle every
+          // existing diagram: ELK replaced dagre as the layout engine, and
+          // the "neo" look replaced "classic". Both are pinned here so the
+          // ~70 pages with diagrams keep rendering as authored. Unpin only
+          // alongside a deliberate visual review of those pages.
+          layout: 'dagre',
+          look: 'classic',
           flowchart: {
             htmlLabels: false,
             curve: 'basis'
