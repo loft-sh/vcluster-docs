@@ -39,6 +39,11 @@ Tokens in `<Button>`, `<Label>`, `<NavStep>`, `<Input>` that the script did not 
 
 **Known expected unmatched tokens (ignore these):**
 
+These are now encoded in `KNOWN_DYNAMIC_TOKENS` in `scripts/report-platform-ui-drift.js`,
+so the report lists them under "Known dynamic, not drift" instead of mixing them
+into the actionable findings. Keep the two in sync: if you add a row here, add a
+matcher there, and give it a reason.
+
 Some tokens will never match because their text is generated at runtime or the feature has no dedicated UI component files in the source:
 
 | Token | File | Reason |
@@ -319,10 +324,35 @@ Previously (2026-07-28, after the fleet observability sweep): 10 unmatched token
 
 ## Release checklist use
 
-Run the report as part of platform release prep:
+**Run this at Platform rc-1, not on release day.** The UI is frozen by rc-1, and
+the rc-1 to release-day window is the only time there is room to fix what turns
+up. On release day the config flip is meant to be low-risk, and anything stale
+ships into the version snapshot and is frozen there for that release's lifetime.
+Part 4 of the `platform-docs-releaser` skill carries this as a checklist item.
 
-1. `npm run report-platform-ui-drift > .user/ui-drift-$(date +%Y%m%d).txt`
+Check out `loft-enterprise` at the release's tag or branch, not `main`. The docs
+snapshot describes the UI that ships with this version, so `main` reports drift
+from changes that have not shipped.
+
+1. `node scripts/report-platform-ui-drift.js --ui-src <loft-enterprise>/ui/src > .user/ui-drift-$(date +%Y%m%d).txt`
 2. Review unmatched tokens — focus on `<Button>` and single-segment `<NavStep>` first
 3. Spot-check two or three Label findings against loft-enterprise source
 4. Fix confirmed drift files; treat instruction phrases as a separate writing-quality pass
 5. Re-run report to confirm unmatched count dropped
+
+If the count is large enough to be its own piece of work, file it rather than
+folding it into the release PR. The release should not wait on it, but the fix
+should land before the next version snapshot is taken.
+
+### What the report cannot tell you
+
+- **A token matching nothing may mean the feature was removed**, not renamed.
+  Confirm with engineering before deleting pages. Namespace Constraints is the
+  worked example: no view, no route, no API type, only a surviving annotation
+  constant.
+- **Conditional rendering.** Two sidebar items that are mutually exclusive both
+  match, so a step naming only one still reads as correct. See "Conditionally
+  hidden tabs" above.
+- **Nav paths in prose** are caught, but only when the first segment is a real
+  sidebar section. A click sequence like `Edit > Permissions > Save Changes`
+  shares the separator and is deliberately not reported.
