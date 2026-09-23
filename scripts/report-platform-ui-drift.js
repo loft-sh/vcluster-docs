@@ -48,6 +48,45 @@ const UI_IGNORE = [
   '**/*.d.ts',
 ];
 const MIN_TOKEN_LENGTH = 3;
+// Tokens that are real UI text but can never match the UI source, because the
+// string is defined outside it. Listing them keeps the actionable findings
+// actionable: a report where most findings are known false positives trains
+// people to skim past the real ones. Each entry needs a reason, and they are
+// printed in their own section rather than suppressed.
+const KNOWN_DYNAMIC_TOKENS = [
+  {
+    match: /^destinationnamespace$|^otlpendpoint$|^platformhost$/,
+    reason: 'Template parameter name, rendered from the template\'s own schema',
+  },
+  {
+    match: /^fleet observability: /,
+    reason: 'Argo CD Application Template name, created by the operator or shipped as a stack',
+  },
+  {
+    match: /^nvsentinel$/,
+    reason: 'Third-party application name, not Platform UI text',
+  },
+  {
+    match: /^argo cd (template|application) id$/,
+    reason: "Built from the entityTypeName prop in the shared form controls, not a literal",
+  },
+  {
+    match: /namespace constraints$/,
+    reason:
+      'Feature exists (breadcrumb at breadcumbsTransforms.ts, route /clusters/spaceconstraints) ' +
+      'but has no dedicated component file with literal strings',
+  },
+];
+
+function knownDynamicReason(token) {
+  const entry = KNOWN_DYNAMIC_TOKENS.find((candidate) => candidate.match.test(token.normalized));
+  return entry ? entry.reason : null;
+}
+// `**Section > Item**` and `` `Section` > `Item` `` in prose.
+const PROSE_NAV_PATTERNS = [
+  /\*\*[A-Z][A-Za-z &]+(?: > [A-Z][A-Za-z &]+)+\*\*/g,
+  /`[A-Z][A-Za-z &]+`(?: > `[A-Z][A-Za-z &]+`)+/g,
+];
 
 function parseArgs(argv) {
   const args = {
@@ -120,7 +159,7 @@ function getLineNumber(content, index) {
   return content.slice(0, index).split('\n').length;
 }
 
-function extractTokens(filePath, docsRoot) {
+function extractTokens(filePath, docsRoot, uiSectionLabels = new Set()) {
   const content = fs.readFileSync(filePath, 'utf8');
   const tokens = [];
   const skippedDynamic = [];
@@ -177,6 +216,38 @@ function extractTokens(filePath, docsRoot) {
     }
   }
 
+  // Nav paths also get written as bold or backticked prose rather than <NavStep>.
+  // Those are the same drift with the same reader impact, and a component-only
+  // scan cannot see them. DOC-1790 found seven that way, after the NavStep pass
+  // reported clean.
+  for (const pattern of PROSE_NAV_PATTERNS) {
+    let match;
+    pattern.lastIndex = 0;
+
+    while ((match = pattern.exec(proseContent)) !== null) {
+      const text = normalizeText(match[0].replace(/[`*]/g, ''));
+      const normalized = normalizeForSearch(text);
+
+      if (normalized.length < MIN_TOKEN_LENGTH || /[{}]/.test(normalized)) {
+        continue;
+      }
+
+      const firstSegment = getNavStepSegments(text)[0];
+      if (!firstSegment || !uiSectionLabels.has(firstSegment)) {
+        continue;
+      }
+
+      tokens.push({
+        component: 'NavStep',
+        viaProse: true,
+        text,
+        normalized,
+        file: path.relative(docsRoot, filePath),
+        line: getLineNumber(proseContent, match.index),
+      });
+    }
+  }
+
   return { tokens, skippedDynamic, instructionPhrases };
 }
 
@@ -200,14 +271,95 @@ function getUiFiles(uiSrc) {
     .filter((file) => UI_FILE_EXTENSIONS.has(path.extname(file)));
 }
 
+// Sidebar section labels, used to tell a prose nav path from a click sequence.
+function loadSectionLabels(uiSrc) {
+  const file = path.join(uiSrc, 'Layout', 'Sidebar', 'config', 'sections.ts');
+  const labels = new Set();
+
+  if (!fs.existsSync(file)) {
+    return labels;
+  }
+
+  const source = fs.readFileSync(file, 'utf8');
+  const pattern = /label:\s*["'`]([^"'`]+)["'`]/g;
+  let match;
+
+  while ((match = pattern.exec(source)) !== null) {
+    labels.add(normalizeForSearch(match[1]));
+  }
+
+  return labels;
+}
+
+// Many UI strings are built from RESOURCE_LABELS rather than written literally,
+// e.g. `Deploy to ${RESOURCE_LABELS.cluster.singular}` or, in JSX,
+// {RESOURCE_LABELS.cluster.titleCase.singular} ID. Without resolving those,
+// every such label reports as drift forever and real drift hides in the noise.
+// Returns a flat map of dotted path -> string, or null if the file moved.
+function loadResourceLabels(uiSrc) {
+  const file = path.join(uiSrc, 'constants', 'resource-labels.ts');
+
+  if (!fs.existsSync(file)) {
+    return null;
+  }
+
+  const source = fs.readFileSync(file, 'utf8');
+  const start = source.indexOf('{');
+  const end = source.lastIndexOf('}');
+
+  if (start === -1 || end === -1) {
+    return null;
+  }
+
+  const objectLiteral = source
+    .slice(start, end + 1)
+    .replace(/\/\/[^\n]*/g, '')
+    .replace(/([{,]\s*)([A-Za-z_$][\w$]*)\s*:/g, '$1"$2":')
+    .replace(/,(\s*[}\]])/g, '$1');
+
+  let parsed;
+  try {
+    parsed = JSON.parse(objectLiteral);
+  } catch {
+    return null;
+  }
+
+  const flat = new Map();
+  const walk = (node, prefix) => {
+    for (const [key, value] of Object.entries(node)) {
+      const next = prefix ? `${prefix}.${key}` : key;
+      if (value && typeof value === 'object') {
+        walk(value, next);
+      } else if (typeof value === 'string') {
+        flat.set(next, value);
+      }
+    }
+  };
+  walk(parsed, '');
+
+  return flat;
+}
+
+function resolveResourceLabels(content, labels) {
+  if (!labels) {
+    return content;
+  }
+
+  return content.replace(/\$?\{\s*RESOURCE_LABELS\.([\w.]+)\s*\}/g, (whole, key) =>
+    labels.has(key) ? labels.get(key) : whole
+  );
+}
+
 function buildUiIndex(uiSrc) {
   const files = getUiFiles(uiSrc);
+  const labels = loadResourceLabels(uiSrc);
   const haystack = files
-    .map((file) => normalizeUiSource(fs.readFileSync(file, 'utf8')))
+    .map((file) => normalizeUiSource(resolveResourceLabels(fs.readFileSync(file, 'utf8'), labels)))
     .join('\n');
 
   return {
     fileCount: files.length,
+    resourceLabelCount: labels ? labels.size : 0,
     hasToken: (token) => haystack.includes(token),
   };
 }
@@ -261,6 +413,7 @@ function summarize(tokens, uiIndex) {
       text: token.text,
       normalized: token.normalized,
       foundInUi: isTokenFound(token, uiIndex),
+      knownDynamic: knownDynamicReason(token),
       occurrences: [{ file: token.file, line: token.line }],
     });
   }
@@ -370,6 +523,17 @@ function printReport(report) {
   }
 
   console.log('');
+  if (report.knownDynamic.length > 0) {
+    console.log('');
+    console.log('Known dynamic, not drift:');
+    console.log('');
+    for (const token of report.knownDynamic) {
+      console.log(`  ${token.text}  (x${token.occurrences})`);
+      console.log(`    ${token.reason}`);
+    }
+  }
+
+  console.log('');
   console.log('Note: this is a report-only heuristic. Unmatched tokens are review leads, not proof of drift.');
 
   if (report.instructionPhrases.length === 0) {
@@ -395,14 +559,19 @@ function main() {
   assertDirectory(args.uiSrc, 'UI source directory');
 
   const mdxFiles = getMdxFiles(args.docsRoot);
-  const extractionResults = mdxFiles.map((file) => extractTokens(file, args.docsRoot));
+  const uiSectionLabels = loadSectionLabels(args.uiSrc);
+  const extractionResults = mdxFiles.map((file) =>
+    extractTokens(file, args.docsRoot, uiSectionLabels)
+  );
   const tokens = extractionResults.flatMap((result) => result.tokens);
   const skippedDynamic = extractionResults.flatMap((result) => result.skippedDynamic);
   const instructionPhrases = extractionResults.flatMap((result) => result.instructionPhrases);
   const uiIndex = buildUiIndex(args.uiSrc);
   const summarized = summarize(tokens, uiIndex);
-  const unmatched = summarized.filter((token) => !token.foundInUi);
-  const matched = summarized.length - unmatched.length;
+  const allUnmatched = summarized.filter((token) => !token.foundInUi);
+  const unmatched = allUnmatched.filter((token) => !token.knownDynamic);
+  const knownDynamic = allUnmatched.filter((token) => token.knownDynamic);
+  const matched = summarized.length - allUnmatched.length;
   const summarizedInstructionPhrases = summarizeInstructionPhrases(instructionPhrases);
 
   const report = {
@@ -413,6 +582,12 @@ function main() {
     uniqueTokens: summarized.length,
     matchedTokens: matched,
     unmatchedTokens: unmatched.length,
+    knownDynamicTokens: knownDynamic.length,
+    knownDynamic: knownDynamic.map((token) => ({
+      text: token.text,
+      reason: token.knownDynamic,
+      occurrences: token.occurrences.length,
+    })),
     skippedDynamicTokens: skippedDynamic.length,
     skippedDynamic,
     instructionPhraseCount: summarizedInstructionPhrases.length,
