@@ -71,7 +71,7 @@ const KNOWN_DYNAMIC_TOKENS = [
     reason: "Built from the entityTypeName prop in the shared form controls, not a literal",
   },
   {
-    match: /namespace constraints$/,
+    match: /^(create|enforce) namespace constraints$/,
     reason:
       'Feature exists (breadcrumb at breadcumbsTransforms.ts, route /clusters/spaceconstraints) ' +
       'but has no dedicated component file with literal strings',
@@ -491,6 +491,21 @@ function groupInstructionPhrasesByFile(phrases) {
     .sort((a, b) => a.file.localeCompare(b.file));
 }
 
+function printKnownDynamic(report) {
+  if (report.knownDynamic.length === 0) {
+    return;
+  }
+
+  console.log('');
+  console.log('Known dynamic, not drift:');
+  console.log('');
+
+  for (const token of report.knownDynamic) {
+    console.log(`  ${token.text}  (x${token.occurrences})`);
+    console.log(`    ${token.reason}`);
+  }
+}
+
 function printReport(report) {
   console.log('Platform UI docs drift token report');
   console.log('');
@@ -507,6 +522,7 @@ function printReport(report) {
   if (report.unmatched.length === 0) {
     console.log('');
     console.log('No unmatched docs UI tokens found.');
+    printKnownDynamic(report);
     return;
   }
 
@@ -523,15 +539,7 @@ function printReport(report) {
   }
 
   console.log('');
-  if (report.knownDynamic.length > 0) {
-    console.log('');
-    console.log('Known dynamic, not drift:');
-    console.log('');
-    for (const token of report.knownDynamic) {
-      console.log(`  ${token.text}  (x${token.occurrences})`);
-      console.log(`    ${token.reason}`);
-    }
-  }
+  printKnownDynamic(report);
 
   console.log('');
   console.log('Note: this is a report-only heuristic. Unmatched tokens are review leads, not proof of drift.');
