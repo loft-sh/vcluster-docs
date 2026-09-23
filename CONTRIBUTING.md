@@ -481,12 +481,15 @@ organization, so the cluster gives it back.
 A **Tenant** is a customer organization, never a cluster. Capitalize it only
 when naming the API resource, the same way "Project" is.
 
-Isolation has two layers and they are not interchangeable. **Tenant isolation**
-is the Tenant boundary, separating one customer organization's inventory,
-identities, and configuration from another's. **Cluster isolation** is workload,
-control plane, node, and network separation. "Multi-Tenancy" is the product and
-license feature display name and is never rewritten; a lowercase
-"multi-tenancy" descriptor is always one of the two isolation terms.
+**Tenant isolation** is the term for separation at every layer, from the Tenant
+boundary in the management plane down to dedicated nodes. Don't coin "cluster
+isolation", and don't convert existing "tenant isolation" prose. When a sentence
+needs to say *how* separation happens, name the mechanism: private nodes, vNode,
+API-level and namespace separation.
+
+"Multi-Tenancy" stays only as the name of the licensed feature, on the Platform
+License page and in `loft-sh/plans`. As a descriptor, "multi-tenancy" and
+"multitenancy" are retired. Describe what the product does instead.
 
 ### Products
 
