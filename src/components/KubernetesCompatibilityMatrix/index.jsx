@@ -30,7 +30,7 @@ const KubernetesCompatibilityMatrix = () => {
       <table className={styles.matrixTable}>
         <thead>
           <tr>
-            <th rowSpan="2">Host Cluster Kubernetes Version</th>
+            <th rowSpan="2">Control Plane Cluster Kubernetes Version</th>
             <th colSpan={kubernetesVersions.length}>vCluster Kubernetes Version</th>
           </tr>
           <tr>
