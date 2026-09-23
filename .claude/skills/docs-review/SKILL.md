@@ -108,8 +108,8 @@ carve-outs.
   (`.github/workflows/backport-docs.yml`). ("Versioned docs")
 - **Retired terminology**, such as virtual cluster, tenant cluster, host
   cluster, and multi-tenancy. A cluster is a "cluster"; a Tenant is the
-  customer-organization primitive. Isolation splits into tenant isolation and
-  cluster isolation. "Multi-Tenancy" as the feature name is exempt.
+  customer-organization primitive. Isolation is "tenant isolation" at every
+  layer. "Multi-Tenancy" naming the licensed feature is exempt.
   ("Repositioning terminology")
 - **CR versus CRD**, decided by the manifest's `kind` and not by the verb.
   ("CR vs CRD terminology")

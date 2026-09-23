@@ -276,21 +276,35 @@ product already shipped it: `ui/src/constants/resource-labels.ts` in
 `loft-sh/loft-enterprise` renders `vcluster` as "cluster" and `cluster` as
 "control plane cluster".
 
-### Isolation has two layers
+### Isolation is "tenant isolation"
 
-They are not interchangeable. Pick the one that matches what is being separated.
+**Use "tenant isolation".** It is the term the market recognizes and the term
+product and marketing settled on. Do not coin "cluster isolation" as a second
+term, and do not convert existing "tenant isolation" prose.
 
-- **tenant isolation** — the Tenant boundary. One customer organization's
-  inventory, identities, and configuration separated from another's, inside the
-  management plane. The code calls this the tenant boundary or tenant scope
-  (`pkg/tenancy` in `loft-enterprise`).
-- **cluster isolation** — workload, control plane, node, and network
-  separation. Private nodes, vNode, resource proxy ownership labels, per-class
-  sync scoping.
+This holds at every layer, because the tenant is what is being isolated in all
+of them: the Tenant boundary in the management plane, the cluster's own control
+plane and API, and dedicated nodes underneath. A single term across the stack is
+the intent, not an ambiguity to resolve.
 
-Most existing docs prose that says "tenant isolation" means the cluster layer
-and should become "cluster isolation". A lowercase "multi-tenancy" or
-"multitenancy" descriptor is always one of the two, never itself.
+When a sentence needs to be precise about *how* separation is achieved, name the
+mechanism rather than inventing a second isolation term. Private nodes, vNode,
+API-level and namespace separation, resource proxy ownership labels, and
+per-class sync scoping are all concrete and all clearer than a coined category.
+
+"multi-tenancy" and "multitenancy" are retired as descriptors. Describe what the
+product does instead, for example "isolated tenants on dedicated hardware". Note
+that the word has also shifted meaning internally: it now refers to managing
+multiple tenants from one platform through hardware allocation and consumption
+policy, not to sharing hardware.
+
+**Sweep hazard.** When converting "tenant cluster" to "cluster", the phrase
+"tenant cluster isolation" converts to "cluster isolation", which is the exact
+term this rule rejects. It should become "tenant isolation". Grep for it after
+any bulk conversion, because the substitution looks correct in a diff.
+
+Decided by product and marketing in `#proj-multi-tenant-platform` on
+2026-09-23. This supersedes the earlier two-layer split.
 
 **Hard rules:**
 
