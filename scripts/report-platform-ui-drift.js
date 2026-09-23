@@ -71,7 +71,7 @@ const KNOWN_DYNAMIC_TOKENS = [
     reason: "Built from the entityTypeName prop in the shared form controls, not a literal",
   },
   {
-    match: /namespace constraints$/,
+    match: /^(create|enforce) namespace constraints$/,
     reason:
       'Feature exists (breadcrumb at breadcumbsTransforms.ts, route /clusters/spaceconstraints) ' +
       'but has no dedicated component file with literal strings',
@@ -491,6 +491,21 @@ function groupInstructionPhrasesByFile(phrases) {
     .sort((a, b) => a.file.localeCompare(b.file));
 }
 
+function printKnownDynamic(report) {
+  if (report.knownDynamic.length === 0) {
+    return;
+  }
+
+  console.log('');
+  console.log('Known dynamic, not drift:');
+  console.log('');
+
+  for (const token of report.knownDynamic) {
+    console.log(`  ${token.text}  (x${token.occurrences})`);
+    console.log(`    ${token.reason}`);
+  }
+}
+
 function printReport(report) {
   console.log('Platform UI docs drift token report');
   console.log('');
@@ -504,51 +519,46 @@ function printReport(report) {
   console.log(`Skipped dynamic:    ${report.skippedDynamicTokens}`);
   console.log(`Instruction phrases:${report.instructionPhraseCount}`);
 
+  // No early returns here. Each section decides for itself whether it has
+  // anything to say. An early return once hid the known-dynamic section on a
+  // clean run, and then hid instruction phrases the same way: the run with
+  // zero unmatched tokens is exactly the one where the other sections are the
+  // whole report.
   if (report.unmatched.length === 0) {
     console.log('');
     console.log('No unmatched docs UI tokens found.');
-    return;
-  }
-
-  console.log('');
-  console.log('Unmatched tokens by docs file:');
-
-  for (const group of report.unmatched) {
+  } else {
     console.log('');
-    console.log(group.file);
+    console.log('Unmatched tokens by docs file:');
 
-    for (const token of group.tokens) {
-      console.log(`  ${token.line}: <${token.component}>${token.text}</${token.component}>`);
+    for (const group of report.unmatched) {
+      console.log('');
+      console.log(group.file);
+
+      for (const token of group.tokens) {
+        console.log(`  ${token.line}: <${token.component}>${token.text}</${token.component}>`);
+      }
     }
+
+    console.log('');
   }
 
-  console.log('');
-  if (report.knownDynamic.length > 0) {
-    console.log('');
-    console.log('Known dynamic, not drift:');
-    console.log('');
-    for (const token of report.knownDynamic) {
-      console.log(`  ${token.text}  (x${token.occurrences})`);
-      console.log(`    ${token.reason}`);
-    }
-  }
+  printKnownDynamic(report);
 
   console.log('');
   console.log('Note: this is a report-only heuristic. Unmatched tokens are review leads, not proof of drift.');
 
-  if (report.instructionPhrases.length === 0) {
-    return;
-  }
-
-  console.log('');
-  console.log('Unwrapped UI-instruction phrases:');
-
-  for (const group of report.instructionPhrases) {
+  if (report.instructionPhrases.length > 0) {
     console.log('');
-    console.log(group.file);
+    console.log('Unwrapped UI-instruction phrases:');
 
-    for (const phrase of group.phrases) {
-      console.log(`  ${phrase.line}: ${phrase.text}`);
+    for (const group of report.instructionPhrases) {
+      console.log('');
+      console.log(group.file);
+
+      for (const phrase of group.phrases) {
+        console.log(`  ${phrase.line}: ${phrase.text}`);
+      }
     }
   }
 }

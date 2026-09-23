@@ -61,6 +61,13 @@ const config = {
 
   onBrokenLinks: "throw",
 
+  // Renaming a heading changes its anchor, and nothing else in CI notices:
+  // validate-mdx-links checks link targets, not fragments, and onBrokenLinks
+  // does not cover them. Docusaurus defaults this to "warn", which means a
+  // broken anchor ships and the build still exits 0. During the DOC-1372
+  // terminology sweep that default would have shipped twelve of them.
+  onBrokenAnchors: "throw",
+
   // Even if you don't use internationalization, you can use this field to set
   // useful metadata like html lang. For example, if your site is Chinese, you
   // may want to replace "en" with "zh-Hans".
