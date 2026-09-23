@@ -242,26 +242,84 @@ When writing docs for new features:
 
 ## Repositioning terminology (active project)
 
-The docs are being repositioned to target AI cloud providers, neoclouds, and
-enterprises. Apply these terminology rules to **all new and edited prose**.
+The docs are being repositioned to target AI cloud providers and enterprises.
+Apply these terminology rules to **all new and edited prose**.
+
+### The hierarchy the docs teach
+
+Platform 4.13 introduces **Tenant**, a customer-organization primitive that sits
+above Projects. It claims the word "tenant", so the cluster vCluster creates
+gives the word back and is now just a **cluster**. Five roles, each handing off
+to the next:
+
+1. A **system admin** installs Platform onto a Kubernetes cluster. That cluster
+   becomes the **control plane cluster**.
+2. A **platform admin** creates one or more **Tenants** and grants each the
+   inventory it may consume.
+3. A **tenant admin** divides that boundary across one or more **Projects**.
+4. A **project user** creates a **cluster**.
+5. Cluster use is documented mainly in the vCluster docs set, with minor
+   Platform overlap.
+
+### Terminology
 
 | Retire | Use instead |
 |--------|-------------|
-| virtual cluster | tenant cluster |
+| tenant cluster | cluster |
+| virtual cluster | cluster |
 | host cluster | control plane cluster |
-| multi-tenancy | tenant isolation |
 | nested Kubernetes / runs inside a host cluster | virtualized control plane hosted on a control plane cluster |
 | shared cluster | (describe the specific tenancy model instead) |
 
+This reverses the earlier "virtual cluster to tenant cluster" direction. The
+product already shipped it: `ui/src/constants/resource-labels.ts` in
+`loft-sh/loft-enterprise` renders `vcluster` as "cluster" and `cluster` as
+"control plane cluster".
+
+### Isolation has two layers
+
+They are not interchangeable. Pick the one that matches what is being separated.
+
+- **tenant isolation** — the Tenant boundary. One customer organization's
+  inventory, identities, and configuration separated from another's, inside the
+  management plane. The code calls this the tenant boundary or tenant scope
+  (`pkg/tenancy` in `loft-enterprise`).
+- **cluster isolation** — workload, control plane, node, and network
+  separation. Private nodes, vNode, resource proxy ownership labels, per-class
+  sync scoping.
+
+Most existing docs prose that says "tenant isolation" means the cluster layer
+and should become "cluster isolation". A lowercase "multi-tenancy" or
+"multitenancy" descriptor is always one of the two, never itself.
+
 **Hard rules:**
 
-- Never use "virtual cluster" as a generic descriptor in prose.
+- Never use "virtual cluster" or "tenant cluster" as a generic descriptor in
+  prose.
 - "vCluster" (the product name) is unchanged.
-- CLI commands (`vcluster create`, flags, YAML keys) are unchanged — do not
-  alter code blocks or command syntax.
-- "Virtual Nodes" (the tenancy model powered by vNode) is a product name —
-  keep it.
-- "tenant cluster" and "control plane cluster" are lowercase in prose.
+- **"Multi-Tenancy" is the product and license feature display name and stays.**
+  This is a deliberate exception to the isolation rule above. It appears in the
+  Platform License page and in `loft-sh/plans`. Never rewrite it.
+- CLI commands (`vcluster create`, flags, YAML keys) are unchanged. Do not alter
+  code blocks or command syntax.
+- "Virtual Nodes" (the tenancy model powered by vNode) is a product name, as are
+  "vNode", "vMetal", and "Virtual Control Plane". Keep them.
+- "tenant cluster" survives only in the `tenant-cluster` glossary key as a
+  legacy alias, the same way `virtual-cluster` and `host-cluster` already are.
+- "cluster", "control plane cluster", and "tenant" are lowercase in prose.
+  "Tenant" is capitalized only when naming the API resource, the same way
+  "Project" is.
+
+**Enforcement:** `Loft.cluster-terminology` and `Loft.isolation-layer` in
+`.github/styles/Loft/` catch these at warning level. CI runs vale with
+`filter_mode: added`, so they fire only on lines a PR adds. Both are scoped off
+for versioned docs in `.vale.ini`, which keep the terminology their release
+shipped.
+
+**Scope of the migration:** the Tenant primitive PR (DOC-1372) converts only the
+pages where the two meanings collide. The remaining ~3,200 occurrences across
+~400 files are a separate, batched cleanup ticket. Do not bulk-convert outside
+that ticket.
 
 **Tone:** Lead with isolation, hyperscaler-grade reliability, and AI workload
 suitability. De-emphasize cost/density framing in favor of isolation and
