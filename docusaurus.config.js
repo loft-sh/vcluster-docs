@@ -61,6 +61,11 @@ const config = {
 
   onBrokenLinks: "throw",
 
+  // Temporary, for the duration of the tenant cluster to cluster sweep
+  // (DOC-1372). Renaming a heading changes its anchor, and the default
+  // "warn" lets that through silently. Removed in the final sweep PR.
+  onBrokenAnchors: "throw",
+
   // Even if you don't use internationalization, you can use this field to set
   // useful metadata like html lang. For example, if your site is Chinese, you
   // may want to replace "en" with "zh-Hans".
