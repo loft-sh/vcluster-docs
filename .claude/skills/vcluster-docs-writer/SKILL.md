@@ -353,9 +353,12 @@ import SharedNodesSuitability from '@site/vcluster/_partials/admonitions/shared-
 
 Key terms (see `references/vcluster-terms.md` for complete guide):
 - **vCluster**: The trademark (never "vClusters" - legally incorrect)
-- **tenant clusters**: The clusters that vCluster creates ("virtual clusters" is retired); lowercase in prose
-- **control plane cluster**: The cluster that hosts tenant cluster control planes ("host cluster" is retired); lowercase in prose
-- **vCluster Platform**: Management platform and UI for tenant clusters
+- **cluster**: What vCluster creates ("virtual cluster" and "tenant cluster" are both retired); lowercase in prose
+- **control plane cluster**: The cluster that hosts cluster control planes ("host cluster" is retired); lowercase in prose
+- **Tenant**: The customer-organization primitive above Projects. Capitalized only when naming the API resource, the same way "Project" is. Never a synonym for a cluster
+- **tenant isolation** vs **cluster isolation**: the Tenant boundary vs workload separation. Not interchangeable
+- **Multi-Tenancy**: the product and license feature display name. Never rewrite it; lowercase "multi-tenancy" as a descriptor is always one of the two isolation terms
+- **vCluster Platform**: Management platform and UI for clusters and Tenants
 - **"vCluster Pro" does not exist** as a product — don't use it. License-gated features are "Enterprise" features, unlocked via a vCluster Platform Enterprise plan (Dev/Prod/Scale), not a separate "Pro" product or tier.
 - **vcluster**: The CLI command name
 
