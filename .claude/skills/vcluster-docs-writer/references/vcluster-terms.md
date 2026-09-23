@@ -58,28 +58,26 @@ The hierarchy, in order:
 - ❌ DON'T: "tenant" as a shorthand for a cluster
 - ❌ DON'T: shorten "tenant cluster" to "tenant" (both terms are retired anyway)
 
-### Isolation has two layers
+### Isolation is "tenant isolation"
 
-Pick the one that matches what is being separated. They are not interchangeable.
+One term, at every layer. The tenant is what is being isolated whether the
+boundary is the Tenant primitive in the management plane, the cluster's own
+control plane and API, or dedicated nodes underneath. Don't coin "cluster
+isolation", and don't convert existing "tenant isolation" prose.
 
-- **tenant isolation** — the Tenant boundary. One customer organization's
-  inventory, identities, and configuration separated from another's, inside the
-  management plane.
-- **cluster isolation** — workload, control plane, node, and network separation.
-  Private nodes, vNode, resource proxy ownership labels, per-class sync scoping.
+To be precise about *how* separation happens, name the mechanism instead of
+reaching for a second category: private nodes, vNode, API-level and namespace
+separation, resource proxy ownership labels, per-class sync scoping.
 
-Most existing prose that says "tenant isolation" means the cluster layer and
-should become "cluster isolation".
+**"Multi-Tenancy" is the licensed feature's name and stays.** It appears on the
+Platform License page and in `loft-sh/plans`. Use it only when naming that
+feature. As a descriptor, "multi-tenancy" and "multitenancy" are retired.
 
-**"Multi-Tenancy" is the product and license feature display name and stays.**
-It appears on the Platform License page and in `loft-sh/plans`. Never rewrite
-it. A lowercase "multi-tenancy" or "multitenancy" descriptor, by contrast, is
-always one of the two isolation terms.
-
-- ✅ DO: "Multi-Tenancy is available in the Scale plan"
+- ✅ DO: "Multi-Tenancy is available in the Scale plan" (naming the feature)
 - ✅ DO: "Tenant isolation keeps one customer's inventory out of another's view"
-- ✅ DO: "Private nodes give the strongest cluster isolation"
+- ✅ DO: "Private nodes give each tenant dedicated hardware"
 - ❌ DON'T: "multi-tenancy" or "multitenancy" as a descriptor in prose
+- ❌ DON'T: "cluster isolation" as a coined alternative to tenant isolation
 
 ## Products
 
@@ -180,9 +178,8 @@ Deploy clusters on a control plane cluster.
 | cluster | "Create clusters" | "Create vClusters", "virtual clusters", "tenant clusters" |
 | control plane cluster | "Deploy on a control plane cluster" | "host cluster", "Host Cluster" |
 | Tenant | "Create a Tenant for each customer" | "tenant" meaning a cluster |
-| tenant isolation | "Tenant isolation separates customer organizations" | using it for workload separation |
-| cluster isolation | "Private nodes give the strongest cluster isolation" | "multi-tenancy", "multitenancy" |
-| Multi-Tenancy | "Multi-Tenancy is in the Scale plan" (feature name) | rewriting the feature name to "tenant isolation" |
+| tenant isolation | "Tenant isolation separates customer organizations" | "cluster isolation" as a coined alternative |
+| Multi-Tenancy | "Multi-Tenancy is in the Scale plan" (feature name only) | "multi-tenancy" as a descriptor in prose |
 | vCluster Platform | "Install vCluster Platform" | "vCluster platform", "Loft Platform" |
 | Enterprise feature | "This Enterprise feature requires a vCluster Platform license" | "vCluster Pro", "Pro feature", "Upgrade to vCluster Pro" (not a product) |
 | vcluster (CLI) | "`vcluster create`" | "`vCluster create`" |
