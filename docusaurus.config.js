@@ -25,8 +25,17 @@ const isNetlifyProduction = process.env.CONTEXT === 'production';
 
 /** @type {import('@docusaurus/types').Config} */
 const config = {
-  title: "Tenant cluster management",
-  tagline: "Manage tenant clusters like a hyperscaler",
+  // A light brand suffix, per the AEO review on 2026-09-23. Every page title
+  // gets "<page> | <this>", so this has to work on all 2400+ of them. The
+  // previous value, "Tenant cluster management", was a positioning phrase:
+  // narrow, low search demand, and it undersells what the docs cover. Let the
+  // H1 and body copy carry the positioning instead.
+  //
+  // Docusaurus prints the site title alone when a page's title equals it
+  // exactly, so the docs home overrides its own <title> through <Head> rather
+  // than reading "vCluster Docs | vCluster".
+  title: "vCluster",
+  tagline: "Run your AI cloud like a hyperscaler",
   url: "https://vcluster.com",
   baseUrl: __webpack_public_path__,
   organizationName: "loft-sh", // Usually your GitHub org/user name.
@@ -60,6 +69,13 @@ const config = {
   ],
 
   onBrokenLinks: "throw",
+
+  // Renaming a heading changes its anchor, and nothing else in CI notices:
+  // validate-mdx-links checks link targets, not fragments, and onBrokenLinks
+  // does not cover them. Docusaurus defaults this to "warn", which means a
+  // broken anchor ships and the build still exits 0. During the DOC-1372
+  // terminology sweep that default would have shipped twelve of them.
+  onBrokenAnchors: "throw",
 
   // Even if you don't use internationalization, you can use this field to set
   // useful metadata like html lang. For example, if your site is Chinese, you

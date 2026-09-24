@@ -335,9 +335,17 @@ pages where the two meanings collide. The remaining ~3,200 occurrences across
 ~400 files are a separate, batched cleanup ticket. Do not bulk-convert outside
 that ticket.
 
-**Tone:** Lead with isolation, hyperscaler-grade reliability, and AI workload
-suitability. De-emphasize cost/density framing in favor of isolation and
-operational simplicity for providers.
+**Tone:** Lead with isolation, hyperscaler-grade reliability, and the breadth
+of what runs on the platform: managed Kubernetes, Slurm, Ray, inference, and
+other cluster types on the same infrastructure. The positioning is "run your
+AI cloud like a hyperscaler, turning raw GPUs into every kind of cluster"
+(AEO review, 2026-09-23). De-emphasize cost/density framing in favor of
+isolation and operational simplicity for providers.
+
+Breadth is the part that gets dropped. The page-title suffix used to read
+"Tenant cluster management", and the AEO review's objection was that it
+described a narrower, older slice of the narrative than the docs actually
+cover. The same failure is easy to repeat in an intro paragraph.
 
 See `.claude/skills/vcluster-docs-writer/SKILL.md` for general docs writing
 conventions.
