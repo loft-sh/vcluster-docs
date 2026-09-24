@@ -390,30 +390,6 @@ const config = {
           height: 36,
         },
         items: [
-          // Product tabs
-          {
-            to: "/vcluster/",
-            position: "left",
-            label: "vCluster",
-          },
-          {
-            to: "/platform/",
-            position: "left",
-            label: "vCluster Platform",
-          },
-          {
-            href: "https://www.vnode.com/docs",
-            label: "vNode",
-            position: "left",
-            target: "_blank",
-          },
-          {
-            href: "https://www.vmetal.ai/docs",
-            label: "vMetal",
-            position: "left",
-            target: "_blank",
-          },
-          // Right-side items
           {
             href: "https://www.vcluster.com/blog",
             label: "Blog",
@@ -448,7 +424,7 @@ const config = {
         contextualSearch: true,
         searchPagePath: "search",
         externalUrlRegex:
-          "(?:loft\\.sh|platform-v4-[0-9]--vcluster-docs-site\\.netlify\\.app|vnode\\.com|vmetal\\.ai)",
+          "(?:loft\\.sh|platform-v4-[0-9]--vcluster-docs-site\\.netlify\\.app)",
       },
       footer: {
         style: "light",
