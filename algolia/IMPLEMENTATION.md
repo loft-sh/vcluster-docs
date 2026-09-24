@@ -142,6 +142,29 @@ curl --request POST \
   --output /tmp/vcluster-synonyms.backup.json
 ```
 
+Then reconcile that backup against the file before going any further. Step 4
+sends `replaceExistingSynonyms=true`, which deletes every synonym the file does
+not contain, including any added directly in the Algolia dashboard and never
+committed here:
+
+```bash
+python3 - <<'EOF'
+import json
+live = {h["objectID"] for h in json.load(open("/tmp/vcluster-synonyms.backup.json"))["hits"]}
+repo = {s["objectID"] for s in json.load(
+    open("algolia/export-vcluster-settings.preview.json"))["synonyms"]}
+print("in Algolia but not in the file (will be DELETED):", sorted(live - repo) or "none")
+print("in the file but not in Algolia (will be added):  ", sorted(repo - live) or "none")
+EOF
+```
+
+Expect the first list to hold only the four superseded objectIDs from the
+bidirectional set this PR replaced: `syn-virtual-tenant-cluster`,
+`syn-host-control-plane-cluster`, `syn-multi-tenancy-isolation`, and
+`syn-neocloud-ai-cloud`. Anything else in that list is a synonym someone
+created in the dashboard. Commit it to the file first, or you will silently
+drop it.
+
 ## Step 4: Apply Updated Index Settings and Synonyms
 
 [export-vcluster-settings.preview.json](export-vcluster-settings.preview.json)
@@ -194,19 +217,33 @@ the file is the source of truth in git.
 
 Synonyms take effect immediately. They do not need the reindex in Step 6.
 
-The groups currently in the file map retired terminology onto the terms the
-docs now use, so a reader searching the old word still lands somewhere:
+The entries map retired terminology onto the terms the docs now use, so a
+reader searching the old word still lands somewhere.
 
-| Group | Purpose |
-| -- | -- |
-| `syn-virtual-tenant-cluster` | "virtual cluster" and "tenant cluster" reach "cluster" |
-| `syn-host-control-plane-cluster` | "host cluster" reaches "control plane cluster" |
-| `syn-multi-tenancy-isolation` | "multi-tenancy" reaches "tenant isolation" |
-| `syn-neocloud-ai-cloud` | "neocloud" reaches "AI cloud" |
+**They are deliberately one-way.** A `type: "synonym"` group makes every term in
+it equivalent in both directions. Written that way, `cluster` would expand to
+`virtual cluster` and `tenant cluster` on every search, and `cluster` is the
+single most common query these docs get. Each one would pull in the versioned
+and generated pages that still use the retired wording and rank them against
+current pages. `type: "oneWaySynonym"` fires only when the query contains
+`input`, which is the behavior actually wanted here: the old word finds the new
+pages, and the new word is left alone.
 
-These matter more than usual after the DOC-1372 terminology sweep, because the
-retired terms no longer appear anywhere in the docs. Without the synonyms, a
-search for "virtual cluster" returns nothing.
+| Entry | Query that fires it | Also matches |
+| -- | -- | -- |
+| `syn-virtual-cluster-to-cluster` | "virtual cluster" | "cluster" |
+| `syn-tenant-cluster-to-cluster` | "tenant cluster" | "cluster" |
+| `syn-host-cluster-to-control-plane-cluster` | "host cluster" | "control plane cluster" |
+| `syn-multi-tenancy-to-tenant-isolation` | "multi-tenancy" | "tenant isolation" |
+| `syn-multitenancy-to-tenant-isolation` | "multitenancy" | "tenant isolation" |
+| `syn-neocloud-to-ai-cloud` | "neocloud" | "AI cloud" |
+| `syn-neoclouds-to-ai-cloud` | "neoclouds" | "AI cloud" |
+
+`syn-multi-tenancy-spellings` is the one deliberate exception, and it stays
+bidirectional. "multi-tenancy" and "multitenancy" are two spellings of one word
+rather than an old term and its replacement, and "Multi-Tenancy" is still a
+live feature name on the License page, so a reader typing either spelling
+should reach it.
 
 ### Rules
 
@@ -316,8 +353,10 @@ curl --request POST \
   --data '{"query":"","hitsPerPage":1000}'
 ```
 
-Expect the four groups listed in Step 4. A 200 from the settings call in Step 4
-says nothing about synonyms, so check them here rather than assuming.
+Expect the eight entries listed in Step 4, and check the `type` field on each:
+anything reading `synonym` other than `syn-multi-tenancy-spellings` is a
+bidirectional group that shouldn't be there. A 200 from the settings call in
+Step 4 says nothing about synonyms, so check them here rather than assuming.
 
 Verify the index now supports:
 
@@ -360,10 +399,19 @@ Check:
 
 - current stable docs rank above older docs for common queries
 - older docs still show up when explicitly filtered
-- searching a retired term returns results: "virtual cluster", "tenant cluster",
-  "host cluster", "multi-tenancy" and "neocloud" no longer appear in the docs,
-  so each depends entirely on its synonym group. An empty result here means the
-  synonyms in Step 4 did not apply.
+- searching a retired term reaches **current** pages. Don't treat any result as
+  a pass. The retired wording is still present in roughly 1,800 indexed files:
+  every versioned snapshot keeps the terminology its release shipped, the
+  generated CLI and API reference is regenerated from source that still uses it,
+  and a few production-guide pages use it deliberately. A query for "virtual
+  cluster" therefore returns hits whether or not a single synonym is installed,
+  so a plain non-empty result proves nothing.
+
+  Filter to `Current stable` and confirm that "virtual cluster", "tenant
+  cluster", "host cluster" and "neocloud" each return current-version pages that
+  do not contain the queried phrase at all. That result can only come from the
+  synonym. The synonym endpoint check in Step 7 is the authoritative test;
+  this one confirms it reaches readers.
 - unreleased docs don’t dominate results unless intentionally targeted
 
 ## External Site Reindex (vNode and vMetal)
@@ -408,7 +456,9 @@ If you skip step 1, the search modal and search page default filters will contin
 
 ## Notes and Follow-Up Ideas
 
-- The preview settings file now carries four synonym groups, added after the
-  DOC-1372 terminology sweep. `rules` is still empty. Both are applied
-  separately from index settings, which is easy to miss; see Step 4.
+- The preview settings file carries eight synonym entries, added after the
+  DOC-1372 terminology sweep. Seven are one-way mappings from a retired term to
+  its replacement; see Step 4 for why the direction matters. `rules` is still
+  empty. Both are applied separately from index settings, which is easy to
+  miss.
 - If the crawler is already running with a blocked or stale configuration, it may be safer to trigger a fresh reindex after patching instead of trying to resume old work.
