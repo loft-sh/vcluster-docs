@@ -51,7 +51,7 @@ Do the rollout in this order:
 1. Review and merge the docs-site PR.
 2. Wait for the preview to look good and production to deploy.
 3. Back up the current Algolia crawler config and current index settings.
-4. Apply the updated index settings to the existing `vcluster` index.
+4. Apply the updated index settings **and synonyms** to the existing `vcluster` index. They are separate endpoints; see Step 4.
 5. Patch the crawler configuration.
 6. Trigger a full reindex after the docs changes are live on production.
 7. Verify extracted records and search behavior.
@@ -65,6 +65,7 @@ Important:
 Source references:
 
 - [Algolia update index settings](https://www.algolia.com/doc/rest-api/search/set-settings)
+- [Algolia save synonyms batch](https://www.algolia.com/doc/rest-api/search/save-synonyms)
 - [Algolia crawler update configuration](https://www.algolia.com/doc/rest-api/crawler/patch-config)
 - [Algolia start a crawl](https://www.algolia.com/doc/rest-api/crawler/start-reindex)
 - [Algolia initialIndexSettings behavior](https://www.algolia.com/doc/tools/crawler/apis/configuration/initial-index-settings/)
@@ -128,20 +129,128 @@ curl --request GET \
   --output /tmp/vcluster-index-settings.backup.json
 ```
 
-## Step 4: Apply Updated Index Settings
-
-Import the new index settings from [export-vcluster-settings.preview.json](export-vcluster-settings.preview.json):
+Back up current synonyms. Step 4 replaces them wholesale, so this is the only
+way back:
 
 ```bash
+curl --request POST \
+  --url "https://$ALGOLIA_APP_ID.algolia.net/1/indexes/$ALGOLIA_INDEX/synonyms/search" \
+  --header "x-algolia-application-id: $ALGOLIA_APP_ID" \
+  --header "x-algolia-api-key: $ALGOLIA_ADMIN_KEY" \
+  --header "content-type: application/json" \
+  --data '{"query":"","hitsPerPage":1000}' \
+  --output /tmp/vcluster-synonyms.backup.json
+```
+
+Then reconcile that backup against the file before going any further. Step 4
+sends `replaceExistingSynonyms=true`, which deletes every synonym the file does
+not contain, including any added directly in the Algolia dashboard and never
+committed here:
+
+```bash
+python3 - <<'EOF'
+import json
+live = {h["objectID"] for h in json.load(open("/tmp/vcluster-synonyms.backup.json"))["hits"]}
+repo = {s["objectID"] for s in json.load(
+    open("algolia/export-vcluster-settings.preview.json"))["synonyms"]}
+print("in Algolia but not in the file (will be DELETED):", sorted(live - repo) or "none")
+print("in the file but not in Algolia (will be added):  ", sorted(repo - live) or "none")
+EOF
+```
+
+Expect the first list to hold only the four superseded objectIDs from the
+bidirectional set this PR replaced: `syn-virtual-tenant-cluster`,
+`syn-host-control-plane-cluster`, `syn-multi-tenancy-isolation`, and
+`syn-neocloud-ai-cloud`. Anything else in that list is a synonym someone
+created in the dashboard. Commit it to the file first, or you will silently
+drop it.
+
+## Step 4: Apply Updated Index Settings and Synonyms
+
+[export-vcluster-settings.preview.json](export-vcluster-settings.preview.json)
+is a wrapper holding three separate Algolia resources:
+
+```json
+{ "settings": { ... }, "rules": [ ... ], "synonyms": [ ... ] }
+```
+
+Each one has its own endpoint. Sending the whole file to any single endpoint
+silently does nothing useful: Algolia ignores unknown top-level keys, returns
+200, and leaves everything unchanged. Split it first.
+
+### Index settings
+
+```bash
+python3 -c "import json;print(json.dumps(json.load(open('algolia/export-vcluster-settings.preview.json'))['settings']))" \
+  > /tmp/vcluster-index-settings.json
+
 curl --request PUT \
   --url "https://$ALGOLIA_APP_ID.algolia.net/1/indexes/$ALGOLIA_INDEX/settings" \
   --header "x-algolia-application-id: $ALGOLIA_APP_ID" \
   --header "x-algolia-api-key: $ALGOLIA_ADMIN_KEY" \
   --header "content-type: application/json" \
-  --data @algolia/export-vcluster-settings.preview.json
+  --data @/tmp/vcluster-index-settings.json
 ```
 
 This is required because the crawler’s `initialIndexSettings` won’t update an already-existing index.
+
+### Synonyms
+
+Synonyms are not index settings. They have their own endpoint, and the settings
+call above will not change them.
+
+```bash
+python3 -c "import json;print(json.dumps(json.load(open('algolia/export-vcluster-settings.preview.json'))['synonyms']))" \
+  > /tmp/vcluster-synonyms.json
+
+curl --request POST \
+  --url "https://$ALGOLIA_APP_ID.algolia.net/1/indexes/$ALGOLIA_INDEX/synonyms/batch?replaceExistingSynonyms=true" \
+  --header "x-algolia-application-id: $ALGOLIA_APP_ID" \
+  --header "x-algolia-api-key: $ALGOLIA_ADMIN_KEY" \
+  --header "content-type: application/json" \
+  --data @/tmp/vcluster-synonyms.json
+```
+
+`replaceExistingSynonyms=true` makes the file authoritative, so a synonym
+deleted from it is deleted from the index. That is what you want here, since
+the file is the source of truth in git.
+
+Synonyms take effect immediately. They do not need the reindex in Step 6.
+
+The entries map retired terminology onto the terms the docs now use, so a
+reader searching the old word still lands somewhere.
+
+**They are deliberately one-way.** A `type: "synonym"` group makes every term in
+it equivalent in both directions. Written that way, `cluster` would expand to
+`virtual cluster` and `tenant cluster` on every search, and `cluster` is the
+single most common query these docs get. Each one would pull in the versioned
+and generated pages that still use the retired wording and rank them against
+current pages. `type: "oneWaySynonym"` fires only when the query contains
+`input`, which is the behavior actually wanted here: the old word finds the new
+pages, and the new word is left alone.
+
+| Entry | Query that fires it | Also matches |
+| -- | -- | -- |
+| `syn-virtual-cluster-to-cluster` | "virtual cluster" | "cluster" |
+| `syn-tenant-cluster-to-cluster` | "tenant cluster" | "cluster" |
+| `syn-host-cluster-to-control-plane-cluster` | "host cluster" | "control plane cluster" |
+| `syn-multi-tenancy-to-tenant-isolation` | "multi-tenancy" | "tenant isolation" |
+| `syn-multitenancy-to-tenant-isolation` | "multitenancy" | "tenant isolation" |
+| `syn-neocloud-to-ai-cloud` | "neocloud" | "AI cloud" |
+| `syn-neoclouds-to-ai-cloud` | "neoclouds" | "AI cloud" |
+
+`syn-multi-tenancy-spellings` is the one deliberate exception, and it stays
+bidirectional. "multi-tenancy" and "multitenancy" are two spellings of one word
+rather than an old term and its replacement, and "Multi-Tenancy" is still a
+live feature name on the License page, so a reader typing either spelling
+should reach it.
+
+### Rules
+
+`rules` is empty today. If it ever is not, it needs
+`POST /1/indexes/$ALGOLIA_INDEX/rules/batch?clearExistingRules=true`, the same
+shape as the synonyms call.
+
 
 ## Step 5: Patch the Crawler Configuration
 
@@ -233,6 +342,22 @@ curl --request GET \
   --header "accept: application/json"
 ```
 
+Check synonyms:
+
+```bash
+curl --request POST \
+  --url "https://$ALGOLIA_APP_ID.algolia.net/1/indexes/$ALGOLIA_INDEX/synonyms/search" \
+  --header "x-algolia-application-id: $ALGOLIA_APP_ID" \
+  --header "x-algolia-api-key: $ALGOLIA_ADMIN_KEY" \
+  --header "content-type: application/json" \
+  --data '{"query":"","hitsPerPage":1000}'
+```
+
+Expect the eight entries listed in Step 4, and check the `type` field on each:
+anything reading `synonym` other than `syn-multi-tenancy-spellings` is a
+bidirectional group that shouldn't be there. A 200 from the settings call in
+Step 4 says nothing about synonyms, so check them here rather than assuming.
+
 Verify the index now supports:
 
 - `product`
@@ -274,6 +399,19 @@ Check:
 
 - current stable docs rank above older docs for common queries
 - older docs still show up when explicitly filtered
+- searching a retired term reaches **current** pages. Don't treat any result as
+  a pass. The retired wording is still present in roughly 1,800 indexed files:
+  every versioned snapshot keeps the terminology its release shipped, the
+  generated CLI and API reference is regenerated from source that still uses it,
+  and a few production-guide pages use it deliberately. A query for "virtual
+  cluster" therefore returns hits whether or not a single synonym is installed,
+  so a plain non-empty result proves nothing.
+
+  Filter to `Current stable` and confirm that "virtual cluster", "tenant
+  cluster", "host cluster" and "neocloud" each return current-version pages that
+  do not contain the queried phrase at all. That result can only come from the
+  synonym. The synonym endpoint check in Step 7 is the authoritative test;
+  this one confirms it reaches readers.
 - unreleased docs don’t dominate results unless intentionally targeted
 
 ## External Site Reindex (vNode and vMetal)
@@ -318,8 +456,9 @@ If you skip step 1, the search modal and search page default filters will contin
 
 ## Notes and Follow-Up Ideas
 
-- The preview settings file leaves `rules` and `synonyms` empty. That’s okay for rollout.
-- A later pass could add synonyms for common variants such as:
-  - `vcluster` and `virtual cluster`
-  - `platform` and `vcluster platform`
+- The preview settings file carries eight synonym entries, added after the
+  DOC-1372 terminology sweep. Seven are one-way mappings from a retired term to
+  its replacement; see Step 4 for why the direction matters. `rules` is still
+  empty. Both are applied separately from index settings, which is easy to
+  miss.
 - If the crawler is already running with a blocked or stale configuration, it may be safer to trigger a fresh reindex after patching instead of trying to resume old work.
