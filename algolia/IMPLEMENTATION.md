@@ -276,20 +276,20 @@ Check:
 - older docs still show up when explicitly filtered
 - unreleased docs don’t dominate results unless intentionally targeted
 
-## External Site Reindex (vNode and vMetal)
+## External Site Reindex (vNode)
 
-The crawler now covers three domains: `vcluster.com`, `vnode.com`, and `vmetal.ai`. The Saturday schedule crawls all three automatically. However, vnode-docs and vmetal-docs deploy independently and have no per-deploy crawler hook — a manual reindex is required after either external site ships significant content changes.
+The crawler covers `vcluster.com` and `vnode.com`. The Saturday schedule crawls both automatically. However, vnode-docs deploys independently and has no per-deploy crawler hook, so a manual reindex is required after that external site ships significant content changes. vMetal content is indexed from the Platform section on `vcluster.com`.
 
 ### When to trigger a manual reindex
 
-Trigger after any deploy to `vnode-docs` or `vmetal-docs` that adds or substantially changes pages. Small edits don't warrant a reindex — the Saturday crawl will pick them up.
+Trigger after any deploy to `vnode-docs` that adds or substantially changes pages. Small edits don't warrant a reindex — the Saturday crawl will pick them up.
 
 ### Before triggering the reindex
 
 Verify the external site is live with the correct meta tags. Check page source on any doc page and confirm:
 
 ```
-<meta name="docsearch:product" content="vnode">   <!-- or vmetal -->
+<meta name="docsearch:product" content="vnode">
 <meta name="docsearch:page_category" content="docs">
 ```
 
@@ -305,7 +305,7 @@ curl --request POST \
 
 ### Verify
 
-After the crawl completes, open the Algolia index browser and filter by `product:vnode` and `product:vmetal` to confirm records are present with correct `version_label` and `is_latest` values.
+After the crawl completes, open the Algolia index browser and filter by `product:vnode` to confirm records are present with correct `version_label` and `is_latest` values.
 
 ## After Each Stable Release
 

@@ -19,18 +19,12 @@ export const DOCSEARCH_PRODUCTS = {
     displayName: "vNode",
     versioned: false,
   },
-  vmetal: {
-    pluginId: "vmetal",
-    displayName: "vMetal",
-    versioned: false,
-  },
 };
 
 // Brand colors for products that appear in search results from external domains.
 // Used to render product badge pills in the search modal and search page.
 export const PRODUCT_BADGES = {
   vnode: {label: DOCSEARCH_PRODUCTS.vnode.displayName, color: '#0C00FF'},
-  vmetal: {label: DOCSEARCH_PRODUCTS.vmetal.displayName, color: '#0098B2'},
 };
 
 export function getDocsearchProduct(pluginId) {
@@ -98,5 +92,4 @@ export function getVersionBoostScore({ pluginId, versionName, pathname }) {
 
   return 0;
 }
-
 
