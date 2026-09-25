@@ -198,6 +198,11 @@ This is the release-day action. All heavy work was done at rc-1.
 - [ ] Merge config flip PR
 - [ ] Monitor production deployment
 - [ ] Verify version appears in dropdown
+- [ ] Trigger vmetal-docs lifecycle sync (vMetal has no version of its own — it follows Platform's lifecycle):
+  ```bash
+  gh api repos/loft-sh/vmetal-docs/dispatches -f event_type=platform-released
+  ```
+  Opens a PR in vmetal-docs regenerating `docs/reference/lifecycle-policy.mdx` from `docs/_partials/platform_supported_versions.mdx`. Independent of this PR — no need to wait on it before merging here.
 
 ## Part 7: Final Review
 
@@ -243,6 +248,7 @@ Ready for: Build & Test
 | `hack/test-platform-X.Y.hurl` | SEO/redirect/cross-version tests | AI |
 | Platform support dates file | Support dates & compat | User |
 | `platform_versioned_docs/version-X.Y.Z/` | Versioned docs | User |
+| `vmetal-docs` `docs/reference/lifecycle-policy.mdx` | Regenerated via cross-repo dispatch | AI (post-merge) |
 | `platform_versions.json` | Version list | Auto |
 
 ## Common Issues Checklist
