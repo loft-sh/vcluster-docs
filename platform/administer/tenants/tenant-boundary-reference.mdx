@@ -1,0 +1,246 @@
+---
+title: Tenant boundary reference
+sidebar_label: Boundary Reference
+sidebar_position: 3
+description: How each Platform resource behaves inside a Tenant boundary, plus the ownership labels and naming rules that enforce it.
+---
+
+This page is a lookup table. It covers what a Tenant can see and author for
+each Platform resource, and the labels and naming rules behind that.
+
+For the workflow, see
+[Create and configure a Tenant](./create-and-configure-tenants.mdx). For
+symptoms and error messages, see
+[Troubleshoot Tenants](../../troubleshoot/tenants.mdx).
+
+## How a resource gets its answer
+
+Every Platform resource resolves to two facts for a given Tenant.
+
+- **Can the Tenant author its own instances?** This gates creating, not reading.
+  A Tenant always sees what it owns, even where it can no longer add to it.
+- **What happens to the platform's own instances?** Either `hidden`, meaning the
+  Tenant sees only what a grant singles out, or `shared`, meaning the Tenant sees
+  all of them.
+
+Those two facts come from one of three places, in order.
+
+1. **A capability governs the resource.** The Tenant's capability decides. Absent
+   or disabled means the platform's instances stay hidden and the Tenant can't
+   author new ones. Instances the Tenant already owns stay readable.
+2. **A shipped default covers it.** The table below applies.
+3. **Neither.** The resource withholds the platform's instances and lets the
+   Tenant keep its own. A resource reaches this case by being new and not yet
+   considered, so the symptom is something missing rather than something
+   disclosed.
+
+## Read the resolved boundary
+
+Platform recomputes the boundary and writes it to the Tenant's status, one entry
+per resource.
+
+```bash
+kubectl get tenant acme -o jsonpath='{.status.boundary}' | jq
+```
+
+| Field | Meaning |
+|-------|---------|
+| `resource` | The Platform resource name, lowercase plural |
+| `own` | Whether the Tenant can author its own instances |
+| `baseline` | `hidden` or `shared`, for instances no selector matches |
+| `byLabels` | The label selector the capability grants with |
+| `byName` | Instances granted by exact name |
+| `derived` | Instances reached by following a reference from something already granted |
+
+`status.hostnames` sits alongside `status.boundary` and lists the DNS names that
+resolve to the Tenant. The Tenant controller projects it from the tenant's
+configuration. Don't edit it directly. The controller overwrites manual changes
+during its next reconciliation.
+
+The status is mostly a report. Platform works the spec-derived rules out again
+on every request, so selector changes don't wait for the report to update.
+
+`derived` is the exception. Granting a node type also makes its node provider
+reachable, since the grant would otherwise be unusable. The Tenant controller
+resolves that relationship into `derived`, and the request path reads those
+names back from status. Don't edit this field. The controller overwrites manual
+changes during its next reconciliation.
+
+## Capability-governed resources
+
+These deny by default. Nothing is visible until the matching capability is
+enabled and a selector matches.
+
+| Resource | Capability | Tenant can author its own |
+|----------|-----------|---------------------------|
+| `clusters` | `controlPlaneClusters` | No |
+| `nodetypes` | `nodeTypes` | No |
+| `osimages` | `osImages` | Yes, with `allow.custom` |
+| `sshkeys` | `sshKeys` | Yes, with `allow.custom` |
+| `virtualclustertemplates` | `templates` | No |
+| `apps` | `templates` | No |
+| `stacktemplates` | `templates` | No |
+| `spacetemplates` | `templates` | No |
+| `machineconfigtemplates` | `templates` | No |
+| `argocdapplicationtemplates` | `templates` | No |
+
+A capability that's present but disabled hides every one of the platform's
+instances and stops the Tenant creating new ones. Instances the Tenant already
+owns stay readable, because ownership is a fact the instance carries rather than
+a permission the capability grants.
+
+## Shipped defaults
+
+These resources have no capability. The table is their whole answer.
+
+### The Tenant keeps its own, the platform's stay hidden
+
+This is the common case. A Tenant sees the instances it created and none of the
+platform's.
+
+| Resource | What it is |
+|----------|-----------|
+| `projects` | Projects |
+| `virtualclusterinstances` | Clusters |
+| `spaceinstances` | Namespaces |
+| `projectsecrets` | Project secrets |
+| `nodeclaims` | Node claims |
+| `argocdapplications` | Argo CD applications |
+| `virtualclusterschemas` | Cluster schemas |
+| `nodeproviders` | Node providers |
+| `machines` | Bare metal machines |
+| `networkenvironments` | Network environments |
+| `sharedsecrets` | Shared secrets |
+| `oidcclients` | OIDC clients |
+| `databaseconnectors` | Database connectors |
+
+`machines` and `networkenvironments` are the resources a platform admin lends by
+hand. No capability grants them, so a Tenant reaches one of the platform's only
+through an exclusive assignment.
+
+`sharedsecrets`, `oidcclients`, and `databaseconnectors` are sensitive, which is
+a reason to hide the platform's instances rather than a reason a Tenant may not
+hold its own.
+
+### Shared with every Tenant
+
+| Resource | What it is | Tenant can author its own |
+|----------|-----------|---------------------------|
+| `clusterroletemplates` | Cluster role templates | No |
+
+A Tenant that creates users has to assign them roles, and Platform already ships
+the roles worth assigning. Authoring stays denied, because writing a cluster
+role template is writing RBAC.
+
+### Hidden entirely
+
+| Resource | What it is | Tenant can author its own |
+|----------|-----------|---------------------------|
+| `tenants` | Tenants | No |
+
+Managing Tenants belongs to a platform admin session.
+
+## Ownership labels
+
+Two labels record a Tenant's relationship to a resource. They answer different
+questions and are mutually exclusive. A resource carrying both is refused on
+write, and is visible to no Tenant if it somehow exists.
+
+### `tenant.vcluster.com/owner`
+
+The Tenant created this resource, and it counts against that Tenant. Platform
+applies the label at creation, keeps it on update, and refuses any change that
+would alter it. A Tenant can neither see nor set it.
+
+An absent label means the resource belongs to the platform.
+
+### `tenant.vcluster.com/exclusive-to`
+
+A platform admin assigned this resource to one Tenant. Nothing derives it,
+because no field in the Tenant spec expresses exclusivity. A platform admin
+applies and removes it by hand.
+
+```yaml
+metadata:
+  labels:
+    tenant.vcluster.com/exclusive-to: acme
+```
+
+The value is the Tenant name. An empty value reserves the resource for the
+platform, which is a claim rather than the absence of one. Removing the label
+returns the resource to the pool, except on a network environment, where the
+assignment can't be changed or removed once set.
+
+The holding Tenant reads and references the resource. Every write, including
+deletion, stays with the platform admin.
+
+## Name rules
+
+### Tenant names
+
+A Tenant name must be a valid DNS label. The platform checks it when it accepts
+the Tenant, whether you use the UI or apply YAML.
+
+| Rule | Reason |
+|------|--------|
+| Lowercase alphanumeric and hyphens | Derived names have to be valid DNS labels too |
+| Starts and ends alphanumeric | Same reason. A `metadata.generateName` prefix is the exception and can end in a hyphen |
+| No dots | A project's namespace is derived from the name |
+| No `--` sequence | `--` separates the Tenant name from the resource name |
+| `metadata.name` is 32 characters or fewer | Everything the Tenant owns is named after it, and `<tenant>--default` still has to fit the project name budget |
+| `metadata.generateName` is 27 characters or fewer | Kubernetes appends a five-character suffix, and the final name must fit the 32-character limit |
+
+This is stricter than Platform's other resources. Users and teams permit dots.
+Tenants don't, because a Tenant name has to survive being embedded in every
+name derived from it.
+
+A Tenant can be created with `metadata.generateName` instead of
+`metadata.name`, and one of the two is required. The prefix can end in a hyphen,
+which Kubernetes places immediately before the generated characters.
+
+The name is immutable after creation, so a rename means creating a new Tenant.
+Everything the Tenant owns is derived from it, so treat the name as permanent
+when you pick it.
+
+### Resource names
+
+A cluster-scoped resource a Tenant creates must be named `<tenant>--<name>`. For
+a Tenant called `acme`, an SSH key called `build` is named `acme--build`.
+
+This applies to resources the Tenant authors, not to resources a platform admin
+grants or assigns. Namespace-scoped resources are unaffected, because their
+names are already scoped by the namespace.
+
+Omitting the prefix produces a validation error naming the prefix required.
+
+```text
+SSHKey.management.loft.sh "build" is invalid: metadata.name: Invalid value:
+"build": must start with "acme--": this kind is cluster-scoped, so its name is
+shared with every tenant on the platform
+```
+
+### Names created with a Tenant
+
+| Object | Name |
+|--------|------|
+| Tenant admin user | `<tenant>--admin` |
+| Default project | `<tenant>--default` |
+
+## Selector semantics
+
+| Written | Means |
+|---------|-------|
+| Capability absent | Denied. The platform's instances stay hidden and the Tenant can't author new ones |
+| `enabled: false` | Same as absent. Instances the Tenant already owns stay readable |
+| `enabled: true`, no `allow` | Enabled, nothing selected, so nothing visible |
+| `allow.byLabels: {}` | Every admin-owned instance of that resource |
+| `allow.byLabels` absent or null | No admin-owned instances |
+| `allow.byName: [a, b]` | Exactly those instances |
+
+Label selectors match all specified pairs. With a non-empty selector, an
+instance has to carry every pair. An empty selector matches every admin-owned
+instance, including those without labels.
+
+`byName` and `byLabels` can't both be set on `nodeTypes`, which is the only
+capability offering both. To grant a named set plus an extra, label the extra one
+and widen the label selector.
