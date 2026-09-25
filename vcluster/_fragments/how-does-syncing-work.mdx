@@ -9,7 +9,7 @@ permissions.
 
 All fields of a resource are synced either from the cluster to the control plane cluster or the inverse, from the control plane cluster to the cluster. The direction on how
 the sync of the resources is based on what section the resource is part of in the `vcluster.yaml`. There 
-are a few exceptions for each resource where specific fields are kept in sync in both directions (i.e. bi-directional sync). 
+are a few exceptions for each resource where specific fields are kept in sync in both directions (that is, bi-directional sync). 
 
 If the resource is being asked to sync from the cluster to the control plane cluster, vCluster copies the resources from the cluster and sends it to the control plane cluster to be created. There are
 a couple of additional labels added to the control plane cluster resource object for vCluster to keep it in sync. The syncer starts watching for changes to the resource on either side. When the resource
@@ -64,7 +64,9 @@ When vCluster copies the ingress to the control plane cluster, the vCluster crea
 * **Name Rewritten**: vCluster rewrites the name of the resource to avoid conflicts in the control plane cluster. The name is rewritten in the form of `NAME-x-NAMESPACE-x-VCLUSTER_NAME`
 * **Namespace Rewritten**: vCluster rewrites the namespace of the resource to sync everything into the namespace of the deployed cluster control plane.
 * **Annotations / Labels Added**: vCluster adds annotations and labels to identify the resource in the control plane cluster, which are pre-fixed with `vcluster.loft.sh/`.
+<!-- vale off -->
 * **References Rewritten**: vCluster rewrites the `spec.rules[*].http.paths[*].backend.service.name` and `spec.tls[*].secretName` to match the rewritten names of the resources in the control plane cluster.
+<!-- vale on -->
 
 
 ```yaml
@@ -99,6 +101,44 @@ spec:
     - https-example.foo.com
     secretName: testsecret-tls-x-default-x-vcluster
 ```
+
+### Resource name length and truncation
+
+This rule applies to resources that sync into the vCluster control plane's namespace, which is the default. If you enable [namespace syncing](../configure/vcluster-yaml/sync/to-host/advanced/namespaces.mdx) and a namespace matches one of your mappings, vCluster keeps the object name unchanged and only rewrites its namespace. Nothing below applies to that object. Namespaces that match no mapping still fall back to the rewriting described here.
+
+vCluster caps every rewritten name at 63 characters. When `NAME-x-NAMESPACE-x-VCLUSTER_NAME` is longer than that, vCluster shortens it instead of failing the sync.
+
+The cap is vCluster's own and applies to every resource type, so don't read it as a Kubernetes constraint. Kubernetes is stricter for some kinds and far looser for others. Service names are limited to 63 characters, but ServiceAccount, Secret, and ConfigMap names are DNS subdomains and may be up to 253. vCluster rewrites past 63 regardless of what the resource type would allow.
+
+The shortened name keeps the first 52 characters of the full rewritten name. It then appends `-` followed by the first 10 characters of the hex-encoded SHA-256 digest. The digest covers the whole untruncated name, so two objects that share their first 52 characters still get distinct names.
+
+For example, a ServiceAccount named `payments-service-account-with-a-very-long-name` in the `production-workloads` namespace of a cluster named `team-alpha-vcluster` has this full rewritten name:
+
+```
+payments-service-account-with-a-very-long-name-x-production-workloads-x-team-alpha-vcluster
+```
+
+That name is 91 characters, so vCluster stores the object on the control plane cluster under this name instead:
+
+```
+payments-service-account-with-a-very-long-name-x-pro-d0698fbbcd
+```
+
+Truncated names are 63 characters. There is one exception. When the 52-character prefix ends with a dot, vCluster collapses the resulting `.-` sequence into a single `-`, so the name is 62 characters.
+
+Names of 63 characters or fewer are never truncated, and no hash is appended.
+
+To map a synced object on the control plane cluster back to its original name in the cluster, read its `vcluster.loft.sh/object-name` annotation. vCluster sets it on every synced object, and it always carries the untruncated name.
+
+For namespaced objects, `vcluster.loft.sh/object-namespace` carries the original namespace in the cluster. Cluster-scoped objects have no namespace, so vCluster removes that annotation from them. Reverse-mapping automation must tolerate its absence rather than assume both annotations are present.
+
+:::info Deriving synced names in automation
+External systems that key off synced object names see the truncated name, not the name inside the cluster. ServiceAccount-dependent integrations are the most common place this surfaces, including EKS Pod Identity, IRSA, GKE Workload Identity, and AKS Workload Identity. An IAM trust policy that references the untruncated name silently fails to match.
+
+Rather than reimplementing this rule, resolve the name through the vCluster Platform API. For a worked example, see [Integrate EKS Pod Identity with vCluster](../third-party-integrations/pod-identity/eks-pod-identity.mdx).
+
+The API always returns the single-namespace form shown above. It doesn't read your namespace mappings, so for an object in a mapped namespace it returns a name that doesn't exist on the control plane cluster. Use it only for objects that sync into the vCluster control plane's namespace.
+:::
 
 ### Sync labels to the control plane cluster
 
