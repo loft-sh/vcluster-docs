@@ -57,20 +57,20 @@ Netlify builds a deploy preview only for PRs whose base branch is `main` or
 another branch Netlify deploys, such as `next`. A stacked PR, one that targets
 another PR's branch, gets no preview until its base merges.
 
-To preview a stacked PR, build and deploy it yourself with the Netlify CLI.
-You need access to the `vcluster-docs-site` Netlify project, and the build
-needs about 11 GB of memory.
+If you have access to the docs project in Netlify, you can deploy a draft
+preview yourself with the Netlify CLI. Otherwise, ask someone who has access.
+The build needs about 11 GB of memory.
 
 ```bash
 npx netlify-cli login
-npx netlify-cli link --name vcluster-docs-site
+npx netlify-cli link
 npx netlify-cli deploy --context deploy-preview --dir=public --alias=pr-<number>
 ```
 
-The `deploy` command runs the site build first, so you don't need a separate
-`netlify build`. The deploy is a draft, so it doesn't change the live site.
-It's served at `https://pr-<number>--vcluster-docs-site.netlify.app/docs/`.
-Rerun the `deploy` command to update it after you push changes.
+`netlify link` prompts you to choose the project. The `deploy` command runs the
+site build first, so you don't need a separate `netlify build`. The deploy is a
+draft, so it doesn't change the live site, and the CLI prints its URL when it
+finishes. Rerun the `deploy` command to update it after you push changes.
 
 Never use `main`, `next`, or another deployed branch name as the alias.
 Netlify serves an alias at the same subdomain as a branch deploy with that
