@@ -9,7 +9,7 @@ import FeatureTable from '@site/src/components/FeatureTable';
 <FeatureTable names="auto-nodes-terraform" />
 
 
-The terraform provider allows you to use Terraform scripts to automatically create [nodes](./overview.mdx) and [node environments](./overview.mdx). 
+The terraform provider allows you to use Terraform scripts to automatically create [nodes](./overview.mdx) and the infrastructure behind [network environments](../../vmetal/concepts/network-environments.mdx). 
 When a vCluster requests a new node, the platform will execute the specified Terraform script to create and join a node automatically into the vCluster. 
 If the node or vCluster is later deleted, the platform will destroy the node using Terraform.
 
@@ -55,7 +55,7 @@ We use OpenTofu to execute the terraform scripts. We are currently working on a 
 Node templates are terraform scripts either defined inside the node provider object directly or referenced via git. 
 
 :::tip Git
-We recommend to use git for storing your Terraform node and node environment templates. This way you have a complete audit trail of who has changed what and you can even create multiple node providers based off different branches, tags or commits.
+We recommend to use git for storing your Terraform node and network environment templates. This way you have a complete audit trail of who has changed what and you can even create multiple node providers based off different branches, tags or commits.
 :::
 
 ### Use Git
@@ -145,7 +145,8 @@ Besides the user-defined credentials specified below, the platform passes a `var
 * `var.vcluster.instance`: Full cluster instance object
 * `var.vcluster.nodeClaim`: Full node claim object
 * `var.vcluster.nodeType`: Full node type object
-* `var.vcluster.nodeEnvironment.outputs`: If a node environment was specified for this provider, the defined outputs of the node environment
+* `var.vcluster.properties`: Merged properties from the NodeProvider, NodeType, NetworkEnvironment, and NodeClaim
+* `var.vcluster.networkEnvironment.outputs`: If the node claim resolves a network environment, the outputs of its infrastructure template
 
 ## Node types
 
@@ -195,11 +196,17 @@ spec:
 
 The node type field `maxCapacity` allows you to specify an upper limit of how many nodes should be created for the node type.
 
-## Node environment template
+## Network environment template
 
-[Node environments](./overview.mdx) can be configured similar to node templates either inline or using git. Each node environment will be created once per vCluster before the first node claim is provisioned. Only if a vCluster is using a node the provider a new node environment is provisioned.
+A network environment template provisions shared infrastructure, such as a VPC, for a [network environment](../../vmetal/concepts/network-environments.mdx).
+Configure it inline or using git, the same way as node templates.
+When the template is set, every node claim from this provider needs a network environment.
 
-The following example specifies a very simple inline template to create an AWS VPC instance for a vCluster:
+The platform provisions the infrastructure when you create a NetworkEnvironment that references the provider, not when the first node claim arrives.
+It destroys the infrastructure when you delete the environment. Deletion waits while any node claim still uses the environment.
+
+The following example specifies a simple inline template that creates an AWS VPC:
+
 ```yaml
 apiVersion: management.loft.sh/v1
 kind: NodeProvider
@@ -207,49 +214,72 @@ metadata:
   name: terraform-example
 spec:
   terraform:
-    nodeEnvironmentTemplate:
-      inline: |-
-        terraform {
-          required_version = ">= 1.5"
-          required_providers {
-            aws = {
-              source  = "hashicorp/aws"
-              version = ">= 5.0"
+    networkEnvironmentTemplate:
+      infrastructure:
+        inline: |-
+          terraform {
+            required_version = ">= 1.5"
+            required_providers {
+              aws = {
+                source  = "hashicorp/aws"
+                version = ">= 5.0"
+              }
             }
           }
-        }
 
-        provider "aws" {
-          region = var.vcluster.requirements["region"]
-        }
-
-        resource "aws_vpc" "vcluster" {
-          cidr_block           = "10.0.0.0/16"
-          enable_dns_support   = true
-          enable_dns_hostnames = true
-          tags = {
-            Name = "${var.vcluster.name}-vpc"
+          provider "aws" {
+            region = var.vcluster.properties["region"]
           }
-        }
 
-        output "vpc_id" {
-          value = aws_vpc.vcluster.id
-        }
+          resource "aws_vpc" "network" {
+            cidr_block           = "10.0.0.0/16"
+            enable_dns_support   = true
+            enable_dns_hostnames = true
+            tags = {
+              Name = "${var.vcluster.name}-vpc"
+            }
+          }
+
+          output "vpc_id" {
+            value = aws_vpc.network.id
+          }
     nodeTemplate:
       inline: |-
         ...
 ```
 
-The defined output `vpc_id` within the node environment can be accessed in the node template using `var.vcluster.nodeEnvironment.outputs["vpc_id"]`.
+Then create a network environment that references the provider. It must be assigned to a Tenant, or reserved for the platform with an empty value:
 
-### Available terraform vCluster variables
+```yaml
+apiVersion: management.loft.sh/v1
+kind: NetworkEnvironment
+metadata:
+  name: aws-network
+  labels:
+    tenant.vcluster.com/exclusive-to: ""
+spec:
+  providerRef: terraform-example
+  properties:
+    region: us-east-1
+```
 
-Besides the user-defined credentials specified below, the platform passes a `var.vcluster` object to each node environment script. The following values are available:
-* `var.vcluster.name`: Name of the vCluster
-* `var.vcluster.namespace`: Project namespace of the vCluster
-* `var.vcluster.requirements`: A key-value map of the specified and resolved requirements of the first node claim used to create this node environment
-* `var.vcluster.instance`: Full cluster instance object
-* `var.vcluster.nodeEnvironment`: Full node environment object
+Node claims select it through the `vcluster.com/network-environment` property, or use the provider's default environment.
+The node template reads the `vpc_id` output as `var.vcluster.networkEnvironment.outputs["vpc_id"]`.
+
+:::warning Renamed template field and variable
+Earlier releases used `spec.terraform.nodeEnvironmentTemplate`, a separate `kubernetes` template, and the `var.vcluster.nodeEnvironment` variable.
+The field is now `networkEnvironmentTemplate`, and the variable is now `var.vcluster.networkEnvironment`. The old variable has no alias, so update templates that read it.
+The `kubernetes` template is no longer supported.
+:::
+
+### Available network environment variables
+
+Besides the user-defined credentials specified below, the platform passes a `var.vcluster` object to each network environment script. The following values are available:
+* `var.vcluster.name`: Name of the network environment
+* `var.vcluster.namespace`: Namespace of the platform, because network environments are cluster scoped
+* `var.vcluster.properties`: Merged properties from the NodeProvider and the network environment
+* `var.vcluster.nodeProvider`: Full node provider object
+* `var.vcluster.networkEnvironment`: Full network environment object
 
 ## Credentials
 
@@ -304,10 +334,10 @@ data:
 This will lead to the platform passing the Terraform variables `aws_access_key_id` and `aws_secret_access_key` to the `tofu init` and `tofu apply` commands using `-var aws_access_key_id=VALUE`.
 
 ## Terraform backend
-By default, the platform will use the [Kubernetes backend](https://developer.hashicorp.com/terraform/language/backend/kubernetes) to store the state of the nodes and node environments in Kubernetes secrets in the `vcluster-platform` namespace. 
-The platform will create a separate workspace per node and node environment in the following form:
+By default, the platform will use the [Kubernetes backend](https://developer.hashicorp.com/terraform/language/backend/kubernetes) to store the state of the nodes and network environments in Kubernetes secrets in the `vcluster-platform` namespace. 
+The platform will create a separate workspace per node and network environment in the following form:
 * *Node*: `NODE_CLAIM_NAME.PROJECT_NAME.node`
-* *Node Environment*: `NODE_ENVIRONMENT_NAME.PROJECT_NAME.env`
+* *Network environment*: `NETWORK_ENVIRONMENT_NAME.env`
 
 ### Use a custom backend
 

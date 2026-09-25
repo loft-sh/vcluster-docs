@@ -1,0 +1,87 @@
+---
+title: Network environments
+sidebar_label: Network environments
+sidebar_position: 1
+sidebar_class_name: pro
+description: How a NetworkEnvironment describes the network a machine joins, who it belongs to, and which driver provisions it.
+---
+
+A `NetworkEnvironment` describes the network that machines join when a driver provisions them.
+It is cluster scoped, so it isn't tied to a single project or namespace.
+Each environment names one driver in `spec.providerRef` and carries that driver's settings in `spec.properties`.
+
+Drivers use environments differently.
+Some provision real infrastructure from one, such as a VPC and an address range.
+Others don't require one and provision nothing from it, though they can still read its properties.
+See the [NICo driver guide](../drivers/bare-metal/nico.mdx#create-a-network) for a driver that requires one.
+
+## Decide who a network belongs to
+
+Every environment records who it is for.
+An operator creates the environment and states the assignment as a label:
+
+| Label | Value | Meaning |
+| --- | --- | --- |
+| `tenant.vcluster.com/exclusive-to` | a Tenant name | An operator lends this environment to that Tenant. |
+| `tenant.vcluster.com/exclusive-to` | empty string | The environment is reserved for the platform. |
+| `tenant.vcluster.com/owner` | a Tenant name | A Tenant created this environment for itself. |
+
+The platform assignment is an empty value rather than a name, because the platform has no Tenant name of its own.
+The label must still be present.
+Its presence, not its value, is what records an assignment, so an environment with no label at all is unassigned rather than platform owned.
+
+Don't set both labels.
+An environment is either lent to a Tenant by an operator or owned by a Tenant, never both.
+
+The API requires an assignment when you create the environment:
+
+```text
+network environment must be assigned to a tenant or the platform
+```
+
+When you create an environment as a Tenant administrator, omit the label.
+The API records Tenant ownership for you.
+Tenant-scoped reads hide these labels, so an absent label in that view doesn't mean the environment is unassigned.
+
+## What you can't change later
+
+Once an environment carries an assignment, both the assignment and the whole `spec` are immutable:
+
+```text
+tenant assignment cannot be changed or removed
+spec cannot be changed after assignment to a tenant
+```
+
+This includes `providerRef` and every driver property.
+To change any of it, create a replacement environment and move its workloads across.
+Decide the assignment and the network settings before you apply the manifest.
+
+## How a machine selects a network
+
+A `NodeClaim` reaches an environment in one of two ways:
+
+- It names one explicitly, through the network environment property or `spec.environmentRef`.
+- It names none, and the provider's default applies.
+  Mark that default by setting the `machines.vcluster.com/is-default-environment` annotation on the environment to `"true"`.
+  Only environments whose `providerRef` matches the claim's provider are candidates, and each provider can have only one default.
+
+A project restricts which environments its claims may use.
+A claim that names an environment its project excludes fails with `network environment is not allowed in project`.
+
+Set `providerRef` to the provider of the workloads that use the environment.
+The API doesn't compare the two when a claim names an environment explicitly, so a mismatch surfaces later as a provisioning failure.
+
+## Check that an environment is ready
+
+Every environment reports a `Ready` condition, summarizing whether its driver has provisioned and synced the infrastructure.
+An environment without a `providerRef` provisions nothing and becomes ready immediately.
+Wait for `Ready` before you create machines against it:
+
+```bash
+kubectl get networkenvironments.management.loft.sh <name> -o yaml
+kubectl wait networkenvironments.management.loft.sh/<name> --for=condition=Ready --timeout=10m
+```
+
+## Next steps
+
+- [Connect the NICo driver](../drivers/bare-metal/nico.mdx) and create a network for platform or Tenant workloads.

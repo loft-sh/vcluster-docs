@@ -1,0 +1,748 @@
+---
+title: NVIDIA Infra Controller
+sidebar_label: NVIDIA Infra Controller
+sidebar_position: 1
+sidebar_class_name: pro
+description: Connect NVIDIA Infra Controller to vCluster Platform to provision bare metal instances and private nodes for clusters.
+---
+
+import FeatureTable from '@site/src/components/FeatureTable';
+import InterpolatedCodeBlock from '@site/src/components/InterpolatedCodeBlock';
+import PageVariables from '@site/src/components/PageVariables';
+import Flow, {Step} from '@site/src/components/Flow';
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+import NavStep from '@site/src/components/NavStep';
+import Button from '@site/src/components/Button';
+
+<FeatureTable names="auto-nodes-nico" />
+
+The NVIDIA Infra Controller (NICo) driver connects vCluster Platform to an existing NICo installation.
+It discovers machine inventory and instance types, provisions bare metal instances, and supplies private nodes to clusters through Auto Nodes.
+NICo manages the hardware, operating system installation, and site networking.
+
+You can provision workloads for the platform itself, for platform Tenants, or both.
+Platform workloads don't need a `Tenant` object.
+A NodeProvider can serve the platform and multiple platform Tenants. You don't need a separate provider for each Tenant.
+
+A platform administrator completes the setup once, from [connecting the provider](#connect-the-provider) through [preparing an image](#prepare-an-operating-system-image).
+Project users then [provision instances](#provision-an-instance) or [supply cluster nodes with Auto Nodes](#supply-cluster-nodes-with-auto-nodes).
+
+## How the integration works
+
+| vCluster Platform resource | NICo resource or operation |
+| --- | --- |
+| `NodeProvider` | Connection to one infrastructure provider organization and site. |
+| `NodeType` | A discovered, ready NICo instance type with CPU, memory, GPU, and capacity information. |
+| `Machine` | A mirror of a physical machine in the configured NICo site. |
+| `Tenant` with NICo annotations | A NICo tenant organization, its provider account relationship, and managed allocations. |
+| Platform-assigned network or instance | Uses the NodeProvider's organization as a NICo tenant, in addition to its provider role. |
+| `NetworkEnvironment` | One tenant-owned VPC, plus one VPC prefix in FNN mode. |
+| `OSImage` | A reusable image definition, materialized as an operating system in the consuming NICo tenant. |
+| `NodeClaim` | A NICo instance, selected by instance type or pinned to a specific machine. |
+
+NICo uses an organization as an identity boundary. An organization can have both an infrastructure provider and a tenant record.
+Provider operations manage inventory and allocations. Tenant operations manage VPCs, operating systems, and instances.
+The platform authenticates as `PROVIDER_ADMIN` for inventory and allocations, and as `TENANT_ADMIN` for tenant resources.
+See NVIDIA's [authentication model](https://docs.nvidia.com/infra-controller/rest-api-reference/authentication-and-authorization) and [tenant management workflow](https://docs.nvidia.com/infra-controller/documentation/configuration-day-1/tenant-management).
+
+Adding a NodeProvider doesn't create a default network.
+Create a NetworkEnvironment with an explicit assignment before provisioning instances.
+NICo requires a tenant-owned VPC in both supported network modes.
+
+## Prerequisites
+
+- A vCluster Platform license that includes the NICo node provider and the features you use, such as instance management or private nodes.
+- Administrator access to vCluster Platform and the NICo REST API configuration.
+- An operational NICo installation with a registered site and discovered machines. Type-based provisioning also needs ready instance types associated with those machines.
+- The NICo REST API base URL, provider organization, and site UUID.
+- A provider-owned parent IP block for creating platform networks or allocating tenant address space, unless you adopt the required resources.
+- A NICo-compatible OS image and a reachable image server, or an existing NICo operating system usable by the target tenant.
+- A project in which to create instances or clusters.
+
+Install NICo and configure its hardware discovery, BMC credentials, provisioning services, and site network before connecting the driver.
+The driver doesn't install NICo or register physical machines.
+Use the [NVIDIA documentation](https://docs.nvidia.com/infra-controller/) for that setup.
+
+Verify these network paths:
+
+| Source | Destination | Purpose |
+| --- | --- | --- |
+| vCluster Platform | NICo REST API | Inventory, tenant onboarding, and resource lifecycle operations. |
+| NICo REST API | Platform `/oidc/keys` endpoint | Retrieve the keys that verify platform-issued tokens. |
+| NICo site provisioning services | OS image server | Download the installation image. |
+| Provisioned hosts | NICo phone-home service | Report OS initialization when phone home is enabled. |
+| Provisioned hosts | Cluster control plane or configured VPN endpoint | Join and operate as private nodes. |
+
+Use trusted TLS certificates and stable endpoint names.
+For private nodes, also satisfy the [node requirements](/docs/vcluster/deploy/worker-nodes/private-nodes/node-requirements) and [connectivity requirements](/docs/vcluster/deploy/worker-nodes/private-nodes).
+
+## Choose the network mode
+
+The NodeProvider's `spec.nico.networkMode` selects the network model for all its environments and instances.
+It can't change after creation.
+
+| Setting | `fnn` | `flat` |
+| --- | --- | --- |
+| Hardware and site | DPU-backed native networking. The NICo site must have native networking enabled. | Zero-DPU hosts or hosts operating in NIC mode, with a configured HostInband network. |
+| NICo VPC type | `FNN` | `FLAT` |
+| VPC prefix | Created from the tenant's allocated IP block, or adopted. | Not created. |
+| Instance networking | One physical interface attached to the VPC prefix. | NICo automatic networking with `autoNetwork: true`. |
+| Address assignment | VPC prefix configuration. | Site HostInband configuration. |
+
+`fnn` is the default. Select `flat` explicitly for a FLAT site.
+The driver doesn't support `ETHERNET_VIRTUALIZER` mode.
+
+:::warning FLAT isn't DPU-enforced network isolation
+
+A FLAT VPC provides NICo resource ownership, but NICo doesn't program its data plane.
+Separate Tenant or VPC records don't create isolated networks on a shared HostInband segment.
+Configure any required isolation in the physical network.
+See NVIDIA's [FLAT VPC documentation](https://docs.nvidia.com/infra-controller/documentation/operations-day-2/managing-vp-cs/flat-vp-cs-and-zero-dpu-hosts).
+
+:::
+
+## Connect the provider
+
+Complete provider, Tenant, network, and image setup as a platform administrator through the [management API](../../../api/use-api.mdx).
+Set these values to match your installation. UUIDs must identify existing resources in NICo.
+
+<PageVariables
+  PLATFORM_URL="https://platform.example.com"
+  NICO_ENDPOINT="https://nico.example.com"
+  PROVIDER="nico"
+  PROVIDER_ORG="vcluster-autonodes"
+  SITE_ID="11111111-1111-4111-8111-111111111111"
+  SITE_IP_BLOCK_ID="22222222-2222-4222-8222-222222222222"
+/>
+
+Connect `kubectl` to the management API before running the commands in this guide:
+
+<InterpolatedCodeBlock
+  language="bash"
+  code={'vcluster platform login [[GLOBAL:PLATFORM_URL]]\n' +
+    'vcluster platform connect management'}
+/>
+
+Save each manifest to the filename shown above it before running its `kubectl apply` command.
+
+<Flow>
+<Step>
+
+### Configure NICo to trust platform-issued tokens
+
+NICo must trust platform-issued JWTs. Add an issuer with these settings:
+
+<InterpolatedCodeBlock
+  language="yaml"
+  title="NICo issuer settings"
+  code={'name: vcluster-platform\n' +
+    'origin: custom\n' +
+    'issuer: "[[GLOBAL:PLATFORM_URL]]/oidc"\n' +
+    'jwks: "[[GLOBAL:PLATFORM_URL]]/oidc/keys"\n' +
+    'audiences:\n' +
+    '  - "[[GLOBAL:NICO_ENDPOINT]]"\n' +
+    'claimMappings:\n' +
+    '  - orgAttribute: organization\n' +
+    '    orgDisplayAttribute: organization\n' +
+    '    rolesAttribute: roles'}
+/>
+
+Follow [NVIDIA's authentication documentation](https://docs.nvidia.com/infra-controller/rest-api-reference/authentication-and-authorization) to configure the issuer in your NICo installation.
+
+Use the platform's configured hostname for `issuer` and the NodeProvider's REST endpoint for `audiences`, without a trailing slash.
+Use the dynamic organization and role mappings shown above to read these values from platform-issued tokens.
+NICo v2.1.0 permits only one dynamic organization mapping across its issuers. Check for an existing mapping before adding this issuer.
+Don't add required token scopes that the platform doesn't issue.
+
+The platform issues and refreshes short-lived tokens automatically.
+The NodeProvider doesn't accept a static bearer token or a credentials Secret for this integration.
+Trusting this issuer allows the platform to act as provider and tenant administrator, so restrict access to its configuration and signing keys.
+
+</Step>
+<Step>
+
+### Create the NodeProvider
+
+In <NavStep>Nodes & Providers</NavStep>, create a node provider and select **NVIDIA NICo**.
+Alternatively, apply this manifest through the management API:
+
+<InterpolatedCodeBlock
+  language="yaml"
+  title="nico-provider.yaml"
+  code={'apiVersion: management.loft.sh/v1\n' +
+    'kind: NodeProvider\n' +
+    'metadata:\n' +
+    '  name: [[GLOBAL:PROVIDER]]\n' +
+    'spec:\n' +
+    '  nico:\n' +
+    '    endpoint: "[[GLOBAL:NICO_ENDPOINT]]"\n' +
+    '    org: [[GLOBAL:PROVIDER_ORG]]\n' +
+    '    siteId: [[GLOBAL:SITE_ID]]\n' +
+    '    siteIPBlockID: [[GLOBAL:SITE_IP_BLOCK_ID]]\n' +
+    '    networkMode: [[VAR:NETWORK_MODE:fnn]]\n' +
+    '    identity:\n' +
+    '      platformIssued:\n' +
+    '        enabled: true'}
+/>
+
+Set `networkMode` to `flat` if your hosts use the FLAT model.
+The endpoint is the REST API's scheme, hostname, and optional port, not a Core gRPC endpoint or a URL containing an organization path.
+The driver appends `/v2/org/{org}/nico`.
+
+`siteIPBlockID` identifies the provider's parent block, not a tenant IP block or a VPC prefix.
+The platform uses it to allocate tenant address space and to establish site access for platform-owned networks.
+It doesn't create this parent block.
+
+Apply the manifest:
+
+```bash
+kubectl apply -f nico-provider.yaml
+```
+
+</Step>
+<Step>
+
+### Verify discovery
+
+<InterpolatedCodeBlock
+  language="bash"
+  code={'kubectl get nodeprovider [[GLOBAL:PROVIDER]] -o yaml\n' +
+    'kubectl get nodetypes\n' +
+    'kubectl get machines'}
+/>
+
+Discovery worked when `kubectl get nodetypes` lists your NICo instance types and `kubectl get machines` lists your site's machines.
+The platform creates NodeTypes for ready instance types in the configured site.
+Their names start with the provider name, such as `nico.gpu-h100`.
+If two instance type names collide after sanitizing, each gets a suffix from its NICo ID.
+Choose a discovered NodeType for the provisioning examples:
+
+<PageVariables NODE_TYPE="nico.gpu-h100" />
+
+Machine resources mirror NICo's physical inventory.
+Their names combine the provider name and NICo REST machine UUID.
+Don't create Machine resources manually to register NICo hardware.
+
+</Step>
+</Flow>
+
+### Provider configuration reference
+
+| Field under `spec.nico` | Behavior |
+| --- | --- |
+| `endpoint` | NICo REST API base URL. Required. |
+| `org` | Provider organization. Defaults to `vcluster-autonodes`. Immutable. |
+| `siteId` | Site UUID used for provisioning and discovery. Supply it when creating the provider. Once set, it is immutable. |
+| `siteIPBlockID` | Existing provider-owned parent IP block for the site. Required when the platform must allocate address space or platform network site access. |
+| `networkMode` | `fnn` or `flat`. Defaults to `fnn` and is immutable. |
+| `instanceTypeIds` | Optional list of NICo instance type UUIDs to expose as NodeTypes. This doesn't filter the machine inventory. |
+| `identity.platformIssued.enabled` | Must be `true`. Platform-issued identity is the supported authentication method. |
+| `insecureSkipTLSVerify` | Defaults to `false`. Use only for isolated development environments with untrusted certificates. |
+
+Although the API schema includes `siteIPBlockCIDR`, the integration doesn't implement creating or resolving a parent block from a CIDR.
+Use `siteIPBlockID`.
+Don't configure both fields.
+
+## Choose the workload owner
+
+Choose one of the following paths before creating a network.
+The NetworkEnvironment's assignment determines which NICo tenant owns its VPC and instances, even when a platform administrator launches them.
+
+### Platform-owned workloads
+
+For a platform project, create a [platform-assigned NetworkEnvironment](#create-a-network).
+The platform then initializes a NICo tenant in the NodeProvider's own organization and establishes its provider account relationship.
+It does this when infrastructure is first needed, not when the NodeProvider is created.
+
+No Tenant object or organization setting is required.
+The platform reserves capacity for each instance selected by type and releases that reservation after instance deletion.
+Skip Tenant onboarding below and continue with [network creation](#create-a-network).
+
+Platform-assigned networks aren't available to tenant projects.
+Don't use a regular Tenant's NICo organization annotation to represent the platform itself.
+
+### Tenant-owned workloads
+
+Configure an existing platform Tenant as a platform administrator.
+Choose a NICo organization that differs from every configured provider organization.
+The organization must also be unique among platform Tenants.
+
+<PageVariables TENANT="research" TENANT_ORG="research-nico" />
+
+<Flow>
+<Step>
+
+#### Link the Tenant and grant instance types
+
+Merge this configuration into the Tenant, preserving its existing users, permissions, and other settings:
+
+<InterpolatedCodeBlock
+  language="yaml"
+  title="Tenant configuration"
+  code={'apiVersion: management.loft.sh/v1\n' +
+    'kind: Tenant\n' +
+    'metadata:\n' +
+    '  name: [[GLOBAL:TENANT]]\n' +
+    '  annotations:\n' +
+    '    nico.vcluster.com/org: [[GLOBAL:TENANT_ORG]]\n' +
+    'spec:\n' +
+    '  nodeTypes:\n' +
+    '    enabled: true\n' +
+    '    allow:\n' +
+    '      byName:\n' +
+    '        - [[GLOBAL:NODE_TYPE]]\n' +
+    '    quota:\n' +
+    '      byType:\n' +
+    '        "[[GLOBAL:NODE_TYPE]]": "2"\n' +
+    '  osImages:\n' +
+    '    enabled: true\n' +
+    '    allow:\n' +
+    '      byLabels:\n' +
+    '        example.com/image-catalog: nico'}
+/>
+
+The organization annotation enables NICo onboarding.
+If that NICo tenant already exists, the platform links it. Otherwise, NICo creates it when the platform retrieves the current tenant.
+The platform API prevents changing or removing the organization mapping after it is set.
+NICo must authorize the platform's tokens for that organization.
+Linking an existing tenant doesn't bypass issuer configuration or transfer its existing identity-provider credentials to the platform.
+NICo rejects this dynamic issuer mapping if a static issuer mapping reserves the same organization name.
+Resolve that conflict in NICo's issuer configuration before linking the tenant.
+
+The controller derives the NodeProvider from the allowed NICo NodeTypes.
+The current onboarding controller rejects grants that resolve to more than one NICo NodeProvider for the same Tenant.
+This is an integration restriction, not a requirement to dedicate a NodeProvider to each Tenant.
+If no NICo NodeTypes are granted, the `nico.vcluster.com/node-provider` annotation can select the provider directly.
+That annotation doesn't grant instance type capacity.
+
+A positive `quota.byType` value creates a NICo instance type reservation for that Tenant.
+Set quotas within the site's available capacity.
+Granting a NodeType without a quota doesn't create a reservation, though an existing external NICo allocation can provide capacity.
+External reservations don't count toward the reservation requested by `quota.byType`. A positive quota requests a separate platform-managed reservation.
+Quota changes don't evict running instances, and NICo can reject reductions below active usage.
+
+The `osImages` permission makes images with the example catalog label visible to the Tenant.
+Additional capabilities, such as control plane clusters, templates, and custom SSH keys, must be granted for the workflows the Tenant will use.
+
+</Step>
+<Step>
+
+#### Allocate address space for the Tenant
+
+FNN and FLAT need different allocations, so follow the paragraphs for your provider's network mode.
+
+For FNN, request a tenant IP block from the provider's parent block:
+
+<InterpolatedCodeBlock
+  language="bash"
+  code={'kubectl annotate tenant [[GLOBAL:TENANT]] \\\n' +
+    '  nico.vcluster.com/ip-block-prefix-length="[[VAR:TENANT_PREFIX_LENGTH:20]]"'}
+/>
+
+The parent block must have enough free space for the requested prefix.
+The tenant block must, in turn, fit all VPC prefixes you plan to create for that Tenant.
+For example, a `/20` tenant block can contain multiple `/24` VPC prefixes.
+
+To use an existing NICo tenant IP block instead, set `nico.vcluster.com/ip-block-id` to its UUID.
+The block must belong to the linked NICo tenant and be ready.
+Use either the ID annotation or the prefix-length annotation, not both.
+
+FLAT doesn't need a tenant IP block for instance addresses.
+Creating a FLAT VPC still requires an allocation at its site.
+An instance type allocation created by the previous step satisfies that requirement.
+For a Tenant that only uses targeted machines, arrange a site allocation in NICo or allocate a tenant IP block through this step.
+
+</Step>
+<Step>
+
+#### Wait for onboarding
+
+<InterpolatedCodeBlock
+  language="bash"
+  code={'kubectl get tenant [[GLOBAL:TENANT]] -o yaml\n' +
+    'kubectl wait tenant/[[GLOBAL:TENANT]] --for=condition=NICoOnboarded --timeout=10m'}
+/>
+
+Check `status.nico` for the organization, provider, tenant ID, account ID, and IP block ID.
+Inspect allocations in NICo. Their IDs and counts aren't stored in `status.nico`.
+The `NICoOnboarded` condition reports errors in authentication, account linking, allocations, and IP block setup.
+
+The platform invites and accepts the tenant account relationship when needed.
+Existing account relationships and externally managed allocations remain external resources.
+It can request the targeted-instance-creation capability on an existing account as well as a newly created one.
+
+</Step>
+</Flow>
+
+## Create a network
+
+Create one NetworkEnvironment for the workload owner you chose.
+Select the corresponding tab and save its manifest as `nico-network.yaml`.
+Use a different name for each environment if you need both platform and Tenant networks.
+
+<PageVariables NETWORK="nico-network" />
+
+:::warning Choose the assignment and network settings before creating the environment
+
+The assignment and entire `spec` are immutable after creation, including the provider and network properties.
+To change them, create a replacement environment and reprovision its workloads.
+If you plan to adopt an existing VPC, set the [network properties](#network-properties) before applying the manifest.
+
+:::
+
+<Tabs>
+<TabItem value="platform" label="Platform workloads" default>
+
+<InterpolatedCodeBlock
+  language="yaml"
+  title="nico-network.yaml"
+  code={'apiVersion: management.loft.sh/v1\n' +
+    'kind: NetworkEnvironment\n' +
+    'metadata:\n' +
+    '  name: [[GLOBAL:NETWORK]]\n' +
+    '  labels:\n' +
+    '    tenant.vcluster.com/exclusive-to: ""\n' +
+    'spec:\n' +
+    '  providerRef: [[GLOBAL:PROVIDER]]\n' +
+    '  properties: {}'}
+/>
+
+</TabItem>
+<TabItem value="tenant" label="Tenant workloads">
+
+Complete [Tenant onboarding](#tenant-owned-workloads) first.
+
+<InterpolatedCodeBlock
+  language="yaml"
+  title="nico-network.yaml"
+  code={'apiVersion: management.loft.sh/v1\n' +
+    'kind: NetworkEnvironment\n' +
+    'metadata:\n' +
+    '  name: [[GLOBAL:NETWORK]]\n' +
+    '  labels:\n' +
+    '    tenant.vcluster.com/exclusive-to: [[GLOBAL:TENANT]]\n' +
+    'spec:\n' +
+    '  providerRef: [[GLOBAL:PROVIDER]]\n' +
+    '  properties: {}'}
+/>
+
+</TabItem>
+</Tabs>
+
+Both manifests work with either provider mode:
+
+- **FNN:** The driver creates a VPC and a VPC prefix. The prefix length defaults to `/24`.
+  Tenant networks use their Tenant's IP block. Platform networks allocate a block from `siteIPBlockID` for that environment.
+- **FLAT:** The driver creates a FLAT VPC without a VPC prefix.
+  For a new platform network, it reserves a `/32` block from `siteIPBlockID` to establish site access.
+  This reservation isn't the host's address pool. Host addresses come from NICo's HostInband network.
+
+Apply the manifest for your chosen assignment and wait for the environment's `Ready` condition.
+
+<InterpolatedCodeBlock
+  language="bash"
+  code={'kubectl apply -f nico-network.yaml\n' +
+    'kubectl get networkenvironments.management.loft.sh [[GLOBAL:NETWORK]] -o yaml\n' +
+    'kubectl wait networkenvironments.management.loft.sh/[[GLOBAL:NETWORK]] --for=condition=Ready --timeout=10m'}
+/>
+
+Use this same network name in the instance and Auto Nodes examples below.
+Platform-assigned networks are for platform projects. Tenant-assigned networks are for that Tenant's workloads.
+Keep `providerRef` set to the NICo NodeProvider. The API doesn't compare it with the workload's provider, but provisioning fails against a network this driver didn't prepare.
+See [Network environments](../../concepts/network-environments.mdx) for the assignment labels, creating a network as a tenant administrator, immutability, and how a machine selects a network.
+
+### Network properties
+
+Set these in `NetworkEnvironment.spec.properties` before creating the environment:
+
+| Property | Behavior |
+| --- | --- |
+| `nico.vcluster.com/vpc-prefix-length` | FNN prefix length, from `8` through `31`. Defaults to `24`. The source block must have sufficient free space. |
+| `nico.vcluster.com/vpc-cidrs` | Optional comma-separated CIDRs for a new FNN VPC, with no spaces after the commas. Invalid for FLAT and incompatible with `vpc-id`. Doesn't replace tenant IP allocation. |
+| `nico.vcluster.com/vpc-id` | Adopt an existing VPC in the assigned NICo tenant. Its network mode must match the provider. |
+| `nico.vcluster.com/vpc-prefix-id` | Adopt an existing FNN VPC prefix. It must belong to the selected VPC. |
+
+To adopt an existing FNN network, replace `spec.properties: {}` with:
+
+```yaml
+properties:
+  nico.vcluster.com/vpc-id: <vpc-uuid>
+  nico.vcluster.com/vpc-prefix-id: <vpc-prefix-uuid>
+```
+
+For FLAT, supply only `vpc-id`.
+For FNN, adopting only the VPC still requires address space to create its prefix.
+Tenant-owned FNN networks require the Tenant's IP block configuration even when adopting a prefix.
+
+:::warning Use properties to adopt resources
+
+Don't prepopulate `nico.vcluster.com/vpc-id` or `nico.vcluster.com/vpc-prefix-id` in metadata annotations.
+The controller uses annotations to record managed resources and retry state.
+Supplying IDs as properties records adoption and prevents the platform from deleting those adopted resources during teardown.
+
+:::
+
+## Prepare an operating system image
+
+An [OSImage](../../../use-platform/machines/os-images.mdx) lets multiple claims reference one image definition.
+Use an image that meets NICo's boot requirements and, for cluster nodes, the private node requirements.
+The image must support the instance user data used by the platform.
+
+<PageVariables OS_IMAGE="ubuntu-nico" />
+
+:::warning Imaging overwrites the selected disk
+
+Choose the target disk and root filesystem identifier for your actual hardware and image.
+Don't copy an example device name without verifying it.
+See NVIDIA's [image-based operating system guidance](https://docs.nvidia.com/infra-controller/documentation/configuration-day-1/image-based-operating-systems).
+
+:::
+
+<InterpolatedCodeBlock
+  language="yaml"
+  title="nico-os-image.yaml"
+  code={'apiVersion: management.loft.sh/v1\n' +
+    'kind: OSImage\n' +
+    'metadata:\n' +
+    '  name: [[GLOBAL:OS_IMAGE]]\n' +
+    '  labels:\n' +
+    '    example.com/image-catalog: nico\n' +
+    'spec:\n' +
+    '  displayName: Ubuntu for NICo\n' +
+    '  properties:\n' +
+    '    machines.vcluster.com/os-image-type: nico\n' +
+    '    nico.vcluster.com/os-image-url: "[[VAR:IMAGE_URL:https://images.example.com/ubuntu-nico.img]]"\n' +
+    '    nico.vcluster.com/os-image-sha: "[[VAR:IMAGE_SHA:REPLACE_WITH_IMAGE_SHA]]"\n' +
+    '    nico.vcluster.com/os-image-disk: "[[VAR:IMAGE_DISK:/dev/nvme0n1]]"\n' +
+    '    nico.vcluster.com/os-image-rootfs-label: "[[VAR:ROOTFS_LABEL:cloudimg-rootfs]]"'}
+/>
+
+Replace the image URL, digest, disk, and filesystem label with values for your image.
+The catalog label matches the Tenant image permission in the earlier example.
+Platform users also need permission to use the OSImage.
+
+```bash
+kubectl apply -f nico-os-image.yaml
+```
+
+| OSImage property | Purpose |
+| --- | --- |
+| `machines.vcluster.com/os-image-type` | Set to `nico` for image filtering in the UI. |
+| `nico.vcluster.com/os-image-url` | Required download URL when creating an image-based NICo operating system. |
+| `nico.vcluster.com/os-image-sha` | Image checksum. The driver passes it to NICo unchanged, so use the format the NICo operating system API expects. |
+| `nico.vcluster.com/os-image-disk` | Whole-disk target for installation. If omitted, NICo selects the disk. |
+| `nico.vcluster.com/os-image-rootfs-id` | Root filesystem UUID. Use an identifier that matches the image. |
+| `nico.vcluster.com/os-image-rootfs-label` | Root filesystem label, as an alternative to its UUID. |
+| `nico.vcluster.com/os-image-id` | Reference an existing NICo operating system instead of creating one from an image URL. |
+
+NICo image-based operating systems require exactly one of the root filesystem UUID and label.
+Refer to the [NICo operating system API](https://docs.nvidia.com/infra-controller/rest-api-reference/api-reference/operating-system/create-operating-system) for image field requirements.
+
+For an image-based definition, the driver creates or finds `vcluster-<OSImage name>` in the consuming NICo tenant at first use.
+It waits for that operating system to become ready.
+It enables user data overrides so each instance can receive its bootstrap configuration.
+Use a new OSImage name for a new image version. Editing the image URL doesn't update an existing NICo operating system.
+
+### Use an existing NICo operating system
+
+Set `nico.vcluster.com/os-image-id` in the OSImage properties, or directly in the workload properties.
+The existing operating system must be usable by the target NICo tenant at the configured site.
+Verify its readiness, image settings, and `allowOverride: true` in NICo.
+The direct ID path doesn't configure those settings for you.
+
+If the merged workload properties contain `nico.vcluster.com/os-image-id`, that ID takes precedence over the `vcluster.com/os-image` reference.
+Avoid setting both unless that override is intentional.
+
+### Phone home, user data, and SSH
+
+The driver enables NICo phone home by default for newly created operating systems and instances.
+The host must reach NICo's phone-home service for the NICo provisioning workflow to finish.
+Set the workload property `nico.vcluster.com/phone-home-enabled: "false"` only if your site intentionally doesn't use phone home.
+This setting doesn't remove the requirement for a private node to join its cluster.
+
+The platform combines its bootstrap configuration with the supported [user data templates](../../../use-platform/machines/machine-config-templates.mdx) and [SSH key](../../../use-platform/machines/ssh-keys.mdx) settings.
+For cluster nodes, the bootstrap configuration includes the join command.
+For standalone instances, supply the access configuration your OS needs. Selecting an image alone doesn't grant SSH access.
+After creating an SSHKey, reference it in the workload properties:
+
+```yaml
+properties:
+  vcluster.com/ssh-keys: <ssh-key-name>
+```
+
+Add this property alongside the image and network selections, without replacing them.
+Tenant users also need permission to use the key or create their own SSH keys.
+
+## Provision an instance
+
+Use the project that should own the workload.
+Choose a ready network assigned to the platform for a platform project, or to that Tenant for a tenant project.
+The project's `allowedNodeTypes` and `allowedNetworkEnvironments` must permit your selections, and the user must have access to the OSImage.
+Tenant workloads must be provisioned from that Tenant's context. The setup commands above use the platform administrator context.
+Tenant users work in their own Tenant. A platform administrator can click <Button>Switch to Tenant...</Button> in the sidebar header and select the Tenant.
+
+To provision by node type, open the project's <NavStep>Instances</NavStep> page and click <Button>Launch Instance...</Button>.
+To target a specific physical machine, go to <NavStep>Bare Metal > Machines</NavStep>, click <Button>Provision</Button> on a free machine, and select the project.
+In either form, select the OS image, network environment, and management access settings, then click <Button>Provision Instance</Button> or <Button>Launch Instance</Button>.
+
+For the API example, set the project's management namespace, not the cluster's workload namespace.
+`p-default` is only an example. Use the namespace of your chosen platform or Tenant project.
+
+<PageVariables PROJECT_NAMESPACE="p-default" />
+
+The equivalent type-based NodeClaim is:
+
+<InterpolatedCodeBlock
+  language="yaml"
+  title="nico-instance.yaml"
+  code={'apiVersion: management.loft.sh/v1\n' +
+    'kind: NodeClaim\n' +
+    'metadata:\n' +
+    '  name: nico-worker\n' +
+    '  namespace: [[GLOBAL:PROJECT_NAMESPACE]]\n' +
+    'spec:\n' +
+    '  providerRef: [[GLOBAL:PROVIDER]]\n' +
+    '  typeRef: [[GLOBAL:NODE_TYPE]]\n' +
+    '  properties:\n' +
+    '    vcluster.com/network-environment: [[GLOBAL:NETWORK]]\n' +
+    '    vcluster.com/os-image: [[GLOBAL:OS_IMAGE]]'}
+/>
+
+To target one machine, replace `spec.typeRef` with `spec.machineRef`:
+
+```yaml
+machineRef: <machine-name>
+```
+
+`machineRef` and `typeRef` are mutually exclusive.
+Use the Machine resource name returned by the platform, not its hostname or NICo Core machine identifier.
+Targeted provisioning requires NICo's targeted-instance-creation capability for the tenant account.
+The integration requests that capability during onboarding.
+The capability update is best effort. Successful onboarding alone doesn't confirm that targeted provisioning is enabled for the site.
+
+Apply the manifest and inspect the claim while provisioning:
+
+<InterpolatedCodeBlock
+  language="bash"
+  code={'kubectl apply -f nico-instance.yaml\n' +
+    'kubectl get nodeclaims -n [[GLOBAL:PROJECT_NAMESPACE]]\n' +
+    'kubectl get nodeclaim nico-worker -n [[GLOBAL:PROJECT_NAMESPACE]] -o yaml'}
+/>
+
+The NodeClaim's conditions report provisioning progress.
+The `Provisioned` condition becomes `True` when NICo reports the instance ready. For cluster nodes, `Joined` becomes `True` once the node registers with the cluster.
+Its `nico.vcluster.com/instance-id` annotation identifies the NICo instance for further investigation.
+Don't edit controller-managed resource ID annotations.
+
+The examples select the network explicitly with `vcluster.com/network-environment`.
+If you omit it, the platform can use an accessible provider default, marked with `machines.vcluster.com/is-default-environment: "true"`.
+`Project.spec.allowedNetworkEnvironments` restricts both explicit and default selections.
+An omitted allowlist allows otherwise accessible networks. An empty list allows none.
+
+## Supply cluster nodes with Auto Nodes
+
+Create a cluster with [private nodes and Auto Nodes](/docs/vcluster/deploy/worker-nodes/private-nodes/auto-nodes).
+The cluster's project must have access to the provider's NodeTypes and the selected network.
+
+This `vcluster.yaml` requests one static worker:
+
+<InterpolatedCodeBlock
+  language="yaml"
+  title="vcluster.yaml"
+  code={'privateNodes:\n' +
+    '  enabled: true\n' +
+    '  autoNodes:\n' +
+    '    - provider: [[GLOBAL:PROVIDER]]\n' +
+    '      properties:\n' +
+    '        vcluster.com/network-environment: [[GLOBAL:NETWORK]]\n' +
+    '        vcluster.com/os-image: [[GLOBAL:OS_IMAGE]]\n' +
+    '      static:\n' +
+    '        - name: nico-workers\n' +
+    '          quantity: 1\n' +
+    '          nodeTypeSelector:\n' +
+    '            - property: vcluster.com/node-type\n' +
+    '              value: [[GLOBAL:NODE_TYPE]]'}
+/>
+
+The network and image properties are defaults for every pool in this provider entry. Pool-level properties can override them.
+For demand-based scaling, configure a dynamic pool with the same node type selector under that entry.
+See the [Auto Nodes configuration reference](/docs/vcluster/configure/vcluster-yaml/private-nodes/auto-nodes) for pool limits and scheduling settings.
+
+The platform creates a NodeClaim, waits for its network and OS, and asks NICo to provision an instance.
+The instance boots with the join configuration and registers as a cluster node.
+NICo instance readiness and Kubernetes node readiness are separate checks.
+Verify both the NodeClaim's conditions and `kubectl get nodes` in the cluster.
+
+The driver discovers GPU capacity, but doesn't install GPU drivers or Kubernetes device plugins.
+Include the necessary host software in your image and configure the cluster's GPU stack.
+
+## Cleanup and resource ownership
+
+Delete workloads before deleting their networks, and delete networks before removing a Tenant or NodeProvider.
+Keep the provider connection and issuer trust available until cleanup completes.
+Deleting a Kubernetes resource can start a destructive, asynchronous NICo operation.
+
+| Resource | Cleanup behavior |
+| --- | --- |
+| NodeClaim | Deletes its NICo instance and waits for deletion. Platform-owned type reservations are released afterward. NICo controls hardware cleanup and return to service. |
+| Platform-created VPC and prefix | Deleted with the NetworkEnvironment, prefix first. A platform network's managed IP block allocation is released afterward. |
+| VPC or prefix supplied through adoption properties | Retained in NICo. Any additional resources created by the platform are still cleaned up. |
+| Tenant instance type reservations and carved IP block | Managed reservations are released during Tenant cleanup. Dependencies or active use can block release. |
+| Account relationship created for a platform Tenant | Deleted during Tenant cleanup only if no allocations remain. Retained if external allocations remain. |
+| Existing tenant IP block, account relationship, or external allocation | Not deleted as a platform-owned resource. |
+| NICo tenant organization | Not deleted by the integration. |
+| NICo operating system created from an OSImage | Retained after instance deletion. Deleting the OSImage or the NodeProvider deletes the `vcluster-<OSImage name>` operating system once no NodeClaim references it. |
+| NICo operating system referenced by `os-image-id` | Not deleted by the integration. |
+
+For Auto Nodes, remove the pool or cluster first so it stops maintaining its NodeClaims.
+Then wait for those instances to deprovision before removing the environment.
+Tenant cleanup waits while associated NetworkEnvironments remain.
+Don't bypass cleanup by removing finalizers or manually deleting stored NICo IDs.
+
+## Troubleshoot provisioning
+
+Start with the management resources:
+
+<InterpolatedCodeBlock
+  language="bash"
+  code={'kubectl get nodeprovider [[GLOBAL:PROVIDER]] -o yaml\n' +
+    'kubectl get tenant [[GLOBAL:TENANT]] -o yaml\n' +
+    'kubectl get networkenvironments.management.loft.sh [[GLOBAL:NETWORK]] -o yaml\n' +
+    'kubectl get nodeclaims -n [[GLOBAL:PROJECT_NAMESPACE]] -o yaml'}
+/>
+
+Run these checks as a platform administrator. Skip the Tenant command for platform-owned workloads.
+For server logs, use the Kubernetes context hosting the platform and your actual deployment namespace.
+Correlate controller messages with NICo REST and site logs using the recorded instance, VPC, or prefix ID.
+
+| Symptom | Checks and next action |
+| --- | --- |
+| Provider rejected for licensing | Verify that the platform license includes the NICo node provider. |
+| NICo returns `401` or `403` | Check issuer, audience, role and organization mappings, JWKS reachability, TLS, and clock synchronization. Check NICo's REST API logs for the rejected claim. |
+| No NodeTypes | Check the configured site, instance type readiness, machine associations, and `instanceTypeIds` filter. Discovery doesn't create instance types. |
+| NodeTypes exist but there is no capacity | Check NICo allocations and usage. For a Tenant, verify positive per-type quotas or an external allocation. |
+| Tenant doesn't onboard | Check `nico.vcluster.com/org`, allowed NICo NodeTypes or the provider annotation, and `NICoOnboarded`. The org must be unique and must not equal a provider org. |
+| Onboarding reports multiple providers | Grant NICo NodeTypes from only one NodeProvider to that Tenant. |
+| Network stays pending | Check its assignment and conditions, Tenant onboarding, site access, and NICo VPC status. For FNN, also check its IP block and prefix. |
+| Platform FLAT network can't provision | Configure a valid `siteIPBlockID` with space for the site-access allocation. FLAT still needs a VPC and allocation-based site access. |
+| Visible network missing from instance selector | Check provider match, the project's Tenant, assignment, and `Project.spec.allowedNetworkEnvironments`. Network readiness is checked during provisioning, not used to filter this selector. |
+| Instance remains pending after boot | Check OS readiness, image reachability, filesystem settings, user data override permission, and the NICo phone-home path. |
+| Existing OS rejects user data | Verify `allowOverride: true`. This is especially important when selecting a NICo operating system ID directly. |
+| NICo instance is ready but the node has not joined | Check bootstrap logs on the host, private node prerequisites, control plane or VPN connectivity, DNS, and the cluster's node status. |
+| Targeted launch fails | Verify the Machine name and provider, that it is available and unclaimed, and that the tenant account has targeted-instance-creation capability. |
+| A delete remains pending | Check remaining instances, prefixes, allocations, and NICo resource status. Restore provider connectivity rather than removing finalizers. |
+
+## Limitations
+
+- Tenant onboarding supports one NICo NodeProvider per Tenant. Multiple Tenants can share that provider.
+- Existing NICo tenants can be linked. The platform API prevents changing or removing a Tenant's NICo organization mapping once set.
+- Network assignment and configuration are immutable. The integration doesn't move VPCs or running instances between tenants.
+- One VPC per NetworkEnvironment. FNN provisioning attaches one physical interface to one VPC prefix.
+- No configuration for additional VPC interfaces, InfiniBand partitions, Spectrum-X partitions, NVLink partitions, or VPC peering through this driver.
+- No `ETHERNET_VIRTUALIZER` support. FLAT isolation depends on the site's physical network.
+- Platform-issued identity only. No static-token or external credentials configuration on the NodeProvider.
+- No automatic parent IP block creation from `siteIPBlockCIDR`.
+- Machine inventory doesn't provide authoritative NICo power state or implement platform power-control operations. Use NICo for hardware power management.
+- Changes to an OSImage don't reimage running instances. Use a new image definition and replace the affected instances.
+- NICo operating systems referenced directly by `os-image-id` require separate cleanup in NICo.
