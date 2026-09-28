@@ -55,9 +55,21 @@ every kind of broken link, so also see
 
 Netlify builds a deploy preview only for PRs whose base branch is `main` or
 another branch Netlify deploys, such as `next`. A stacked PR, one that targets
-another PR's branch, gets no preview until its base merges.
+another PR's branch, gets no preview from Netlify.
 
-If you have access to the docs project in Netlify, you can deploy a draft
+The `stacked-pr-preview` workflow fills the gap. For a PR whose base isn't
+`main`, `next`, or a `vcluster-v*` or `platform-v*` branch, it builds the site
+and deploys a Netlify draft at the alias `pr-<number>`. It then posts the URL,
+`https://pr-<number>--vcluster-docs-site.netlify.app/docs/`, as a PR comment
+and updates both on every push. PRs from forks get no preview, because GitHub
+doesn't pass repository secrets to them. A native GitHub stack created with
+`gh stack` on top of `main` already gets Netlify Deploy Previews, so the
+workflow skips it.
+
+#### Deploy a preview by hand
+
+Use the manual steps when the workflow can't run, for example on a PR from a
+fork. If you have access to the docs project in Netlify, you can deploy a draft
 preview yourself with the Netlify CLI. Otherwise, ask someone who has access.
 The build needs about 11 GB of memory.
 
