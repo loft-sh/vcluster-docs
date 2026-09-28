@@ -42,9 +42,9 @@ then `hack/preview/deploy-stacked-preview.sh` uploads a draft deploy at the
 alias `pr-<number>` and a sticky comment posts the URL. It never passes
 `--prod`. PRs from forks are skipped because they don't receive secrets.
 
-It needs the repository secret `NETLIFY_AUTH_TOKEN`, a Netlify personal access
-token with access to the `vcluster-docs-site` project. The job fails if the
-secret is missing. `test-preview-scripts.yml` runs shellcheck and the bats
+It reads the org secret `NETLIFY_ACCESS_TOKEN`, a Netlify token with deploy
+access to the `vcluster-docs-site` project, and passes it to the Netlify CLI as
+`NETLIFY_AUTH_TOKEN`. The job fails if the secret is missing. `test-preview-scripts.yml` runs shellcheck and the bats
 suite for the deploy script:
 
 ```bash
