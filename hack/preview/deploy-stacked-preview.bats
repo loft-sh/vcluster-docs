@@ -17,7 +17,7 @@ while [[ $# -gt 0 ]]; do
     if [[ "$1" == "--alias" ]]; then alias="$2"; fi
     shift
 done
-printf '{"site_name":"vcluster-docs-site","deploy_id":"abc","deploy_url":"https://%s--vcluster-docs-site.netlify.app"}\n' "$alias"
+printf '{"site_name":"vcluster-docs-site","deploy_id":"abc","deploy_url":"https://%s--vcluster-docs-site.netlify.app","logs":"https://app.netlify.com/projects/vcluster-docs-site/deploys/abc"}\n' "$alias"
 STUB
     chmod +x "${STUB_DIR}/netlify"
     export NETLIFY_BIN="${STUB_DIR}/netlify"
@@ -49,10 +49,11 @@ teardown() {
     [ "$status" -ne 0 ]
 }
 
-@test "writes the docs URL to GITHUB_OUTPUT" {
+@test "writes the docs URL and deploy log URL to GITHUB_OUTPUT" {
     PR_NUMBER=2846 run "$SCRIPT"
     [ "$status" -eq 0 ]
     grep -Fx "url=https://pr-2846--vcluster-docs-site.netlify.app/docs/" "$GITHUB_OUTPUT"
+    grep -Fx "logs=https://app.netlify.com/projects/vcluster-docs-site/deploys/abc" "$GITHUB_OUTPUT"
 }
 
 @test "rejects a missing PR number" {

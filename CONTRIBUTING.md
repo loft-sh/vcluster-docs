@@ -62,7 +62,9 @@ The `stacked-pr-preview` workflow fills the gap. For a PR whose base isn't
 and deploys a Netlify draft at the alias `pr-<number>`. It then posts the URL,
 `https://pr-<number>--vcluster-docs-site.netlify.app/docs/`, as a PR comment
 and updates both on every push. PRs from forks get no preview, because GitHub
-doesn't pass repository secrets to them.
+doesn't pass repository secrets to them. A native GitHub stack created with
+`gh stack` on top of `main` already gets Netlify Deploy Previews, so the
+workflow skips it.
 
 #### Deploy a preview by hand
 

@@ -11,7 +11,8 @@
 #   NETLIFY_BIN          (optional) Netlify CLI executable. Used by the bats
 #                        suite instead of npx.
 #   PUBLISH_DIR          (optional) Built site folder. Default "public".
-#   GITHUB_OUTPUT        (optional) Receives "url=<preview docs URL>".
+#   GITHUB_OUTPUT        (optional) Receives "url=<preview docs URL>" and
+#                        "logs=<Netlify deploy log URL>".
 #
 # The alias always matches ^pr-[1-9][0-9]*$. Netlify serves an alias at the
 # same subdomain as a branch deploy with that name, and no deployed branch
@@ -50,7 +51,9 @@ if [[ -z "$deploy_url" ]]; then
 fi
 
 preview_url="${deploy_url%/}/docs/"
+logs_url="$(jq -r '.logs // empty' <<<"$result")"
 echo "Preview: ${preview_url}"
 if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
     echo "url=${preview_url}" >> "$GITHUB_OUTPUT"
+    echo "logs=${logs_url}" >> "$GITHUB_OUTPUT"
 fi
