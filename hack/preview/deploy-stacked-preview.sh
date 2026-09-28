@@ -39,7 +39,6 @@ netlify_cli() {
 result="$(netlify_cli deploy \
     --no-build \
     --json \
-    --context deploy-preview \
     --dir "$publish_dir" \
     --alias "$alias" \
     --message "Stacked PR #${pr_number} preview")"

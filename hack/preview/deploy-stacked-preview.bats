@@ -40,7 +40,13 @@ teardown() {
     run grep -Fx -- "--prod" "$NETLIFY_ARGS_FILE"
     [ "$status" -ne 0 ]
     grep -Fx -- "--no-build" "$NETLIFY_ARGS_FILE"
-    grep -Fx -- "deploy-preview" "$NETLIFY_ARGS_FILE"
+}
+
+@test "omits --context, which netlify-cli rejects with --no-build" {
+    PR_NUMBER=2846 run "$SCRIPT"
+    [ "$status" -eq 0 ]
+    run grep -Fx -- "--context" "$NETLIFY_ARGS_FILE"
+    [ "$status" -ne 0 ]
 }
 
 @test "writes the docs URL to GITHUB_OUTPUT" {
