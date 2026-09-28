@@ -1,0 +1,90 @@
+name: stacked-pr-preview
+
+# Netlify builds a Deploy Preview only for PRs whose base branch it deploys:
+# main, next, and the archived vcluster-v* and platform-v* branches. A stacked
+# PR targets another PR's branch, so reviewers saw no rendered pages until the
+# base merged, or someone with Netlify access deployed a draft by hand
+# (DEVOPS-1556). This workflow builds those PRs and uploads a Netlify draft
+# deploy at the fixed alias pr-<number>, then posts its URL on the PR.
+# Production and branch deploys are untouched: the deploy never passes --prod.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches-ignore:
+      - main
+      - next
+      - 'vcluster-v*'
+      - 'platform-v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: stacked-pr-preview-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  NETLIFY_CLI_VERSION: 27.10.0
+  # vcluster-docs-site. The site ID names the project and grants no access.
+  NETLIFY_SITE_ID: 9cf411b1-f9fe-4ebe-b75d-e8228be7004a
+
+jobs:
+  deploy:
+    name: Deploy stacked PR preview
+    # Secrets are not passed to PRs from forks, so those get no preview.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    # The Docusaurus build peaks around 10.6 GB; hosted runners for public
+    # repos have 16 GB.
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      pull-requests: write
+    env:
+      NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+    steps:
+      - name: Check Netlify token
+        run: |
+          if [[ -z "$NETLIFY_AUTH_TOKEN" ]]; then
+            echo "::error::Repository secret NETLIFY_AUTH_TOKEN is not set."
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Runs build.command from netlify.toml with its [build.environment] and
+      # the site's deploy-preview environment variables, as Netlify would.
+      - name: Build site
+        run: npx --yes "netlify-cli@${NETLIFY_CLI_VERSION}" build --context deploy-preview
+
+      - name: Deploy draft
+        id: deploy
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: bash hack/preview/deploy-stacked-preview.sh
+
+      - name: Comment preview URL
+        uses: loft-sh/github-actions/.github/actions/sticky-pr-comment@sticky-pr-comment/v1
+        with:
+          marker: '<!-- stacked-pr-preview -->'
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          body: |
+            ### Stacked PR preview
+
+            ${{ steps.deploy.outputs.url }}
+
+            Netlify doesn't build Deploy Previews for PRs against `${{ github.event.pull_request.base.ref }}`, so the `stacked-pr-preview` workflow deployed this draft. It updates on every push. Built from ${{ github.event.pull_request.head.sha }}.
+
+            To see unreleased changes, put `/next/` after the product path, for example `/docs/platform/next/`. Once this PR targets `main`, use the Netlify Deploy Preview instead.
