@@ -33,6 +33,28 @@ differ from the failed build. A green run that skips an alpha or stale release
 does not test the generator. The PR check covers the committed dependencies;
 the receiver still validates newly released API versions after bumping them.
 
+## Stacked PR preview (`stacked-pr-preview.yml`)
+
+Netlify builds Deploy Previews only for PRs against branches it deploys:
+`main`, `next`, and the archived `vcluster-v*` and `platform-v*` branches. For
+any other base, this workflow runs `netlify build --context deploy-preview`,
+then `hack/preview/deploy-stacked-preview.sh` uploads a draft deploy at the
+alias `pr-<number>` and a sticky comment posts the URL. It never passes
+`--prod`. PRs from forks are skipped because they don't receive secrets.
+`hack/preview/needs-stacked-preview.sh` also skips PRs in a native GitHub stack
+based on `main`, since Netlify already previews those.
+
+It reads the org secret `NETLIFY_ACCESS_TOKEN`, a Netlify token with deploy
+access to the `vcluster-docs-site` project, and passes it to the Netlify CLI as
+`NETLIFY_AUTH_TOKEN`. The job fails if the secret is missing.
+`test-preview-scripts.yml` runs shellcheck and the bats suites for the preview
+scripts:
+
+```bash
+shellcheck hack/preview/*.sh
+bats hack/preview/*.bats
+```
+
 ## Sync next branch (`sync-next-branch.yml`)
 Keeps `next` branch in sync with `main` by auto-merging or creating PRs when conflicts exist. Runs on push to main, daily, or manually. Never syncs in reverse (next → main is manual only).
 
