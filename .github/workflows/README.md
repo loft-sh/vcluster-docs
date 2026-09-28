@@ -44,8 +44,9 @@ alias `pr-<number>` and a sticky comment posts the URL. It never passes
 
 It reads the org secret `NETLIFY_ACCESS_TOKEN`, a Netlify token with deploy
 access to the `vcluster-docs-site` project, and passes it to the Netlify CLI as
-`NETLIFY_AUTH_TOKEN`. The job fails if the secret is missing. `test-preview-scripts.yml` runs shellcheck and the bats
-suite for the deploy script:
+`NETLIFY_AUTH_TOKEN`. The job fails if the secret is missing.
+`test-preview-scripts.yml` runs shellcheck and the bats suite for the deploy
+script:
 
 ```bash
 shellcheck hack/preview/*.sh
