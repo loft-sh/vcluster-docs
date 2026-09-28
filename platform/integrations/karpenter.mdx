@@ -6,21 +6,26 @@ sidebar_position: 7
 
 import Tabs from "@theme/Tabs";
 import TabItem from "@theme/TabItem";
+import InterpolatedCodeBlock from "@site/src/components/InterpolatedCodeBlock";
 
 vCluster is compatible with Karpenter and vCluster's features can be used in conjuntion with Karpenter to
 further reduce infrastructure costs.
 
-This article will explain how to [Create Designated Node Pool for a vCluster's Workload Pods](#create-designated-node-pool-for-a-vclusters-workload-pods), [Create Designated Node Pool for a Project](#create-designated-node-pool-for-a-project), and [Target Node Pool Based on vCluster Pod Labels](#target-node-pool-based-on-vcluster-pod-labels). All
+This article explains how to [create a designated node pool for a vCluster's workload pods](#create-designated-node-pool-for-a-vclusters-workload-pods), [create a designated node pool for a project](#create-designated-node-pool-for-a-project), and [target node pool based on vCluster pod labels](#target-node-pool-based-on-vcluster-pod-labels). All
 three of which can be powerful cost saving tools.
 
-This article assumes you are using a control plane cluster provisioned on one of the following managed Kubernetes services: EKS (Elastic Kubernetes Service) or AKS (Azure Kubernetes Service).
+This article assumes you are using a control plane cluster provisioned on one of the following managed Kubernetes services: EKS (Elastic Kubernetes Service), AKS (Azure Kubernetes Service), or GKE (Google Kubernetes Engine).
 
 The pattern `<value>` repeatedly occurs in this documentation and is meant to imply that the user should replace the value, angular brackets included, with their own.
 
-Much of this article borrows and builds upon the [Getting Started with Karpenter](https://karpenter.sh/docs/getting-started/getting-started-with-karpenter/) documentation and the [Karpenter Provider Azure README.md](https://github.com/Azure/karpenter-provider-azure). Most if not all scripts and yaml manifests were written by the others of those articles or articles of other AKS and Azure documentation. Some of those works were then modified while others remain the same.
+Much of this article borrows and builds upon the [Getting Started with Karpenter](https://karpenter.sh/docs/getting-started/getting-started-with-karpenter/) documentation, the [Karpenter Provider Azure README.md](https://github.com/Azure/karpenter-provider-azure), and the [Karpenter Provider GCP documentation](https://github.com/cloudpilot-ai/karpenter-provider-gcp/tree/main/docs). Most if not all scripts and yaml manifests were written by the authors of those articles or articles of other AKS, Azure, and GCP documentation. Some of those works were then modified while others remain the same.
+
+:::note
+The Karpenter core API version and NodeClass kind differ by cloud provider. The EKS and AKS examples in this article use `karpenter.sh/v1beta1`. The GCP provider ([cloudpilot-ai/karpenter-provider-gcp](https://github.com/cloudpilot-ai/karpenter-provider-gcp)) requires the current `karpenter.sh/v1` API and its own `GCENodeClass` kind. Follow only the tab that matches your control plane cluster's cloud provider, and don't mix fields between tabs.
+:::
 
 ### Pre-requisites
-1. Either an [EKS Kubernetes cluster](https://karpenter.sh/docs/getting-started/getting-started-with-karpenter) or an [AKS Kubernetes cluster](https://github.com/Azure/karpenter-provider-azure).
+1. Either an [EKS Kubernetes cluster](https://karpenter.sh/docs/getting-started/getting-started-with-karpenter), an [AKS Kubernetes cluster](https://github.com/Azure/karpenter-provider-azure), or a [GKE Standard cluster](https://cloud.google.com/kubernetes-engine/docs/how-to/creating-a-zonal-cluster).
 2. vCluster Platform installed on control plane cluster. Read [Deploy the vCluster Platform docs](https://www.vcluster.com/docs/platform/install/quick-start-guide#2-deploy-the-vcluster-platform).
 3. EKS specific requirements for vCluster Platform compatibility:
     1. EBS driver installed. [Get the Amazon EBS CSI driver add-on](https://docs.aws.amazon.com/eks/latest/userguide/managing-ebs-csi.html#adding-ebs-csi-eks-add-on).
@@ -42,80 +47,104 @@ allowVolumeExpansion: true
 
 ```
 
+4. GKE specific requirements: enable the Compute Engine, GKE, and IAM Service Account Credentials APIs used by the [Karpenter GCP provider](https://github.com/cloudpilot-ai/karpenter-provider-gcp):
+
+```bash
+gcloud services enable compute.googleapis.com container.googleapis.com iamcredentials.googleapis.com
+```
+
 ## Install Karpenter
 
 <Tabs defaultValue="EKS"
   values={[
     { label: "EKS RBAC Requirements", value: "EKS" },
     { label: "AKS RBAC Requirements", value: "AKS" },
+    { label: "GKE RBAC Requirements", value: "GKE" },
   ]}
 >
   <TabItem value="EKS">
 
 1. Run helm install for karpenter:
 
-```bash
-helm upgrade --install karpenter oci://public.ecr.aws/karpenter/karpenter --version "${KARPENTER_VERSION}" --namespace "${KARPENTER_NAMESPACE}" --create-namespace \
-  --set "settings.clusterName=<cluster_name_in_provider>" \
-  --set "settings.interruptionQueue=<cluster_name_in_provider>" \
-  --set controller.resources.requests.cpu=1 \
-  --set controller.resources.requests.memory=1Gi \
-  --set controller.resources.limits.cpu=1 \
-  --set controller.resources.limits.memory=1Gi \
-  --wait
-```
+Set `KARPENTER_VERSION` per the [Karpenter getting started guide](https://karpenter.sh/docs/getting-started/getting-started-with-karpenter/) before running this command.
+
+<InterpolatedCodeBlock
+  code={'export KARPENTER_NAMESPACE=kube-system\n' +
+'\n' +
+'helm upgrade --install karpenter oci://public.ecr.aws/karpenter/karpenter --version "${KARPENTER_VERSION}" --namespace "${KARPENTER_NAMESPACE}" --create-namespace \\\n' +
+'  --set "settings.clusterName=[[VAR:CLUSTER_NAME:my-cluster]]" \\\n' +
+'  --set "settings.interruptionQueue=[[VAR:CLUSTER_NAME:my-cluster]]" \\\n' +
+'  --set controller.resources.requests.cpu=1 \\\n' +
+'  --set controller.resources.requests.memory=1Gi \\\n' +
+'  --set controller.resources.limits.cpu=1 \\\n' +
+'  --set controller.resources.limits.memory=1Gi \\\n' +
+'  --wait'}
+  language="bash"
+/>
 
   </TabItem>
   <TabItem value="AKS">
 
-1. Enable OIDC issuer for your cluster if it is not enabled yet.
+1. Set your environment variables:
+
+<InterpolatedCodeBlock
+  code={'export RESOURCE_GROUP=[[VAR:RESOURCE_GROUP:my-resource-group]]\n' +
+'export CLUSTER_NAME=[[VAR:CLUSTER_NAME:my-cluster]]\n' +
+'export AZURE_LOCATION=[[VAR:AZURE_LOCATION:eastus]]\n' +
+'export IDENTITY_NAME=[[VAR:IDENTITY_NAME:karpentermsi]]\n' +
+'export KARPENTER_NAMESPACE=kube-system\n' +
+'export KARPENTER_VERSION=[[VAR:KARPENTER_VERSION:0-f83fadf2c99ffc2b7429cb40a316fcefc0c4752a]]'}
+  language="bash"
+/>
+
+2. Enable OIDC issuer for your cluster if it is not enabled yet.
 
 ```bash
 az aks update \
-  --resource-group <resource-group-name> \
-  --name <cluster-name> \
+  --resource-group "${RESOURCE_GROUP}" \
+  --name "${CLUSTER_NAME}" \
   --enable-oidc-issuer
 ```
 
-2. Enable OIDC workload identity for your cluster if it is not enabled yet.
+3. Enable OIDC workload identity for your cluster if it is not enabled yet.
 
 ```bash
 az aks update \
-  --resource-group <resource-group-name> \
-  --name <cluster-name> \
+  --resource-group "${RESOURCE_GROUP}" \
+  --name "${CLUSTER_NAME}" \
   --enable-workload-identity
 ```
 
-3. Set local AKS credentials.
+4. Set local AKS credentials.
 
 ```bash
-az aks get-credentials --name "<cluster-name>" --resource-group "resource-group-name" --overwrite-existing
+az aks get-credentials --name "${CLUSTER_NAME}" --resource-group "${RESOURCE_GROUP}" --overwrite-existing
+
+AKS_JSON=$(az aks show --name "${CLUSTER_NAME}" --resource-group "${RESOURCE_GROUP}" --output json)
 ```
 
-4. Create managed identity for karpenter.
+5. Create managed identity for karpenter.
 
 ```bash
-KMSI_JSON=$(az identity create --name karpentermsi --resource-group "<resource-group-name>" --location "<azure-location>")
+KMSI_JSON=$(az identity create --name "${IDENTITY_NAME}" --resource-group "${RESOURCE_GROUP}" --location "${AZURE_LOCATION}")
 ```
 
-
-
-5. Get the OIDC issuer URL.
+6. Get the OIDC issuer URL.
 
 ```bash
-export ISSUER_URL=$(az aks show --name <cluster-name> --resource-group <resource-group-name> --query "oidcIssuerProfile.issuerUrl" -o tsv)
+export ISSUER_URL=$(az aks show --name "${CLUSTER_NAME}" --resource-group "${RESOURCE_GROUP}" --query "oidcIssuerProfile.issuerUrl" -o tsv)
 ```
 
-6. You will then need to create a credential linked to the identity and a service account using the OIDC issuer URL.
+7. You will then need to create a credential linked to the identity and a service account using the OIDC issuer URL.
 
 ```bash
-az identity federated-credential create --name KARPENTER_FID --identity-name <identity> --resource-group "<resource_group>" \
+az identity federated-credential create --name KARPENTER_FID --identity-name "${IDENTITY_NAME}" --resource-group "${RESOURCE_GROUP}" \
   --issuer "${ISSUER_URL}" \
   --subject system:serviceaccount:kube-system:karpenter-sa \
   --audience api://AzureADTokenExchange
 ```
 
-7. Create the role assignments that Karpenter needs.
+8. Create the role assignments that Karpenter needs.
 ```bash
 KARPENTER_USER_ASSIGNED_CLIENT_ID=$(jq -r '.principalId' <<< "$KMSI_JSON")
 RG_MC=$(jq -r ".nodeResourceGroup" <<< "$AKS_JSON")
@@ -125,19 +154,16 @@ for role in "Virtual Machine Contributor" "Network Contributor" "Managed Identit
 done
 ```
 
-8. Generate values file needed to deploy Karpenter in AKS cluster.
+9. Generate values file needed to deploy Karpenter in AKS cluster.
 
 ```bash
 curl -sO https://raw.githubusercontent.com/Azure/karpenter-provider-azure/main/hack/deploy/configure-values.sh
-chmod +x ./configure-values.sh && ./configure-values.sh <cluster-name> <resource-group-name> karpenter-sa karpentermsi
+chmod +x ./configure-values.sh && ./configure-values.sh "${CLUSTER_NAME}" "${RESOURCE_GROUP}" karpenter-sa "${IDENTITY_NAME}"
 ```
 
-9. Finally, deploy Karpenter in your AKS cluster using helm upgrade:
+10. Finally, deploy Karpenter in your AKS cluster using helm upgrade:
 
 ```bash
-export KARPENTER_NAMESPACE=kube-system
-export KARPENTER_VERSION=0-f83fadf2c99ffc2b7429cb40a316fcefc0c4752a
-
 helm upgrade --install karpenter oci://ksnap.azurecr.io/karpenter/snapshot/karpenter \
   --version "${KARPENTER_VERSION}" \
   --namespace "${KARPENTER_NAMESPACE}"  --create-namespace \
@@ -152,6 +178,113 @@ kubectl logs -f -n "kube-system" -l app.kubernetes.io/name=karpenter -c controll
 ```
 
   </TabItem>
+  <TabItem value="GKE">
+
+1. Set your environment variables, then enable Workload Identity Federation for GKE on the cluster and on the node pool that will run Karpenter. Standard clusters don't enable this by default (Autopilot clusters always do), and it must be enabled at the cluster level before it can be enabled on a node pool:
+
+<InterpolatedCodeBlock
+  code={'export PROJECT_ID=[[VAR:PROJECT_ID:my-project-id]]\n' +
+'export CLUSTER_NAME=[[VAR:CLUSTER_NAME:my-cluster]]\n' +
+'export REGION=[[VAR:REGION:us-central1]]\n' +
+'export NODE_POOL_NAME=[[VAR:NODE_POOL_NAME:default-pool]]'}
+  language="bash"
+/>
+
+```bash
+gcloud container clusters update "${CLUSTER_NAME}" \
+  --location="${REGION}" \
+  --workload-pool="${PROJECT_ID}.svc.id.goog"
+
+gcloud container node-pools update "${NODE_POOL_NAME}" \
+  --cluster="${CLUSTER_NAME}" \
+  --location="${REGION}" \
+  --workload-metadata=GKE_METADATA
+```
+
+:::note
+Skip this step if the cluster was created with `--workload-pool` and its node pools already use `--workload-metadata=GKE_METADATA`. See [Google's Workload Identity Federation for GKE guide](https://docs.cloud.google.com/kubernetes-engine/docs/how-to/workload-identity#enable_on_clusters_and_node_pools) for details.
+:::
+
+2. Create a GCP service account for the Karpenter controller and grant it the minimal IAM role from the provider's canonical permission list:
+
+<InterpolatedCodeBlock
+  code={'export GSA_NAME=[[VAR:GSA_NAME:karpenter-gsa]]'}
+  language="bash"
+/>
+
+```bash
+gcloud iam service-accounts create "${GSA_NAME}" --project="${PROJECT_ID}"
+
+curl -fsSL https://raw.githubusercontent.com/cloudpilot-ai/karpenter-provider-gcp/main/deploy/iam/karpenter-controller-role.yaml \
+  -o karpenter-controller-role.yaml
+gcloud iam roles create karpenter_controller \
+  --project="${PROJECT_ID}" \
+  --file=karpenter-controller-role.yaml
+
+gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+  --member="serviceAccount:${GSA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com" \
+  --role="projects/${PROJECT_ID}/roles/karpenter_controller"
+```
+
+3. Create a dedicated node service account. This replaces the Compute Engine default service account, which has broad `roles/editor`-equivalent access:
+
+<InterpolatedCodeBlock
+  code={'export NODE_SA_NAME=[[VAR:NODE_SA_NAME:karpenter-node]]'}
+  language="bash"
+/>
+
+```bash
+export NODE_SA_EMAIL="${NODE_SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
+
+gcloud iam service-accounts create "${NODE_SA_NAME}" --project="${PROJECT_ID}"
+
+gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+  --member="serviceAccount:${NODE_SA_EMAIL}" \
+  --role="roles/container.nodeServiceAccount"
+
+gcloud iam service-accounts add-iam-policy-binding "${NODE_SA_EMAIL}" \
+  --role roles/iam.serviceAccountUser \
+  --member "serviceAccount:${GSA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com" \
+  --project "${PROJECT_ID}"
+```
+
+4. Install Karpenter with Helm, pointing new nodes at the dedicated node service account:
+
+```bash
+helm repo add karpenter-provider-gcp https://cloudpilot-ai.github.io/karpenter-provider-gcp
+helm repo update
+
+helm upgrade --install karpenter-crd karpenter-provider-gcp/karpenter-crd
+
+helm upgrade --install karpenter karpenter-provider-gcp/karpenter \
+  --namespace karpenter-system --create-namespace \
+  --set "controller.settings.projectID=${PROJECT_ID}" \
+  --set "controller.settings.clusterLocation=${REGION}" \
+  --set "controller.settings.clusterName=${CLUSTER_NAME}" \
+  --set "controller.settings.defaultNodepoolServiceAccount=${NODE_SA_EMAIL}" \
+  --set "credentials.enabled=false" \
+  --set "serviceAccount.annotations.iam\.gke\.io/gcp-service-account=${GSA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com" \
+  --wait
+```
+
+5. Bind Workload Identity so the Karpenter Kubernetes service account can impersonate the GCP service account:
+
+```bash
+gcloud iam service-accounts add-iam-policy-binding \
+  "${GSA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com" \
+  --role roles/iam.workloadIdentityUser \
+  --member "serviceAccount:${PROJECT_ID}.svc.id.goog[karpenter-system/karpenter]"
+```
+
+6. Verify the Karpenter controller pod reaches `Running` state:
+
+```bash
+kubectl get pods -n karpenter-system
+```
+
+If Workload Identity isn't available in your environment, see the [service account key alternative](https://github.com/cloudpilot-ai/karpenter-provider-gcp/blob/main/docs/getting-started/installation.md#alternative-service-account-keys) in the provider's installation guide.
+
+  </TabItem>
 </Tabs>
 
 ## Configure control plane cluster Kubernetes RBAC permissions
@@ -163,6 +296,7 @@ To deploy the manifests presented in the remainder of this article you will need
   values={[
     { label: "EKS RBAC Requirements", value: "EKS" },
     { label: "AKS RBAC Requirements", value: "AKS" },
+    { label: "GKE RBAC Requirements", value: "GKE" },
   ]}
 >
   <TabItem value="EKS">
@@ -173,18 +307,22 @@ To deploy the manifests presented in the remainder of this article you will need
     * Create `NodePools.karpenter.sh/v1beta1` in control plane cluster.
     * Create `AKSNodeClass.karpenter.sh/v1beta1` in control plane cluster.
   </TabItem>
+  <TabItem value="GKE">
+    * Create `NodePools.karpenter.sh/v1` in control plane cluster.
+    * Create `GCENodeClass.karpenter.k8s.gcp/v1alpha1` in control plane cluster.
+  </TabItem>
 </Tabs>
 
-## Create Node Pools
+## Create node pools
 
-### Create Designated Node Pool for a vCluster's Workload Pods
+### Create designated node pool for a vCluster's workload pods
 
-<h4>vCluster Platform Permissions</h4>
+<h4>Required permissions</h4>
 
 The following permissions will be required in vCluster Platform:
       * Create clusters
 
-<h4>Create Node Pool</h4>
+<h4>Create node pool</h4>
 
 This section utilizes taints and tolerations to guide cluster pods to the desired node. This works best if every node pool or node utilizes a taint. Otherwise, the pods may be scheduled on non-tainted nodes.
 1. Select "Create Cluster"
@@ -205,6 +343,7 @@ sync:
   values={[
     { label: "Provision Node Pool for EKS", value: "EKS" },
     { label: "Provision Node Pool for AKS", value: "AKS" },
+    { label: "Provision Node Pool for GKE", value: "GKE" },
   ]}
 >
   <TabItem value="EKS">
@@ -252,7 +391,7 @@ sync:
     apiVersion: karpenter.k8s.aws/v1beta1
     kind: EC2NodeClass
     metadata:
-      name: <name-of-your-choosing>
+      name: <node-class-name>
     spec:
       amiFamily: AL2 # Amazon Linux 2
       role: "KarpenterNodeRole-<cluster-name>"
@@ -311,9 +450,63 @@ EOF
     apiVersion: karpenter.azure.com/v1alpha2
     kind: AKSNodeClass
     metadata:
-      name: <name-of-your-choosing>
+      name: <node-class-name>
     spec:
       imageFamily: Ubuntu2204
+EOF
+    ```
+  </TabItem>
+  <TabItem value="GKE">
+
+    ```bash
+    cat <<EOF | kubectl apply -f -
+    ---
+    apiVersion: karpenter.sh/v1
+    kind: NodePool
+    metadata:
+      name: <name-of-your-choosing>
+    spec:
+      template:
+        spec:
+          taints:
+          - key: vclusterID
+            value:  <vcluster-id>
+            effect: NoSchedule
+          requirements:
+            - key: kubernetes.io/arch
+              operator: In
+              values: ["amd64"]
+            - key: kubernetes.io/os
+              operator: In
+              values: ["linux"]
+            - key: karpenter.sh/capacity-type
+              operator: In
+              values: ["spot"]
+            - key: karpenter.k8s.gcp/instance-family
+              operator: In
+              values: ["n4", "n2", "e2"]
+          nodeClassRef:
+            group: karpenter.k8s.gcp
+            kind: GCENodeClass
+            name: <node-class-name>
+      limits:
+        cpu: 100
+      disruption:
+        consolidationPolicy: WhenEmptyOrUnderutilized
+        consolidateAfter: 0s
+    ---
+    apiVersion: karpenter.k8s.gcp/v1alpha1
+    kind: GCENodeClass
+    metadata:
+      name: <node-class-name>
+    spec:
+      serviceAccount: "<node-service-account-email>"
+      imageSelectorTerms:
+        - family: ContainerOptimizedOS
+          channel: cluster
+      disks:
+        - sizeGiB: 60
+          boot: true
 EOF
     ```
   </TabItem>
@@ -355,18 +548,18 @@ You should see nodes provision for the deployment. If you do the above on a vClu
 kubectl delete deployment inflate
 ```
 
-### Create Designated Node Pool for a Project
+### Create designated node pool for a project
 We will designate a node pool for a project by creating templates and enforcing the template for that project.
 
 
-<h4>vCluster Platform Permissions</h4>
+<h4>Required permissions</h4>
 
 The following permissions will be required in vCluster Platform:
       * Create vCluster Templates
       * Create Projects
 
 
-<h4>Create Node Pool</h4>
+<h4>Create node pool</h4>
 
 1. Using the vCluster Platform add a template: Templates -> Clusters -> Add Cluster Template.
 2. In the yaml editor box, which contains the vcluster.yaml, add the following:
@@ -384,6 +577,7 @@ sync:
   values={[
     { label: "Provision NodePool for EKS", value: "EKS" },
     { label: "Provision NodePool for AKS", value: "AKS" },
+    { label: "Provision NodePool for GKE", value: "GKE" },
   ]}
 >
   <TabItem value="EKS">
@@ -430,7 +624,7 @@ sync:
     apiVersion: karpenter.k8s.aws/v1beta1
     kind: EC2NodeClass
     metadata:
-      name: <name-of-your-choosing>
+      name: <node-class-name>
     spec:
       amiFamily: AL2 # Amazon Linux 2
       role: "<karpenter-node-role>" # replace with your cluster name
@@ -488,9 +682,63 @@ EOF
     apiVersion: karpenter.azure.com/v1alpha2
     kind: AKSNodeClass
     metadata:
-      name: <name-of-your-choosing>
+      name: <node-class-name>
     spec:
       imageFamily: Ubuntu2204
+EOF
+```
+
+  </TabItem>
+  <TabItem value="GKE">
+
+    ```bash
+    cat <<EOF | kubectl apply -f -
+    apiVersion: karpenter.sh/v1
+    kind: NodePool
+    metadata:
+      name: <name-of-your-choosing>
+    spec:
+      template:
+        spec:
+          taints:
+          - key: <project-name>
+            value: "true"
+            effect: NoSchedule
+          requirements:
+            - key: kubernetes.io/arch
+              operator: In
+              values: ["amd64"]
+            - key: kubernetes.io/os
+              operator: In
+              values: ["linux"]
+            - key: karpenter.sh/capacity-type
+              operator: In
+              values: ["spot"]
+            - key: karpenter.k8s.gcp/instance-family
+              operator: In
+              values: ["n4", "n2", "e2"]
+          nodeClassRef:
+            group: karpenter.k8s.gcp
+            kind: GCENodeClass
+            name: <node-class-name>
+      limits:
+        cpu: 100
+      disruption:
+        consolidationPolicy: WhenEmptyOrUnderutilized
+        consolidateAfter: 0s
+    ---
+    apiVersion: karpenter.k8s.gcp/v1alpha1
+    kind: GCENodeClass
+    metadata:
+      name: <node-class-name>
+    spec:
+      serviceAccount: "<node-service-account-email>"
+      imageSelectorTerms:
+        - family: ContainerOptimizedOS
+          channel: cluster
+      disks:
+        - sizeGiB: 60
+          boot: true
 EOF
 ```
 
@@ -499,22 +747,23 @@ EOF
 
 4. Create a new project that only allows templates with set tolerations. Go to project dropdown and create a new project. In the Allowed Templates section, remove the All Templates option. Select the templates that include tolerations for the node pool created in step 3. Now, all pods created in clusters belonging to this project will deploy to the designated node pools.
 
-### Target Node Pool Based on vCluster Pod Labels
+### Target node pool based on vCluster pod labels
 
-<h4>vCluster Platform Permissions</h4>
+<h4>Required permissions</h4>
 
 The following permissions will be required in vCluster Platform:
       * Create clusters
 
-<h4>Create Node Pool</h4>
+<h4>Create node pool</h4>
 
-1. Create a node pool with custom labels e.g. `my.org/environ`.
+1. Create a node pool with custom labels, for example `my.org/environ`.
 
 <Tabs
   defaultValue="EKS"
   values={[
     { label: "Provision NodePool for EKS", value: "EKS" },
     { label: "Provision NodePool for AKS", value: "AKS" },
+    { label: "Provision NodePool for GKE", value: "GKE" },
   ]}
 >
   <TabItem value="EKS">
@@ -559,7 +808,7 @@ The following permissions will be required in vCluster Platform:
   apiVersion: karpenter.k8s.aws/v1beta1
   kind: EC2NodeClass
   metadata:
-    name: <name-of-your-choosing>
+    name: <node-class-name>
   spec:
     amiFamily: AL2 # Amazon Linux 2
     role: "<karpenter-node-role>" # replace with your cluster name
@@ -615,9 +864,61 @@ EOF
     apiVersion: karpenter.azure.com/v1alpha2
     kind: AKSNodeClass
     metadata:
-      name: <name-of-your-choosing>
+      name: <node-class-name>
     spec:
       imageFamily: Ubuntu2204
+EOF
+```
+
+  </TabItem>
+  <TabItem value="GKE">
+
+    ```bash
+    cat <<EOF | kubectl apply -f -
+    apiVersion: karpenter.sh/v1
+    kind: NodePool
+    metadata:
+      name: default
+    spec:
+      template:
+        spec:
+          requirements:
+            - key: kubernetes.io/arch
+              operator: In
+              values: ["amd64"]
+            - key: kubernetes.io/os
+              operator: In
+              values: ["linux"]
+            - key: karpenter.sh/capacity-type
+              operator: In
+              values: ["spot"]
+            - key: karpenter.k8s.gcp/instance-family
+              operator: In
+              values: ["n4", "n2", "e2"]
+            - key: my.org/environ
+              operator: Exists
+          nodeClassRef:
+            group: karpenter.k8s.gcp
+            kind: GCENodeClass
+            name: <node-class-name>
+      limits:
+        cpu: 100
+      disruption:
+        consolidationPolicy: WhenEmptyOrUnderutilized
+        consolidateAfter: 0s
+    ---
+    apiVersion: karpenter.k8s.gcp/v1alpha1
+    kind: GCENodeClass
+    metadata:
+      name: <node-class-name>
+    spec:
+      serviceAccount: "<node-service-account-email>"
+      imageSelectorTerms:
+        - family: ContainerOptimizedOS
+          channel: cluster
+      disks:
+        - sizeGiB: 60
+          boot: true
 EOF
 ```
 
