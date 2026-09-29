@@ -16,9 +16,8 @@ Edge collectors are OpenTelemetry Collectors that scrape or receive metrics near
 workloads, then send OTLP to the Write Gateway. Each collector request must include a bearer
 token and scope headers that match a `metrics-writer` access key.
 
-Deploy collectors once the gateway is running and a `metrics-writer` key is in place, as
-described in [Install the observability gateway](./install-observability-gateway.mdx) and
-[Configure metrics access](./configure-metrics-access.mdx).
+Deploy collectors once the gateway is running, as described in
+[Install the observability gateway](./install-observability-gateway.mdx).
 
 ## Deploy collectors with Argo CD
 
@@ -33,27 +32,40 @@ Standalone clusters can't use. There is no bundled collector for them. Configure
 collector manually instead, as described below.
 :::
 
-Each collector authenticates to the gateway with a `metrics-writer` bearer token. Create a
-Secret named `otel-otlp-auth` in the collector namespace before you deploy, or pass the
-token through the `bearerToken` parameter.
+The collectors read the gateway endpoint, their `metrics-writer` token, and the gateway CA
+from a `metrics-writer` Secret in the collector namespace. The Secret carries three keys:
 
-```yaml title="otel-otlp-auth.yaml"
-apiVersion: v1
-kind: Secret
-metadata:
-  name: otel-otlp-auth
-  namespace: observability
-type: Opaque
-stringData:
-  authorization: "Bearer REPLACE_WITH_METRICS_WRITER_KEY"
-```
+| Key | Content |
+|---|---|
+| `endpoint` | OTLP HTTP URL of the Write Gateway, including the `https://` scheme. |
+| `token` | The `metrics-writer` access key, with no `Bearer ` prefix. |
+| `ca.crt` | PEM CA that issued the gateway serving certificate. Must be present, but can be empty to verify against the system CA trust store. |
 
-Create the writer key first, as described in
-[Create a writer key for a cluster](./configure-metrics-access.mdx#create-a-writer-key-for-a-cluster)
-or [Create a writer key for a control plane cluster](./configure-metrics-access.mdx#create-a-writer-key-for-a-control-plane-cluster),
-then deploy the collectors. The walkthrough below deploys to a cluster. For a
-control plane cluster, swap `destination.cluster` in for `destination.virtualCluster`, as
-described at the end of this section.
+The collectors re-read the token on every request, so a rotated token takes effect without
+a restart. A changed endpoint or CA takes effect only after you restart the collectors.
+
+How the Secret gets there depends on the destination:
+
+- **Cluster:** turn on the observability integration in the cluster's
+  `vcluster.yaml`. Platform issues the `metrics-writer` key, and the cluster writes
+  the Secret into its `observability` namespace and keeps it up to date:
+
+  ```yaml title="vcluster.yaml"
+  integrations:
+    observability:
+      enabled: true
+      connector: fleet-observability   # the connector Secret's name
+  ```
+
+  To deliver the Secret elsewhere, set `integrations.observability.gatewaySecret.namespace`
+  and `integrations.observability.gatewaySecret.name`, and set the template's
+  `destinationNamespace` and `gatewaySecretName` parameters to match.
+- **Control plane cluster:** nothing delivers the Secret, so create it yourself, as
+  described in [Create the Secret for a control plane cluster](#create-the-secret-for-a-control-plane-cluster).
+
+The walkthrough below deploys to a cluster. For a control plane cluster, swap
+`destination.cluster` in for `destination.virtualCluster`, as described at the end of this
+section.
 
 <Tabs
   defaultValue="ui"
@@ -84,7 +96,6 @@ spec:
     name: cluster-collector
   parameters:
     destinationNamespace: observability
-    otlpEndpoint: https://gateway-fleet-observability.vcluster-platform.svc.cluster.local:4318
     project: default
 ```
 
@@ -111,7 +122,7 @@ spec:
     From the <Label>Argo CD Application Template</Label> dropdown, select the <Label>Fleet Observability: Cluster Collector</Label> template.
   </Step>
   <Step>
-    Fill the <Label>Template Parameters</Label>. Set <Label>destinationNamespace</Label> to `observability` and <Label>otlpEndpoint</Label> to the Write Gateway endpoint. Use the in-cluster Service endpoint for collectors in the Platform cluster, or the gateway LoadBalancer address for collectors in a cluster elsewhere.
+    Fill the <Label>Template Parameters</Label>. Set <Label>destinationNamespace</Label> to the namespace of the `metrics-writer` Secret, which is `observability` by default.
   </Step>
   <Step>
     Click <Button>Save</Button> to add the Argo CD Application to the cluster.
@@ -123,12 +134,11 @@ spec:
 
 | Parameter | Default | Description |
 |---|---|---|
-| `destinationNamespace` | `observability` | Namespace for the collectors. |
+| `destinationNamespace` | `observability` | Namespace for the collectors. It must contain the `metrics-writer` Secret. |
 | `project` | `default` | Argo CD project that owns the application. |
-| `otlpEndpoint` | Fleet Write Gateway Service | OTLP HTTP endpoint the collectors push to. Use the in-cluster Service endpoint (`:4318`) for collectors in the Platform cluster, or the gateway LoadBalancer address (`https://<loadbalancer-address>:4318`) for collectors elsewhere. See [Expose the gateway with a LoadBalancer](./install-observability-gateway.mdx#expose-the-gateway-with-a-loadbalancer). |
-| `bearerToken` | _(empty)_ | `metrics-writer` bearer token. When empty, the collectors read the `otel-otlp-auth` Secret. |
-| `otlpCaData` | _(empty)_ | PEM CA data used to verify the gateway serving certificate. |
-| `otlpInsecureSkipVerify` | `false` | Skip gateway TLS verification. Use only for test gateways. |
+| `gatewaySecretName` | `metrics-writer` | Name of the Secret the collectors read the endpoint, token, and CA from. |
+| `otlpCaData` | _(empty)_ | PEM CA data used to verify the gateway serving certificate in place of the Secret's `ca.crt`. |
+| `collectionInterval` | `30s` | Scrape interval for the jobs the collectors scrape themselves. |
 | `otelDaemonResources` | _(empty)_ | Resource requests and limits for the `otel-daemon` collector container, as a multiline YAML block. See the example below. When empty, the chart default applies, which sets no requests or limits. |
 | `otelDeployResources` | _(empty)_ | Resource requests and limits for the `otel-deploy` collector container, in the same format as `otelDaemonResources`. When empty, the chart default applies, which sets no requests or limits. |
 
@@ -166,6 +176,36 @@ extra configuration. See
 
 On a cluster, this template also scrapes the cluster control plane's backing store.
 See [Cluster backing store metrics](#cluster-backing-store-metrics) below.
+
+### Create the Secret for a control plane cluster
+
+Nothing delivers the `metrics-writer` Secret to a control plane cluster, so create it
+before you deploy the collectors. Create the writer key first, as described in
+[Create a writer key for a control plane cluster](./configure-metrics-access.mdx#create-a-writer-key-for-a-control-plane-cluster).
+
+On the cluster where Platform runs, export the CA of the default Platform-managed gateway
+certificate:
+
+```bash
+CONNECTOR_ID=fleet-observability
+kubectl get secret -n vcluster-platform "gateway-${CONNECTOR_ID}-tls" \
+  -o jsonpath='{.data.ca\.crt}' | base64 -d > ca.crt
+```
+
+For a gateway certificate issued by a public CA, create an empty `ca.crt` file instead.
+
+On the control plane cluster, create the Secret. Use the in-cluster Service endpoint for
+the cluster where Platform runs, or the gateway LoadBalancer address
+(`https://<loadbalancer-address>:4318`) for any other cluster. See
+[Gateway endpoints](#gateway-endpoints).
+
+```bash
+kubectl create namespace observability
+kubectl create secret generic metrics-writer -n observability \
+  --from-literal=endpoint=https://gateway-fleet-observability.vcluster-platform.svc.cluster.local:4318 \
+  --from-literal=token=REPLACE_WITH_METRICS_WRITER_KEY \
+  --from-file=ca.crt=ca.crt
+```
 
 ## Cluster backing store metrics
 
