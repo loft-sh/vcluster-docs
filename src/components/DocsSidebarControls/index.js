@@ -14,10 +14,22 @@ import {
 import styles from './styles.module.css';
 
 const sections = [
+  {label: 'Docs overview', to: '/', id: 'overview', icon: 'home'},
   {label: 'vCluster', to: '/vcluster/', id: 'vcluster'},
   {label: 'vMetal', to: '/platform/next/vmetal/overview', id: 'vmetal'},
   {label: 'Platform', to: '/platform/', id: 'platform'},
 ];
+
+function HomeIcon() {
+  return (
+    <svg
+      className={styles.homeIcon}
+      viewBox="0 0 24 24"
+      aria-hidden="true">
+      <path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z" />
+    </svg>
+  );
+}
 
 function getActiveSection(pathname) {
   if (pathname.startsWith('/docs/vcluster')) {
@@ -59,7 +71,7 @@ export default function DocsSidebarControls({className}) {
 
   return (
     <div className={clsx(styles.controls, className)}>
-      <nav className={styles.productSwitcher} aria-label="Documentation products">
+      <nav className={styles.sectionSwitcher} aria-label="Documentation sections">
         {sections.map((section) => {
           const active = section.id === activeSection;
 
@@ -67,9 +79,11 @@ export default function DocsSidebarControls({className}) {
             <Link
               key={section.id}
               to={section.to}
-              className={clsx(styles.productLink, active && styles.productLinkActive)}
+              className={clsx(styles.sectionLink, active && styles.sectionLinkActive)}
+              aria-label={section.icon ? section.label : undefined}
+              title={section.icon ? section.label : undefined}
               aria-current={active ? 'page' : undefined}>
-              {section.label}
+              {section.icon === 'home' ? <HomeIcon /> : section.label}
             </Link>
           );
         })}
