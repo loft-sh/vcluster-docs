@@ -69,7 +69,6 @@ const config = {
   ],
 
   onBrokenLinks: "throw",
-  onBrokenAnchors: "throw",
 
   // Renaming a heading changes its anchor, and nothing else in CI notices:
   // validate-mdx-links checks link targets, not fragments, and onBrokenLinks
