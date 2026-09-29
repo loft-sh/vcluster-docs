@@ -1,0 +1,93 @@
+---
+title: Machine Inventory
+sidebar_label: Machine Inventory
+sidebar_position: 0.5
+description: The read-only Machine inventory mirror vMetal syncs from a provider, distinct from the NodeClaim (instance) that claims it and the BareMetalHost that the Metal3 driver manages directly.
+toc_max_heading_level: 3
+---
+
+:::info Requires Platform 4.13.0-alpha.1 or later
+Everything on this page is part of the machine inventory layer introduced in Platform 4.13. None of it is available in 4.12. For the GA clusterless provisioning path that doesn't depend on it, see [Independently provisioned instances](../deploy/independently-provisioned-machines.mdx).
+:::
+
+A `Machine` is a read-only mirror of one physical machine in a provider's inventory. The platform's inventory sync creates, updates, and deletes it from what the provider reports. You can't write its `spec` or `status`, only add or change its labels and annotations. This is a different object from the [instance](./machine-lifecycle.mdx) that claims capacity and the `BareMetalHost` that the Metal3 driver manages directly.
+
+## Machine, NodeClaim, and BareMetalHost
+
+Three objects describe overlapping things about one physical server, and each answers a different question:
+
+| Object | Answers | Written by |
+|---|---|---|
+| `Machine` | What does the provider's inventory currently say about this server? | The platform's inventory sync. Read-only for users. |
+| `NodeClaim` (instance) | Is this server claimed, and by what? | The platform, in response to a request. See [Instance and server concepts](./machine-lifecycle.mdx). |
+| `BareMetalHost` | What is Metal3 doing to provision or clean this specific server? | The Metal3 driver and Bare Metal Operator. |
+
+A Machine's identity doesn't depend on a claim. Claimed or not, it exists for as long as the provider reports the server. An instance's identity is the opposite: it exists only for the duration of one claim.
+
+## Identity
+
+A Machine is cluster-scoped. Its resource name is `<providerRef>.<provider-native-machine-id>`, for example `metal3-provider.host-042` for a Metal3-backed server (the `BareMetalHost` name) or the machine ID a NICo provider reports. `spec.displayName` is presentation only, not part of the resource name. When you reference a Machine by name, such as in `machineRef` below, use the full qualified form.
+
+## What you can and can't change
+
+You can't create or delete a Machine, or change its `spec` or `status` — the inventory sync owns both, and the spec is immutable once written. You can add or change ordinary labels and annotations on it, the same way you would on any Kubernetes object.
+
+Three exceptions are platform-owned and rejected if you try to change them:
+
+- The `machines.vcluster.com/source` label, which records which inventory source produced the Machine.
+- The NetBox device annotation and the `netbox.vcluster.com/` annotation namespace, on Machines synced from NetBox.
+
+## Provider-dependent fields
+
+`status.phase` is `Pending`, `Available`, `Provisioned`, `Provisioning`, `Maintenance`, `Error`, or `Unknown`. `status.powerState` is `On`, `Off`, or `Unknown`, and `status.hardware` normalizes CPU, memory, storage, GPU, DPU, network, and InfiniBand capabilities across drivers.
+
+Not every provider reports every field. Power state is empty when a driver doesn't support it, and the platform UI hides an unavailable value rather than showing a false one. Don't assume a field is populated across every driver; check what the specific provider you're using reports.
+
+## Phase isn't claim occupancy
+
+`status.phase` describes the provider's view of the server, not whether a Platform claim holds it. A Machine can read `Available` from the provider's side while a `NodeClaim` already holds it, if the claim hasn't reached a phase the provider recognizes yet, or the reverse.
+
+The `machines.vcluster.com/node-claim` annotation is the actual claim signal. The platform sets it to `<namespace>/<name>` of the `NodeClaim` currently consuming the Machine, and clears it when the claim is released. Before treating a Machine as free to claim, confirm this annotation is absent — `Available` alone isn't sufficient evidence.
+
+## Sync failures
+
+If a provider's inventory listing fails, the platform doesn't guess. Existing Machine mirrors are retained, moved to `Unknown` phase, and marked `Synced=False` with reason `ListFailed`. `lastSyncTime` stays frozen at the last confirmed state rather than advancing, so you can tell a stale mirror from a current one.
+
+A Machine is removed only after a *successful* inventory listing confirms the provider no longer reports it. A failed listing never deletes Machines, even if the provider would otherwise appear to have fewer servers.
+
+## Claim a specific machine
+
+`NodeClaimSpec.MachineRef` pins a claim to one named Machine from the provider's inventory, instead of letting the platform select from a node type's eligible pool. It's mutually exclusive with `TypeRef`, and a pinned claim consumes no node-type capacity.
+
+```yaml
+apiVersion: management.loft.sh/v1
+kind: NodeClaim
+metadata:
+  name: pinned-claim
+  namespace: loft-p-my-project
+spec:
+  displayName: "Pinned to host-042"
+  providerRef: metal3-provider
+  machineRef: metal3-provider.host-042
+```
+
+The referenced Machine must exist and belong to the same `providerRef` as the claim. A missing Machine or a provider mismatch is rejected at admission time. As of 4.13, both Metal3 and NICo support `machineRef`; a provider without machine inventory doesn't.
+
+## Inventory sources
+
+Where a Machine's data comes from depends on the provider:
+
+- **Metal3** mirrors its own `BareMetalHost` inventory directly. Every Metal3-managed server already has a corresponding Machine.
+- **NetBox** can be configured as a Metal3 inventory source (`MachineSourceNetBox`), importing device records instead of relying solely on manually registered `BareMetalHost` resources. Imported Machines carry `SourceAttached` and `Registered` conditions that track the NetBox link. When a device is untagged in NetBox while still provisioned or claimed, `SourceAttached` goes `False` with reason `Orphaned` — this doesn't deprovision anything by itself, it flags that an operator needs to decide whether to release or reclaim the machine.
+
+Driver and integration status (including whether NICo and the NetBox import are recommended for general use, not just technically available) is tracked separately and isn't restated here. Check current guidance before depending on either in production.
+
+## Admin UI navigation
+
+The admin **Machines** section has three tabs, visible to anyone who can list Machines:
+
+- **Overview** — the cross-driver Machine inventory described on this page, regardless of which provider produced each entry.
+- **Metal3** — raw `BareMetalHost` operations, specific to the Metal3 driver.
+- **Network Attachments** — Metal3-scoped network attachment configuration, kept separate from the Metal3 tab.
+
+This is distinct from the project-facing **Instances** view, which lists claims (`NodeClaim` objects), not inventory. See [Independently provisioned instances](../deploy/independently-provisioned-machines.mdx#5-connect-over-ssh) for connecting to a claimed server over SSH from that view.
