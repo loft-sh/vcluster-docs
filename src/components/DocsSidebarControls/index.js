@@ -14,14 +14,18 @@ import {
 import styles from './styles.module.css';
 
 const sections = [
-  {label: 'Overview', to: '/', id: 'overview'},
   {label: 'vCluster', to: '/vcluster/', id: 'vcluster'},
+  {label: 'vMetal', to: '/platform/next/vmetal/overview', id: 'vmetal'},
   {label: 'Platform', to: '/platform/', id: 'platform'},
 ];
 
 function getActiveSection(pathname) {
   if (pathname.startsWith('/docs/vcluster')) {
     return 'vcluster';
+  }
+
+  if (/^\/docs\/platform\/(?:next\/|[^/]+\/)?vmetal(?:\/|$)/.test(pathname)) {
+    return 'vmetal';
   }
 
   if (pathname.startsWith('/docs/platform')) {
@@ -55,7 +59,7 @@ export default function DocsSidebarControls({className}) {
 
   return (
     <div className={clsx(styles.controls, className)}>
-      <nav className={styles.sectionSwitcher} aria-label="Documentation sections">
+      <nav className={styles.productSwitcher} aria-label="Documentation products">
         {sections.map((section) => {
           const active = section.id === activeSection;
 
@@ -63,7 +67,7 @@ export default function DocsSidebarControls({className}) {
             <Link
               key={section.id}
               to={section.to}
-              className={clsx(styles.sectionLink, active && styles.sectionLinkActive)}
+              className={clsx(styles.productLink, active && styles.productLinkActive)}
               aria-current={active ? 'page' : undefined}>
               {section.label}
             </Link>
@@ -78,7 +82,7 @@ export default function DocsSidebarControls({className}) {
           hiddenVersions={vclusterHiddenVersions}
         />
       )}
-      {activeSection === 'platform' && (
+      {(activeSection === 'platform' || activeSection === 'vmetal') && (
         <VersionSelector
           docsPluginId="platform"
           dropdownItemsAfter={getDesktopVersions(platformEOLVersions)}
