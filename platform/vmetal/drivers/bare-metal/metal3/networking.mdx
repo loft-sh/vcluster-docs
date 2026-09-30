@@ -1,0 +1,44 @@
+---
+title: Network Configuration
+sidebar_label: Network Configuration
+sidebar_position: 5
+description: How the provisioning network, Multus CNI bridge, and built-in IPAM fit together for the Metal3 driver.
+---
+
+import NetworkTopology from '@site/static/media/diagrams/vmetal-network-topology.svg';
+import MultusBridge from '@site/static/media/diagrams/vmetal-multus-bridge.svg';
+
+The Metal3 driver uses two distinct L2 segments. The Kubernetes cluster network carries pod-to-pod traffic inside the control plane cluster. The bare metal provisioning network is a separate segment where bare metal servers PXE boot. These aren't the same network, and bare metal servers have no direct access to cluster-internal services.
+
+<figure>
+  <NetworkTopology style={{width: '100%', height: 'auto'}} role="img" aria-label="BMC, provisioning, and tenant network zones, and how the DHCP proxy bridges the cluster network to the provisioning network" />
+</figure>
+
+## Why the DHCP server needs Multus
+
+The DHCP server runs as a pod on the control plane cluster. By default, pods can only reach the cluster network, but bare metal servers PXE boot on the provisioning network, which is unreachable from a single-interface pod.
+
+The DHCP server is a multihomed pod with two interfaces: the first (`eth0`) connects to the cluster network, where Ironic runs, and the second (`eth1`), attached through Multus CNI, connects to the provisioning network where bare metal servers broadcast DHCP requests.
+
+<figure>
+  <MultusBridge style={{width: '100%', height: 'auto'}} role="img" aria-label="The DHCP server pod uses eth0 for the cluster network and a Multus-attached eth1 for the provisioning network" />
+</figure>
+
+Use the DHCP server and Multus CNI when the bare metal servers and Ironic are on different L2 segments. In lab setups where both share the same network, `hostNetwork: true` removes the Multus requirement. For the Helm values that configure bridge, macvlan, and host-network modes, see [Infrastructure deployment](./overview.mdx#infrastructure-deployment).
+
+When Ironic powers on a server, it broadcasts a DHCP discover on the provisioning network. The DHCP server responds with an IP address and the location of the iPXE bootloader. The server downloads the bootloader, then contacts Ironic over HTTP to fetch the Ironic Python Agent ramdisk, which registers with Ironic and performs hardware inspection or OS installation.
+
+## IPAM
+
+The platform assigns one static IP to each provisioned server, from a pool configured on the node type:
+
+- [`metal3.vcluster.com/network-cidr`](./overview.mdx#metal3vclustercomnetwork-cidr) is required, and supplies the gateway and prefix. On its own, the platform derives the network address from the prefix length and skips the network address, gateway, and broadcast address, then allocates IPs sequentially from the remaining pool.
+- [`metal3.vcluster.com/network-ip-range`](./overview.mdx#metal3vclustercomnetwork-ip-range) is optional, and restricts allocation to one or more explicit `<start>-<end>` ranges within that subnet. Range mode allocates every IP in the range exactly. The platform doesn't skip network or broadcast addresses within it.
+
+The platform stores each allocation in an `ipam-default` ConfigMap in the Platform management namespace on the management cluster. It writes the allocated IP, gateway, and DNS servers into a `network-data` Secret on the control plane cluster for Ironic to read during provisioning. After Machine teardown completes, the platform releases the IP so a later allocation can reuse it.
+
+The platform uses optimistic locking to serialize concurrent allocations, so two simultaneous provisioning requests don't receive the same IP. It doesn't validate the configured range against addresses already in use on the network, so make sure the range doesn't overlap with static addresses, the DHCP proxy VIP, or other DHCP servers on the provisioning network. Provisioning fails with an allocation error when all IPs in the range are in use. Size your range for the maximum number of servers you expect to run simultaneously.
+
+For advanced configurations such as VLAN tagging or bonding, `metal3.vcluster.com/network-data` can supply a raw network-data document directly, overriding IPAM-based generation.
+
+For diagnosing IP allocation failures, including how to inspect and clean up the allocation ConfigMap, see [Troubleshooting](./troubleshooting.mdx#ip-allocation-issues).
