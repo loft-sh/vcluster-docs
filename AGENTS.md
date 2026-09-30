@@ -1,9 +1,6 @@
 # vCluster docs agent notes
 
-Follow the writing and terminology guidance in `CLAUDE.md`.
-
-## Terminology
-
-- Use `tenant cluster` and `control plane cluster` in standard sentence casing.
-- Do not capitalize `control plane cluster` as a proper noun in prose, headings, tables, or diagrams unless it starts a sentence.
-- Product names such as `vCluster` are unchanged.
+`CLAUDE.md` is canonical for writing, terminology, and style guidance in this
+repository. Follow it, not any restatement of it, including a prior version of
+this file: terminology in particular has changed more than once, and a copy
+here will go stale the next time it does.
