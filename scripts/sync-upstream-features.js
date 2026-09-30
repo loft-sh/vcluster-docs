@@ -317,7 +317,7 @@ function main() {
 `;
       const featuresContent = featuresHeader + yaml.dump(localFeatures, {
         lineWidth: 120,
-        quotingType: '"',
+        quoteStyle: 'double',
         forceQuotes: true,
         noRefs: true,
       });
@@ -341,7 +341,7 @@ function main() {
 `;
       const productsContent = productsHeader + yaml.dump(localProducts, {
         lineWidth: 120,
-        quotingType: '"',
+        quoteStyle: 'double',
         forceQuotes: true,
         noRefs: true,
       });

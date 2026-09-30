@@ -91,10 +91,10 @@ import ConfigYaml from '!!raw-loader!@site/docs/_code/config.yaml';
 import HostConfig from '!!raw-loader!@site/docs/_code/host-config.yaml';
 import GuestConfig from '!!raw-loader!@site/docs/_code/guest-config.yaml';
 
-**Host cluster configuration:**
+**Control plane cluster configuration:**
 <CodeBlock language="yaml">{HostConfig}</CodeBlock>
 
-**Virtual cluster configuration:**
+**Cluster configuration:**
 <CodeBlock language="yaml">{GuestConfig}</CodeBlock>
 ```
 

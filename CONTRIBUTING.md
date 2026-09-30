@@ -51,6 +51,46 @@ fix any broken links that may have been introduced. A build doesn't catch
 every kind of broken link, so also see
 [Checking links before you push](#checking-links-before-you-push).
 
+### Preview a stacked PR
+
+Netlify builds a deploy preview only for PRs whose base branch is `main` or
+another branch Netlify deploys, such as `next`. A stacked PR, one that targets
+another PR's branch, gets no preview from Netlify.
+
+The `stacked-pr-preview` workflow fills the gap. For a PR whose base isn't
+`main`, `next`, or a `vcluster-v*` or `platform-v*` branch, it builds the site
+and deploys a Netlify draft at the alias `pr-<number>`. It then posts the URL,
+`https://pr-<number>--vcluster-docs-site.netlify.app/docs/`, as a PR comment
+and updates both on every push. PRs from forks get no preview, because GitHub
+doesn't pass repository secrets to them. A native GitHub stack created with
+`gh stack` on top of `main` already gets Netlify Deploy Previews, so the
+workflow skips it.
+
+#### Deploy a preview by hand
+
+Use the manual steps when the workflow can't run, for example on a PR from a
+fork. If you have access to the docs project in Netlify, you can deploy a draft
+preview yourself with the Netlify CLI. Otherwise, ask someone who has access.
+The build needs about 11 GB of memory.
+
+```bash
+npx netlify-cli login
+npx netlify-cli link
+npx netlify-cli deploy --context deploy-preview --dir=public --alias=pr-<number>
+```
+
+`netlify link` prompts you to choose the project. The `deploy` command runs the
+site build first, so you don't need a separate `netlify build`. The deploy is a
+draft, so it doesn't change the live site, and the CLI prints its URL when it
+finishes. Rerun the `deploy` command to update it after you push changes.
+
+Never use `main`, `next`, or another deployed branch name as the alias.
+Netlify serves an alias at the same subdomain as a branch deploy with that
+name. Omit `--prod`, which publishes to the live site.
+
+As with any preview, put `/next/` after the product path to see unreleased
+changes, for example `/docs/platform/next/...`.
+
 ## AI-assisted PR review
 
 Pull requests can receive an on-demand AI review from Claude. Mention `@claude`
@@ -59,6 +99,7 @@ in a PR comment to trigger a review.
 Example commands:
 
 - `@claude review this PR` - get a focused review
+- `@claude fact check this page` - verify the technical claims against the code
 - `@claude fix the linting issues` - ask for specific changes
 - `@claude update the examples to use the new API` - request targeted updates
 
@@ -184,7 +225,7 @@ to highlight important information.
 :::note Additional context: The `vcluster create` command automatically creates
 a new namespace if it doesn't exist. :::
 
-:::tip Use `vcluster` CLI to quickly deploy a tenant cluster. :::
+:::tip Use `vcluster` CLI to quickly deploy a cluster. :::
 
 :::info The default configuration uses minimal resources suitable for testing.
 :::
@@ -465,15 +506,38 @@ vCluster products.
 trademark, for example, it cannot be used in plural. **Do not use "vClusters"**.
 
 Never use vCluster or vClusters when talking about a cluster that vCluster
-creates. Use **tenant clusters**.
+creates. Use **clusters**. Both "virtual cluster" and "tenant cluster" are
+retired: the Tenant primitive claims the word "tenant" for the customer
+organization, so the cluster gives it back.
+
+### The hierarchy
+
+1. A **system admin** installs Platform onto a Kubernetes cluster, which becomes
+   the **control plane cluster**.
+2. A **platform admin** creates **Tenants**.
+3. A **tenant admin** divides the Tenant boundary across **Projects**.
+4. A **project user** creates a **cluster**.
+
+A **Tenant** is a customer organization, never a cluster. Capitalize it only
+when naming the API resource, the same way "Project" is.
+
+**Tenant isolation** is the term for separation at every layer, from the Tenant
+boundary in the management plane down to dedicated nodes. Don't coin "cluster
+isolation", and don't convert existing "tenant isolation" prose. When a sentence
+needs to say *how* separation happens, name the mechanism: private nodes, vNode,
+API-level and namespace separation.
+
+"Multi-Tenancy" stays only as the name of the licensed feature, on the Platform
+License page and in `loft-sh/plans`. As a descriptor, "multi-tenancy" and
+"multitenancy" are retired. Describe what the product does instead.
 
 ### Products
 
-- vCluster: open source project that provisions and manages tenant clusters
-- vCluster Platform: the management platform and UI for managing tenant clusters
-  across one or more Control Plane Clusters
+- vCluster: open source project that provisions and manages clusters
+- vCluster Platform: the management platform and UI for managing clusters and
+  Tenants across one or more control plane clusters
 - vMetal: infrastructure orchestrator for bare-metal and VM provisioning beneath
-  tenant clusters
+  clusters
 - vNode: tenant-isolation container runtime
 
 "vCluster Pro" is not a product and should not be used. License-gated

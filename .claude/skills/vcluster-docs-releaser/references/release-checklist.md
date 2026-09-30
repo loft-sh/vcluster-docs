@@ -137,7 +137,7 @@ minor.
 - [ ] File: `vcluster/manage/upgrade/supported_versions.mdx`
 - [ ] Update: Kubernetes version support matrix
 - [ ] Add: New K8s versions if released
-- [ ] Verify: Host cluster compatibility
+- [ ] Verify: Control plane cluster compatibility
 - [ ] Check: vCluster version compatibility
 
 ## Part 5: Build & Test (rc-1 window)

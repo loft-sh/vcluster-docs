@@ -205,6 +205,46 @@ AI performs:
 4. ✅ All config changes applied
 5. ✅ Version is hidden from dropdown (in `platformHiddenVersions` array in `versionConfig.js`)
 6. ✅ Default vCluster Version column verified in `docs/_partials/platform_supported_versions.mdx` (added in [DOC-1658](https://linear.app/loft/issue/DOC-1658)): if the new release's row already exists, confirm the value matches `DefaultVClusterVersion` in `pkg/constants/constants.go` of the `loft-enterprise` repo at this tag; if the row doesn't exist yet, flag it for the User step below
+7. ✅ UI drift check (see below)
+
+#### UI drift check
+
+Run it at rc-1, against the release's own ref:
+
+```bash
+node scripts/report-platform-ui-drift.js --ui-src <loft-enterprise>/ui/src
+```
+
+**Why rc-1 and not release day.** The UI for the release is frozen by rc-1, and
+the rc-1 to release-day window is the only time there is room to fix what the
+check finds. On release day the config flip is meant to be a low-risk change,
+and stale click-through steps ship with the version snapshot, where they are
+frozen for that release's lifetime.
+
+**Check out `loft-enterprise` at the release's tag or branch, not `main`.** The
+docs snapshot describes the UI that ships with this version. Running against
+`main` reports drift from changes that have not shipped yet.
+
+Findings are leads, not proof. Resolve each against
+`ui/src/Layout/Sidebar/config/sections.ts` and the component that renders the
+string. Invoke the `platform-ui-drift` skill, which owns the fix patterns, the
+known false positives, and the conditional-rendering cases the script cannot
+detect.
+
+Two classes the script does catch but that need judgment:
+
+- **Sidebar section renames.** These arrive in batches whenever the sidebar is
+  restructured, and they invalidate every earlier fix. [DOC-1790](https://linear.app/loft/issue/DOC-1790)
+  had 65 after one redesign, and [DOC-1657](https://linear.app/loft/issue/DOC-1657)
+  and [DOC-1574](https://linear.app/loft/issue/DOC-1574) were both correct until
+  that redesign landed.
+- **Removed features.** A token that matches nothing anywhere in the UI source
+  may mean the feature is gone, not renamed. Confirm with engineering before
+  deleting pages.
+
+If the count is large enough to be its own piece of work, file it rather than
+folding it into the release PR. The release should not wait on it, but the fix
+should land before the version snapshot is taken for the following release.
 
 User performs:
 

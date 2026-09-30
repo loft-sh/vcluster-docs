@@ -6,9 +6,9 @@ get_resource_name() {
   # by making an HTTP request to the vCluster Platform API.
   #
   # Arguments:
-  #   resource_name:        The name of the Kubernetes resource created in virtual cluster.
-  #   resource_namespace:   The namespace of the Kubernetes resource created in virtual cluster.
-  #   vcluster_name:        The name of the virtual cluster.
+  #   resource_name:        The name of the Kubernetes resource created in the cluster.
+  #   resource_namespace:   The namespace of the Kubernetes resource created in the cluster.
+  #   vcluster_name:        The name of the cluster.
   #   host:                 The host URL of the vCluster Platform.
   #   auth_token:           The authentication token for accessing the vCluster Platform API.
   #

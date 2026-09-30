@@ -52,7 +52,7 @@ Additional context: The `vcluster create` command automatically creates a new na
 :::
 
 :::tip
-Use `vcluster` CLI to quickly deploy a virtual cluster.
+Use `vcluster` CLI to quickly deploy a cluster.
 :::
 
 :::info
