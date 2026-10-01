@@ -5,7 +5,6 @@ sidebar_position: 2
 description: Deploy the default Fleet Observability pipeline end to end with Argo CD, from the metrics backend to your first query.
 ---
 
-import InterpolatedCodeBlock from "@site/src/components/InterpolatedCodeBlock";
 import Tabs from "@theme/Tabs";
 import TabItem from "@theme/TabItem";
 
@@ -104,78 +103,26 @@ kubectl get pods -n vcluster-platform -l app.kubernetes.io/name=gateway,app.kube
 For connector keys, TLS options, and the Platform UI, see
 [Install the observability gateway](./install-observability-gateway.mdx).
 
-## 3. Create a metrics-writer key
+## 3. Turn on the observability integration
 
-Create a `metrics-writer` access key scoped to your cluster. Set `PROJECT` and
-`TENANT_CLUSTER` to your cluster's project and instance name. The command prints
-the generated token as `token: <value>` at the end.
+Turn on the observability integration in the cluster's `vcluster.yaml`, referencing
+the connector from step 2:
 
-<InterpolatedCodeBlock
-  code={
-    'PROJECT=[[VAR:PROJECT:default]]\n' +
-    'TENANT_CLUSTER=[[VAR:TENANT_CLUSTER:my-vcluster]]\n' +
-    'KEY=$(head -c 20 /dev/urandom | od -An -tx1 | tr -d \' \\n\')\n' +
-    'kubectl apply -f - <<EOF\n' +
-    'apiVersion: storage.loft.sh/v1\n' +
-    'kind: AccessKey\n' +
-    'metadata:\n' +
-    '  name: "loft-metrics-writer-p-${PROJECT}-${TENANT_CLUSTER}"\n' +
-    'spec:\n' +
-    '  type: Other\n' +
-    '  key: "${KEY}"\n' +
-    '  subject: "loft:metrics-writer:p-${PROJECT}:${TENANT_CLUSTER}"\n' +
-    '  groups:\n' +
-    '    - loft:system:metrics-writers\n' +
-    '  scope:\n' +
-    '    roles:\n' +
-    '      - role: metrics-writer\n' +
-    '    virtualClusters:\n' +
-    '      - project: ${PROJECT}\n' +
-    '        virtualCluster: "${TENANT_CLUSTER}"\n' +
-    'EOF\n' +
-    'echo "token: ${KEY}"'
-  }
-  language="bash"
-/>
-
-Keep the printed token for the next step.
-
-For control plane cluster keys, reader keys, and rotation, see
-[Configure metrics access](./configure-metrics-access.mdx).
-
-## 4. Deploy edge collectors
-
-The token from step 3 goes into a Secret inside the cluster, in the namespace the
-collectors run in. Switch your `kubectl` context to the cluster, then create the
-namespace and the Secret:
-
-```bash
-kubectl create namespace observability
+```yaml title="vcluster.yaml"
+integrations:
+  observability:
+    enabled: true
+    connector: fleet-observability
 ```
 
-```yaml title="otel-otlp-auth.yaml"
-apiVersion: v1
-kind: Secret
-metadata:
-  name: otel-otlp-auth
-  namespace: observability
-type: Opaque
-stringData:
-  authorization: "Bearer REPLACE_WITH_METRICS_WRITER_KEY"
-```
+Platform then issues a `metrics-writer` access key scoped to the cluster, and the
+cluster writes it into a `metrics-writer` Secret in its `observability` namespace,
+together with the gateway endpoint and the CA that issued the gateway's serving
+certificate. You don't create the key or the Secret yourself. The cluster re-fetches
+the Secret every 10 minutes, so a deleted key is issued again and a rotated token reaches the
+collectors without a restart.
 
-```bash
-kubectl apply -f otel-otlp-auth.yaml
-```
-
-Switch your `kubectl` context back to the cluster where Platform runs before continuing.
-The `ArgoCDApplication` you apply next, and its project namespace, are Platform custom
-resources that only exist on that cluster, not on the cluster.
-
-Then deploy the collector to your cluster. Edge collectors run inside the
-cluster, which resolves DNS in its own zone, so `otlpEndpoint` needs to point somewhere
-the cluster can actually reach. Which value to use depends on where the
-cluster runs:
+The endpoint Platform hands out depends on where the cluster runs:
 
 <Tabs
   defaultValue="same"
@@ -186,11 +133,11 @@ cluster runs:
 >
 <TabItem value="same">
 
-If the cluster runs on the same control plane cluster as Platform, map the
-gateway Service into the cluster's DNS instead of exposing it externally. This
-requires shared nodes tenancy. Add this to the cluster's `vcluster.yaml`:
+If the cluster uses shared nodes on the control plane cluster that runs Platform,
+Platform hands out the gateway's in-cluster Service name. Map that Service into the tenant
+cluster's DNS so the collectors can resolve it. Add this to the same `vcluster.yaml`:
 
-```yaml
+```yaml title="vcluster.yaml"
 controlPlane:
   coredns:
     enabled: true
@@ -203,66 +150,19 @@ networking:
 ```
 
 See [Resolve DNS](/docs/vcluster/configure/vcluster-yaml/networking/resolve-dns) for how
-to apply `vcluster.yaml` changes and the full option reference. `otlpEndpoint` keeps using
-the gateway's in-cluster Service name:
-
-```yaml title="fleet-edge-collectors.yaml"
-apiVersion: management.loft.sh/v1
-kind: ArgoCDApplication
-metadata:
-  name: fleet-edge-collectors-my-vcluster   # include the cluster name for uniqueness
-  namespace: p-my-project          # replace with your project namespace
-spec:
-  displayName: "Fleet edge collectors"
-  destination:
-    virtualCluster:
-      name: my-vcluster            # replace with your cluster name
-      target: vCluster             # deploy into the cluster
-  templateRef:
-    name: cluster-collector
-  parameters:
-    destinationNamespace: observability
-    otlpEndpoint: https://gateway-fleet-observability.vcluster-platform.svc.cluster.local:4318
-    otlpInsecureSkipVerify: "true"
-    project: default
-```
+to apply `vcluster.yaml` changes and the full option reference.
 
 </TabItem>
 <TabItem value="different">
 
-If the cluster runs on a different cluster than Platform, it can't resolve or
-route to the gateway's in-cluster Service name. Expose the gateway with a `LoadBalancer`
-Service instead. Add `serviceType: LoadBalancer` to the connector Secret from step 2 and
-reapply it, then retrieve the assigned address:
+If the cluster runs on a different cluster than Platform, or runs its workloads on
+private nodes, it can't reach the gateway's in-cluster Service. Expose the gateway with a
+`LoadBalancer` Service instead. Add `serviceType: LoadBalancer` to the connector Secret from
+step 2 and reapply it. Platform then hands out the load balancer address once the cloud
+provider assigns it, and adds it to the gateway's serving certificate.
 
-```bash
-kubectl get svc -n vcluster-platform gateway-fleet-observability \
-  -o jsonpath='{range .status.loadBalancer.ingress[*]}{.hostname}{.ip}{"\n"}{end}'
-```
-
-The cloud provider assigns the address asynchronously, so wait until it's populated, then
-use it as `otlpEndpoint`:
-
-```yaml title="fleet-edge-collectors.yaml"
-apiVersion: management.loft.sh/v1
-kind: ArgoCDApplication
-metadata:
-  name: fleet-edge-collectors-my-vcluster   # include the cluster name for uniqueness
-  namespace: p-my-project          # replace with your project namespace
-spec:
-  displayName: "Fleet edge collectors"
-  destination:
-    virtualCluster:
-      name: my-vcluster            # replace with your cluster name
-      target: vCluster             # deploy into the cluster
-  templateRef:
-    name: cluster-collector
-  parameters:
-    destinationNamespace: observability
-    otlpEndpoint: https://REPLACE_WITH_LOADBALANCER_ADDRESS:4318
-    otlpInsecureSkipVerify: "true"
-    project: default
-```
+Until you do, Platform refuses to issue a key for the cluster, because the
+collectors couldn't reach the endpoint it would hand out.
 
 See [Expose the gateway with a LoadBalancer](./install-observability-gateway.mdx#expose-the-gateway-with-a-loadbalancer)
 for certificate and Service annotation details.
@@ -270,14 +170,40 @@ for certificate and Service annotation details.
 </TabItem>
 </Tabs>
 
-Both branches keep `otlpInsecureSkipVerify: "true"` to accept the gateway's self-signed
-certificate for this quickstart. For a production setup, distribute the gateway's
-`ca.crt` instead, as described in
-[Customize the gateway serving certificate](./install-observability-gateway.mdx#customize-the-gateway-serving-certificate).
+For control plane cluster keys, reader keys, and rotation, see
+[Configure metrics access](./configure-metrics-access.mdx).
+
+## 4. Deploy edge collectors
+
+Deploy the collector to your cluster. The collectors read the endpoint, token, and
+CA from the `metrics-writer` Secret from step 3, so the application only names the
+destination:
+
+```yaml title="fleet-edge-collectors.yaml"
+apiVersion: management.loft.sh/v1
+kind: ArgoCDApplication
+metadata:
+  name: fleet-edge-collectors-my-vcluster   # include the cluster name for uniqueness
+  namespace: p-my-project          # replace with your project namespace
+spec:
+  displayName: "Fleet edge collectors"
+  destination:
+    virtualCluster:
+      name: my-vcluster            # replace with your cluster name
+      target: vCluster             # deploy into the cluster
+  templateRef:
+    name: cluster-collector
+  parameters:
+    destinationNamespace: observability
+    project: default
+```
 
 ```bash
 kubectl apply -f fleet-edge-collectors.yaml
 ```
+
+The collectors verify the gateway against the delivered CA, so the gateway's
+self-signed certificate works without extra configuration.
 
 For control plane cluster targets, manual collector configuration, and the full
 parameter list, see [Configure edge collectors](./configure-edge-collectors.mdx).
@@ -298,8 +224,8 @@ kill $PF_PID
 
 Gateway metrics only confirm a write request arrived, not that it reached the backend.
 Create a `metrics-reader` key scoped to the same cluster and query the Query Proxy
-for your first metric. Match `PROJECT` and `TENANT_CLUSTER` to the values you used in step
-3. See [Create a reader key](./configure-metrics-access.mdx#create-a-reader-key) for the
+for your first metric. Set `PROJECT` and `TENANT_CLUSTER` to the cluster's project and
+instance name. See [Create a reader key](./configure-metrics-access.mdx#create-a-reader-key) for the
 full parameter list:
 
 ```bash
