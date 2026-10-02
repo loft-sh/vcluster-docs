@@ -74,21 +74,18 @@ The version is deployed hidden, then exposed via a config flip PR on release day
 
 ### Item 2b: InterpolatedCodeBlock Fallback Versions
 
-`LATEST_VERSIONS` in `src/components/InterpolatedCodeBlock/index.js` is auto-synced
-to the latest stable patch by `.github/workflows/sync-latest-versions.yml`
-(daily cron). The PR-time `validate-latest-versions.yml` workflow fails if the
-file drifts from the latest matching patch. No manual edit is needed for
-patch releases.
+`src/data/latest-versions.json` is auto-synced by
+`.github/workflows/sync-latest-versions.yml` (daily cron) to the latest stable
+patch of the minor each product serves as `lastVersion` in
+`docusaurus.config.js`. Moving `lastVersion` at GA (the plugin `lastVersion`
+step under Additional AI Tasks and Part 6) is the only input it needs, for
+patch and minor releases alike. Never edit the file by hand. The PR-time
+`validate-latest-versions.yml` workflow fails if the file drifts.
 
-For minor releases (e.g. 0.33.0 → 0.34.0), the auto-sync does NOT promote the
-minor — the new minor must land through the normal docs versioning step. The
-auto-sync will pick up subsequent patches once the file points at the new
-minor.
-
-- [ ] **Minor releases only:** update `LATEST_VERSIONS.vcluster` to `0.XX.0` and
-      `LATEST_VERSIONS.platform` to `4.YY.0` in
-      `src/components/InterpolatedCodeBlock/index.js`.
-      (The auto-sync will handle subsequent patches once this is set.)
+- [ ] **Minor releases only:** after `lastVersion` moves, confirm the next
+      `auto/sync-latest-versions` PR bumps both products to the new minor's
+      latest stable patch, and merge it. To land it in the release PR instead,
+      run `npm run sync-latest-versions` there.
 
 ### Additional AI Tasks:
 

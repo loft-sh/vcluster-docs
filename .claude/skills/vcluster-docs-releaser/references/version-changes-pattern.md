@@ -186,33 +186,34 @@ announcementBar: {
 },
 ```
 
-## InterpolatedCodeBlock Fallback Versions (auto-synced)
+## Latest Stable Versions (auto-synced)
 
-**File:** `src/components/InterpolatedCodeBlock/index.js`
+**File:** `src/data/latest-versions.json`
 
-This block is now auto-synced to the latest stable patch by
-`.github/workflows/sync-latest-versions.yml`:
-
-```js
-const LATEST_VERSIONS = {
-  platform: '4.4.0',
-  vcluster: '0.29.0',
-};
+```json
+{
+  "platform": "4.12.1",
+  "vcluster": "0.37.2"
+}
 ```
 
-**Do not edit by hand** during patch releases — the daily sync workflow opens a
-PR when a new stable patch (matching the currently-tracked minor) ships in
-[loft-sh/vcluster](https://github.com/loft-sh/vcluster/releases) or
-[loft-sh/loft](https://github.com/loft-sh/loft/releases). A PR-time staleness
-check (`validate-latest-versions.yml`) fails the build if the file drifts.
+**Do not edit by hand.** `.github/workflows/sync-latest-versions.yml` runs
+daily and opens a PR when the newest stable patch of the minor each product
+serves as `lastVersion` in `docusaurus.config.js` differs from the file. It
+reads releases from [loft-sh/vcluster](https://github.com/loft-sh/vcluster/releases)
+and [loft-sh/loft](https://github.com/loft-sh/loft/releases). A PR-time
+staleness check (`validate-latest-versions.yml`) fails the build if the file
+drifts.
 
-**Minor bumps** (e.g. `0.29.0` → `0.30.0`) still go through the normal docs
-versioning step — the auto-sync is patch-only by design and never promotes
-minor versions. Bump the minor here once the new docs version is created;
-patches on top of the new minor will then be auto-synced.
+**Minor bumps** (for example `0.37.0` to `0.38.0`) need no edit here. Moving
+`lastVersion` at GA is what promotes the minor, and the next sync writes that
+minor's latest stable patch. A minor with no stable release yet is refused,
+so versioning docs at RC time never points install commands at an unpublished
+chart.
 
-Version strings have no `v` prefix. This fallback is used when the Docusaurus
-version context is unavailable (e.g. non-versioned pages, SSR edge cases).
+Version strings have no `v` prefix. The file resolves `__PLATFORM_VERSION__`
+and `__VCLUSTER_VERSION__` for current docs and for pages without a Docusaurus
+version context; versioned docs resolve their own version.
 
 ## netlify.toml Changes
 
