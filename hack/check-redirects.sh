@@ -264,6 +264,8 @@ detect_changes() {
 
     while IFS=$'\t' read -r status old_path new_path; do
         [[ -z "$status" ]] && continue
+        # Partials and fragments live under _-prefixed folders and have no URL.
+        [[ "$old_path" == */_* ]] && continue
         RENAMED_OLD="${RENAMED_OLD}${old_path}"$'\n'
         RENAMED_NEW="${RENAMED_NEW}${new_path}"$'\n'
     done <<<"$rename_lines"
