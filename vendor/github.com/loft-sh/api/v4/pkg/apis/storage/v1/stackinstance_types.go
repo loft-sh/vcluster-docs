@@ -469,6 +469,11 @@ type StackTaskStatus struct {
 	// LastTransitionTime is when this task last changed phase.
 	// +optional
 	LastTransitionTime metav1.Time `json:"lastTransitionTime,omitempty"`
+
+	// TimeoutAt is when the stack fails the task if it is still progressing. Set only while the
+	// task is Progressing, and moved when the task starts a new wait, such as capturing its outputs.
+	// +optional
+	TimeoutAt *metav1.Time `json:"timeoutAt,omitempty"`
 }
 
 // StackOrphanedApplication is an owned child whose task is no longer in the resolved set.
