@@ -11,6 +11,7 @@ const __webpack_public_path__ = "/docs/";
 import resolveGlob from "resolve-glob";
 import remarkVersionTokens from "./plugins/remark-version-tokens.js";
 import rehypeStripComments from "./plugins/rehype-strip-comments.js";
+import rehypeStripGlossaryTooltips from "./plugins/rehype-strip-glossary-tooltips.js";
 
 const newDocTemplate = `---
 title: Your Document Title
@@ -236,7 +237,7 @@ const config = {
           // HTML→Markdown conversion. Runs at the hast stage, ahead of
           // rehype-remark, so comment nodes are gone before mdast is built.
           // See DOC-1322.
-          beforeDefaultRehypePlugins: [rehypeStripComments],
+          beforeDefaultRehypePlugins: [rehypeStripComments, rehypeStripGlossaryTooltips],
         },
         siteTitle: 'vCluster Documentation',
         siteDescription: 'Documentation for vCluster (virtual Kubernetes clusters) and vCluster Platform (multi-cluster management)',
