@@ -62,7 +62,7 @@ SH
     ! grep -q "args=mod vendor" "$SHIM_STATE/go.log"
 }
 
-@test "major version is derived from VERSION (v5 needs no code change)" {
+@test "major version is derived from VERSION" {
     VERSION=v5.2.0 run "$SCRIPT"
     [ "$status" -eq 0 ]
     grep -q "args=mod edit -require github.com/loft-sh/agentapi/v5@v5.2.0" "$SHIM_STATE/go.log"
