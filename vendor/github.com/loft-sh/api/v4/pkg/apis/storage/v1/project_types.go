@@ -202,10 +202,11 @@ type Quotas struct {
 var (
 	SpaceTemplateKind          = "SpaceTemplate"
 	VirtualClusterTemplateKind = "VirtualClusterTemplate"
+	StackTemplateKind          = "StackTemplate"
 )
 
 type AllowedTemplate struct {
-	// Kind of the template that is allowed. Currently only supports DevPodWorkspaceTemplate, VirtualClusterTemplate & SpaceTemplate
+	// Kind of the template that is allowed. Supports DevPodWorkspaceTemplate, VirtualClusterTemplate, SpaceTemplate and StackTemplate.
 	// +optional
 	Kind string `json:"kind,omitempty"`
 
