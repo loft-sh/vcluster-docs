@@ -1,0 +1,160 @@
+---
+title: NVIDIA Dynamo
+sidebar_label: NVIDIA Dynamo
+sidebar_position: 3
+description: Install the NVIDIA Dynamo inference runtime into a cluster or control plane cluster with the certified nvidia-dynamo Stack.
+---
+
+import InterpolatedCodeBlock from "@site/src/components/InterpolatedCodeBlock";
+import SharedNodesSuitability from '@site/vcluster/_partials/admonitions/shared-nodes-suitability.mdx';
+
+[NVIDIA Dynamo](https://github.com/ai-dynamo/dynamo) is an open source framework for serving AI models across GPU nodes. Its operator runs the models you describe with `DynamoGraphDeployment` resources.
+
+vCluster Platform 5.0 bundles the `nvidia-dynamo` StackTemplate. It installs the Dynamo runtime into one cluster or control plane cluster, so that destination can serve models.
+
+## Understand the architecture
+
+The `nvidia-dynamo` StackTemplate has one App task, `runtime`. It installs the `dynamo-platform` Helm chart from the NVIDIA NGC `ai-dynamo` repository into the destination you select.
+
+The release contains:
+
+- the Dynamo operator, which runs cluster-wide with validating and mutating admission webhooks
+- NATS, from the chart's bundled subchart
+- etcd, from the chart's bundled subchart
+
+The runtime owns the whole Dynamo stack in its destination, so it installs NATS and etcd instead of connecting to external instances. The chart's other optional components, such as Grove, KAI Scheduler, and Snapshot, stay disabled.
+
+## Choose a destination
+
+Install the runtime at most once per destination. The operator, its CustomResourceDefinitions (CRDs), and its webhooks are cluster-scoped. The chart refuses to install when the destination already runs a cluster-wide Dynamo operator.
+
+| Destination | What it gives you | Use case |
+| --- | --- | --- |
+| Cluster | A Dynamo runtime inside one cluster's API, with its own operator, NATS, and etcd | Each tenant runs and manages its own models |
+| Control plane cluster | One Dynamo runtime on the control plane cluster | Your team runs the models and exposes them to customers through an API |
+
+If you choose the cluster destination so tenants can deploy their own models, those tenants have Kubernetes access and run their own workloads. The worker node model then decides how isolated they are.
+
+<SharedNodesSuitability />
+
+## Before you begin
+
+Make sure that you have:
+
+- vCluster Platform 5.0 or later. The template uses App tasks, so it requires the Apps feature, which is included on every plan.
+- Kubernetes 1.30 or later in the destination. This is the chart's `kubeVersion` constraint.
+- A default StorageClass in the destination. NATS requests a 10Gi volume and etcd requests a 1Gi volume.
+- Outbound access from the destination to `helm.ngc.nvidia.com`, `nvcr.io`, and Docker Hub for the chart and images.
+- GPU nodes with the NVIDIA device plugin for the models you deploy later. The runtime itself doesn't need GPUs.
+
+## Review parameters
+
+| Parameter | Default | Description |
+| --- | --- | --- |
+| `version` | `1.5.0` | Version of the `dynamo-platform` Helm chart. Must be a semantic version, such as `1.5.0`. |
+| `namespace` | `dynamo-system` | Namespace the runtime is installed into. Must be a valid Kubernetes namespace name. |
+
+The template doesn't expose other Helm values. To change the chart configuration, see [Customize the template](#customize-the-template).
+
+## Install the runtime
+
+To install from the Platform UI, follow [Use a Stack](../../../tenants/consume-services/apps/use-stacks.mdx#choose-how-to-install-a-stack) and select the **NVIDIA Dynamo** template. To install the runtime in every cluster created from a template, add a `deploy.stacks` entry as described on the same page.
+
+To install through the management API, create a StackInstance in the project namespace that owns the destination. This example installs the runtime into a cluster:
+
+<InterpolatedCodeBlock
+  title="nvidia-dynamo.yaml"
+  language="yaml"
+  code={"apiVersion: management.loft.sh/v1\n" +
+    "kind: StackInstance\n" +
+    "metadata:\n" +
+    "  name: nvidia-dynamo\n" +
+    "spec:\n" +
+    "  displayName: NVIDIA Dynamo\n" +
+    "  owner:\n" +
+    "    user: [[VAR:OWNER:admin]]\n" +
+    "  destination:\n" +
+    "    virtualCluster:\n" +
+    "      name: [[VAR:CLUSTER_NAME:my-cluster]]\n" +
+    "  templateRef:\n" +
+    "    name: nvidia-dynamo\n" +
+    "  parameters:\n" +
+    "    version: \"1.5.0\"\n" +
+    "    namespace: dynamo-system\n" +
+    "  prunePolicy: Prune\n"}
+/>
+
+To install into a control plane cluster instead, replace the `virtualCluster` block with `cluster`, and set `name` to the control plane cluster's name.
+
+Apply the StackInstance:
+
+<InterpolatedCodeBlock
+  code={"vcluster platform connect management\n" +
+    "kubectl apply -n [[VAR:PROJECT_NAMESPACE:p-default]] -f nvidia-dynamo.yaml"}
+  language="bash"
+/>
+
+## Verify the installation
+
+Helm waits up to 20 minutes for the release to become ready, which leaves room for slow image pulls. The `runtime` task fails after 25 minutes, so a failed install reports Helm's error first.
+
+Watch the StackInstance until both the StackInstance phase and the `runtime` task report `Healthy`:
+
+<InterpolatedCodeBlock
+  code={"kubectl get stackinstance nvidia-dynamo -n [[VAR:PROJECT_NAMESPACE:p-default]] \\\n" +
+    "  -o jsonpath='{.status.phase}{\"\\n\"}{range .status.tasks[*]}{.name}{\"\\t\"}{.phase}{\"\\t\"}{.message}{\"\\n\"}{end}'"}
+  language="bash"
+/>
+
+Then connect to the destination. For a cluster, use the vCluster CLI. For a control plane cluster, use its own kubeconfig.
+
+<InterpolatedCodeBlock
+  code={"vcluster platform connect vcluster [[VAR:CLUSTER_NAME:my-cluster]] --project [[VAR:PROJECT:default]]"}
+  language="bash"
+/>
+
+Check that the operator, NATS, and etcd pods are `Running`, and that the Dynamo CRD exists:
+
+```bash
+kubectl get pods -n dynamo-system
+kubectl get crd dynamographdeployments.nvidia.com
+```
+
+After the runtime is healthy, deploy a model with a `DynamoGraphDeployment`. See the [NVIDIA Dynamo documentation](https://docs.nvidia.com/dynamo/) for model recipes and backends.
+
+## Upgrade the runtime
+
+Change the `version` parameter on the StackInstance to move to another chart release. The operator applies its CRDs from its image at startup, so CRD changes roll out with the new operator version. Read the Dynamo release notes before you upgrade across minor versions.
+
+## Remove the runtime
+
+Delete every `DynamoGraphDeployment` in the destination first. The operator manages finalizers on its resources, so removing the operator first can leave those resources stuck in deletion.
+
+Then delete the StackInstance. Platform deletes the AppInstance it created for the `runtime` task, which uninstalls the Helm release. The `prunePolicy` setting applies when a template update removes a task, not when you delete the StackInstance.
+
+These resources remain after removal:
+
+- the Dynamo CRDs, because the operator applies them and the Helm release doesn't own them
+- the NATS and etcd PersistentVolumeClaims created from the StatefulSet volume claim templates
+
+Delete them manually if you don't plan to reinstall the runtime.
+
+## Customize the template
+
+The bundled template is read-only and runs NATS and etcd as single, bundled instances. To expose more Helm values or point the operator at external NATS or etcd, copy the template. See [Customize a certified stack](../../../tenants/templates/certified-stacks.mdx#customize-a-certified-stack).
+
+## Troubleshoot
+
+| Symptom | Cause | Resolution |
+| --- | --- | --- |
+| The `runtime` task fails, and the Helm error includes `Only one cluster-wide Dynamo operator should be deployed per cluster` | The destination already runs a Dynamo operator, from another StackInstance or a manual install. | Use the existing runtime, or remove it before you install this one. |
+| The `runtime` task fails after 25 minutes | Images didn't pull, or a NATS or etcd volume didn't bind. | Check image access to `nvcr.io` and Docker Hub, and confirm that the destination has a default StorageClass. |
+| A `DynamoGraphDeployment` stays in deletion | The operator was removed before the resource. | Reinstall the runtime so the operator can process the resource's finalizer. Delete the resource, then remove the runtime again. |
+
+For general Stack failures, see [Troubleshoot Stacks](../../../tenants/troubleshoot/stacks.mdx).
+
+## Next steps
+
+- Read the upstream [NVIDIA Dynamo integration guide](https://github.com/loft-sh/vcluster-stacks/blob/main/certified-stacks/nvidia-dynamo/README.md) for the source manifests and tests.
+- Compare serving options in [Model serving](/docs/vcluster/integrations/model-serving).
+- Review the other [Certified Stacks](./index.mdx).
