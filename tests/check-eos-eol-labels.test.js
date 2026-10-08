@@ -121,8 +121,8 @@ const CURRENT_PARTIAL_FIXTURE = `
     <tr>
       <td>v4.12 (LTS)</td>
       <td>2026 Sep 08</td>
-      <td>2027 Oct 13</td>
-      <td>2028 Apr 13</td>
+      <td>2027 Oct 15</td>
+      <td>2028 Apr 15</td>
       <td>v0.37</td>
     </tr>
     <tr>
@@ -147,8 +147,8 @@ test('parsePartial reads five-column tables, LTS designations, and <sup> markers
   assert.deepEqual(rows[0], {
     version: 'v4.12',
     released: '2026 Sep 08',
-    eos: '2027 Oct 13',
-    eol: '2028 Apr 13',
+    eos: '2027 Oct 15',
+    eol: '2028 Apr 15',
   });
   assert.equal(rows[1].version, 'v3.4');
   assert.equal(rows[1].eos, '2025 Apr 01*');
