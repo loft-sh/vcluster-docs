@@ -126,7 +126,7 @@ minor.
 
 ### Item 8: Update Release Support Dates
 
-- [ ] File: `vcluster/manage/upgrade/supported_versions.mdx`
+- [ ] File: `vcluster/operate/upgrade/supported_versions.mdx`
 - [ ] Update: Release date for new version
 - [ ] Update: End of support dates for older versions
 - [ ] Update: End of life dates
@@ -134,7 +134,7 @@ minor.
 
 ### Item 9: Update Compatibility Matrix
 
-- [ ] File: `vcluster/manage/upgrade/supported_versions.mdx`
+- [ ] File: `vcluster/operate/upgrade/supported_versions.mdx`
 - [ ] Update: Kubernetes version support matrix
 - [ ] Add: New K8s versions if released
 - [ ] Verify: Control plane cluster compatibility
@@ -230,7 +230,7 @@ Ready for: Build & Test
 | `docusaurus.config.js` | Version config, labels, SEO | AI |
 | `netlify.toml` | Redirect config | AI |
 | `hack/test-vcluster-0.XX.hurl` | SEO/redirect tests | AI |
-| `vcluster/manage/upgrade/supported_versions.mdx` | Support dates & compat | User |
+| `vcluster/operate/upgrade/supported_versions.mdx` | Support dates & compat | User |
 | `vcluster_versioned_docs/version-0.XX.0/` | Versioned docs | User |
 | `vcluster_versions.json` | Version list | Auto |
 
