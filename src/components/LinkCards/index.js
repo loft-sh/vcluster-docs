@@ -1,13 +1,17 @@
 import React from 'react';
 import clsx from 'clsx';
 import Link from '@docusaurus/Link';
+import VersionAwareDocLink from '@site/src/components/VersionAwareDocLink';
 import services from '@site/src/data/services';
 import styles from './styles.module.css';
 
 // One clickable card with a Material icon, a title, and a short description.
-export function LinkCard({to, icon, title, description}) {
+// Set `product` ("vcluster" or "platform") to keep the reader's docs version,
+// with `to` given relative to that product's docs root.
+export function LinkCard({to, product, icon, title, description}) {
+  const CardLink = product ? VersionAwareDocLink : Link;
   return (
-    <Link to={to} className={clsx('card', styles.card)}>
+    <CardLink to={to} product={product} className={clsx('card', styles.card)}>
       {icon && (
         <span className={clsx('material-icons-outlined', styles.icon)} aria-hidden="true">
           {icon}
@@ -15,7 +19,7 @@ export function LinkCard({to, icon, title, description}) {
       )}
       <span className={styles.title}>{title}</span>
       {description && <span className={styles.description}>{description}</span>}
-    </Link>
+    </CardLink>
   );
 }
 
@@ -37,6 +41,17 @@ export function ServiceCards() {
       ))}
     </LinkCardGrid>
   );
+}
+
+// The shipped service pages as an inline "A, B, or C" link list, for prose and
+// list items where a card grid would be too heavy.
+export function ServiceLinks() {
+  return services.map((service, index) => (
+    <React.Fragment key={service.to}>
+      {index > 0 && (index === services.length - 1 ? (services.length > 2 ? ', or ' : ' or ') : ', ')}
+      <Link to={service.to}>{service.shortTitle}</Link>
+    </React.Fragment>
+  ));
 }
 
 export default ServiceCards;
