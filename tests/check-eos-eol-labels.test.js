@@ -102,7 +102,57 @@ test('parseDate strips trailing footnote markers', () => {
 });
 
 test('parseDate handles short and long month names', () => {
-  assert.equal(parseDate('Aug 15, 2025').getTime(), new Date('August 15, 2025').getTime());
+  assert.equal(parseDate('Aug 15, 2025').getTime(), Date.UTC(2025, 7, 15));
+});
+
+test('parseDate handles the "YYYY Mon DD" format', () => {
+  assert.equal(parseDate('2026 Sep 08').getTime(), Date.UTC(2026, 8, 8));
+});
+
+test('parseDate returns UTC midnight regardless of runner timezone', () => {
+  assert.equal(parseDate('July 29, 2026').toISOString(), '2026-07-29T00:00:00.000Z');
+});
+
+// Shape of the live partials: five columns, "YYYY Mon DD" dates, <sup>
+// footnote markers, and an "(LTS)" designation in the Release cell.
+const CURRENT_PARTIAL_FIXTURE = `
+<table>
+  <tbody>
+    <tr>
+      <td>v4.12 (LTS)</td>
+      <td>2026 Sep 08</td>
+      <td>2027 Oct 15</td>
+      <td>2028 Apr 15</td>
+      <td>v0.37</td>
+    </tr>
+    <tr>
+      <td colspan="5" align="center">
+        <i>Versions below are no longer supported</i>
+      </td>
+    </tr>
+    <tr>
+      <td>v3.4</td>
+      <td>2024 Feb 29</td>
+      <td>2025 Apr 01<sup>*</sup></td>
+      <td>2025 Jul 01</td>
+      <td>v0.19</td>
+    </tr>
+  </tbody>
+</table>
+`;
+
+test('parsePartial reads five-column tables, LTS designations, and <sup> markers', () => {
+  const rows = parsePartial(CURRENT_PARTIAL_FIXTURE);
+  assert.equal(rows.length, 2);
+  assert.deepEqual(rows[0], {
+    version: 'v4.12',
+    released: '2026 Sep 08',
+    eos: '2027 Oct 15',
+    eol: '2028 Apr 15',
+  });
+  assert.equal(rows[1].version, 'v3.4');
+  assert.equal(rows[1].eos, '2025 Apr 01*');
+  assert.equal(parseDate(rows[1].eos).getTime(), Date.UTC(2025, 3, 1));
 });
 
 test('parseDate throws on unparseable input', () => {
@@ -254,4 +304,21 @@ test('applyVersionConfigUpdate throws when label is missing', () => {
     () => applyVersionConfigUpdate(input, 'v0.99 (EOS)', 'v0.99 (EOL)'),
     /Failed to find/
   );
+});
+
+// Guards against the live partials drifting away from what parsePartial
+// understands. A table format change once made every row parse as skipped,
+// which turned the weekly label sync into a silent no-op.
+test('parsePartial reads rows from the live supported-versions partials', () => {
+  const fs = require('fs');
+  const path = require('path');
+  for (const product of ['vcluster', 'platform']) {
+    const file = path.join(__dirname, '..', 'docs/_partials', `${product}_supported_versions.mdx`);
+    const rows = parsePartial(fs.readFileSync(file, 'utf8'));
+    assert.ok(rows.length > 0, `no rows parsed from ${product}_supported_versions.mdx`);
+    for (const row of rows) {
+      assert.doesNotThrow(() => parseDate(row.eos), `${product} ${row.version} EOS date`);
+      assert.doesNotThrow(() => parseDate(row.eol), `${product} ${row.version} EOL date`);
+    }
+  }
 });

@@ -120,7 +120,9 @@ function parseMDXTable(content, product) {
 
     const extractText = (cell) => cell.replace(/<[^>]+>/g, '').trim();
 
-    const version = extractText(cells[0]);
+    const versionCell = extractText(cells[0]);  // e.g. "v4.12" or "v4.12 (LTS)"
+    const version = versionCell.match(/v\d+\.\d+/)[0];
+    const isLTS = /\(LTS\)/.test(versionCell);
     const releaseDate = extractText(cells[1]);
     const eosDate = extractText(cells[2]);
     const eolDate = extractText(cells[3]);
@@ -144,6 +146,12 @@ function parseMDXTable(content, product) {
     // Add notes for extended support versions
     if (eosDate.includes('*') && extendedSupportNote) {
       versionObj.notes = extendedSupportNote;
+    }
+
+    // Long Term Support releases are marked "(LTS)" in the Release column
+    if (isLTS) {
+      versionObj.lts = true;
+      versionObj.notes = 'Long Term Support (LTS): supported as a pair with the matching vCluster Platform or vCluster LTS release.';
     }
 
     versions.push(versionObj);

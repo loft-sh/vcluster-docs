@@ -46,13 +46,17 @@ function parsePartial(content) {
     const body = m[1];
     if (/colspan=/.test(body)) continue;
     const cells = [];
-    const cellRe = /<td>([\s\S]*?)<\/td>/g;
+    const cellRe = /<td[^>]*>([\s\S]*?)<\/td>/g;
     let cm;
-    while ((cm = cellRe.exec(body)) !== null) cells.push(cm[1].trim());
-    if (cells.length !== 4) continue;
-    const version = cells[0];
-    if (!/^v\d+\.\d+$/.test(version)) continue;
-    rows.push({ version, released: cells[1], eos: cells[2], eol: cells[3] });
+    // Strip inline markup such as <sup>*</sup> footnote markers, keeping the text.
+    while ((cm = cellRe.exec(body)) !== null) cells.push(cm[1].replace(/<[^>]+>/g, '').trim());
+    // Release, release date, EOS, and EOL come first. Later columns (for
+    // example the default Kubernetes or vCluster version) are ignored.
+    if (cells.length < 4) continue;
+    // The Release cell may carry a designation such as "v4.12 (LTS)".
+    const vm = cells[0].match(/^(v\d+\.\d+)(?:\s+\(LTS\))?$/);
+    if (!vm) continue;
+    rows.push({ version: vm[1], released: cells[1], eos: cells[2], eol: cells[3] });
   }
   return rows;
 }
@@ -64,7 +68,9 @@ function parseDate(s) {
   if (Number.isNaN(d.getTime())) {
     throw new Error(`Cannot parse date: "${s}" (cleaned: "${clean}")`);
   }
-  return d;
+  // new Date() reads these strings as local midnight. Normalize to UTC
+  // midnight so boundary-day comparisons don't depend on the runner's timezone.
+  return new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
 }
 
 function expectedSuffix(row, today) {
