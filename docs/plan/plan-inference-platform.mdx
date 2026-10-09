@@ -1,0 +1,72 @@
+---
+title: Plan an inference platform
+sidebar_label: Plan an inference platform
+sidebar_position: 4
+description: Decide endpoint tiers, GPU capacity classes, endpoint readiness expectations, and your product boundary for a managed inference platform.
+---
+
+A managed inference platform serves models to customers through your product API and endpoints, not through direct Kubernetes access. This page covers the decisions specific to inference. It explains how to tier endpoints, how to divide GPU capacity into classes, what endpoint readiness depends on, and where your product's boundary sits.
+
+Make the general decisions first. [Choose a worker node model](./choose-worker-node-model.mdx) and [Capacity models](./capacity-models.mdx) apply to inference the same way they apply to any service. For the build steps, see the [Inference provider](../operator-patterns/inference-provider.mdx) guide.
+
+## Choose an inference tenancy model
+
+Most inference providers offer more than one endpoint tier. Each tier applies the worker node decision to how customers reach their models.
+
+| Tier | Use when | Tradeoff |
+| --- | --- | --- |
+| Dedicated | Customers supply models, adapters, containers, or code, or need predictable performance or compliance isolation. Each customer gets its own cluster on private GPU nodes. | Strongest isolation and performance predictability, with more capacity to plan. |
+| Shared serving | Customers call provider-owned, trusted models through your API and don't run their own containers, plugins, or models. One cluster hosts many endpoints. | Highest utilization. Isolation is at the application level, so never place customer-supplied workloads here. |
+
+The shared serving tier is the provider-operated case in [Choose a worker node model](./choose-worker-node-model.mdx#examples). Customers have no cluster access and can't run their own workloads, so shared nodes may be suitable once you apply the [shared node hardening guide](/docs/vcluster/security/shared-nodes-hardening). If a tier lets customers bring anything that executes, treat it as a dedicated tier. Add [vNode](https://www.vnode.com/docs/) when customer code needs a stronger runtime boundary than a standard container.
+
+A cluster per customer also gives each customer its own Kubernetes API. Without that boundary, competing serving frameworks collide in a shared control plane. For example, one tenant running KServe and another running a different framework's CRDs can conflict and affect each other.
+
+A cluster can host many serving endpoints, so a cluster per customer doesn't mean a cluster per model. An endpoint can use direct Kubernetes resources or an inference control plane such as KServe. See [Inference serving stacks](/docs/vcluster/integrations/model-serving) for both patterns.
+
+Each tier becomes a cluster template, with `privateNodes.enabled` set for dedicated tiers, and a project that limits which node types the tier can claim. Day 1 of the [Inference provider](../operator-patterns/inference-provider.mdx) guide builds both.
+
+## Size GPU capacity classes
+
+[Capacity models](./capacity-models.mdx) covers where machines come from, whether they're reserved for a customer or drawn on demand, and how quotas cap them. For inference, also decide how to divide that capacity into classes.
+
+- Define node types by GPU model, GPU count, region, and provider, so that each endpoint tier maps to the node types it may claim. Use [allowed node types](/docs/platform/next/tenants/projects/allowed/node-types) so an `l40s-shared` tier can't claim `h100-dedicated` capacity.
+- On NVIDIA GPUs that support MIG, give external or SLA-backed tenants MIG instances. MIG partitions memory and compute at the hardware level, so each tenant gets predictable, isolated performance. Offer a small set of standard MIG profiles per GPU model instead of fully custom sizes.
+- Keep training and inference on separate node pools, since co-locating them causes latency spikes for inference.
+- Keep the underlying driver, vGPU, and Dynamic Resource Allocation configuration in the vendor stack. See [GPU and accelerator support](/docs/vcluster/introduction/gpu-and-accelerator-support).
+
+For owned bare metal, [Inference provider capacity](/docs/platform/next/vmetal/drivers/bare-metal/metal3/gpu-fleet-operations#inference-provider-capacity) maps hardware SKUs to serving tiers and compares warm pools with on-demand provisioning.
+
+## Endpoint readiness
+
+Endpoint readiness depends on more than Kubernetes pod readiness. A new endpoint might wait for:
+
+- Argo CD to sync the Application
+- GPU capacity and node bootstrap
+- GPU Operator reconciliation
+- Image pulls
+- Model download, model load, and cache warmup
+- Route attachment, DNS, and certificate issuance
+
+Plan for minutes, not seconds, for the Argo CD sync itself. See [Sequence the GPU stack and the serving stack](/docs/vcluster/integrations/model-serving#sequence-the-gpu-stack-and-the-serving-stack) for why. The first image pull on a new GPU node is also slow for multi-gigabyte runtime images. Later endpoints scheduled on that same node start fast from the cache.
+
+Model weight download and load time scales with model size. For large models it can add more to cold start than the runtime image pull does. As with the image, endpoints that land on a node where the weights are already cached load faster.
+
+On bare metal, the wait for capacity isn't instant. Provisioning a server includes BMC verification, hardware inspection, PXE boot, and OS install before the node joins. See [Plan warm pools against on-demand provisioning](/docs/platform/next/vmetal/drivers/bare-metal/metal3/gpu-fleet-operations#plan-warm-pools-against-on-demand-provisioning) to decide how much capacity to keep ready.
+
+## Integrate with your product control plane
+
+Customers call your product API and inference endpoints, not vCluster Platform. Your product decides which actions to expose, such as endpoint creation, model selection, GPU tier selection, quota changes, and deletion. It then maps those actions to Platform and tenant resources.
+
+An endpoint tier such as `h100-dedicated` or `l40s-shared` maps to template parameters, node type constraints, and quota policy. An endpoint instance maps to a cluster and serving resources. These resources can include an `InferenceService` or direct workload, Service, route, autoscaler, and metrics resources.
+
+Dedicated tiers and shared serving pools need different metering granularity, since many endpoints can share the same nodes in a pool.
+
+For the full mapping pattern and metering approach, see [Build a product control plane on the Platform API](/docs/platform/next/integrations/api-workflows/product-control-plane). It covers how to map product concepts to Platform resources, drive the Platform API, and keep billing labels stable.
+
+## Related
+
+- The [Inference provider](../operator-patterns/inference-provider.mdx) guide builds and operates the platform, Day 0 to Day 2.
+- [Inference serving stacks](/docs/vcluster/integrations/model-serving) covers direct engines, distributed serving systems, inference control planes, and routing.
+- [GPU and inference autoscaling](/docs/vcluster/integrations/gpu-hpa-dcgm) scales on hardware and serving metrics.
+- [What are Stacks](/docs/platform/next/tenants/templates/what-are-stacks) coordinates the applications that make up an inference environment.
