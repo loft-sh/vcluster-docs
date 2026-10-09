@@ -723,7 +723,7 @@ spec:
 		Title:       "Stack Instance",
 		Name:        "StackInstance",
 		Resource:    "stackinstances",
-		Description: "StackInstance deploys one inline or referenced task graph to a cluster or control plane cluster and reports aggregate and per-task status. See [What are Stacks](../../tenants/templates/what-are-stacks.mdx) for the concept and [Use a Stack](../../tenants/consume-services/apps/use-stacks.mdx) for the installation and monitoring workflow.",
+		Description: "StackInstance deploys one inline or referenced task graph to a cluster or control plane cluster and reports aggregate and per-task status. See [What are Stacks](../../tenants/templates/what-are-stacks.mdx) for the concept and [Use a Stack](../../use-platform/apps/use-stacks.mdx) for the installation and monitoring workflow.",
 		File:        path.Join(util.BaseResourcesPath, "stackinstance.mdx"),
 		Object: &managementv1.StackInstance{
 			TypeMeta: metav1.TypeMeta{
