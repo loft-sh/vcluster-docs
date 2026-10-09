@@ -34,8 +34,8 @@ const services = [
   {
     to: '/internal-platforms-and-dev-clusters',
     icon: 'groups',
-    title: 'Internal platforms and dev clusters',
-    shortTitle: 'Internal platforms and dev clusters',
+    title: 'Team and CI clusters as a service',
+    shortTitle: 'Team and CI clusters',
     description: 'Give engineering teams and CI pipelines their own isolated clusters, from long-running to ephemeral.',
   },
 ];
