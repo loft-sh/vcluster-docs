@@ -151,7 +151,7 @@ Common issues:
 - Air-gapped install pages inside a `pro`-labeled category — the category header carries the badge; individual pages don't need one.
 - API reference pages — no label needed.
 - Overview/index pages that span multiple tiers — no label needed.
-- `vcluster/introduction/oss-vs-free.mdx` — intro page.
+- `vcluster/overview/oss-vs-free.mdx` — intro page.
 
 ## What to Check in Code
 
