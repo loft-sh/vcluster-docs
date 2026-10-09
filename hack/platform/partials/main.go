@@ -616,7 +616,7 @@ spec:
 		Title:       "App Instance",
 		Name:        "AppInstance",
 		Resource:    "appinstances",
-		Description: "AppInstance deploys an App into a tenant cluster, space, or connected cluster, and reports the resulting Helm release status. It replaces the Task and HelmRelease resources removed in Platform 4.12. See [What are Apps](../../understand/what-are-apps.mdx) for the concept, [Upgrade to Platform 4.12](../../maintenance/upgrade-migrate/upgrade.mdx#upgrade-to-4-12) for migrating an existing app deployment, and [Retrieve App Instance Logs](appinstancelog.mdx) for the log subresource.",
+		Description: "AppInstance deploys an App into a cluster, space, or connected cluster, and reports the resulting Helm release status. It replaces the Task and HelmRelease resources removed in Platform 4.12. See [What are Apps](../../tenants/templates/what-are-apps.mdx) for the concept, [Upgrade to Platform 4.12](../../administer/upgrade-migrate/upgrade.mdx#upgrade-to-4-12) for migrating an existing app deployment, and [Retrieve App Instance Logs](appinstancelog.mdx) for the log subresource.",
 		File:        path.Join(util.BaseResourcesPath, "appinstance.mdx"),
 		Object: &managementv1.AppInstance{
 			TypeMeta: metav1.TypeMeta{
@@ -678,7 +678,7 @@ spec:
 		Title:       "Stack Template",
 		Name:        "StackTemplate",
 		Resource:    "stacktemplates",
-		Description: "StackTemplate is a reusable, parameterized task graph that a StackInstance deploys to a tenant cluster or control plane cluster. See [What are Stacks](../../understand/what-are-stacks.mdx) for the concept and [Create a Stack template](../../administer/templates/create-stack-templates.mdx) for the full task, parameter, and output syntax.",
+		Description: "StackTemplate is a reusable, parameterized task graph that a StackInstance deploys to a cluster or control plane cluster. See [What are Stacks](../../tenants/templates/what-are-stacks.mdx) for the concept and [Create a Stack template](../../tenants/templates/create-stack-templates.mdx) for the full task, parameter, and output syntax.",
 		File:        path.Join(util.BaseResourcesPath, "stacktemplate.mdx"),
 		Object: &managementv1.StackTemplate{
 			TypeMeta: metav1.TypeMeta{
@@ -723,7 +723,7 @@ spec:
 		Title:       "Stack Instance",
 		Name:        "StackInstance",
 		Resource:    "stackinstances",
-		Description: "StackInstance deploys one inline or referenced task graph to a tenant cluster or control plane cluster and reports aggregate and per-task status. See [What are Stacks](../../understand/what-are-stacks.mdx) for the concept and [Use a Stack](../../use-platform/apps/use-stacks.mdx) for the installation and monitoring workflow.",
+		Description: "StackInstance deploys one inline or referenced task graph to a cluster or control plane cluster and reports aggregate and per-task status. See [What are Stacks](../../tenants/templates/what-are-stacks.mdx) for the concept and [Use a Stack](../../use-platform/apps/use-stacks.mdx) for the installation and monitoring workflow.",
 		File:        path.Join(util.BaseResourcesPath, "stackinstance.mdx"),
 		Object: &managementv1.StackInstance{
 			TypeMeta: metav1.TypeMeta{
@@ -761,7 +761,7 @@ spec:
 		SubResourceParentName: "StackInstance",
 		Resource:              "stackinstances",
 		SubResource:           "outputs",
-		Description:           "Retrieve the outputs a StackTemplate publishes for a StackInstance. Reading this subresource requires separate `get` permission on `stackinstances/outputs`. See [Stack permissions](../../administer/users-permissions/permissions/stacks.mdx#permission-map) and [What are Stacks](../../understand/what-are-stacks.mdx) for the output-capture concept.",
+		Description:           "Retrieve the outputs a StackTemplate publishes for a StackInstance. Reading this subresource requires separate `get` permission on `stackinstances/outputs`. See [Stack permissions](../../tenants/users-permissions/permissions/stacks.mdx#permission-map) and [What are Stacks](../../tenants/templates/what-are-stacks.mdx) for the output-capture concept.",
 		File:                  path.Join(util.BaseResourcesPath, "stackinstanceoutputs.mdx"),
 		Object: &managementv1.StackInstanceOutputs{
 			TypeMeta: metav1.TypeMeta{
