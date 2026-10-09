@@ -145,6 +145,12 @@ url_resolves() {
     local paths_to_check=("$rel")
     [[ -n "$versioned_rel" ]] && paths_to_check=("$versioned_rel")
 
+    # Root docs component (routeBasePath "/"): /docs/<route> -> docs/<route>
+    case "$rel" in
+        vcluster/*|platform/*) ;;
+        *) paths_to_check+=("docs/${rel}") ;;
+    esac
+
     for base in "${paths_to_check[@]}"; do
         local full="${REPO_ROOT}/${base}"
 

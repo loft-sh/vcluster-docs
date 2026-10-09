@@ -1,0 +1,112 @@
+---
+title: Team and CI clusters as a service
+sidebar_label: Team and CI clusters as a service
+sidebar_position: 7
+description: Give internal engineering teams and CI pipelines their own isolated clusters on shared infrastructure, from long-running team clusters to ephemeral CI clusters.
+slug: /internal-platforms-and-dev-clusters
+---
+
+import SharedNodesSuitability from '@site/vcluster/_partials/admonitions/shared-nodes-suitability.mdx';
+
+Give your internal engineering teams and CI pipelines their own isolated clusters, without standing up separate infrastructure for each one. Each team or pipeline run gets its own <GlossaryTerm term="control-plane">control plane</GlossaryTerm>, its own RBAC, and its own view of Kubernetes. Clusters share the nodes of your control plane cluster, so the platform team runs one set of infrastructure.
+
+This page shows how the pieces fit together and the order to build them in. Each step links to the guide that owns the procedure.
+
+<SharedNodesSuitability />
+
+This service is for your own teams and pipelines. If tenants are external customers or you resell access, use private nodes instead, as in the [AI cloud provider](../operator-patterns/ai-cloud.mdx) and [SaaS and B2B provider](../operator-patterns/single-tenant.mdx) patterns.
+
+## What the service provides
+
+- **A cluster per team or pipeline run.** Each one has its own control plane, so teams don't see each other's resources and pipelines don't share state.
+- **Self-service within guardrails.** Teams create clusters from templates that enforce your baseline, and project quotas cap what each team can consume.
+- **Shared infrastructure.** Clusters run on one shared node pool, with optional dedicated node pools for teams with elevated security or performance requirements.
+- **Automatic cleanup.** CI clusters delete themselves after a period of inactivity, and idle team clusters can sleep.
+
+## Choose the cluster lifetime
+
+Long-running team clusters and short-lived CI clusters use the same architecture. They differ in what you optimize for, and most internal platforms offer both.
+
+| | Team clusters | CI clusters |
+| --- | --- | --- |
+| Lifetime | Weeks to years. Can carry internal production traffic. | Minutes or hours |
+| Optimize for | Governance, isolation, and uptime | Lifecycle at scale and fast cleanup |
+| Created by | Team members, through the platform UI or CLI | Pipelines, through the CLI or the Platform API |
+| Cleanup | Manual, with sleep mode for idle clusters | Auto-delete after inactivity, or deletion at the end of the job |
+
+Build team clusters first, then add CI clusters on the same platform.
+
+## Plan the service
+
+| Decision | Read next | Outcome |
+| --- | --- | --- |
+| Define the tenancy model | [Projects](/docs/platform/next/tenants/projects/create), [templates](/docs/platform/next/tenants/templates/overview) | Decide whether teams get one cluster per team, one per project, or clusters on demand. Set a default template enforced across all teams. |
+| Define access and governance | [SSO](/docs/platform/next/administer/authentication/single-sign-on), [RBAC](/docs/platform/next/tenants/users-permissions/overview), [network policy](/docs/vcluster/configure/vcluster-yaml/policies/network-policy) | Map your identity provider to Platform roles. Define which teams can create clusters, how many, and with what resource limits. |
+| Define resource quotas | [Quotas](/docs/platform/next/tenants/projects/quotas), [resource quota](/docs/vcluster/configure/vcluster-yaml/policies/resource-quota) | Set per-team limits on cluster count, CPU, and memory, including how many CI clusters can run at once. This prevents runaway consumption and node saturation at peak pipeline load. |
+| Define application baselines | [Stacks](/docs/platform/next/tenants/templates/what-are-stacks), [create a Stack template](/docs/platform/next/tenants/templates/create-stack-templates) | If teams need the same multi-application environment, define the Apps or Argo CD Applications, dependencies, and health gates that Platform deploys for them. |
+| Plan sync configuration | [Sync configuration](/docs/vcluster/configure/vcluster-yaml/sync) | Decide which control plane cluster resources, such as storage classes, ingress controllers, and secrets, are visible inside the clusters. |
+| Define uptime requirements | [HA](/docs/vcluster/deploy/control-plane/kubernetes-pod/high-availability), [backing store](/docs/vcluster/configure/vcluster-yaml/control-plane/components/backing-store) | Decide whether team clusters need HA control planes. Most internal platforms start single-replica and move to HA as adoption grows. |
+| Define the CI cleanup policy | [Sleep mode](/docs/vcluster/configure/vcluster-yaml/sleep), [auto-delete](/docs/vcluster/configure/vcluster-yaml/deletion) | Set a default lifetime for CI clusters. Choose auto-delete after inactivity, deletion on pipeline completion through the CLI, or both. |
+| Choose the pipeline integration | [vCluster CLI](/docs/vcluster/cli/vcluster_create), [Platform API](/docs/platform/next/integrations/api-workflows/product-control-plane), [Argo CD](/docs/platform/next/integrations/gitops-cicd/argocd) | Decide whether pipelines create and delete clusters with CLI commands in workflow steps, calls to the Platform API, or GitOps. |
+| Plan image caching | Your container runtime's registry mirror docs | Decide whether CI clusters pull images directly from registries or through a cache. On shared nodes, the control plane cluster's container runtime pulls images, so configure any pull-through cache there. A warm cache significantly reduces job time. |
+
+## Build the service
+
+### Stand up team clusters
+
+1. Install [vCluster Platform](/docs/platform/next/install/quick-start-guide) on your existing Kubernetes cluster.
+2. Configure [SSO](/docs/platform/next/administer/authentication/single-sign-on) and [team permissions](/docs/platform/next/tenants/users-permissions/overview).
+3. Create [projects](/docs/platform/next/tenants/projects/create) aligned to your org structure, such as by team, business unit, or environment.
+4. Define [templates](/docs/platform/next/tenants/templates/overview) that enforce your baseline, including [pod security standard](/docs/vcluster/configure/vcluster-yaml/policies/pod-security-standard), [network policy](/docs/vcluster/configure/vcluster-yaml/policies/network-policy), resource quota, and sync configuration.
+5. If teams need a standard set of applications, [create a StackTemplate](/docs/platform/next/tenants/templates/create-stack-templates) and [deploy it to the clusters](/docs/platform/next/use-platform/apps/use-stacks#choose-how-to-install-a-stack) that need it.
+6. Apply [quotas](/docs/platform/next/tenants/projects/quotas) per project to cap resource consumption.
+7. Enable [monitoring](/docs/platform/next/administer/monitoring/overview) for the Platform layer and expose cluster-level metrics to Platform's fleet view.
+8. Validate self-service and isolation. A team lead creates a cluster, deploys a workload, and verifies that another team's project isn't visible. Confirm the control plane cluster's CNI enforces NetworkPolicy. With `sync.toHost.networkPolicies` enabled, apply a default-deny policy in a namespace inside the cluster, and confirm the blocked connection is refused. If traffic still flows, network isolation between clusters on shared nodes isn't in effect. See the [security baseline](/docs/vcluster/security).
+
+### Add CI clusters
+
+After team clusters work, add the CI-specific configuration:
+
+1. Create a CI-specific [template](/docs/platform/next/tenants/templates/overview) that deletes clusters after your target period of inactivity:
+
+   ```yaml title="vcluster.yaml"
+   deletion:
+     auto:
+       afterInactivity: 1h
+   ```
+
+2. Set [project quotas](/docs/platform/next/tenants/projects/quotas) on the maximum number of concurrent CI clusters per team or pipeline.
+3. Configure your CI system to create a cluster at the start of each job and delete it at the end. The job needs the vCluster CLI logged in to the platform, for example with `vcluster platform login` and an [access key](/docs/platform/next/administer/authentication/access-keys). This example uses a project named `ci` and the template from step 1, named `ci-cluster`:
+
+   ```bash
+   # Create a cluster at pipeline start
+   vcluster create ci-${CI_JOB_ID} --driver platform --project ci --template ci-cluster
+
+   # Delete on pipeline completion, or let auto-delete handle it
+   vcluster delete ci-${CI_JOB_ID} --driver platform --project ci
+   ```
+
+4. Validate end to end. A pipeline run creates a cluster, deploys a test workload, and the cluster is deleted after the job finishes.
+
+## Operate the service
+
+| Operation | Read next |
+| --- | --- |
+| Monitor cluster health, resource usage, and concurrent CI clusters during peak load | [Fleet Observability](/docs/platform/next/fleet-operations/observability/overview), [other architectures](/docs/platform/next/fleet-operations/reference-architectures/fleet-metrics-architectures) |
+| Manage cluster lifecycle and upgrades | [Upgrade vCluster](/docs/vcluster/manage/upgrade/upgrade-version), [upgrade Platform](/docs/platform/next/administer/upgrade-migrate/upgrade) |
+| Respond to quota violations or runaway clusters, and tune quotas as pipeline volume grows | [Quotas](/docs/platform/next/tenants/projects/quotas), [resource quota](/docs/vcluster/configure/vcluster-yaml/policies/resource-quota) |
+| Find orphaned CI clusters from jobs that exited without cleanup | [Sleep mode](/docs/vcluster/configure/vcluster-yaml/sleep), [auto-delete](/docs/vcluster/configure/vcluster-yaml/deletion) |
+| Back up and restore team clusters | [Snapshots](/docs/vcluster/manage/backup-restore/backup), [restore](/docs/vcluster/manage/backup-restore/restore) |
+| Rotate certificates | [Certificate rotation](/docs/vcluster/manage/certificates) |
+
+## Know where the service ends
+
+Clusters on shared nodes give each team control plane, API, and namespace isolation. Tenants still share the kernel and the physical nodes, so this service is for teams and pipelines you trust. A dedicated node pool places a team's workloads on specific nodes, but it doesn't give the isolation of private nodes. See [Choose a worker node model](../plan/choose-worker-node-model.mdx).
+
+The platform team owns the control plane cluster, the templates, and upgrades. Each team owns the workloads and configuration inside its own clusters.
+
+## Related
+
+- [Choose a worker node model](../plan/choose-worker-node-model.mdx) explains when shared nodes fit and when they don't.
+- [Shared nodes quick start](/docs/vcluster/quick-start/shared-nodes) shows the isolation model in a few minutes.
+- [Security baseline](/docs/vcluster/security) lists the hardening steps for clusters on shared nodes.
