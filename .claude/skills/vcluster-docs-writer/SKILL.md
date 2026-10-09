@@ -63,7 +63,7 @@ See `references/style-guide.md` for complete writing guidelines.
 
 ✅ **CORRECT** (file paths with .mdx):
 ```markdown
-[Pod Identity](../../../../third-party-integrations/pod-identity/eks-pod-identity.mdx)
+[Pod Identity](../../../../integrations/pod-identity/eks-pod-identity.mdx)
 ```
 
 **Build gates:** `onBrokenLinks: "throw"` and `onBrokenAnchors: "throw"`. Between them the build catches missing files and dead `#anchor` targets. Neither catches the silent-404 class, where a relative path without `.mdx` renders correct static HTML and only 404s when a user clicks it.

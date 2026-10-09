@@ -76,7 +76,7 @@ static HTML but 404s on click.
 These are examples of **correct** link formats that are robust and trailing-slash independent:
 
 ```markdown
-[Pod Identity](../../../../third-party-integrations/pod-identity/eks-pod-identity.mdx)
+[Pod Identity](../../../../integrations/pod-identity/eks-pod-identity.mdx)
 [Backing Store](../../../configure/vcluster-yaml/control-plane/components/backing-store/README.mdx)
 [FIPS Guide](./fips.mdx)
 [Policies](../../../configure/vcluster-yaml/policies/README.mdx)
