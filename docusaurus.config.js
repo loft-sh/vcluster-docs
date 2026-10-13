@@ -220,9 +220,11 @@ const config = {
             '/docs/vcluster/cli/**',
             // Aggregate config reference renders to ~380K — well above the
             // 100K agent truncation limit. Sub-pages are indexed individually.
+            // Retired in 0.38 (DOC-1556); remove this entry at the 0.38 cutover.
             '/docs/vcluster/configure/vcluster-yaml$',
-            // Aggregate sync reference renders to ~161K; sub-pages are indexed.
-            '/docs/vcluster/configure/vcluster-yaml/sync$',
+            // The sync section of the vcluster.yaml reference renders to ~176K;
+            // the Configure > Resource synchronization task pages are indexed.
+            '/docs/vcluster/reference/vcluster-yaml/sync$',
             // Platform API reference renders to ~116K; no sub-pages exist.
             // Silent truncation on a dense API reference causes incorrect answers.
             '/docs/platform/api/resources/project/templates$',
