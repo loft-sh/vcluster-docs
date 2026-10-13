@@ -170,7 +170,7 @@ Instead, use `overview.mdx` with an explicit `slug:` that matches the directory 
 title: Networking
 sidebar_label: Overview
 sidebar_position: 0
-slug: /configure/vcluster-yaml/networking
+slug: /configure/networking
 ---
 ```
 
@@ -193,9 +193,7 @@ When converting an existing `README.mdx` to `overview.mdx`:
 
 Do not add a `link` field.
 
-**Exception: `vcluster/configure/vcluster-yaml/` uses `README.mdx`**
-
-The `vcluster-yaml` section mirrors the structure of the `vcluster.yaml` config file — every folder is a yaml key. Labeling these pages "Overview" is semantically wrong because there is no `overview` key in the yaml. In this section only, use `README.mdx` (not `overview.mdx`) as the folder index. Docusaurus treats it as the category header click target; it does not appear as a named sidebar item. Do NOT set `sidebar_label: Overview` or `sidebar_position: 0` on these files — they are irrelevant once the file becomes the category index.
+There are no exceptions. `vcluster/configure/vcluster-yaml/`, which used `README.mdx` because its folders mirrored `vcluster.yaml` keys, no longer exists. The 0.38 restructure (DOC-1556) split it into task-first Configure sections, which use `overview.mdx` like everything else. The generated key reference now lives in `vcluster/reference/vcluster-yaml/`, with one flat page per top-level key and an `overview.mdx` index.
 
 ### PR Preview URLs
 
@@ -315,7 +313,7 @@ Explanation pages (architecture, overview, "what is X") should build the reader'
 - ⚠️ **NEVER use URL paths for links** (use file paths with `.mdx`)
 - ⚠️ **NEVER place admonitions inside JSX components** like `<Step>`
 - ⚠️ **NEVER add a `link` field to `_category_.json`** — sidebar section labels must expand/collapse only, not navigate
-- ⚠️ **NEVER create `README.mdx` as a folder index** in general docs sections — use `overview.mdx` with an explicit `slug:` instead. **Exception**: `vcluster/configure/vcluster-yaml/` uses `README.mdx` because every folder is a yaml key and "Overview" is semantically wrong there (see Sidebar Navigation Conventions)
+- ⚠️ **NEVER create `README.mdx` as a folder index** — use `overview.mdx` with an explicit `slug:` instead (see Sidebar Navigation Conventions)
 - ⚠️ **NEVER recommend shared nodes for untrusted tenants with Kubernetes access or arbitrary workload execution** (external, resale, regulated) — route those to private nodes (see Tenancy Model Positioning)
 
 ### Always-Do

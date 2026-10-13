@@ -67,8 +67,8 @@ static HTML but 404s on click.
 [FIPS Guide](/vcluster/deploy/security/fips)
 
 <!-- Relative paths without .mdx — SILENT 404 on click (SPA navigation) -->
-[Backing Store](../../../configure/vcluster-yaml/control-plane/components/backing-store)
-[Policies](../../../../configure/vcluster-yaml/policies/)
+[Backing Store](../../../configure/control-plane/components/backing-store)
+[Policies](../../../../configure/policies/)
 ```
 
 ## ✅ Correct Examples (File Paths with .mdx)
@@ -77,9 +77,9 @@ These are examples of **correct** link formats that are robust and trailing-slas
 
 ```markdown
 [Pod Identity](../../../../integrations/pod-identity/eks-pod-identity.mdx)
-[Backing Store](../../../configure/vcluster-yaml/control-plane/components/backing-store/README.mdx)
+[Backing Store](../../../configure/control-plane/components/backing-store/overview.mdx)
 [FIPS Guide](./fips.mdx)
-[Policies](../../../configure/vcluster-yaml/policies/README.mdx)
+[Policies](../../../configure/policies/overview.mdx)
 ```
 
 ## Benefits of File Paths
