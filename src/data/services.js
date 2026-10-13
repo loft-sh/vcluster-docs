@@ -8,7 +8,7 @@ const services = [
     icon: 'dns',
     title: 'Bare metal as a service',
     shortTitle: 'Bare metal',
-    description: 'Give tenants dedicated physical servers on demand, provisioned from your hardware and reached over SSH.',
+    description: 'Give tenants dedicated bare metal servers on demand, provisioned from your hardware and reached over SSH.',
   },
   {
     to: '/vms-as-a-service',
