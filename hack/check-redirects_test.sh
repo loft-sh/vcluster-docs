@@ -335,6 +335,33 @@ test_pr_renamed() {
     cleanup "$dir"
 }; test_pr_renamed
 
+test_pr_readme_to_overview_with_slug() {
+    local dir; dir="$(setup_test_repo)"; cd "$dir"
+    mkdir -p vcluster/configure/networking
+    printf -- '---\ntitle: Networking\n---\n# N\n' > vcluster/configure/networking/README.mdx
+    create_netlify_toml; seal_initial_state
+    git mv vcluster/configure/networking/README.mdx vcluster/configure/networking/overview.mdx
+    printf -- '---\ntitle: Networking\nslug: /configure/networking\n---\n# N\n' > vcluster/configure/networking/overview.mdx
+    commit_all "readme to overview"
+    local out; out=$(run_script_rc pr); local ec=$?
+    assert_exit 0 "$ec" "README.mdx -> overview.mdx with matching slug -> exit 0"
+    assert_contains "$out" "URL unchanged for renamed" "reports unchanged URL"
+    cleanup "$dir"
+}; test_pr_readme_to_overview_with_slug
+
+test_pr_deleted_readme_uses_folder_url() {
+    local dir; dir="$(setup_test_repo)"; cd "$dir"
+    mkdir -p vcluster/configure/old-section
+    echo "# O" > vcluster/configure/old-section/README.mdx
+    create_netlify_toml; seal_initial_state
+    git rm -q vcluster/configure/old-section/README.mdx
+    add_redirect "/docs/vcluster/next/configure/old-section" "/docs/vcluster/next/configure"
+    commit_all "delete readme"
+    local out; out=$(run_script_rc pr); local ec=$?
+    assert_exit 0 "$ec" "deleted README.mdx covered by its folder URL -> exit 0"
+    cleanup "$dir"
+}; test_pr_deleted_readme_uses_folder_url
+
 test_pr_ignores_partials() {
     local dir; dir="$(setup_test_repo)"; cd "$dir"
     mkdir -p vcluster/_partials

@@ -219,11 +219,34 @@ redirect_target_for_url() {
     return 1
 }
 
+# file_slug PATH: print the page's `slug:` frontmatter, read from the working
+# tree or, for deleted and renamed files, from the base ref.
+file_slug() {
+    local path="$1" content=""
+    if [[ -f "$path" ]]; then
+        content="$(cat "$path")"
+    else
+        local ref
+        ref="$(get_base_ref 2>/dev/null)"
+        [[ -n "$ref" ]] && content="$(git show "${ref}:${path}" 2>/dev/null)"
+    fi
+    printf '%s\n' "$content" | awk 'NR==1 && $0!="---"{exit} NR>1 && $0=="---"{exit} /^slug:/{sub(/^slug:[ \t]*/,""); gsub(/["\x27]/,""); print; exit}'
+}
+
 file_to_url() {
-    local url="$1"
+    local url="$1" slug
+    slug="$(file_slug "$1")"
+    if [[ -n "$slug" ]]; then
+        case "$url" in
+            vcluster/*|platform/*) echo "/docs/${url%%/*}/next${slug%/}" ;;
+            *) echo "/docs${slug%/}" ;;
+        esac
+        return
+    fi
     url="${url%.mdx}"
     url="${url%.md}"
     url="${url%/index}"
+    url="${url%/README}"
     case "$url" in
         vcluster/*|platform/*)
             local product="${url%%/*}"
@@ -410,9 +433,13 @@ check_pr_deletions() {
     local i=0
     while IFS= read -r old_path; do
         [[ -z "$old_path" ]] && continue
-        local url
+        local url new_path new_url
         url="$(file_to_url "$old_path")"
-        if has_redirect_coverage "$url"; then
+        new_path="$(echo "$RENAMED_NEW" | sed -n "$((i + 1))p")"
+        new_url="$(file_to_url "$new_path")"
+        if [[ -n "$new_path" && "$url" == "$new_url" ]]; then
+            ok "URL unchanged for renamed: $old_path -> $new_path"
+        elif has_redirect_coverage "$url"; then
             ok "Redirect exists for renamed: $old_path"
         else
             error "No redirect for renamed file: $old_path"
