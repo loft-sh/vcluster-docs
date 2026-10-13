@@ -221,6 +221,8 @@ New work typically lands in `docs/` (the `next` version). Before completing a PR
 
 When backporting: make the same changes in relevant `versioned_docs/version-X.XX/` folders and include preview links for those versions too.
 
+Backport labels (`backport-vX.XX`) copy each changed file to the same path in an older version, so they only work for pages whose path didn't change. The Platform 5.0 and vCluster 0.38 restructure moved most pages, so a current path often doesn't exist in Platform 4.12 or earlier, or vCluster 0.37 or earlier. For those pages, don't suggest a backport label. Edit each older version by hand at its own path, with the user's explicit approval. See "Backport changes to released versions" in CONTRIBUTING.md.
+
 ### Integration Tests (BrowserStack)
 
 Cross-browser tests for documentation rendering (mermaid diagrams, and so on).

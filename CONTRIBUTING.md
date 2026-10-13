@@ -91,6 +91,22 @@ name. Omit `--prod`, which publishes to the live site.
 As with any preview, put `/next/` after the product path to see unreleased
 changes, for example `/docs/platform/next/...`.
 
+### Backport changes to released versions
+
+To carry a fix into released versions, add a `backport-vX.XX` label to the PR,
+one per version. After the PR merges, a workflow copies each changed file under
+`vcluster/` or `platform/` to the same path in that version's folder and opens a
+backport PR.
+
+> [!WARNING]
+> The copy only works when the page has the same path in the older version.
+> Platform 5.0 and vCluster 0.38 reorganized most of the docs, so a page's
+> current path often doesn't exist in Platform 4.12 or earlier, or vCluster 0.37
+> or earlier. For those pages, don't add a backport label. Make the change by
+> hand in each older version's folder, at that version's own path, and say so
+> in the PR description. Pages that kept their path still backport normally.
+> This applies until Platform 4.12 and vCluster 0.37 reach end of support.
+
 ## AI-assisted PR review
 
 Pull requests can receive an on-demand AI review from Claude. Mention `@claude`
