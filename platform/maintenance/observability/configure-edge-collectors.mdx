@@ -141,6 +141,7 @@ spec:
 | `collectionInterval` | `30s` | Scrape interval for the jobs the collectors scrape themselves. |
 | `otelDaemonResources` | _(empty)_ | Resource requests and limits for the `otel-daemon` collector container, as a multiline YAML block. See the example below. When empty, the chart default applies, which sets no requests or limits. |
 | `otelDeployResources` | _(empty)_ | Resource requests and limits for the `otel-deploy` collector container, in the same format as `otelDaemonResources`. When empty, the chart default applies, which sets no requests or limits. |
+| `bearerToken` | _(empty)_ | Deprecated. Leave empty so the collectors read the `metrics-writer` Secret. See [Upgrade collectors that use the token parameters](#upgrade-collectors-that-use-the-token-parameters). |
 
 Both resource parameters are multiline parameters that take the contents of a Kubernetes
 `resources` field.
@@ -206,6 +207,68 @@ kubectl create secret generic metrics-writer -n observability \
   --from-literal=token=REPLACE_WITH_METRICS_WRITER_KEY \
   --from-file=ca.crt=ca.crt
 ```
+
+### Upgrade collectors that use the token parameters
+
+Earlier versions of the `cluster-collector` template took the gateway endpoint and token as
+the `otlpEndpoint` and `bearerToken` parameters, plus `otlpInsecureSkipVerify` to skip
+certificate verification. These parameters are deprecated and will be removed in a later
+release. Until then, the template still reads them from existing applications:
+
+- **Both `otlpEndpoint` and `bearerToken` set:** the collectors keep working. They read the
+  `otel-daemon-otlp-auth` and `otel-deploy-otlp-auth` Secrets the template renders from both
+  parameters, not the `metrics-writer` Secret.
+- **Only one of them set**, such as `otlpEndpoint` with a hand-made `otel-otlp-auth` Secret:
+  Platform can't render the application. The collectors keep running with the configuration
+  they had before the upgrade, but the application applies no further changes. Its `Synced`
+  condition reports `BuildApplicationFailed` with this message:
+
+  ```text
+  cluster-collector: the deprecated bearerToken and otlpEndpoint must be set together, or both cleared to read the Metrics-Writer Secret
+  ```
+
+To move an application to the delivered `metrics-writer` Secret:
+
+1. Turn on the observability integration in the cluster's `vcluster.yaml`, as described in
+   [Deploy collectors with Argo CD](#deploy-collectors-with-argo-cd). The collectors must
+   reach the endpoint Platform hands out, which needs either a DNS mapping or a gateway
+   LoadBalancer depending on where the cluster runs. See
+   [step 3 of the quickstart](./quickstart.mdx#3-turn-on-the-observability-integration).
+   If the application's `destinationNamespace` isn't `observability`, also set
+   `integrations.observability.gatewaySecret` and the template's `gatewaySecretName` to
+   match. For a control plane cluster,
+   [create the Secret yourself](#create-the-secret-for-a-control-plane-cluster) instead.
+
+2. In the cluster, confirm the Secret exists:
+
+   ```bash
+   kubectl get secret metrics-writer -n observability
+   ```
+
+3. In one edit, remove `otlpEndpoint`, `otlpInsecureSkipVerify`, and `bearerToken` from the
+   `ArgoCDApplication`'s `spec.parameters`. Removing only one of `otlpEndpoint` and
+   `bearerToken` fails rendering. For example:
+
+   ```diff title="fleet-edge-collectors.yaml"
+      parameters:
+        destinationNamespace: observability
+   -    otlpEndpoint: https://gateway-fleet-observability.vcluster-platform.svc.cluster.local:4318
+   -    otlpInsecureSkipVerify: "true"
+        project: default
+   ```
+
+4. In the cluster, restart the collectors so they read the new Secret:
+
+   ```bash
+   kubectl rollout restart daemonset,deployment -n observability -l app.kubernetes.io/name=opentelemetry-collector
+   ```
+
+5. Argo CD prunes the Secrets the template rendered from `bearerToken`, but not a hand-made
+   `otel-otlp-auth` Secret. Delete it if it exists:
+
+   ```bash
+   kubectl delete secret otel-otlp-auth -n observability
+   ```
 
 ## Cluster backing store metrics
 
