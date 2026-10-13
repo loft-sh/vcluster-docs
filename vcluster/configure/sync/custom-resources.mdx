@@ -1,12 +1,12 @@
 ---
-title: Manage custom resources
-sidebar_label: Custom resources
-sidebar_position: 8
+title: Sync custom resources
+sidebar_label: Sync custom resources
+sidebar_position: 4
 sidebar_class_name: host-nodes
 description: Choose a sync direction and resource type for custom resources, and operate them over their lifecycle.
 ---
 
-import TenancySupport from '../_fragments/tenancy-support.mdx';
+import TenancySupport from '../../_fragments/tenancy-support.mdx';
 
 <TenancySupport hostNodes="true" />
 
@@ -16,8 +16,8 @@ import TenancySupport from '../_fragments/tenancy-support.mdx';
 
 | You want | Direction | Ownership |
 | --- | --- | --- |
-| Read-only copies of control-plane-managed resources available to tenant workloads, such as shared `ClusterStores` from external-secrets | [From the control plane cluster](../configure/sync/from-host/custom-resources.mdx) | The control plane cluster owns the object. A tenant field edit stays local until the control plane cluster changes that same field, which then overwrites it. |
-| Tenant workloads to create and manage resources that a control plane cluster controller or extension API server acts on, such as an Istio waypoint Gateway | [To the control plane cluster](../configure/sync/to-host/advanced/custom-resources.mdx) | The cluster owns the object. vCluster mirrors it to the control plane cluster. |
+| Read-only copies of control-plane-managed resources available to tenant workloads, such as shared `ClusterStores` from external-secrets | [From the control plane cluster](./from-host/custom-resources.mdx) | The control plane cluster owns the object. A tenant field edit stays local until the control plane cluster changes that same field, which then overwrites it. |
+| Tenant workloads to create and manage resources that a control plane cluster controller or extension API server acts on, such as an Istio waypoint Gateway | [To the control plane cluster](./to-host/advanced/custom-resources.mdx) | The cluster owns the object. vCluster mirrors it to the control plane cluster. |
 
 You can't sync the same resource type in both directions. From-host sync skips any resource already configured for to-host sync.
 
@@ -26,7 +26,7 @@ You can't sync the same resource type in both directions. From-host sync skips a
 You don't declare which one you're syncing. vCluster resolves each configured resource against the control plane cluster on startup:
 
 - If a CustomResourceDefinition (CRD) backs it, vCluster copies that CRD.
-- If an extension <GlossaryTerm term="api-server">API server</GlossaryTerm> serves it through [API aggregation](../configure/sync/from-host/custom-resources.mdx#aggregated-api-resources) instead, vCluster generates a schemaless CRD for it.
+- If an extension <GlossaryTerm term="api-server">API server</GlossaryTerm> serves it through [API aggregation](./from-host/custom-resources.mdx#aggregated-api-resources) instead, vCluster generates a schemaless CRD for it.
 
 Which one applies changes what you get:
 
@@ -37,7 +37,7 @@ Which one applies changes what you get:
 | To-host writes | Applied to the tenant object, synced to the control plane cluster asynchronously | Written through to the control plane cluster synchronously before the tenant request returns, with rollback on rejection |
 | Subresources | Whatever the CRD defines | Only the resource and `status`. `scale`, `logs`, `exec`, and similar aren't available in the cluster |
 
-The synchronous write-through path means a tenant `create`, `update`, or `patch` on an aggregated resource gets the same extension API server validation it would get by writing directly to the control plane cluster, and a rejected write doesn't come back as a success. It isn't a blanket guarantee: dry runs and subresource requests skip write-through, deletion is asynchronous, and rollback is best-effort. See [Synchronous validation on the control plane cluster](../configure/sync/to-host/advanced/custom-resources.mdx#synchronous-validation-on-the-control-plane-cluster) for the exact behavior and failure modes.
+The synchronous write-through path means a tenant `create`, `update`, or `patch` on an aggregated resource gets the same extension API server validation it would get by writing directly to the control plane cluster, and a rejected write doesn't come back as a success. It isn't a blanket guarantee: dry runs and subresource requests skip write-through, deletion is asynchronous, and rollback is best-effort. See [Synchronous validation on the control plane cluster](./to-host/advanced/custom-resources.mdx#synchronous-validation-on-the-control-plane-cluster) for the exact behavior and failure modes.
 
 ## Lifecycle
 
@@ -45,7 +45,7 @@ The synchronous write-through path means a tenant `create`, `update`, or `patch`
 
 **Disabling** a resource, by removing its entry from `customResources` or setting `enabled: false`, takes effect on the next restart or rollout of the vCluster control plane, the same as enabling one. Once it does, the <GlossaryTerm term="syncer">syncer</GlossaryTerm> for that resource stops, but vCluster doesn't delete the CRD, its objects, or anything it created on the control plane cluster. What happens next depends on the resource type: a copied CRD-backed schema keeps giving the tenant API server resource-specific validation on its own. A generated aggregated-resource CRD never had one, so tenant writes only get Kubernetes' basic object and metadata validation. For a to-host aggregated resource, disabling also removes the write-through validation the extension API server was providing. Delete the CRD yourself if you want it gone.
 
-**Upgrading the synced version** of a resource differs by resource type. For a CRD-backed resource, vCluster adds the new version to the tenant CRD and switches the storage version, but any other version already on the CRD keeps whatever `served` setting it had. For a generated aggregated-resource CRD, vCluster explicitly stops serving previously stored versions while still retaining them. See [Versioned example](../configure/sync/from-host/custom-resources.mdx#versioned-example) for the CRD-backed upgrade sequence.
+**Upgrading the synced version** of a resource differs by resource type. For a CRD-backed resource, vCluster adds the new version to the tenant CRD and switches the storage version, but any other version already on the CRD keeps whatever `served` setting it had. For a generated aggregated-resource CRD, vCluster explicitly stops serving previously stored versions while still retaining them. See [Versioned example](./from-host/custom-resources.mdx#versioned-example) for the CRD-backed upgrade sequence.
 
 ## Troubleshoot write-through rollback failures
 
@@ -65,13 +65,13 @@ To resolve it:
 1. Find why the original write needed rolling back, since that determines whether there's anything to inspect on the control plane cluster. Search the control plane's logs for `write-through: rejecting write, rolling back` entries for that resource. Unlike the rollback-failure logs, these carry a `reason` field.
    - `host_rejected`: the extension API server actually rejected the object. Check the cluster for the retained object, then check the control plane cluster's rejection reason. vCluster rewrites object and namespace names in the error, so match by resource and namespace rather than by the message text. Fix the object in the cluster, or delete it if it shouldn't exist.
    - Any other reason (`response_error`, `translate_error`, `unparseable_response`, and so on): the failure was local or transient, not a validation rejection. There's no control plane cluster rejection to inspect. Check whether the syncer has since reconciled the retained object, since the underlying condition may have cleared on its own.
-2. For `host_lookup` or `host_delete`, don't delete anything on the control plane cluster without confirming identity first. The control plane cluster object carries `vcluster.loft.sh/object-name`, `vcluster.loft.sh/object-namespace`, and `vcluster.loft.sh/object-uid` annotations identifying which tenant object it mirrors. If the tenant object still exists, all three must match its current name, namespace, and UID before you act on the control plane cluster object. If the tenant object is gone, you have no UID left to compare against, and neither the rollback-failure logs nor the rejection logs record one. Without another source that captured the original UID, you can't confirm identity, and shouldn't delete the object. The cluster's [audit log](./logging.mdx#audit-logs) only works as that source if its policy logs `create` for this resource at `RequestResponse`. The default policy in the linked setup logs most resources at `Metadata`, which omits the response body and the UID it would contain.
+2. For `host_lookup` or `host_delete`, don't delete anything on the control plane cluster without confirming identity first. The control plane cluster object carries `vcluster.loft.sh/object-name`, `vcluster.loft.sh/object-namespace`, and `vcluster.loft.sh/object-uid` annotations identifying which tenant object it mirrors. If the tenant object still exists, all three must match its current name, namespace, and UID before you act on the control plane cluster object. If the tenant object is gone, you have no UID left to compare against, and neither the rollback-failure logs nor the rejection logs record one. Without another source that captured the original UID, you can't confirm identity, and shouldn't delete the object. The cluster's [audit log](../../operate/logging.mdx#audit-logs) only works as that source if its policy logs `create` for this resource at `RequestResponse`. The default policy in the linked setup logs most resources at `Metadata`, which omits the response body and the UID it would contain.
 
 There's no automatic retry of an abandoned rollback.
 
 ## Related
 
-- [Custom resources from the control plane cluster](../configure/sync/from-host/custom-resources.mdx) — configuration reference for from-host sync
-- [Custom resources to the control plane cluster](../configure/sync/to-host/advanced/custom-resources.mdx) — configuration reference for to-host sync, including write-through behavior
-- [Sync a namespaced custom resource from the control plane cluster](../configure/sync/from-host/sync-custom-resource-from-host.mdx) — worked example
-- [Sync Calico network policies to the control plane cluster](../configure/sync/patching/sync-calico-network-policies.mdx) — worked example for scoping an opaque selector on to-host sync
+- [Custom resources from the control plane cluster](./from-host/custom-resources.mdx) — configuration reference for from-host sync
+- [Custom resources to the control plane cluster](./to-host/advanced/custom-resources.mdx) — configuration reference for to-host sync, including write-through behavior
+- [Sync a namespaced custom resource from the control plane cluster](./from-host/sync-custom-resource-from-host.mdx) — worked example
+- [Sync Calico network policies to the control plane cluster](./patching/sync-calico-network-policies.mdx) — worked example for scoping an opaque selector on to-host sync
