@@ -247,7 +247,7 @@ Apply these terminology rules to **all new and edited prose**.
 
 ### The hierarchy the docs teach
 
-Platform 4.13 introduces **Tenant**, a customer-organization primitive that sits
+Platform 5.0 introduces **Tenant**, a customer-organization primitive that sits
 above Projects. It claims the word "tenant", so the cluster vCluster creates
 gives the word back and is now just a **cluster**. Five roles, each handing off
 to the next:
