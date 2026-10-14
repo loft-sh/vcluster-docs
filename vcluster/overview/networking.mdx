@@ -1,0 +1,80 @@
+---
+title: Networking
+sidebar_label: Networking
+sidebar_position: 5
+description: How clients and nodes reach a cluster's control plane, and how pod, service, and DNS networking work on private and shared nodes.
+---
+
+A cluster's networking depends on its worker node model. With private nodes, the cluster runs its own pod network on its own nodes, as any Kubernetes cluster does. With shared nodes, tenant pods run on the control plane cluster and use its network, and vCluster maps the cluster's Services and DNS onto it.
+
+## Control plane access
+
+Each cluster's API server listens behind a Service in the cluster's namespace on the control plane cluster. By default it's a ClusterIP Service on port 443, reachable only from inside the control plane cluster.
+
+To reach the API server from outside, expose that Service:
+
+- Change the Service type to LoadBalancer or NodePort.
+- Route to it through an Ingress controller that supports SSL passthrough.
+- Route to it through a Gateway API TLSRoute on a passthrough Gateway.
+
+When nothing is exposed, [`vcluster connect`](../cli/vcluster_connect.md) falls back to a local proxy or a port-forward, which works for one person but not for a team or automation. See [Expose vCluster](../operate/accessing-vcluster.mdx#expose-vcluster) and [Ingress access](../configure/networking/ingress-access.mdx).
+
+### How private nodes reach the control plane
+
+Private nodes join the cluster over the network, so they need a control plane address they can reach. vCluster uses the endpoint you configure, or else the control plane Service's address. A LoadBalancer Service is the usual choice. vCluster Standalone uses the address of its own control plane node.
+
+Traffic in the other direction, such as `kubectl logs`, `kubectl exec`, and admission webhook calls, goes through Konnectivity. An agent on the nodes opens a tunnel to the control plane, so the control plane never needs to reach the nodes directly. Nodes can also sit in another network, such as a different cloud or a home lab. An optional [VPN](../configure/private-nodes/vpn.mdx) then connects them to the control plane and to each other. The VPN requires a connection to vCluster Platform.
+
+## Private nodes
+
+With [private nodes](../deploy/worker-nodes/private-nodes/overview.mdx), each cluster has its own network stack, deployed onto its nodes:
+
+- **CNI:** Flannel by default. Flannel doesn't enforce NetworkPolicy, so turn it off and install your own CNI if tenants need network policies.
+- **kube-proxy:** routes Service traffic on the nodes.
+- **Pod and Service ranges:** `10.244.0.0/16` for pods and `10.96.0.0/12` for Services by default. Each cluster sets its own, so ranges can overlap between clusters.
+- **CoreDNS:** runs on the cluster's nodes and resolves the cluster's own Services.
+
+vCluster syncs nothing to the control plane cluster, so tenant pods, Services, and DNS records never appear on it. vCluster doesn't isolate the networks the nodes are attached to. Segment them as you would for any set of clusters, especially when nodes from different tenants share a data center network. See [Deploy add-ons](../configure/add-ons/deploy-add-ons.mdx#cni) to change the CNI or kube-proxy.
+
+## Shared nodes
+
+With [shared nodes](../deploy/worker-nodes/host-nodes/overview.mdx), tenant pods run as pods on the control plane cluster, so they use its CNI and get pod IPs from its network.
+
+### Services
+
+vCluster syncs each Service to the control plane cluster and gives the tenant's Service the same cluster IP as its synced copy. Traffic to that IP is routed by the control plane cluster's kube-proxy or CNI, so Services behave as they would on any Kubernetes cluster. See [Service sync](../configure/sync/to-host/networking/services.mdx).
+
+### DNS
+
+Each cluster runs its own [CoreDNS](../configure/control-plane/components/coredns.mdx), which resolves names against the cluster's own API server. Tenant pods use it as their nameserver, so `my-service.my-namespace` resolves to the tenant's Service, not to anything else on the control plane cluster. Names outside the cluster go to the upstream resolver of the node that CoreDNS runs on. Service names on the control plane cluster don't resolve unless you turn on [fallback to the control plane cluster's DNS](../configure/networking/advanced.mdx).
+
+CoreDNS runs as its own Deployment by default. With a license, you can embed it in the control plane pod instead, which also enables [DNS mapping between clusters](../configure/networking/resolve-dns.mdx).
+
+### Ingress routing
+
+Instead of running an Ingress controller in every cluster, tenants can use the control plane cluster's. vCluster can sync [Ingresses](../configure/sync/to-host/networking/ingresses.mdx) and [Gateway API resources](../configure/sync/to-host/networking/gateway-api.mdx) to the control plane cluster. Both are off by default. If you also enable network policies, allow traffic from the Ingress controller or Gateway to tenant pods, because the default workload policy blocks it.
+
+### Services across clusters
+
+To give tenants access to a platform service on the control plane cluster, or the other way around, [replicate the Service](../configure/networking/replicate-services.mdx) into the other side. This works only on shared nodes.
+
+### Network isolation
+
+Pods from every cluster on shared nodes share one pod network. Without NetworkPolicy, a pod in one cluster can reach pods in another. See [Network policies](#network-policies).
+
+## Network policies
+
+[Network policies](../configure/policies/network-policy.mdx) are off by default. When you enable them, vCluster creates NetworkPolicies in the cluster's namespace on the control plane cluster:
+
+- A policy for the control plane, which limits its traffic to the API server port, DNS, and the services it needs.
+- On shared nodes, a policy for tenant workloads. It lets them reach each other, the control plane, DNS, and the public internet, but not private address ranges or other clusters. It accepts incoming traffic only from the same cluster and the control plane. Add [custom rules](../configure/policies/network-policy.mdx#custom-rules) for anything else, such as an Ingress controller.
+
+Tenants can also write their own NetworkPolicies inside the cluster. With private nodes, the cluster's own CNI enforces them, but the default CNI, Flannel, doesn't support NetworkPolicy. Install a CNI that does if tenants rely on them. With shared nodes, tenant policies take effect only when you [sync network policies](../configure/sync/to-host/networking/network-policies.mdx) to the control plane cluster.
+
+In every case, a CNI that enforces NetworkPolicy does the work. Some CNIs accept the resources without acting on them, so confirm that yours enforces them. See [Security and tenant isolation](./isolation.mdx) for where network policy fits among the other isolation layers.
+
+## Next steps
+
+- [Networking configuration](../configure/networking/overview.mdx) for DNS, Service replication, and advanced settings.
+- [Private nodes](../deploy/worker-nodes/private-nodes/overview.mdx) to deploy a cluster with its own network stack.
+- [Expose vCluster](../operate/accessing-vcluster.mdx#expose-vcluster) to make the API server reachable.

@@ -1,32 +1,77 @@
 ---
-title: Isolation
-sidebar_label: Isolation
+title: Security and tenant isolation
+sidebar_label: Security and isolation
 sidebar_position: 4
+description: How vCluster isolates tenants in layers, from the control plane and API down to nodes, runtime, and network, and which isolation profile fits which tenants.
 ---
 
-The vCluster project provides several configuration options pertaining to cluster
-isolation and security. This section briefly covers the primary configuration options. For detailed
-information, see the [security overview](../deploy/security/README.mdx) and [policies configuration](../configure/policies/overview.mdx).
+import SharedNodesSuitability from '../_partials/admonitions/shared-nodes-suitability.mdx';
 
-vCluster can isolate workloads by combining a Pod Security Standard, ResourceQuota, LimitRange,
-and NetworkPolicy. These settings are configured explicitly in `vcluster.yaml`.
+Every cluster vCluster creates is a separate Kubernetes environment with its own control plane, API, and RBAC. How far that isolation extends below the API depends on where tenant workloads run. On private nodes, a tenant gets dedicated machines. On shared nodes, tenants share the kernel and physical nodes of the control plane cluster.
 
-Enable these settings in your cluster or cluster template values:
+This page explains the layers of tenant isolation and how they combine into isolation profiles. To configure and harden a deployment, see [Secure vCluster deployments](../deploy/security/README.mdx).
 
-```yaml
-policies:
-  podSecurityStandard: "baseline"
-  limitRange:
-    enabled: true
-  resourceQuota:
-    enabled: true
-  networkPolicy:
-    enabled: true
-```
+## Isolation layers
 
-All vCluster isolation settings can be customized through the policy configuration pages.
+Tenant isolation isn't a single switch. Each layer below protects against a different kind of access, and the layers you need depend on how much you trust your tenants.
 
-:::warning CNIs and Network Policies
-Not all CNIs will support all network policies. Make sure you understand what capabilities your
-CNI supports when investigating tenant isolation.
-:::
+### Control plane and API
+
+Each cluster runs its own API server, controller manager, and data store. Tenants connect to their cluster's API server, never to the control plane cluster's API. A tenant with `cluster-admin` in their cluster controls that cluster only. Through their API server, they can't list, read, or change resources that belong to other tenants or to the control plane cluster.
+
+This layer applies to every deployment. See [Architecture](./architecture.mdx#control-plane) for how the control plane is built.
+
+### Sync boundary
+
+On shared nodes, vCluster syncs selected resources, such as Pods, Services, and PersistentVolumeClaims, into the cluster's namespace on the control plane cluster so they can run there. vCluster translates their names and namespaces on the way, and creates only the resource types that the sync configuration enables. Each enabled type lets a tenant create real objects on the control plane cluster, so the sync configuration is a security setting.
+
+The platform operator owns this boundary through `vcluster.yaml` or a Platform template. Tenants can't loosen it from inside their cluster. See [Configure resource sync](../configure/sync/overview.mdx) for what syncs by default.
+
+### Nodes
+
+The worker node model sets the strongest boundary between tenants:
+
+- **Private nodes** run a single cluster's workloads. Each tenant gets its own nodes, CNI, and CSI, and no other tenant's workloads share the kernel. This is the model for external, resale, regulated, and GPU tenants.
+- **Shared nodes** run workloads from many clusters on the control plane cluster's own nodes. Tenants keep control plane, API, and namespace isolation, but share the kernel and physical nodes. Use them for trusted tenants such as development, testing, and internal teams.
+
+See [Architecture](./architecture.mdx#worker-nodes) for how each model works, and [Decide whether tenants share hardware](/docs/plan/choose-worker-node-model) to choose between them.
+
+### Runtime
+
+[vNode](https://www.vnode.com/docs/) wraps each pod in a lightweight sandbox that uses Linux user namespaces, filesystem virtualization, and seccomp filtering. It needs no hypervisor or guest kernel, so workloads run at native speed. Use it for workloads that need elevated access, such as privileged containers, Docker-in-Docker, or user-supplied inference code. vNode works on shared and private nodes. See the vNode docs for what the sandbox contains.
+
+### Network
+
+On shared nodes, pods from every cluster share the control plane cluster's pod network. [NetworkPolicy](../configure/policies/network-policy.mdx) restricts traffic between them and vCluster's own components. vCluster creates these policies when you enable network policies in the `policies` section of `vcluster.yaml`, and the control plane cluster's CNI enforces them.
+
+On private nodes, each cluster has its own pod network, and tenants write their own NetworkPolicies. The default CNI, Flannel, doesn't enforce NetworkPolicy, so install a CNI that does if tenants rely on them. See [Networking](./networking.mdx#network-policies) for details.
+
+### Workload guardrails
+
+[Policies](../configure/policies/overview.mdx) limit what tenant workloads can do and consume. A Pod Security Standard blocks privileged and host-level pod configurations on any node model. On shared nodes, a ResourceQuota and LimitRange in the cluster's namespace cap the CPU, memory, and storage its workloads take from the control plane cluster. With the Scale plan, [central admission control](../configure/policies/admission-control.mdx) adds operator-defined admission webhooks that tenants can't remove.
+
+### Management access
+
+When clusters are created through vCluster Platform, templates decide which `vcluster.yaml` settings a tenant gets. A user who can edit `vcluster.yaml` freely can loosen sync settings or expose control plane cluster resources. So non-admin users should create clusters only from approved templates. Platform RBAC separates the administrators who define templates from the project users who consume them.
+
+## Isolation profiles
+
+The layers combine into four profiles, from the strongest boundary to the lightest:
+
+| Profile | Boundary between tenants | Fits |
+| --- | --- | --- |
+| Private nodes on dedicated bare metal | Separate physical servers, provisioned by vMetal | GPU and PCIe device exclusivity, compliance, and sovereign deployments |
+| Private nodes | Separate nodes, CNI, and CSI per cluster, optionally with vNode | External, resale, regulated, and other untrusted tenants |
+| Shared nodes with vNode | Shared nodes, with a runtime sandbox around each pod | Trusted tenants whose workloads need elevated access |
+| Shared nodes | Shared nodes, kernel, and node network | Trusted tenants such as development, testing, CI/CD, and internal teams |
+
+Every profile keeps the control plane and API layers and the Pod Security Standard. The deployment security overview covers the [controls for each profile](../deploy/security/README.mdx#tenancy-and-isolation-profiles).
+
+<SharedNodesSuitability />
+
+## Next steps
+
+- [Secure vCluster deployments](../deploy/security/README.mdx) for the baseline configuration, hardening steps, and production checklist.
+- [Shared-node hardening](../deploy/security/shared-nodes-hardening.mdx) for the threat model and required settings before running trusted tenants on shared nodes.
+- [Private nodes](../deploy/worker-nodes/private-nodes/overview.mdx) to deploy dedicated nodes for each cluster.
+- [Policies](../configure/policies/overview.mdx) to configure Pod Security Standards, quotas, network policies, and admission control.

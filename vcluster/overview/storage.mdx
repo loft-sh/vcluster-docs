@@ -1,0 +1,65 @@
+---
+title: Storage
+sidebar_label: Storage
+sidebar_position: 6
+description: Where a cluster keeps its control plane state and its workload data, how that differs between private and shared nodes, and what snapshots capture.
+---
+
+A cluster stores two kinds of data. The control plane keeps its own state, the API objects that define the cluster, in a backing store. Tenant workloads keep their data in persistent volumes. vCluster handles each one differently, and the worker node model decides where workload volumes come from.
+
+## Control plane state
+
+Every cluster has its own backing store, which holds the cluster's API objects. Tenants never share a backing store.
+
+| Backing store | How it runs | Use it for |
+| --- | --- | --- |
+| Embedded SQLite | Inside the control plane pod. This is the default. | Development, testing, and single-replica clusters |
+| Embedded etcd | Inside each control plane replica | High availability without a separate datastore |
+| Deployed etcd | As a separate etcd StatefulSet next to the control plane | Clusters that need etcd managed apart from the control plane |
+| External database | A MySQL or PostgreSQL database you provide | Teams that run managed databases and want backups handled there |
+
+Embedded SQLite supports only one control plane replica, so high availability needs embedded etcd, deployed etcd, or an external store. A cluster uses one backing store, and you can't change its type in place after deployment, only migrate between some types. Make the choice before deploying with [Choose a backing store](../plan/choose-backing-store.mdx).
+
+### Where the data lives
+
+With embedded SQLite or embedded etcd, vCluster runs the control plane as a StatefulSet and gives it a 5Gi PersistentVolumeClaim from the control plane cluster's default StorageClass. With a deployed, external, or database backing store, the control plane keeps no data of its own and runs as a Deployment. Deployed etcd gets its own PersistentVolumeClaim instead.
+
+If you turn off the control plane's volume while using an embedded store, the data goes into an `emptyDir` volume and is lost when the pod is deleted or rescheduled. That's only suitable for throwaway clusters. See [StatefulSet configuration](../configure/control-plane/deployment/statefulset.mdx) to change the volume's size, StorageClass, or retention.
+
+vCluster Standalone keeps its data on the control plane node's disk, in `/var/lib/vcluster` by default. vind keeps it in Docker volumes attached to the control plane container.
+
+## Workload storage
+
+Where a tenant's persistent volumes come from depends on the [worker node model](./architecture.mdx#worker-nodes).
+
+### Private nodes
+
+With private nodes, vCluster doesn't sync PersistentVolumeClaims, PersistentVolumes, or StorageClasses to the control plane cluster. With the default storage setup, tenant data never touches it.
+
+By default, vCluster installs the [local path provisioner](../configure/add-ons/deploy-add-ons.mdx#local-path-provisioner) and makes `local-path` the default StorageClass. It provisions volumes on the local disk of the node that runs the pod. For storage that survives a node failure or moves between nodes, turn it off and install your own CSI driver, as you would on any Kubernetes cluster. When the private nodes are KubeVirt virtual machines, the optional [KubeVirt CSI driver](../configure/add-ons/deploy-add-ons.mdx#kubevirt-csi) provisions volumes in the cluster's namespace on the control plane cluster instead.
+
+### Shared nodes
+
+With shared nodes, tenant pods run on the control plane cluster, so their volumes come from it too:
+
+1. A tenant creates a PersistentVolumeClaim in their cluster.
+2. vCluster syncs the claim to the cluster's namespace on the control plane cluster.
+3. The control plane cluster's CSI driver provisions the volume, and the real PersistentVolume lives on the control plane cluster.
+4. The tenant sees a matching PersistentVolume in their cluster, bound to their claim.
+
+By default, the claim keeps its StorageClass name, so tenants use the control plane cluster's StorageClasses. A claim without one gets the control plane cluster's default class. To limit which classes tenants can use, [sync StorageClasses from the control plane cluster](../configure/sync/from-host/storage-classes.mdx) with a selector. Claims that name a class outside the selection don't sync, but a claim with no class still gets the default.
+
+PersistentVolume sync is off by default, so tenants can't create PersistentVolumes that point at arbitrary storage on the control plane cluster. Turning it on lets tenants create volumes, such as host path volumes, that Pod Security Standards don't catch. Review the [storage guidance for shared nodes](../deploy/security/shared-nodes-hardening.mdx#storage-breakout-prevention) before enabling it. [Volume snapshot sync](../configure/sync/to-host/storage/volume-snapshots.mdx) is also off by default.
+
+## Snapshots and backups
+
+[`vcluster snapshot create`](../cli/vcluster_snapshot_create.md) captures the control plane. A snapshot holds the backing store data and the cluster's Helm release, but not the data in persistent volumes. Not every backing store supports it, so check [Choose a backing store](../plan/choose-backing-store.mdx#compare-the-options). Store snapshots in an OCI registry, an S3 bucket, or Azure Blob Storage. A `container://` location keeps the snapshot on the control plane's local filesystem, which doesn't help if you lose that node.
+
+To back up volume data as well, use a tool that snapshots persistent volumes, such as [Velero](../operate/backup-restore/velero.mdx). The exception is vind, where a snapshot also exports the Docker volumes of the control plane and worker containers.
+
+## Next steps
+
+- [Choose a backing store](../plan/choose-backing-store.mdx) before deploying.
+- [Configure the backing store](../configure/control-plane/components/backing-store/overview.mdx).
+- [Back up and restore a cluster](../operate/backup-restore/backup.mdx).
+- [Configure storage sync](../configure/sync/to-host/storage/persistent-volume-claims.mdx) for shared nodes.
