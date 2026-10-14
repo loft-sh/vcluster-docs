@@ -349,6 +349,33 @@ test_pr_readme_to_overview_with_slug() {
     cleanup "$dir"
 }; test_pr_readme_to_overview_with_slug
 
+test_pr_deleted_slug_served_by_new_file() {
+    local dir; dir="$(setup_test_repo)"; cd "$dir"
+    mkdir -p vcluster/quick-start
+    printf -- '---\ntitle: Start Here\nslug: /\n---\n# S\n' > vcluster/quick-start/overview.mdx
+    create_netlify_toml; seal_initial_state
+    git rm -q vcluster/quick-start/overview.mdx
+    mkdir -p vcluster/overview
+    printf -- '---\ntitle: Start Here\nslug: /\n---\n# Rewritten landing page with different content\n' > vcluster/overview/start-here.mdx
+    commit_all "move landing page and rewrite it"
+    local out; out=$(run_script_rc pr); local ec=$?
+    assert_exit 0 "$ec" "deleted page whose slug a new page serves -> exit 0"
+    assert_contains "$out" "URL still served after delete" "reports URL still served"
+    cleanup "$dir"
+}; test_pr_deleted_slug_served_by_new_file
+
+test_pr_deleted_slug_not_served() {
+    local dir; dir="$(setup_test_repo)"; cd "$dir"
+    mkdir -p vcluster/quick-start
+    printf -- '---\ntitle: Old\nslug: /old-landing\n---\n# O\n' > vcluster/quick-start/overview.mdx
+    create_netlify_toml; seal_initial_state
+    git rm -q vcluster/quick-start/overview.mdx
+    commit_all "delete slugged page"
+    local out; out=$(run_script_rc pr); local ec=$?
+    assert_exit 1 "$ec" "deleted slugged page with no new owner -> exit 1"
+    cleanup "$dir"
+}; test_pr_deleted_slug_not_served
+
 test_pr_deleted_readme_uses_folder_url() {
     local dir; dir="$(setup_test_repo)"; cd "$dir"
     mkdir -p vcluster/configure/old-section

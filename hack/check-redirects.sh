@@ -233,6 +233,21 @@ file_slug() {
     printf '%s\n' "$content" | awk 'NR==1 && $0!="---"{exit} NR>1 && $0=="---"{exit} /^slug:/{sub(/^slug:[ \t]*/,""); gsub(/["\x27]/,""); print; exit}'
 }
 
+# url_still_served PATH URL: true when a current file in the same product
+# serves URL through a matching `slug:`. Git reports a heavily rewritten move
+# as a delete plus an add, so the rename check never sees it.
+url_still_served() {
+    local path="$1" url="$2" slug product candidate
+    slug="$(file_slug "$path")"
+    [[ -z "$slug" ]] && return 1
+    product="${path%%/*}"
+    while IFS= read -r candidate; do
+        [[ -z "$candidate" || "$candidate" == "$path" ]] && continue
+        [[ "$(file_to_url "$candidate")" == "$url" ]] && return 0
+    done < <(git grep -lE "^slug:[[:space:]]*[\"']?${slug}[\"']?[[:space:]]*$" -- "${product}/*.md" "${product}/*.mdx" 2>/dev/null)
+    return 1
+}
+
 file_to_url() {
     local url="$1" slug
     slug="$(file_slug "$1")"
@@ -419,6 +434,8 @@ check_pr_deletions() {
 
         if has_redirect_coverage "$url"; then
             ok "Redirect exists for deleted: $filepath"
+        elif url_still_served "$filepath" "$url"; then
+            ok "URL still served after delete: $filepath"
         else
             missing=$((missing + 1))
             error "No redirect for deleted file: $filepath"
