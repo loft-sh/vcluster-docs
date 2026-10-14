@@ -27,17 +27,17 @@ When preparing a new documentation release (especially for versioned docs), ALWA
 #### ❌ WRONG (URL paths - sensitive to trailing slashes):
 ```markdown
 [Pod Identity](/vcluster/integrations/pod-identity/eks-pod-identity)
-[Backing Store](../../../configure/vcluster-yaml/control-plane/components/backing-store)
+[Backing Store](../../../configure/control-plane/components/backing-store)
 [FIPS Guide](/vcluster/deploy/security/fips)
-[Policies](../../../../configure/vcluster-yaml/policies/)
+[Policies](../../../../configure/policies/)
 ```
 
 #### ✅ CORRECT (file paths with .mdx - robust):
 ```markdown
-[Pod Identity](../../../../third-party-integrations/pod-identity/eks-pod-identity.mdx)
-[Backing Store](../../../configure/vcluster-yaml/control-plane/components/backing-store/README.mdx)
+[Pod Identity](../../../../integrations/pod-identity/eks-pod-identity.mdx)
+[Backing Store](../../../configure/control-plane/components/backing-store/overview.mdx)
 [FIPS Guide](./fips.mdx)
-[Policies](../../../configure/vcluster-yaml/policies/README.mdx)
+[Policies](../../../configure/policies/overview.mdx)
 ```
 
 ### 3. Release Process - MUST CHECK VERSIONED DOCS

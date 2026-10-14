@@ -3,7 +3,7 @@
 
 const MERMAID_PAGES = [
   '/docs/vcluster/deploy/basics',
-  '/docs/vcluster/configure/vcluster-yaml/sync/',
+  '/docs/vcluster/next/configure/sync/',
   '/docs/platform/install/quick-start-guide',
 ];
 

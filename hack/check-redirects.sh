@@ -145,6 +145,12 @@ url_resolves() {
     local paths_to_check=("$rel")
     [[ -n "$versioned_rel" ]] && paths_to_check=("$versioned_rel")
 
+    # Root docs component (routeBasePath "/"): /docs/<route> -> docs/<route>
+    case "$rel" in
+        vcluster/*|platform/*) ;;
+        *) paths_to_check+=("docs/${rel}") ;;
+    esac
+
     for base in "${paths_to_check[@]}"; do
         local full="${REPO_ROOT}/${base}"
 
@@ -213,11 +219,49 @@ redirect_target_for_url() {
     return 1
 }
 
+# file_slug PATH: print the page's `slug:` frontmatter, read from the working
+# tree or, for deleted and renamed files, from the base ref.
+file_slug() {
+    local path="$1" content=""
+    if [[ -f "$path" ]]; then
+        content="$(cat "$path")"
+    else
+        local ref
+        ref="$(get_base_ref 2>/dev/null)"
+        [[ -n "$ref" ]] && content="$(git show "${ref}:${path}" 2>/dev/null)"
+    fi
+    printf '%s\n' "$content" | awk 'NR==1 && $0!="---"{exit} NR>1 && $0=="---"{exit} /^slug:/{sub(/^slug:[ \t]*/,""); gsub(/["\x27]/,""); print; exit}'
+}
+
+# url_still_served PATH URL: true when a current file in the same product
+# serves URL through a matching `slug:`. Git reports a heavily rewritten move
+# as a delete plus an add, so the rename check never sees it.
+url_still_served() {
+    local path="$1" url="$2" slug product candidate
+    slug="$(file_slug "$path")"
+    [[ -z "$slug" ]] && return 1
+    product="${path%%/*}"
+    while IFS= read -r candidate; do
+        [[ -z "$candidate" || "$candidate" == "$path" ]] && continue
+        [[ "$(file_to_url "$candidate")" == "$url" ]] && return 0
+    done < <(git grep -lE "^slug:[[:space:]]*[\"']?${slug}[\"']?[[:space:]]*$" -- "${product}/*.md" "${product}/*.mdx" 2>/dev/null)
+    return 1
+}
+
 file_to_url() {
-    local url="$1"
+    local url="$1" slug
+    slug="$(file_slug "$1")"
+    if [[ -n "$slug" ]]; then
+        case "$url" in
+            vcluster/*|platform/*) echo "/docs/${url%%/*}/next${slug%/}" ;;
+            *) echo "/docs${slug%/}" ;;
+        esac
+        return
+    fi
     url="${url%.mdx}"
     url="${url%.md}"
     url="${url%/index}"
+    url="${url%/README}"
     case "$url" in
         vcluster/*|platform/*)
             local product="${url%%/*}"
@@ -264,6 +308,8 @@ detect_changes() {
 
     while IFS=$'\t' read -r status old_path new_path; do
         [[ -z "$status" ]] && continue
+        # Partials and fragments live under _-prefixed folders and have no URL.
+        [[ "$old_path" == */_* ]] && continue
         RENAMED_OLD="${RENAMED_OLD}${old_path}"$'\n'
         RENAMED_NEW="${RENAMED_NEW}${new_path}"$'\n'
     done <<<"$rename_lines"
@@ -388,6 +434,8 @@ check_pr_deletions() {
 
         if has_redirect_coverage "$url"; then
             ok "Redirect exists for deleted: $filepath"
+        elif url_still_served "$filepath" "$url"; then
+            ok "URL still served after delete: $filepath"
         else
             missing=$((missing + 1))
             error "No redirect for deleted file: $filepath"
@@ -402,9 +450,13 @@ check_pr_deletions() {
     local i=0
     while IFS= read -r old_path; do
         [[ -z "$old_path" ]] && continue
-        local url
+        local url new_path new_url
         url="$(file_to_url "$old_path")"
-        if has_redirect_coverage "$url"; then
+        new_path="$(echo "$RENAMED_NEW" | sed -n "$((i + 1))p")"
+        new_url="$(file_to_url "$new_path")"
+        if [[ -n "$new_path" && "$url" == "$new_url" ]]; then
+            ok "URL unchanged for renamed: $old_path -> $new_path"
+        elif has_redirect_coverage "$url"; then
             ok "Redirect exists for renamed: $old_path"
         else
             error "No redirect for renamed file: $old_path"

@@ -63,7 +63,7 @@ See `references/style-guide.md` for complete writing guidelines.
 
 ✅ **CORRECT** (file paths with .mdx):
 ```markdown
-[Pod Identity](../../../../third-party-integrations/pod-identity/eks-pod-identity.mdx)
+[Pod Identity](../../../../integrations/pod-identity/eks-pod-identity.mdx)
 ```
 
 **Build gates:** `onBrokenLinks: "throw"` and `onBrokenAnchors: "throw"`. Between them the build catches missing files and dead `#anchor` targets. Neither catches the silent-404 class, where a relative path without `.mdx` renders correct static HTML and only 404s when a user clicks it.
@@ -170,7 +170,7 @@ Instead, use `overview.mdx` with an explicit `slug:` that matches the directory 
 title: Networking
 sidebar_label: Overview
 sidebar_position: 0
-slug: /configure/vcluster-yaml/networking
+slug: /configure/networking
 ---
 ```
 
@@ -193,9 +193,7 @@ When converting an existing `README.mdx` to `overview.mdx`:
 
 Do not add a `link` field.
 
-**Exception: `vcluster/configure/vcluster-yaml/` uses `README.mdx`**
-
-The `vcluster-yaml` section mirrors the structure of the `vcluster.yaml` config file — every folder is a yaml key. Labeling these pages "Overview" is semantically wrong because there is no `overview` key in the yaml. In this section only, use `README.mdx` (not `overview.mdx`) as the folder index. Docusaurus treats it as the category header click target; it does not appear as a named sidebar item. Do NOT set `sidebar_label: Overview` or `sidebar_position: 0` on these files — they are irrelevant once the file becomes the category index.
+There are no exceptions. `vcluster/configure/vcluster-yaml/`, which used `README.mdx` because its folders mirrored `vcluster.yaml` keys, no longer exists. The 0.38 restructure (DOC-1556) split it into task-first Configure sections, which use `overview.mdx` like everything else. The generated key reference now lives in `vcluster/reference/vcluster-yaml/`, with one flat page per top-level key and an `overview.mdx` index.
 
 ### PR Preview URLs
 
@@ -222,6 +220,8 @@ New work typically lands in `docs/` (the `next` version). Before completing a PR
 - **When unclear**: Note in the PR description that backporting should be reviewed
 
 When backporting: make the same changes in relevant `versioned_docs/version-X.XX/` folders and include preview links for those versions too.
+
+Backport labels (`backport-vX.XX`) copy each changed file to the same path in an older version, so they only work for pages whose path didn't change. The Platform 5.0 and vCluster 0.38 restructure moved most pages, so a current path often doesn't exist in Platform 4.12 or earlier, or vCluster 0.37 or earlier. For those pages, don't suggest a backport label. Edit each older version by hand at its own path, with the user's explicit approval. See "Backport changes to released versions" in CONTRIBUTING.md.
 
 ### Integration Tests (BrowserStack)
 
@@ -315,7 +315,7 @@ Explanation pages (architecture, overview, "what is X") should build the reader'
 - ⚠️ **NEVER use URL paths for links** (use file paths with `.mdx`)
 - ⚠️ **NEVER place admonitions inside JSX components** like `<Step>`
 - ⚠️ **NEVER add a `link` field to `_category_.json`** — sidebar section labels must expand/collapse only, not navigate
-- ⚠️ **NEVER create `README.mdx` as a folder index** in general docs sections — use `overview.mdx` with an explicit `slug:` instead. **Exception**: `vcluster/configure/vcluster-yaml/` uses `README.mdx` because every folder is a yaml key and "Overview" is semantically wrong there (see Sidebar Navigation Conventions)
+- ⚠️ **NEVER create `README.mdx` as a folder index** — use `overview.mdx` with an explicit `slug:` instead (see Sidebar Navigation Conventions)
 - ⚠️ **NEVER recommend shared nodes for untrusted tenants with Kubernetes access or arbitrary workload execution** (external, resale, regulated) — route those to private nodes (see Tenancy Model Positioning)
 
 ### Always-Do
@@ -339,7 +339,7 @@ When writing or editing any page that recommends or positions a worker node mode
 - ❌ DON'T claim shared-node tenants get isolated nodes, networks, or infrastructure. That is only true for private nodes.
 - ✅ DO frame NetworkPolicy positively as an added isolation layer worth enabling even for trusted tenants. vCluster can create the policies through `policies.networkPolicy`, and the control plane cluster's CNI enforces them. Note the real-world failure mode is a silently ineffective control, most often a CNI that accepts NetworkPolicy resources without enforcing them, so point to the security baseline (`/docs/vcluster/security`) for verification.
 
-**Exception — provider-owned shared serving**: The rule targets untrusted tenant workloads on shared nodes, not all multitenancy. A provider that runs its own trusted models on a shared serving tier, exposing only an API, is doing application-level multitenancy. This token-factory pattern (for example Nebius-style token serving) is not untrusted code on shared nodes, so it's allowed even for external, paying customers. Scope it explicitly to provider-owned, trusted models with application-level isolation, and never to customer-supplied models or code. The real distinction is trusted-provider-workload versus untrusted-tenant-workload, not internal versus external. Because of this, do NOT blanket-import the suitability admonition onto provider shared-serving pages. See `vcluster/production-guide/inference-provider.mdx` for the worked example.
+**Exception — provider-owned shared serving**: The rule targets untrusted tenant workloads on shared nodes, not all multitenancy. A provider that runs its own trusted models on a shared serving tier, exposing only an API, is doing application-level multitenancy. This token-factory pattern (for example Nebius-style token serving) is not untrusted code on shared nodes, so it's allowed even for external, paying customers. Scope it explicitly to provider-owned, trusted models with application-level isolation, and never to customer-supplied models or code. The real distinction is trusted-provider-workload versus untrusted-tenant-workload, not internal versus external. Because of this, do NOT blanket-import the suitability admonition onto provider shared-serving pages. See `docs/operator-patterns/inference-provider.mdx` for the worked example.
 
 **Keep it principle-based**: Frame shared-node risk as an architectural property (shared kernel and nodes) and a configuration responsibility, not as a vCluster defect. Never reference specific customers, their CNI or infrastructure choices, security incidents, conference reports, or found vulnerabilities in published docs. These positioning rules exist to prevent misconfiguration, not to document any single deployment.
 

@@ -36,8 +36,6 @@ LAST_VERSION_PATTERN = re.compile(
 # These targets cannot simply receive an .mdx suffix. They point to generated,
 # renamed, or removed pages and are tracked separately from DOC-1043.
 KNOWN_EXCEPTIONS = {
-    ("deploy/control-plane/binary/basics.mdx", "../../../cli/vcluster_platform_connect_vcluster"),
-    ("deploy/control-plane/binary/high-availability.mdx", "../../../cli/vcluster_platform_connect_vcluster"),
     ("hardening-guide/host-nodes/self-assessment.mdx", "./control-plane-components"),
     ("hardening-guide/host-nodes/self-assessment.mdx", "./etcd"),
     ("hardening-guide/host-nodes/self-assessment.mdx", "./control-plane"),

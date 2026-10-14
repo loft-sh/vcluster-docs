@@ -1,0 +1,185 @@
+---
+title: Configure auto snapshots
+sidebar_label: Auto snapshots
+sidebar_position: 3
+sidebar_class_name: host-nodes private-nodes standalone
+description: Learn how to configure automatic snapshots.
+---
+import ProAdmonition from '../../_partials/admonitions/pro-admonition.mdx'
+import TenancySupport from '../../_fragments/tenancy-support.mdx';
+import SnapshotsS3AWS from '../../_fragments/snapshots-s3-aws.mdx'
+import SnapshotsOCI from '../../_fragments/snapshots-oci.mdx'
+import Button from "@site/src/components/Button";
+import Expander from "@site/src/components/Expander";
+import Flow, { Step } from "@site/src/components/Flow";
+import Label from "@site/src/components/Label";
+import NavStep from "@site/src/components/NavStep";
+import Tabs from "@theme/Tabs";
+import TabItem from "@theme/TabItem";
+import FeatureTable from '@site/src/components/FeatureTable';
+
+<FeatureTable names="scheduled-snapshots" />
+
+<TenancySupport hostNodes="true" privateNodes="true" standalone="true" />
+
+<ProAdmonition />
+
+<GlossaryTerm term="vcluster">vCluster</GlossaryTerm> Platform allows you to configure taking snapshots of the vCluster at specific intervals.
+
+:::info Manual snapshots with the vCluster CLI
+For on-demand snapshot creation and restore operations, see the [vCluster Snapshot and Restore](../../operate/backup-restore/backup.mdx) documentation.
+:::
+
+This allows administrators to capture and store the vCluster state in scheduled intervals to help protect
+against infrastructure failures, data corruption, and configuration errors. By maintaining consistent
+recovery points, administrators can quickly restore the vCluster to a known good state without relying on manual backup processes.
+If you use private nodes, see [Use snapshots with private nodes](../../operate/backup-restore/restore.mdx#use-snapshots-with-private-nodes) for additional restore steps.
+
+:::warning Deployed etcd isn't supported
+Snapshots aren't supported with [deployed etcd](../control-plane/components/backing-store/etcd/deploy.mdx) (`controlPlane.backingStore.etcd.deploy`), so don't rely on scheduled snapshots to protect those clusters.
+:::
+
+In the `vcluster.yaml`, it is configured under `snapshots`. Using the UI, you
+can configure the management of snapshots in the config options of a <GlossaryTerm term="tenant-cluster">cluster</GlossaryTerm> under **Snapshots**. Though
+snapshot configuration is configured on the cluster itself, the capability and logic of scheduling snapshots
+is in vCluster Platform.
+
+:::note
+Auto Snapshot requires platform v4.4.0 or later.
+:::
+
+## Configure
+
+<Tabs
+  defaultValue="yaml"
+  values={[
+    { label: "vcluster.yaml", value: "yaml" },
+    { label: "vCluster CLI", value: "cli" },
+    { label: "Platform UI", value: "ui" },
+  ]}
+>
+<TabItem value="yaml">
+
+### Enable auto snapshots
+
+To enable auto snapshots, add the following configuration to your `vcluster.yaml`:
+
+```yaml title="Auto Snapshots configuration"
+snapshots:
+  auto:
+    # Take a snapshot every 12 hours
+    schedule: 0 */12 * * *
+    # Default is UTC
+    # Options are at https://en.wikipedia.org/wiki/List_of_tz_database_time_zones
+    timezone: America/New_York
+    retention:
+      period: 30
+      maxSnapshots: 14
+    storage:
+      type: s3
+      s3:
+        url: s3://my-bucket/path
+```
+
+### S3 bucket example
+
+Snapshots can be stored in an S3 bucket.
+
+<details>
+<summary>Configure snapshots with S3</summary>
+<SnapshotsS3AWS />
+</details>
+
+### OCI image registries
+<details>
+<summary>Configure snapshots with OCI</summary>
+<SnapshotsOCI />
+</details>
+
+</TabItem>
+
+<TabItem value="cli">
+
+### Create an OCI snapshot (Helm driver)
+
+For clusters deployed with the Helm driver (without platform), run [`vcluster snapshot create`](../../cli/vcluster_snapshot_create.md):
+
+```bash
+vcluster snapshot create VCLUSTER_NAME --namespace NAMESPACE oci://ghcr.io/my-user/my-repo:my-tag
+```
+
+This will take a snapshot of the cluster and saves it as an OCI image.
+
+### Create an AWS S3 snapshot (Helm driver)
+
+For clusters deployed with the Helm driver (without platform):
+
+```bash
+vcluster snapshot create VCLUSTER_NAME --namespace NAMESPACE s3://my-bucket/my-bucket-key
+```
+
+This will take a snapshot of the cluster and saves it to a AWS S3 bucket.
+
+Configure additional encryption settings for AWS with these flags:
+- `--customer-key-encryption-file`
+- `--kms-key-id`
+- `--server-side-encryption`
+
+### Create a container filesystem snapshot (Helm driver)
+
+For clusters deployed with the Helm driver (without platform):
+
+```bash
+vcluster snapshot create VCLUSTER_NAME --namespace NAMESPACE container:///data/my-local-snapshot.tar.gz
+```
+
+This will take a snapshot of the cluster to the vCluster container filesystem.
+
+</TabItem>
+
+<TabItem value="ui">
+
+<Flow id="vcluster-prevent-deletion-ui">
+  <Step>
+    From the project drop-down menu (top left corner), select the project you'd like to create the
+    cluster in.
+  </Step>
+  <Step>
+    Click on <NavStep>Clusters</NavStep>.
+  </Step>
+  <Step>
+    Click on <Label>Edit</Label> on the cluster that you want to edit.
+  </Step>
+  <Step>
+    Select the <Expander>Snapshots</Expander> expander, toggle the <Label>Enable Snapshots</Label> slider to enable auto snapshots and configure accordingly.
+  </Step>
+
+<Step>
+  Click on the <Button>Save</Button> button to save the changes.
+</Step>
+
+</Flow>
+</TabItem>
+
+</Tabs>
+
+## Auto snapshots on standalone clusters
+
+:::note
+Auto snapshots on a standalone cluster require vCluster **v0.37 or later**, in addition to the platform version requirement above. The standalone runtime needs to pull its own storage credentials from the platform, which it can only do from v0.37 onward.
+:::
+
+These restrictions apply no matter which method above you use to configure auto snapshots. Standalone clusters have additional restrictions on `snapshots.auto.storage`:
+
+- Only `s3`, `oci`, and `azure` are supported. `container` (local filesystem) storage is rejected. The volume exists only inside the cluster, so the platform can't list or prune it from outside.
+- A storage credential must be configured explicitly. Ambient cloud identity, such as an AWS instance profile or IRSA, isn't available. The platform resolves credentials on the tenant's behalf, and has no access to the tenant's own cloud identity.
+- An Azure Blob URL containing a SAS token is rejected, since it would persist the token in plaintext in the tenant's snapshot request.
+- Any configured `secretNamespace` on the storage credential is ignored. The platform always reads the credential Secret from the Platform project namespace containing the VirtualClusterInstance, regardless of `secretNamespace`. This restriction is specific to standalone. Pod-based clusters honor `secretNamespace` normally.
+
+To avoid giving the cluster standing access to the credential Secret, the platform exposes a `snapshotcredentials` API. A standalone cluster retrieves the configured credentials at snapshot time and uses them in memory without persisting them. The platform doesn't shorten or rotate credentials stored in the Secret.
+
+The restore workflow also splits differently for standalone. Snapshot **creation** is delegated to the cluster itself, since only it can snapshot its own etcd. The platform drops a request in the tenant's own `kube-system` namespace, and the cluster reconciles it. Snapshot **list** and **delete** run on the platform side directly against the object store instead, since those operations don't need access to the cluster. See [Restore a standalone vCluster](../../operate/backup-restore/restore.mdx#restore-a-standalone-vcluster) for the restore side.
+
+## Config reference
+
+For every field under `snapshots`, see the [`snapshots` reference](../../reference/vcluster-yaml/snapshots.mdx).
