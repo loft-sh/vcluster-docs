@@ -17,9 +17,9 @@ Read more about working with vale in the contribution guidelines: https://github
 Closes DOC-
 
 
-AI review: mention `@claude` in a comment to request a review or changes. See [CONTRIBUTING.md](https://github.com/loft-sh/vcluster-docs/blob/main/CONTRIBUTING.md#ai-assisted-pr-review) for available commands.
+AI review: mention `@claude` in a comment to request a review. Claude reads the PR and posts review comments. See [CONTRIBUTING.md](https://github.com/loft-sh/vcluster-docs/blob/main/CONTRIBUTING.md#ai-assisted-pr-review) for example commands.
 
-> FORK LIMITATION: `@claude` does not work on pull requests opened from forks. GitHub Actions cannot access the required secrets for fork-originated PRs. To use AI review, push your branch directly to this repository.
+> Only members of the `loft-sh` organization can trigger `@claude`. If you're contributing from outside vCluster Labs, ask a maintainer to request the review.
 
 <!-- Do not change the line below -->
 @netlify /docs
