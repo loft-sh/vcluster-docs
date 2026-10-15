@@ -116,12 +116,38 @@ get() {
     [ "$(get skip)" = "true" ]
 }
 
-@test "vcluster: RC on frozen minor → versioned folder, channel=rc" {
+@test "vcluster: minor RC on frozen minor is skipped" {
     VERSION=v0.34.0-rc.3 EVENT_TYPE=vcluster-released run "$SCRIPT"
     [ "$status" -eq 0 ]
-    [ "$(get skip)" = "false" ]
-    [ "$(get target_folder)" = "vcluster_versioned_docs/version-0.34.0" ]
-    [ "$(get channel)" = "rc" ]
+    [ "$(get skip)" = "true" ]
+    [ "$(get target_folder)" = "" ]
+    [ "$(get channel)" = "rc-patch" ]
+}
+
+@test "vcluster: patch RC on frozen minor is skipped" {
+    VERSION=v0.34.5-rc.1 EVENT_TYPE=vcluster-released run "$SCRIPT"
+    [ "$status" -eq 0 ]
+    [ "$(get skip)" = "true" ]
+    [ "$(get target_folder)" = "" ]
+    [ "$(get channel)" = "rc-patch" ]
+}
+
+@test "vcluster-cli: patch RC on frozen minor is skipped" {
+    VERSION=v0.34.5-rc.2 EVENT_TYPE=vcluster-cli-released run "$SCRIPT"
+    [ "$status" -eq 0 ]
+    [ "$(get skip)" = "true" ]
+    [ "$(get target_folder)" = "" ]
+    [ "$(get channel)" = "rc-patch" ]
+}
+
+@test "platform: patch RC on the current generator minor is skipped" {
+    # The fixture pins api to 4.9, so this exercises RC filtering rather
+    # than the stale-line guard for older Platform releases.
+    VERSION=v4.9.5-rc.4 EVENT_TYPE=platform-released run "$SCRIPT"
+    [ "$status" -eq 0 ]
+    [ "$(get skip)" = "true" ]
+    [ "$(get target_folder)" = "" ]
+    [ "$(get channel)" = "rc-patch" ]
 }
 
 @test "vcluster: RC of next minor → current docs folder, channel=rc" {
@@ -130,6 +156,22 @@ get() {
     [ "$status" -eq 0 ]
     [ "$(get skip)" = "false" ]
     [ "$(get target_folder)" = "vcluster" ]
+    [ "$(get channel)" = "rc" ]
+}
+
+@test "vcluster-cli: RC of next minor routes to current docs" {
+    VERSION=v0.35.0-rc.1 EVENT_TYPE=vcluster-cli-released run "$SCRIPT"
+    [ "$status" -eq 0 ]
+    [ "$(get skip)" = "false" ]
+    [ "$(get target_folder)" = "vcluster" ]
+    [ "$(get channel)" = "rc" ]
+}
+
+@test "platform: RC of next minor routes to current docs" {
+    VERSION=v4.10.0-rc.1 EVENT_TYPE=platform-released run "$SCRIPT"
+    [ "$status" -eq 0 ]
+    [ "$(get skip)" = "false" ]
+    [ "$(get target_folder)" = "platform" ]
     [ "$(get channel)" = "rc" ]
 }
 
@@ -202,8 +244,10 @@ get() {
 
 @test "vcluster-cli rides on vcluster versioning" {
     VERSION=v0.34.5 EVENT_TYPE=vcluster-cli-released run "$SCRIPT"
+    [ "$status" -eq 0 ]
     [ "$(get skip)" = "false" ]
     [ "$(get target_folder)" = "vcluster_versioned_docs/version-0.34.0" ]
+    [ "$(get channel)" = "stable" ]
 }
 
 @test "platform: stable patch on the current (generator) minor → versioned folder" {
@@ -271,4 +315,20 @@ get() {
     grep -q "^target_folder=vcluster_versioned_docs/version-0.34.0$" "$OUTFILE"
     grep -q "^channel=stable$" "$OUTFILE"
     rm -f "$OUTFILE"
+}
+
+@test "patch RCs write the skip gate and reason to GITHUB_OUTPUT for every event" {
+    for event in vcluster-released vcluster-cli-released platform-released; do
+        version=v0.34.5-rc.1
+        if [ "$event" = "platform-released" ]; then
+            version=v4.9.5-rc.1
+        fi
+        outfile="$BATS_TEST_TMPDIR/${event}.outputs"
+        GITHUB_OUTPUT="$outfile" VERSION="$version" EVENT_TYPE="$event" run "$SCRIPT"
+        [ "$status" -eq 0 ]
+        grep -qx 'skip=true' "$outfile"
+        grep -qx 'target_folder=' "$outfile"
+        grep -qx 'channel=rc-patch' "$outfile"
+        [ "$(cat "$outfile")" = "$output" ]
+    done
 }

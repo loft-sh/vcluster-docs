@@ -49,7 +49,7 @@ The org has over 200 repos, so treat this as a starting point rather than a map.
 | Licensing, entitlements, feature gates | `loft-sh/admin-apis` |
 | Which tier a feature belongs to | `loft-sh/plans` |
 | Platform API types | `loft-sh/api` |
-| Certified stack definitions | `loft-sh/certified-stacks` |
+| Certified and community stack definitions | `loft-sh/vcluster-stacks` |
 
 Development happens in `vcluster-pro`. `loft-sh/vcluster` is the auto-synced
 public OSS mirror, so verify against `vcluster-pro` unless the claim is
