@@ -1,5 +1,14 @@
 <!-- vale off -->
 
+This guide is for anyone who wants to improve the vCluster and vCluster
+Platform docs, and it's written for contributors outside vCluster Labs.
+Everything it describes uses public resources: this repository, the published
+docs site, and the public [loft-sh/vcluster](https://github.com/loft-sh/vcluster)
+and [loft-sh/api](https://github.com/loft-sh/api) repositories. A few steps,
+such as adding backport labels or requesting an AI review, need a maintainer.
+Ask for them in your PR description. vCluster Labs staff have an internal
+guide with more detail on tickets, branches, and private previews.
+
 This docs website is built using [Docusaurus](https://docusaurus.io/) v3, a
 modern static website generator.
 
@@ -17,7 +26,8 @@ then run the following command to install dependencies:
 npm install
 ```
 
-This repository requires Node.js version 18.0 or higher.
+This repository requires Node.js 22 or later. The `.nvmrc` file pins the
+version that CI uses.
 
 ### Local development
 
@@ -91,26 +101,137 @@ name. Omit `--prod`, which publishes to the live site.
 As with any preview, put `/next/` after the product path to see unreleased
 changes, for example `/docs/platform/next/...`.
 
+## Where your change goes
+
+Start by finding the page you want to change. Most changes update a page that
+already exists. Search the docs site, or search this repository for a config
+key, flag, or resource name. If a feature extends something that's already
+documented, update that page instead of adding a new one.
+
+The site is built from three folders, each with its own sidebar:
+
+| Folder | Covers |
+| --- | --- |
+| `vcluster/` | The cluster vCluster creates: its control plane, worker nodes, `vcluster.yaml`, resource sync, and the `vcluster` CLI. |
+| `platform/` | vCluster Platform: tenants and projects, templates, users and permissions, apps, fleet operations, Platform install and administration, and the API. vMetal, the machine layer, lives in `platform/vmetal/`. |
+| `docs/` | Pages that span products, such as the services a provider can offer and end-to-end guides. |
+
+Within each folder, sections are organized by what the reader is doing, not by
+where the code lives. These are the placement questions that come up most:
+
+- **vCluster: Deploy, Configure, or Operate?** Deploy (`vcluster/deploy/`) is
+  for creating a cluster or attaching its nodes. Configure
+  (`vcluster/configure/`) is for changing a `vcluster.yaml` setting to turn on
+  or tune a capability. Operate (`vcluster/operate/`) is for actions on a
+  cluster that's already running, such as upgrades and backups.
+- **Platform: Deliver services to tenants, or Use the platform?** If an admin
+  sets something up for others to consume, such as a template or a
+  permission, it goes in `platform/tenants/`. If a project user works with what
+  they were given, such as creating a cluster from a template, it goes in
+  `platform/use-platform/`.
+- **vMetal: machine model or driver?** Behavior that's the same for every
+  provisioning driver goes in `platform/vmetal/concepts/`. Anything specific to
+  one driver, such as Metal3 or KubeVirt, goes with that driver in
+  `platform/vmetal/drivers/`.
+- **A feature that spans products.** Document each part where its owner lives,
+  and link between them, instead of writing the same procedure twice.
+
+If you're not sure where a page belongs, say so in the PR description. A
+maintainer will place it.
+
+### Generated pages
+
+Some reference pages are generated from source on each release, so an edit to
+them is overwritten. Change the source instead, or describe the problem in an
+issue or PR.
+
+| Content | Folder | Generated from |
+| --- | --- | --- |
+| `vcluster.yaml` key reference | `vcluster/_partials/config/` | The schema field descriptions in [loft-sh/vcluster](https://github.com/loft-sh/vcluster) |
+| vCluster CLI reference | `vcluster/cli/vcluster_*.md` | The command help text in [loft-sh/vcluster](https://github.com/loft-sh/vcluster) |
+| Platform API reference | `platform/api/` | The Go doc comments in [loft-sh/api](https://github.com/loft-sh/api) |
+
+To add prose next to a generated field, see
+[Adding prose to generated partials](#adding-prose-to-generated-partials).
+
+## Versions and branches
+
+### Versioned and unversioned folders
+
+| Folder | What it is | Published at |
+| --- | --- | --- |
+| `vcluster/`, `platform/` | The docs for the next, unreleased version. Make your changes here. | `/docs/vcluster/next/...` and `/docs/platform/next/...` |
+| `vcluster_versioned_docs/version-X.Y.Z/` | A frozen copy of each released vCluster version. The newest is the default. | `/docs/vcluster/...` for the newest, `/docs/vcluster/X.Y.Z/...` for older ones |
+| `platform_versioned_docs/version-X.Y.Z/` | A frozen copy of each released Platform version. | `/docs/platform/...` for the newest, `/docs/platform/X.Y.Z/...` for older ones |
+| `docs/` | The root docs. Not versioned. | `/docs/...` |
+
+At each release, the unversioned folders are copied into a new version folder.
+Don't edit the versioned folders directly. Change the page in `vcluster/` or
+`platform/`, and use backport labels to carry the fix into released versions.
+
+### Which branch to target
+
+Open your PR against `main`. Everything merged to `main` appears on the
+public site right away, under the unreleased `/next/` URLs.
+
+The repository also has a `next` branch. It isn't the same as the `/next/`
+URLs. Maintainers use the `next` branch only for major releases, to prepare
+docs that must not appear on the public site before the release, such as a
+large reorganization. Don't target it unless a maintainer asks you to.
+
+### Backport changes to released versions
+
+To carry a fix into released versions, add a `backport-vX.XX` label to the PR,
+one per version. After the PR merges, a workflow copies each changed file under
+`vcluster/` or `platform/` to the same path in that version's folder and opens a
+backport PR.
+
+> [!WARNING]
+> The copy only works when the page has the same path in the older version.
+> Platform 5.0 and vCluster 0.38 reorganized most of the docs, so a page's
+> current path often doesn't exist in Platform 4.12 or earlier, or vCluster 0.37
+> or earlier. For those pages, don't add a backport label. Make the change by
+> hand in each older version's folder, at that version's own path, and say so
+> in the PR description. Pages that kept their path still backport normally.
+> This applies until Platform 4.12 and vCluster 0.37 reach end of support.
+
+Until Platform 5.0 and vCluster 0.38 are released, the unversioned folders on
+`main` still use the Platform 4.12 and vCluster 0.37 layout, so backport labels
+on PRs into `main` work normally.
+
+vCluster labels use the minor version, such as `backport-v0.37`. Platform
+labels include the patch version, such as `backport-v4.12.0`. Only maintainers
+can add labels, so if you're contributing from outside vCluster Labs, list the
+versions the fix applies to in your PR description.
+
+## After you open a PR
+
+- **Checks.** If you opened the PR from a fork, GitHub waits for a maintainer to
+  approve the workflow runs before any checks start. The checks include the
+  Lint check (see [Style guide automation](#style-guide-automation)), link
+  validators, glossary and feature table checks, and a redirect check when a
+  page moves or is deleted.
+- **Preview.** Netlify builds a deploy preview and comments with its link. Your
+  changes to `vcluster/` or `platform/` appear in the unreleased version, so
+  add `/next/` after `/docs/vcluster` or `/docs/platform` in the preview URL.
+- **Review.** A maintainer reviews the PR and may suggest edits for style,
+  placement, or accuracy.
+
 ## AI-assisted PR review
 
-Pull requests can receive an on-demand AI review from Claude. Mention `@claude`
-in a PR comment to trigger a review.
+Maintainers can request an AI review from Claude by mentioning `@claude` in a PR
+comment. Only members of the `loft-sh` organization can trigger it, so if
+you're contributing from outside vCluster Labs, ask a maintainer.
 
 Example commands:
 
 - `@claude review this PR` - get a focused review
-- `@claude fact check this page` - verify the technical claims against the code
-- `@claude fix the linting issues` - ask for specific changes
-- `@claude update the examples to use the new API` - request targeted updates
+- `@claude fact check this page` - check the technical claims against the code
 
-Claude can also work on fork PRs. Since it can't push directly to external
-forks, ask it to create a PR with changes:
-
-- `@claude create a PR with your suggested changes to this PR`
-
-The review checks documentation style, validates vCluster YAML configurations,
-and identifies broken links. The AI review is meant to assist, not replace,
-human review.
+Claude reads the PR and posts review comments. It doesn't push changes. The
+review checks documentation style, validates vCluster YAML configurations, and
+identifies broken links. The AI review is meant to assist, not replace, human
+review.
 
 ## SEO and crawler policy
 
@@ -160,7 +281,15 @@ current docs. See DOC-1325 for background.
 
 ## Style guide
 
-Most of the style guide rules is enforced by `vale` linter. See the
+The full style guide is
+[style-guide.md](https://github.com/loft-sh/vcluster-docs/blob/main/.claude/skills/vcluster-docs-writer/references/style-guide.md),
+with product names and terminology in
+[vcluster-terms.md](https://github.com/loft-sh/vcluster-docs/blob/main/.claude/skills/vcluster-docs-writer/references/vcluster-terms.md).
+Both are part of the docs-writer skill in this repository, so AI tools that
+work in the repository follow the same rules. The sections below summarize the
+rules contributors run into most.
+
+The Vale linter enforces most of the rules. See the
 [style guide automation](#style-guide-automation) section for more information.
 
 The vCluster docs use the following style guides in this order:
@@ -587,9 +716,14 @@ To maintain quality and consistency in our technical documentation, we use
 [vale](https://vale.sh/) as a linter to automatically enforce style guidelines.
 
 > [!NOTE]
-> The CI workflow automatically runs Vale on pull requests that change specific
-> documentation files, including `.mdx` and `.md` files in the `platform`,
-> `vcluster`, and `vcluster_versioned_docs` directories.
+> The Lint check runs Vale on pull requests into `main` that change `.md` or
+> `.mdx` files under `platform/`, `vcluster/`, and the versioned docs folders.
+> It posts its findings as review comments on your PR. Only Vale errors on lines
+> your PR adds fail the check. Warnings appear as comments but don't block the
+> merge. Root `docs/` pages and the generated CLI pages aren't checked.
+>
+> Fix what Vale flags in the prose. Don't change file paths, commands, or
+> config keys to satisfy it.
 
 ### What is Vale?
 
@@ -642,32 +776,31 @@ write them.
     }
     ```
 
-> [!IMPORTANT]
-> Currently `vale` operates under **MinAlertLevel = warning** This means all
-> warnings are treated as errors and will fail the CI. You are encouraged to set
-> the `MinAlertLevel` to `suggestion` in your local `.vale.ini` to take
-> advantage of the full range of Vale's capabilities. You can easily copy the
-> `.vale.ini` file from the root of the repository and run linter with
-> `vale --config="/path/to/your/.vale.ini"`.
+Run `vale` from the repository root so it picks up the repository's
+`.vale.ini`. CI uses Vale 3.13.0, so a newer local version can report slightly
+differently.
+
+> [!NOTE]
+> The repository's `.vale.ini` sets `MinAlertLevel = warning`, so Vale hides
+> suggestions. To see them too, run `vale --minAlertLevel=suggestion <file>`.
+
+### Adding terms to the vocabulary
+
+If Vale flags a legitimate product or technical term, add it to
+`.github/styles/config/vocabularies/Loft/accept.txt` in the same PR. Each line
+is a regular expression. Terms that Vale should always flag go in
+`reject.txt` in the same folder. Don't add a word only to silence one finding.
 
 ### Controlling Vale rules
 
-The syntax for suppressing Vale depends on file type:
-
-**In `.md` files** — use HTML comments:
+Use HTML comments to turn Vale off around a block, in both `.md` and `.mdx`
+files. The repository's `.vale.ini` treats `.mdx` files as Markdown, so JSX
+comments such as `{/* vale off */}` don't suppress Vale.
 
 ```text
 <!-- vale off -->
 This content won't be checked by Vale.
 <!-- vale on -->
-```
-
-**In `.mdx` files** — use JSX comments (HTML comments do not suppress Vale in MDX):
-
-```text
-{/* vale off */}
-This content won't be checked by Vale.
-{/* vale on */}
 ```
 
 ### Suppressing the release drift check
