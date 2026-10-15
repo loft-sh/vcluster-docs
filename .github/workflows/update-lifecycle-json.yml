@@ -14,7 +14,14 @@ jobs:
     permissions:
       contents: write
     steps:
+      # Check out the PR head, not the default merge commit. The commit step
+      # pushes back to the PR branch, and a commit made on top of the merge
+      # commit can't be rebased onto a branch that's behind main. Credentials
+      # stay persisted because the commit step pushes, and this job uploads no
+      # artifacts.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with: # zizmor: ignore[artipacked]
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
@@ -27,14 +34,24 @@ jobs:
 
       - name: Commit and push
         if: github.event.pull_request.head.repo.fork != true
+        env:
+          BRANCH: ${{ github.head_ref || github.ref_name }}
         run: |
           git add static/api/lifecycle/*.json
-          if ! git diff --cached --quiet; then
-            git config user.name "Loft Bot"
-            git config user.email "loft-bot@users.noreply.github.com"
-            git commit -m "chore: regenerate lifecycle JSON from MDX partials"
-            git fetch origin ${{ github.head_ref }}
-            git rebase origin/${{ github.head_ref }}
-            git push origin HEAD:refs/heads/${{ github.head_ref }}
+          if git diff --cached --quiet; then
+            exit 0
           fi
-          exit 0
+          git config user.name "Loft Bot"
+          git config user.email "loft-bot@users.noreply.github.com"
+          git commit -m "chore: regenerate lifecycle JSON from MDX partials"
+          if ! git push origin "HEAD:refs/heads/${BRANCH}"; then
+            # If the branch moved while this ran, the push that moved it
+            # started a new run, which regenerates the JSON from the newer
+            # commit. Any other push failure is a real error.
+            remote=$(git ls-remote origin "refs/heads/${BRANCH}" | cut -f1)
+            if [ -n "$remote" ] && [ "$remote" != "$(git rev-parse HEAD~1)" ]; then
+              echo "::warning::${BRANCH} moved during this run. The run for the newer commit regenerates the lifecycle JSON."
+            else
+              exit 1
+            fi
+          fi

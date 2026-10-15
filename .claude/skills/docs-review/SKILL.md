@@ -180,16 +180,22 @@ against it.
 
 Check the cheap signals before asking: the page intro, prerequisites, sidebar
 position, what links in, and whether sibling pages state an audience. This repo
-has no `audience` frontmatter, so there's no metadata to look up and no
-in-repo ground truth to fall back on.
+has no `audience` frontmatter, so there's no per-page metadata to look up.
 
-The docs team maintains persona definitions in Notion under
-[Docs > Personas](https://app.notion.com/p/3a5109408069816ca099c2dd6aef9309),
-covering the role set, the lenses layered over it, and a production-path matrix.
-Consult those rather than inventing a reader. That work is still settling, so
-read it at the source and treat it as authoritative over any summary, here or
-elsewhere. The pages are internal and access-gated, so external contributors
-should fall back to habits 1 and 2, which are the part that actually matters.
+Name the reader by role: system admin, platform admin, tenant admin, project
+admin, project user, or cluster user. The roles match the product's permission
+scopes, and "Roles and scopes" in the root docs (`docs/plan/roles-and-scopes.mdx`,
+shipping with Platform 5.0) describes them. Then add the job they're doing, such
+as building, operating, or automating, because that decides what the page needs
+first.
+
+The docs team keeps the role model, the job personas, the lenses layered over
+them, and a production-path matrix in Notion under
+[Docs > Roles and personas](https://app.notion.com/p/3a5109408069816ca099c2dd6aef9309).
+Consult those rather than inventing a reader. Read them at the source and treat
+them as authoritative over any summary, here or elsewhere. The pages are
+internal and access-gated, so external contributors should fall back to the
+roles above and habits 1 and 2, which are the part that actually matters.
 
 ### What to look for
 
