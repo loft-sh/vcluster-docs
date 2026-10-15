@@ -206,6 +206,18 @@ EOF
 
 Use [inline comments](https://docusaurus.io/docs/markdown-features/code-blocks#highlighting-with-comments) in the code to highlight lines.
 
+## Integration Pages
+
+A page about using vCluster or the platform with another product should stand
+on its own for a reader who doesn't know that product yet:
+
+- Start with a short summary of what the other product is and why someone
+  would use the two together.
+- Link to the other product's own documentation for its installation and
+  configuration, instead of repeating it.
+- Document only the vCluster or platform side in detail, plus the settings
+  that connect the two.
+
 ## Feature Documentation Template
 
 When writing documentation for vCluster features, follow this structure:

@@ -677,6 +677,15 @@ and the `sidebar_class_name: pro` frontmatter value are code/engineering
 identifiers and are unaffected by this rule — that sidebar class renders as
 an "ENTERPRISE" badge.
 
+Name vCluster Platform once per page, then call it "the platform". Keep the
+formal name on first mention and in install, licensing, support, release, and
+API contexts. Call the interface "the platform UI", not "vCluster Platform UI".
+The `Loft.no-vcluster-platform` Vale rule warns when a page repeats the
+formal name.
+
+Use `vcluster.yaml` for all cluster configuration. `values.yaml` only means the
+Helm values file for installing vCluster Platform.
+
 ### CLI
 
 The command line interface name is `vcluster`.
