@@ -11,6 +11,7 @@ const __webpack_public_path__ = "/docs/";
 import resolveGlob from "resolve-glob";
 import remarkVersionTokens from "./plugins/remark-version-tokens.js";
 import rehypeStripComments from "./plugins/rehype-strip-comments.js";
+import rehypeStripGlossaryTooltips from "./plugins/rehype-strip-glossary-tooltips.js";
 
 const newDocTemplate = `---
 title: Your Document Title
@@ -218,16 +219,22 @@ const config = {
             // includes the site baseUrl (`/docs/`) because the signalwire
             // plugin matches against the full route path.
             '/docs/vcluster/cli/**',
-            // Aggregate config reference renders to ~380K — well above the
-            // 100K agent truncation limit. Sub-pages are indexed individually.
-            // Retired in 0.38 (DOC-1556); remove this entry at the 0.38 cutover.
-            '/docs/vcluster/configure/vcluster-yaml$',
+            // The plugin compiles each entry to an anchored micromatch glob, so
+            // an exact path excludes only that route and keeps its sub-pages.
+            // A trailing `$` is a literal character and matches nothing.
+            // Aggregate config reference renders to ~380K, above the 100K
+            // agent truncation limit. Sub-pages are indexed individually.
+            // Retired in 0.38 (DOC-1556); remove this entry and the next one at
+            // the 0.38 cutover.
+            '/docs/vcluster/configure/vcluster-yaml',
+            // Aggregate sync reference in the released docs renders to ~161K.
+            '/docs/vcluster/configure/vcluster-yaml/sync',
             // The sync section of the vcluster.yaml reference renders to ~176K;
             // the Configure > Resource synchronization task pages are indexed.
-            '/docs/vcluster/reference/vcluster-yaml/sync$',
+            '/docs/vcluster/reference/vcluster-yaml/sync',
             // Platform API reference renders to ~116K; no sub-pages exist.
             // Silent truncation on a dense API reference causes incorrect answers.
-            '/docs/platform/api/resources/project/templates$',
+            '/docs/platform/api/resources/project/templates',
           ],
           // Emit absolute URLs (https://www.vcluster.com/docs/...) instead of
           // site-relative paths. Downstream consumers (R2R RAG, LLM agents)
@@ -238,7 +245,7 @@ const config = {
           // HTML→Markdown conversion. Runs at the hast stage, ahead of
           // rehype-remark, so comment nodes are gone before mdast is built.
           // See DOC-1322.
-          beforeDefaultRehypePlugins: [rehypeStripComments],
+          beforeDefaultRehypePlugins: [rehypeStripComments, rehypeStripGlossaryTooltips],
         },
         siteTitle: 'vCluster Documentation',
         siteDescription: 'Documentation for vCluster (virtual Kubernetes clusters) and vCluster Platform (multi-cluster management)',

@@ -5,7 +5,7 @@
 # Maps a released VERSION + EVENT_TYPE to a routing decision:
 #   - skip:           true if the version should not produce docs
 #   - target_folder:  path (relative to REPO_ROOT) where generated docs land
-#   - channel:        stable | rc | alpha | beta | next | stale-line | invalid | unknown-event
+#   - channel:        stable | rc | rc-patch | alpha | beta | next | stale-line | invalid | unknown-event
 #
 # Inputs (env):
 #   VERSION      Released version, e.g. v0.34.5, v0.34.0-rc.3, v4.6.0-alpha.1
@@ -25,11 +25,12 @@
 #   * alpha / beta / next → always skip (next = -next.internal.* prereleases
 #     cut from feature branches; these must never open a docs-sync PR, per
 #     DEVOPS-1092)
-#   * MAJOR.MINOR strictly newer than the highest frozen MAJOR.MINOR in the
+#   * Immediate next minor after the highest frozen MAJOR.MINOR in the
 #     event's versions.json → target = current docs root (the unreleased
-#     "next" docs folder)
+#     "next" docs folder); RCs targeting this root still generate docs
 #   * MAJOR.MINOR ≤ highest frozen, candidate folder exists →
-#     target = versioned folder (e.g. version-0.34.0)
+#     target = versioned folder (e.g. version-0.34.0); skip RCs (rc-patch)
+#     because these are live docs and only stable releases should sync them
 #   * MAJOR.MINOR ≤ highest frozen, candidate folder absent → skip
 #     (past minor we don't track)
 #   * platform-released only: MAJOR.MINOR older than the loft-sh/api pin in
@@ -160,6 +161,12 @@ fi
 
 candidate="${versioned_root}/version-${major}.${minor}.0"
 if [[ -d "${REPO_ROOT}/${candidate}" ]]; then
+    # Patch RCs would produce superseded live-docs PRs and can lower Platform
+    # dependency pins if merged after the stable release. Wait for stable;
+    # RCs for the unreleased current root have already returned above.
+    if [[ "$channel" == "rc" ]]; then
+        emit_skip rc-patch
+    fi
     emit skip false
     emit target_folder "$candidate"
     emit channel "$channel"
