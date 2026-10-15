@@ -2,6 +2,19 @@
 
 Complete guide to using partials, fragments, code blocks, and imports in vCluster documentation.
 
+## Partials vs fragments
+
+- **`_partials/` is for generated content only**, such as
+  `vcluster/_partials/config/` and `platform/api/_partials/resources/`. Never
+  hand-edit it, and never add a hand-written file to it.
+- **`_fragments/` is for hand-written reusable content.** Put every new
+  reusable snippet here, in the product tree that uses it, or in
+  `docs/_fragments/` for root and global content.
+- Many hand-written files still live in `_partials/`. They're legacy. Import
+  them where they are, but don't copy their location for new files.
+
+See "Partials vs fragments" in the repo's `CLAUDE.md` for the full rule.
+
 ## Discovering Available Resources
 
 ```bash
@@ -24,14 +37,14 @@ The script automatically determines whether to use `@site/` or relative paths ba
 
 ## Import Path Rules
 
-**Use `@site/` for shared non-versioned content:**
-- `docs/_partials/`
-- `docs/_fragments/`
-- `docs/_code/`
+Follow "Link resolution" in the repo's `CLAUDE.md`. In short:
 
-**Use relative paths for everything else:**
-- Versioned content in `vcluster_versioned_docs/version-*/`
-- Any content specific to a version
+- **Same-product fragments and partials:** a relative path, so versioned
+  copies keep importing their own version.
+- **Root and global content** (`docs/_fragments/`, `docs/_partials/`,
+  `docs/_code/`): `@site/docs/...`.
+- **Cross-product content:** `@site/<other-product>/...`, only when tracking the
+  other product's current content is intentional.
 
 ## Code Block Imports
 
@@ -50,26 +63,20 @@ import VirtualScheduler from '!!raw-loader!../../../_code/virtual-scheduler.yaml
 <CodeBlock language="yaml">{VirtualScheduler}</CodeBlock>
 ```
 
-## Regular Partial Imports
+## Generated Partial Imports
 
-For MDX partials that render directly:
+Import generated reference content with a relative path:
 
 ```jsx
-import MyPartial from '@site/docs/_partials/my-partial.mdx';
+import ConfigReference from '../../_partials/config/controlPlane.mdx';
 
-<MyPartial />
-```
-
-**Example with parameters:**
-```jsx
-import InstallSteps from '@site/docs/_partials/install-steps.mdx';
-
-<InstallSteps platform="eks" />
+<ConfigReference />
 ```
 
 ## Fragment Imports
 
-Fragments are reusable text snippets:
+Fragments are hand-written reusable snippets. They can take props, which the
+fragment reads as `props.<name>`:
 
 ```jsx
 import VersionNote from '@site/docs/_fragments/version-note.mdx';

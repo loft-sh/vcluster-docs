@@ -90,9 +90,10 @@ content must be frozen with a docs version:
 - Same-product partials and fragments: use a relative path. Docusaurus copies
   versioned docs verbatim, so an `@site/<product>/...` import would keep
   resolving to the live tree instead of the versioned copy.
-  - `import Partial from '../../_partials/example.mdx'`
-- Intentionally global content: use `@site/docs/_partials/`. These imports
-  update every docs version that uses them.
+  - `import Fragment from '../../_fragments/example.mdx'`
+- Intentionally global content: use `@site/docs/_fragments/` for new
+  content, or `@site/docs/_partials/` for the existing files there. These
+  imports update every docs version that uses them.
   - `import Prerequisites from '@site/docs/_partials/base-prerequisites.mdx'`
 - Cross-product content: use `@site/<other-product>/...` only when tracking the
   other product's current content is intentional. Platform and vCluster have
@@ -135,6 +136,28 @@ does pull the other product's current source.
 3. Fix the relative path
 
 Clear caches: `rm -rf .docusaurus build node_modules/.cache`
+
+## Partials vs fragments
+
+- **`_partials/` holds generated content only.** A generator overwrites it, so
+  never hand-edit it. Change the source instead. The generated sets today are
+  `vcluster/_partials/config/` (vcluster.yaml reference),
+  `platform/api/_partials/resources/` (Platform API), and
+  `platform/_partials/reference/platform-cli-commands.mdx`.
+- **`_fragments/` holds hand-written reusable content:** admonitions, shared
+  procedures, prerequisites, and any other snippet more than one page imports.
+- **New hand-written snippets go in `_fragments/`**, in the same product tree as
+  the pages that use them (`vcluster/_fragments/`, `platform/_fragments/`, or
+  `docs/_fragments/` for root and global content). Never add a hand-written
+  file to `_partials/`.
+- Many existing hand-written files still live in `_partials/`. That's legacy,
+  not precedent. Import them where they are, and move one to `_fragments/` only
+  as a deliberate change that updates every import, including versioned docs.
+- CI enforces this. `check-partials.yml` fails a PR into `main` or `next` that
+  adds a file under `_partials/` outside the generated paths. Edits and moves
+  of existing files pass. For a real exception, add the `partials-check-skip`
+  label. If a generator starts writing a new path, add it to
+  `GENERATED_PATTERN` in `hack/check-partials.sh`.
 
 ## InterpolatedCodeBlock (prefer over static code blocks)
 
@@ -211,34 +234,12 @@ lifecycle-json updates
 
 Note: Claude Code reads this file automatically (local and CI).
 
-## Feature documentation template
+## Page templates
 
-When writing docs for new features:
-
-### Overview
-
-- WHAT: High-level description (add diagrams for architecture changes)
-- WHY: Use cases this feature solves
-
-### How to use
-
-- Describe attributes/properties introduced
-- Indicate if feature changes default behavior (use admonitions)
-- Examples progress from simple (defaults) to complex (special properties)
-
-### Examples format
-
-- vcluster.yaml: description + code block
-- Platform: description + step-by-step. Minimize UI screenshots since the UI
-  changes often and screenshots go stale, but they're okay where warranted
-  (for example, illustrating a dashboard or layout that's hard to describe in
-  prose).
-
-### Checklist
-
-- Where else should this feature be referenced?
-- Does this change user experience/flow?
-- Does structure match similar docs?
+Start new pages from the template for their type in
+`.claude/skills/vcluster-docs-writer/references/templates/`: feature, task,
+and troubleshooting. They apply `references/style-guide.md` to those page
+types, and the style guide wins where they disagree.
 
 ## Repositioning terminology (active project)
 
