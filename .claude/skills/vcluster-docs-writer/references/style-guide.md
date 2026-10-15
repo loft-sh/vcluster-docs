@@ -218,51 +218,12 @@ on its own for a reader who doesn't know that product yet:
 - Document only the vCluster or platform side in detail, plus the settings
   that connect the two.
 
-## Feature Documentation Template
+## Page Templates
 
-When writing documentation for vCluster features, follow this structure:
-
-### 1. Overview Section
-- **WHAT**: High-level description of what the feature is
-- **WHY**: Explain why users would want to use this feature and what use cases it solves
-- Include diagrams if architecture changes are involved
-
-### 2. How to Use the Feature
-- Describe attributes/properties introduced with the feature
-- **Important**: Always indicate if a feature changes default behavior using info/warning admonitions
-- Examples should progress from simple (with defaults) to complex (special properties)
-
-### 3. YAML Examples Best Practices
-- **Always include descriptive comments** in yaml blocks explaining what each section does
-- **Add context before the yaml** explaining the use case
-- **Add "What happens" or "Effect" after the yaml** explaining the result
-- Use `title` attribute for yaml code blocks (e.g., `yaml title="example.yaml"`)
-- Structure examples by use case (e.g., "Use Case 1: Production namespace with specific naming")
-
-### 4. Step-by-Step Examples
-- Use `<Flow>` and `<Step>` components for multi-step procedures
-- Each step should have clear description before commands
-- Include expected output where relevant
-- Group related examples under descriptive headings
-
-### 5. Known Limitations Section
-- Clearly document any limitations at the end
-- Use subsections for different limitation categories
-- Provide workarounds or alternative approaches where possible
-- Include failing and working examples to illustrate limitations
-
-### 6. Admonition Usage
-- `:::info` for neutral information and default behaviors
-- `:::warning` or `:::caution` for important limitations or immutable configurations
-- `:::note` for additional helpful context
-- **Never place admonitions inside JSX components** like `<Step>`
-
-### 7. Writing Style
-- Use sentence case for headings (not Title Case)
-- Avoid future tense - use present tense
-- Avoid first-person plural
-- Be concise but complete
-- Think from the user's perspective
+Start a new page from the template for its type in
+[templates/](templates/README.md): feature pages, task pages, and
+troubleshooting pages. The templates apply this guide to those page types.
+Where a template and this guide disagree, this guide wins.
 
 ## Controlling Vale Rules
 

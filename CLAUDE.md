@@ -211,34 +211,12 @@ lifecycle-json updates
 
 Note: Claude Code reads this file automatically (local and CI).
 
-## Feature documentation template
+## Page templates
 
-When writing docs for new features:
-
-### Overview
-
-- WHAT: High-level description (add diagrams for architecture changes)
-- WHY: Use cases this feature solves
-
-### How to use
-
-- Describe attributes/properties introduced
-- Indicate if feature changes default behavior (use admonitions)
-- Examples progress from simple (defaults) to complex (special properties)
-
-### Examples format
-
-- vcluster.yaml: description + code block
-- Platform: description + step-by-step. Minimize UI screenshots since the UI
-  changes often and screenshots go stale, but they're okay where warranted
-  (for example, illustrating a dashboard or layout that's hard to describe in
-  prose).
-
-### Checklist
-
-- Where else should this feature be referenced?
-- Does this change user experience/flow?
-- Does structure match similar docs?
+Start new pages from the template for their type in
+`.claude/skills/vcluster-docs-writer/references/templates/`: feature, task,
+and troubleshooting. They apply `references/style-guide.md` to those page
+types, and the style guide wins where they disagree.
 
 ## Repositioning terminology (active project)
 

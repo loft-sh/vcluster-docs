@@ -26,7 +26,7 @@ Trigger when:
 ### Writing New Documentation
 
 1. Review style guidelines in `references/style-guide.md`
-2. Follow document template structure (Overview → How to use → Examples → Limitations)
+2. Start from the page template for the page type in `references/templates/` (feature, task, or troubleshooting)
 3. Discover available resources:
    ```bash
    scripts/discover_partials.sh          # Find partials
@@ -377,3 +377,4 @@ Key terms (see `references/vcluster-terms.md` for complete guide):
 - `partials-guide.md` - Complete partials and components guide
 - `mdx-components.md` - MDX/JSX component usage and admonition rules
 - `vcluster-terms.md` - vCluster product terminology and naming
+- `templates/` - Page templates for feature, task, and troubleshooting pages
