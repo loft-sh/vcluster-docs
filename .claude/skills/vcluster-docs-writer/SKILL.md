@@ -274,10 +274,13 @@ scripts/generate_import.sh <path> <dir>   # Generate import statement
 import Code from '!!raw-loader!@site/docs/_code/example.yaml';
 <CodeBlock language="yaml">{Code}</CodeBlock>
 
-// Regular partial
-import Partial from '@site/docs/_partials/example.mdx';
-<Partial />
+// Hand-written reusable snippet (fragment), same product: relative path
+import Fragment from '../../_fragments/example.mdx';
+<Fragment />
 ```
+
+`_partials/` is for generated content only. Put new hand-written snippets in
+`_fragments/`. See "Partials vs fragments" in the repo's `CLAUDE.md`.
 
 See `references/partials-guide.md` for complete patterns and troubleshooting.
 

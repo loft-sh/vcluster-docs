@@ -601,6 +601,25 @@ import VersionAwareDocLink from '@site/src/components/VersionAwareDocLink';
 A cross-product link targets the other product's stable docs, because Platform
 and vCluster version independently.
 
+#### Partials and fragments
+
+The two folder names mean different things:
+
+| Folder | Contains | Edit it? |
+| --- | --- | --- |
+| `_partials/` | Generated content: the vcluster.yaml reference (`vcluster/_partials/config/`), the Platform API reference (`platform/api/_partials/resources/`), and the Platform CLI index | No. A generator overwrites it. Change the source, as described in [Generated pages](#generated-pages) |
+| `_fragments/` | Hand-written content that more than one page imports, such as admonitions, shared procedures, and prerequisites | Yes |
+
+Put a new reusable snippet in `_fragments/`, in the same product tree as the
+pages that import it, or in `docs/_fragments/` for root and global content.
+Don't add a hand-written file to `_partials/`. Many existing hand-written
+snippets still live in `_partials/` from before this rule. Import them where
+they are, and don't use them as a model for new files.
+
+The "Check partials" CI check enforces this. It fails a PR that adds a new
+file under `_partials/` outside the generated paths. Editing or moving an
+existing file passes.
+
 #### Import paths
 
 Choose the import path based on what you're importing and whether that content
@@ -610,7 +629,7 @@ should freeze with a docs version.
 | --- | --- | --- |
 | React or theme components | `@site/src/` or `@theme/` | Not version-specific |
 | Same-product partials and fragments | a relative path | Versioning copies the docs tree, so each snapshot stays self-contained |
-| Intentionally global content | `@site/docs/_partials/` | Updates every docs version at once |
+| Intentionally global content | `@site/docs/_fragments/` for new content, `@site/docs/_partials/` for existing files | Updates every docs version at once |
 | Cross-product content | `@site/<other-product>/` | Tracks the other product's current content, which is the only option because the version lines don't match up |
 
 A same-product `@site/` import keeps resolving to the live tree even from a
@@ -880,12 +899,11 @@ is written; a rename or removal upstream panics the generator with the
 full list of dangling keys, so the prose can be migrated explicitly
 instead of silently orphaned.
 
-### Use a separate, non-generated partial when prose stands alone
+### Use a fragment when prose stands alone
 
 If the prose is conceptual (an overview page, a how-to, a comparison)
 and only happens to live near generated content, write it as a
-hand-authored `.mdx` outside `vcluster/_partials/config/` and import it
-where needed. The generator doesn't modify it. This is the right choice
+fragment under `vcluster/_fragments/` and import it where needed. The generator doesn't modify it. This is the right choice
 when:
 
 - The prose can be read on its own without a specific schema field next
@@ -897,5 +915,5 @@ when:
 ### Quick rule of thumb
 
 - One schema path with one or two paragraphs of prose → `pathExtras`.
-- Multi-paragraph prose, multiple references, own structure → separate
-  partial, imported manually.
+- Multi-paragraph prose, multiple references, own structure → a fragment,
+  imported manually.
