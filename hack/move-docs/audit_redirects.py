@@ -23,7 +23,9 @@ def topat(f):  # netlify pattern -> regex
     r=re.escape(f).replace(r"\*",".*")
     r=re.sub(r":[a-z]+",r"[^/]+",r)
     return re.compile("^"+r+"/?$")
-pats=[(i,topat(r["frm"])) for i,r in enumerate(rules) if r["frm"]!="/*"]
+# Only well-formed rules take part in matching. Rules missing from or to are
+# still reported under MALFORMED below instead of stopping the audit.
+pats=[(i,topat(r["frm"])) for i,r in enumerate(rules) if r["frm"] and r["to"] and r["frm"]!="/*"]
 def page_exists(url):
     u=url.split("#")[0].split("?")[0].rstrip("/")
     m=re.match(r"/docs/(vcluster|platform)(?:/(next|\d+\.\d+\.\d+))?(?:/(.*))?$",u)

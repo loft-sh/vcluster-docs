@@ -1,34 +1,70 @@
 #!/usr/bin/env python3
 """Move docs pages with git mv and rewrite links that point at them.
 
-Usage: [SECTION=platform|vcluster] [REDIRECTS_OUT=FILE] \\
+Usage: [SECTION=platform|vcluster|docs] [REDIRECTS_OUT=FILE] \\
        hack/move-docs/move_docs.py OLD=NEW [OLD=NEW ...]
 
 OLD and NEW are paths relative to the repo root, files or directories, for
 example platform/install=platform/administer/install. SECTION defaults to
-platform and must match the tree the paths are in.
+platform and must be the tree (platform, vcluster, or docs) that every path
+is in. NEW must not exist yet, and a moved file keeps its extension. All
+pairs are checked before anything moves.
 
 Rewrites, in every unversioned .md/.mdx under SECTION:
   * relative markdown links, imports, require() and src/href/to attributes
-  * absolute /docs/SECTION[/next]/... and vcluster.com/docs/SECTION/... links
-    whose target moved, converted to relative .mdx links (same-section rule)
-In the other trees (whichever of platform/, vcluster/, and docs/ isn't
-SECTION), rewrites links to moved pages as /docs/SECTION/next/<new route>.
+  * absolute links to moved pages (/docs/SECTION[/next]/..., or /docs/... for
+    the root docs), converted to relative .mdx links (same-section rule)
+In the other two trees, rewrites links to moved pages as
+/docs/SECTION/next/<new route>, or /docs/<new route> for the root docs.
+In all three trees, rewrites @site/ imports and requires of moved files,
+including loader prefixes such as !!raw-loader!. Versioned docs that import a
+moved file are listed as VERSIONED IMPORT but not changed.
 
 Prints every change. Writes netlify.toml redirect entries to REDIRECTS_OUT
 (skipping pages whose URL a slug pins) and warns when an existing rule would
-match an old URL first. Doesn't touch versioned docs or edit netlify.toml;
-use insert_redirects.py for that.
+match an old URL first. Doesn't edit versioned docs or netlify.toml; use
+insert_redirects.py for netlify.toml.
 """
 import os, re, subprocess, sys
 
 ROOT = subprocess.check_output(["git", "rev-parse", "--show-toplevel"], text=True).strip()
 os.chdir(ROOT)
 SECTION = os.environ.get("SECTION", "platform")
+if SECTION not in ("platform", "vcluster", "docs"):
+    sys.exit(f"SECTION must be platform, vcluster, or docs, not {SECTION!r}")
+
+# URL layout. The root docs plugin serves docs/ at /docs/<route> with no /next/
+# and no versions. The product plugins serve /docs/<product>[/next]/<route>.
+if SECTION == "docs":
+    URL_RE = r"/docs/"
+    NEXT_BASE = "/docs"
+    REDIRECT_PREFIXES = ["/docs/"]
+else:
+    URL_RE = r"/docs/" + SECTION + r"/(?:next/)?"
+    NEXT_BASE = f"/docs/{SECTION}/next"
+    REDIRECT_PREFIXES = [f"/docs/{SECTION}/next/"]
+    if SECTION == "vcluster":  # stable redirects stay dormant until the release removes the old page
+        REDIRECT_PREFIXES.append(f"/docs/{SECTION}/")
 
 pairs = [a.split("=", 1) for a in sys.argv[1:]]
-if not pairs:
+if not pairs or any(len(p) != 2 for p in pairs):
     sys.exit(__doc__)
+
+# Validate every pair before touching anything, so a bad pair can't leave a half-done move.
+errors = []
+for old, new in pairs:
+    old, new = old.rstrip("/"), new.rstrip("/")
+    for p in (old, new):
+        if not p.startswith(SECTION + "/"):
+            errors.append(f"{p} is outside {SECTION}/ (set SECTION to match the paths)")
+    if not os.path.exists(old):
+        errors.append(f"missing: {old}")
+    if os.path.lexists(new):
+        errors.append(f"destination already exists: {new} (git mv would nest {old} inside it)")
+    if os.path.isfile(old) and os.path.splitext(old)[1] != os.path.splitext(new)[1]:
+        errors.append(f"{new} must keep the extension of {old}")
+if errors:
+    sys.exit("\n".join(errors))
 
 # Expand moves into a file map before moving anything.
 fmap = {}
@@ -80,7 +116,7 @@ def route_to_file(route):
 
 
 REL = re.compile(r"""(?m)(?P<pre>^\[[^\]]+\]:\s*|\]\(|from\s+['"]|import\s+['"]|require\(\s*['"]|(?:src|href|to)=\{?['"])(?P<url>\.{1,2}/[^)'"\s]*|[\w-]+\.mdx?(?:#[^)'"\s]*)?)""")
-ABS = re.compile(r"""(?P<pre>\]\()(?P<url>(?:https?://(?:www\.)?vcluster\.com)?/docs/""" + SECTION + r"""/(?:next/)?(?P<route>[^)#?\s]*)(?P<frag>#[^)\s]*)?)\)""")
+ABS = re.compile(r"""(?P<pre>\]\()(?P<url>(?:https?://(?:www\.)?vcluster\.com)?""" + URL_RE + r"""(?P<route>[^)#?\s]*)(?P<frag>#[^)\s]*)?)\)""")
 
 changed = 0
 for dp, dirs, fns in os.walk(SECTION):
@@ -147,8 +183,8 @@ def route_of(path, slug=None):
     return re.sub(r"(^|/)(index|README)$", "", r)
 
 
-# Cross-section links (vcluster/, docs/) -> /docs/platform/next/<new route>
-XABS = re.compile(r"(?P<url>(?:https?://(?:www\.)?vcluster\.com)?/docs/" + SECTION + r"/(?:next/)?(?P<route>[A-Za-z][^)\s\"'#?]*?))(?P<end>/?(?:#[^)\s\"']*)?(?=[)\s\"']))")
+# Cross-section links (the other two trees) -> NEXT_BASE/<new route>
+XABS = re.compile(r"(?P<url>(?:https?://(?:www\.)?vcluster\.com)?" + URL_RE + r"(?P<route>[A-Za-z][^)\s\"'#?]*?))(?P<end>/?(?:#[^)\s\"']*)?(?=[)\s\"']))")
 for top in [t for t in ("platform", "vcluster", "docs") if t != SECTION]:
     for dp, dirs, fns in os.walk(top):
         for fn in fns:
@@ -165,7 +201,7 @@ for top in [t for t in ("platform", "vcluster", "docs") if t != SECTION]:
                     return m.group(0)
                 new = route_of(fmap[src], slug_of(fmap[src]))
                 frag = m.group("end").lstrip("/")
-                return f"/docs/{SECTION}/next/{new}{frag}"
+                return f"{NEXT_BASE}/{new}{frag}"
             new_text = XABS.sub(fix_x, text)
             if new_text != text:
                 open(cur, "w").write(new_text)
@@ -174,6 +210,45 @@ for top in [t for t in ("platform", "vcluster", "docs") if t != SECTION]:
                         changed += 1
                         print(f"{cur}:{i+1}\n  - {x.strip()[:160]}\n  + {y.strip()[:160]}")
 
+# @site/ imports and requires of moved files, including loader prefixes such as
+# !!raw-loader!. Unversioned trees are rewritten; versioned docs are only reported.
+SITE = re.compile(r"""(?P<pre>['"](?:!![\w-]+!)?@site/)(?P<path>(?:platform|vcluster|docs)/[^'"\s]+)(?P<post>['"])""")
+
+
+def fix_site(m):
+    new = remap(m.group("path"))
+    if new == os.path.normpath(m.group("path")):
+        return m.group(0)
+    return m.group("pre") + new + m.group("post")
+
+
+for top in ("platform", "vcluster", "docs"):
+    for dp, dirs, fns in os.walk(top):
+        for fn in fns:
+            if not fn.endswith((".md", ".mdx")):
+                continue
+            cur = os.path.join(dp, fn)
+            text = open(cur).read()
+            new_text = SITE.sub(fix_site, text)
+            if new_text != text:
+                open(cur, "w").write(new_text)
+                for i, (x, y) in enumerate(zip(text.splitlines(), new_text.splitlines())):
+                    if x != y:
+                        changed += 1
+                        print(f"{cur}:{i+1}\n  - {x.strip()[:160]}\n  + {y.strip()[:160]}")
+
+for top in ("vcluster_versioned_docs", "platform_versioned_docs"):
+    for dp, dirs, fns in os.walk(top):
+        for fn in fns:
+            if not fn.endswith((".md", ".mdx")):
+                continue
+            cur = os.path.join(dp, fn)
+            for i, line in enumerate(open(cur), 1):
+                for m in SITE.finditer(line):
+                    if fix_site(m) != m.group(0):
+                        print(f"VERSIONED IMPORT: {cur}:{i} imports @site/{m.group('path')}, "
+                              "which moved. Not changed; that version's build breaks until it's fixed by hand.")
+
 # Redirect entries for netlify.toml (file-path URL, plus slug URL when it differs)
 red = []
 for src, dst in sorted(fmap.items()):
@@ -181,10 +256,7 @@ for src, dst in sorted(fmap.items()):
         continue
     if slug_of(dst) is not None:
         continue  # slug pins the URL, nothing moved
-    prefixes = [f"/docs/{SECTION}/next/"]
-    if SECTION == "vcluster":  # stable URLs move too once 0.38 ships
-        prefixes.append(f"/docs/{SECTION}/")
-    for pre in prefixes:
+    for pre in REDIRECT_PREFIXES:
         o, n = pre + route_of(src), pre + route_of(dst, slug_of(dst))
         if o != n:
             red.append((src, dst, o, n))

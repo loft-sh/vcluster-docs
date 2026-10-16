@@ -9,7 +9,7 @@ one changes to the repo root first. They need Python 3 and no extra packages.
 
 | Script | What it does |
 | --- | --- |
-| `move_docs.py` | Moves files or folders with `git mv` and rewrites every unversioned link and import that points at them. Writes the matching redirects to a file and warns when an existing rule would match an old URL first. Doesn't touch versioned docs or edit `netlify.toml`. |
+| `move_docs.py` | Moves files or folders with `git mv` and rewrites the unversioned links and imports that point at them, including `@site/` imports. Writes the matching redirects to a file and warns when an existing rule would match an old URL first. Doesn't edit versioned docs or `netlify.toml`. |
 | `insert_redirects.py` | Inserts the redirect block that `move_docs.py` wrote above the `AUTO-GENERATED REDIRECTS START` marker in `netlify.toml`, and retargets existing rules whose `to` points at a moved URL. |
 
 ```bash
@@ -18,10 +18,16 @@ SECTION=vcluster REDIRECTS_OUT=/tmp/redirects.toml \
 python3 hack/move-docs/insert_redirects.py /tmp/redirects.toml "DOC-1234: move old-folder to new-folder"
 ```
 
-`SECTION` defaults to `platform`. Set it to the tree the moved paths are in.
-Pass several `OLD=NEW` pairs to move them in one run.
+`SECTION` defaults to `platform`. Set it to `platform`, `vcluster`, or `docs`,
+whichever tree the moved paths are in. Pass several `OLD=NEW` pairs to move
+them in one run. The script checks every pair before it moves anything, and
+stops if a path is outside `SECTION`, a destination already exists, or a
+moved file would change its extension.
 
-Review two behaviors in the diff before you commit:
+Root docs moves (`SECTION=docs`) use the root docs URL layout. Links and
+redirects point at `/docs/<route>`, with no `/next/` and no stable copy.
+
+Review these in the output and the diff before you commit:
 
 - **Cross-section links go to `/next/`.** A link from another tree to a moved
   page is rewritten as `/docs/SECTION/next/<new route>`, even if it pointed at
@@ -32,6 +38,10 @@ Review two behaviors in the diff before you commit:
   Netlify skips a redirect while a page exists at its source, so the rule
   stays dormant until the release removes the old page. Platform moves get
   only `/next/` redirects.
+- **`VERSIONED IMPORT` lines.** Versioned docs sometimes import unversioned
+  content with `@site/...`. The script lists each one that imports a moved
+  file but doesn't change it, so that version's build breaks until you fix
+  it. Keep the old file, or update the import by hand with approval.
 
 ## Check links and redirects
 
@@ -49,7 +59,9 @@ python3 hack/move-docs/audit_redirects.py
 
 Check these by hand after every move:
 
-- JSX props such as `to="/old/path"` on `LinkCard` or `VersionAwareDocLink`.
+- JSX props such as `to="/old/path"` on `LinkCard`, `VersionAwareDocLink`, or
+  `Link`. Root docs pages often use `<Link to="/old-route">`, which is relative
+  to the site's `/docs/` base URL.
 - `docs_url` in `src/data/features.yaml` and `src/data/products.yaml`. Run
   `npm run sync-feature-tables` after changing one.
 - `/docs/platform-ui-link/...` redirects. Point them straight at the new page,
