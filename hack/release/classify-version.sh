@@ -6,7 +6,8 @@
 #   - skip:           true if the version should not produce docs
 #   - target_folder:  path (relative to REPO_ROOT) where generated docs land
 #   - channel:        stable | rc | rc-patch | alpha | beta | next | stale-line | out-of-range |
-#                     unfrozen-line | major-cutover | generator-unknown | invalid | unknown-event
+#                     unfrozen-line | major-cutover | generator-unknown | history-unknown |
+#                     invalid | unknown-event
 #                     (skip-notice.sh decides which skips fail the run)
 #
 # Inputs (env):
@@ -40,6 +41,14 @@
 #   * vcluster events only: the next minor (X.Y+1) after a sync of X+1.0
 #     already landed on this branch → skip (channel=unfrozen-line), so the old
 #     major's next minor can't overwrite the new major in current docs
+#   * X+1.0 after a sync of X.Y+1 already landed on this branch → skip
+#     (channel=out-of-range) until X.Y+1 is frozen, so the new major can't
+#     overwrite the never-frozen minor in current docs
+#   * both history checks need the full git history; without it (no repo, or a
+#     shallow clone) → skip (channel=history-unknown) rather than guess
+#   * MAJOR.MINOR newer than the highest frozen line of its own major but
+#     older than a frozen newer major (X.Y+1 after X+1.0 was frozen) → skip
+#     (channel=unfrozen-line)
 #   * platform-released only: MAJOR.MINOR older than the generator's
 #     loft-sh/api pin → skip (channel=stale-line), or channel=unfrozen-line
 #     when that line was never frozen. Checked before the next-line rule, because
@@ -75,6 +84,20 @@ emit_route() {
     exit 0
 }
 
+# Succeeds when a sync of MAJOR.MINOR ($1.$2) for this event family has merged
+# on this branch. Reads the sync PR title set in handle-source-release.yml.
+# A missing or shallow history would read as "never synced", so skip instead.
+synced_line() {
+    local shallow found
+    shallow=$(GIT_CEILING_DIRECTORIES="$(dirname "$REPO_ROOT")" \
+        git -C "$REPO_ROOT" rev-parse --is-shallow-repository 2>/dev/null) || shallow=
+    [[ "$shallow" == false ]] || emit_skip history-unknown
+    found=$(GIT_CEILING_DIRECTORIES="$(dirname "$REPO_ROOT")" \
+        git -C "$REPO_ROOT" log -1 --format=%h -E \
+        --grep="^docs: sync ${sync_events} v$1\.$2\." 2>/dev/null) || emit_skip history-unknown
+    [[ -n "$found" ]]
+}
+
 emit_skip() {
     # $1 = channel
     emit skip true
@@ -88,11 +111,13 @@ case "$EVENT_TYPE" in
         versioned_root="vcluster_versioned_docs"
         current_root="vcluster"
         versions_json="vcluster_versions.json"
+        sync_events="vcluster(-cli)?-released"
         ;;
     platform-released)
         versioned_root="platform_versioned_docs"
         current_root="platform"
         versions_json="platform_versions.json"
+        sync_events="platform-released"
         ;;
     *)
         emit_skip unknown-event
@@ -126,13 +151,19 @@ minor=$(( incoming_key % 100000 ))
 # Highest frozen MAJOR.MINOR from versions.json (Docusaurus convention).
 versions_path="${REPO_ROOT}/${versions_json}"
 highest_key=-1
+frozen_key=-1
 if [[ -f "$versions_path" ]]; then
     # `|| -n` keeps the last entry when the file has no trailing newline.
     while read -r v || [[ -n "$v" ]]; do
         v_key=$(version_key "$v") || continue
         (( v_key > highest_key )) && highest_key=$v_key
+        (( v_key / 100000 == major && v_key > frozen_key )) && frozen_key=$v_key
     done < <(tr -d '[]" \t\r' <"$versions_path" | tr ',' '\n')
 fi
+# Newest frozen line this release could be a patch of: the highest in its own
+# major, or the highest overall when nothing in its major is frozen. Anything
+# newer was never frozen, even when a newer major is (X.Y+1 after X+1.0).
+(( frozen_key >= 0 )) || frozen_key=$highest_key
 
 # ── Platform generator is current-line-only ───────────────────────────────
 # The platform partials generator (hack/platform/partials/main.go) reflects
@@ -180,7 +211,7 @@ if [[ "$EVENT_TYPE" == "platform-released" ]]; then
     if (( incoming_key < gen_key )); then
         # Newer than anything frozen yet older than the generator means the
         # line was never documented; that needs a person, not a quiet skip.
-        (( incoming_key > highest_key )) && emit_skip unfrozen-line
+        (( incoming_key > frozen_key )) && emit_skip unfrozen-line
         emit_skip stale-line
     fi
     # incoming_key >= gen_key, so a different major can only be a newer one.
@@ -198,16 +229,23 @@ if (( incoming_key > highest_key )); then
         # vCluster has no pin that says which line owns current docs, so use
         # the merged sync history: once X+1.0 has synced, X.Y+1 would
         # overwrite it. Platform gets the same protection from its api pin.
-        if [[ "$EVENT_TYPE" != "platform-released" && -n "$(GIT_CEILING_DIRECTORIES="$(dirname "$REPO_ROOT")" \
-            git -C "$REPO_ROOT" log -1 --format=%h -E \
-            --grep="^docs: sync vcluster(-cli)?-released v${next_major}\.0\." 2>/dev/null || true)" ]]; then
+        if [[ "$EVENT_TYPE" != "platform-released" ]] && synced_line "$next_major" 0; then
             emit_skip unfrozen-line
         fi
         emit_route "$current_root"
     fi
-    (( highest_key >= 0 && incoming_key == next_major * 100000 )) && emit_route "$current_root"
+    if (( highest_key >= 0 && incoming_key == next_major * 100000 )); then
+        # The reverse: X.Y+1 already synced into current docs and was never
+        # frozen, so X+1.0 would overwrite it. Freeze X.Y+1 first.
+        synced_line $(( next_major - 1 )) $(( highest_key % 100000 + 1 )) && emit_skip out-of-range
+        emit_route "$current_root"
+    fi
     emit_skip out-of-range
 fi
+
+# Older than the newest frozen line but never frozen itself: X.Y+1 released
+# after X+1.0 was frozen. It has no folder and current docs hold X+1.
+(( incoming_key > frozen_key )) && emit_skip unfrozen-line
 
 candidate="${versioned_root}/version-${major}.${minor}.0"
 if [[ -d "${REPO_ROOT}/${candidate}" ]]; then

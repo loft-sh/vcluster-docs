@@ -57,6 +57,11 @@ EOF
         "github.com/loft-sh/agentapi/v4 v4.9.0" \
         "github.com/loft-sh/api/v4 v4.9.0"
 
+    # The history guards fail closed outside a full checkout, like main is.
+    git -C "$FIXTURE" init -q
+    git -C "$FIXTURE" -c user.name=t -c user.email=t@example.com \
+        commit -q --allow-empty -m "init"
+
     export REPO_ROOT="$FIXTURE"
 }
 
@@ -158,7 +163,6 @@ get() {
 
 # Commits a docs-sync subject the way a merged sync PR lands on main.
 record_sync() {
-    git -C "$FIXTURE" init -q 2>/dev/null || true
     git -C "$FIXTURE" -c user.name=t -c user.email=t@example.com \
         commit -q --allow-empty -m "docs: sync $1 $2 (#1)"
 }
@@ -193,6 +197,58 @@ record_sync() {
     [ "$status" -eq 0 ]
     [ "$(get skip)" = "false" ]
     [ "$(get target_folder)" = "vcluster" ]
+}
+
+@test "vcluster: next major while the next minor already synced into current → skip (out-of-range)" {
+    # 0.35 is in current docs but not frozen; 1.0 would overwrite it.
+    record_sync vcluster-released v0.35.0-rc.1
+    VERSION=v1.0.0-rc.1 EVENT_TYPE=vcluster-released run "$SCRIPT"
+    [ "$status" -eq 0 ]
+    [ "$(get skip)" = "true" ]
+    [ "$(get channel)" = "out-of-range" ]
+}
+
+@test "vcluster: a stable next-minor sync blocks a stable next major too" {
+    record_sync vcluster-released v0.35.2
+    VERSION=v1.0.0 EVENT_TYPE=vcluster-released run "$SCRIPT"
+    [ "$status" -eq 0 ]
+    [ "$(get channel)" = "out-of-range" ]
+}
+
+@test "vcluster-cli: a cli sync of the next minor also blocks the next major" {
+    record_sync vcluster-cli-released v0.35.0
+    VERSION=v1.0.0 EVENT_TYPE=vcluster-cli-released run "$SCRIPT"
+    [ "$status" -eq 0 ]
+    [ "$(get channel)" = "out-of-range" ]
+}
+
+@test "vcluster: syncs of the current frozen line don't block the next major" {
+    record_sync vcluster-released v0.34.2
+    VERSION=v1.0.0 EVENT_TYPE=vcluster-released run "$SCRIPT"
+    [ "$status" -eq 0 ]
+    [ "$(get skip)" = "false" ]
+    [ "$(get target_folder)" = "vcluster" ]
+}
+
+@test "vcluster: a sync of a minor that only shares a prefix doesn't block the next major" {
+    record_sync vcluster-released v0.350.0
+    VERSION=v1.0.0 EVENT_TYPE=vcluster-released run "$SCRIPT"
+    [ "$status" -eq 0 ]
+    [ "$(get target_folder)" = "vcluster" ]
+}
+
+@test "vcluster: a platform sync of the same version doesn't block the next major" {
+    record_sync platform-released v0.35.0
+    VERSION=v1.0.0 EVENT_TYPE=vcluster-released run "$SCRIPT"
+    [ "$status" -eq 0 ]
+    [ "$(get target_folder)" = "vcluster" ]
+}
+
+@test "sync PR title still matches the subject the history guard greps for" {
+    # The unfrozen-line and out-of-range history checks read merged sync
+    # subjects; renaming the title template would disable them silently.
+    workflow="${BATS_TEST_DIRNAME}/../../.github/workflows/handle-source-release.yml"
+    grep -qF -- '--title "docs: sync ${EVENT} ${VERSION}"' "$workflow"
 }
 
 @test "vcluster: next major past .0 (1.1.0 against 0.x history) → skip" {
@@ -457,6 +513,24 @@ cut_over_to_next_major() {
         "github.com/loft-sh/api/v5 v5.0.0-rc.1"
 }
 
+@test "platform: next major after the cutover while the next minor already synced into current → skip (out-of-range)" {
+    # 4.10 is in current docs but not frozen; 5.0 would overwrite it.
+    record_sync platform-released v4.10.1
+    cut_over_to_next_major
+    VERSION=v5.0.0-rc.2 EVENT_TYPE=platform-released run "$SCRIPT"
+    [ "$status" -eq 0 ]
+    [ "$(get skip)" = "true" ]
+    [ "$(get channel)" = "out-of-range" ]
+}
+
+@test "platform: a vcluster sync of the same version doesn't block the next major" {
+    record_sync vcluster-released v4.10.0
+    cut_over_to_next_major
+    VERSION=v5.0.0 EVENT_TYPE=platform-released run "$SCRIPT"
+    [ "$status" -eq 0 ]
+    [ "$(get target_folder)" = "platform" ]
+}
+
 @test "platform: RC of next major after the cutover → current docs folder, channel=rc" {
     cut_over_to_next_major
     VERSION=v5.0.0-rc.2 EVENT_TYPE=platform-released run "$SCRIPT"
@@ -609,4 +683,135 @@ cut_over_to_next_major() {
         grep -qx 'channel=rc-patch' "$outfile"
         [ "$(cat "$outfile")" = "$output" ]
     done
+}
+
+# ── History guards fail closed ─────────────────────────────────────────────
+# Which line owns current docs comes from merged sync commits. Without full
+# history that answer is unknown, and routing anyway could overwrite a line.
+
+# Marks the fixture shallow at HEAD, so every earlier commit is hidden.
+make_shallow() {
+    git -C "$FIXTURE" -c user.name=t -c user.email=t@example.com \
+        commit -q --allow-empty -m "unrelated"
+    git -C "$FIXTURE" rev-parse HEAD >"$FIXTURE/.git/shallow"
+}
+
+@test "history: not a git repo → next minor skips (history-unknown)" {
+    rm -rf "$FIXTURE/.git"
+    VERSION=v0.35.0 EVENT_TYPE=vcluster-released run "$SCRIPT"
+    [ "$status" -eq 0 ]
+    [ "$(get skip)" = "true" ]
+    [ "$(get channel)" = "history-unknown" ]
+}
+
+@test "history: not a git repo → next major skips (history-unknown)" {
+    rm -rf "$FIXTURE/.git"
+    VERSION=v1.0.0 EVENT_TYPE=vcluster-released run "$SCRIPT"
+    [ "$status" -eq 0 ]
+    [ "$(get channel)" = "history-unknown" ]
+}
+
+@test "history: shallow clone hiding a 1.0 sync → next minor skips (history-unknown)" {
+    record_sync vcluster-released v1.0.0-rc.1
+    make_shallow
+    VERSION=v0.35.0 EVENT_TYPE=vcluster-released run "$SCRIPT"
+    [ "$status" -eq 0 ]
+    [ "$(get channel)" = "history-unknown" ]
+}
+
+@test "history: shallow clone hiding a 0.35 sync → next major skips (history-unknown)" {
+    record_sync vcluster-released v0.35.0
+    make_shallow
+    VERSION=v1.0.0 EVENT_TYPE=vcluster-released run "$SCRIPT"
+    [ "$status" -eq 0 ]
+    [ "$(get channel)" = "history-unknown" ]
+}
+
+@test "history: platform next major after the cutover without history skips (history-unknown)" {
+    rm -rf "$FIXTURE/.git"
+    cut_over_to_next_major
+    VERSION=v5.0.0 EVENT_TYPE=platform-released run "$SCRIPT"
+    [ "$status" -eq 0 ]
+    [ "$(get channel)" = "history-unknown" ]
+}
+
+@test "history: routes that never read history still work without a git repo" {
+    rm -rf "$FIXTURE/.git"
+    VERSION=v0.34.5 EVENT_TYPE=vcluster-released run "$SCRIPT"
+    [ "$(get target_folder)" = "vcluster_versioned_docs/version-0.34.0" ]
+    VERSION=v9.9.9 EVENT_TYPE=vcluster-released run "$SCRIPT"
+    [ "$(get channel)" = "out-of-range" ]
+    VERSION=v4.8.1 EVENT_TYPE=platform-released run "$SCRIPT"
+    [ "$(get channel)" = "stale-line" ]
+    VERSION=v4.10.0 EVENT_TYPE=platform-released run "$SCRIPT"
+    [ "$(get target_folder)" = "platform" ]
+}
+
+# ── Old-major minors after the new major is frozen ─────────────────────────
+# Once X+1.0 is in versions.json, an X.Y+1 that was never frozen is no longer
+# "newer than frozen", but it still has no docs and still needs a person.
+
+freeze_vcluster_1_0() {
+    mkdir -p "$FIXTURE/vcluster_versioned_docs/version-1.0.0"
+    sed -i 's/^\[$/[\n  "1.0.0",/' "$FIXTURE/vcluster_versions.json"
+}
+
+freeze_platform_5_0() {
+    mkdir -p "$FIXTURE/platform_versioned_docs/version-5.0.0"
+    sed -i 's/^\[$/[\n  "5.0.0",/' "$FIXTURE/platform_versions.json"
+}
+
+@test "vcluster: never-frozen old-major minor after the new major is frozen → skip (unfrozen-line)" {
+    freeze_vcluster_1_0
+    VERSION=v0.35.0 EVENT_TYPE=vcluster-released run "$SCRIPT"
+    [ "$status" -eq 0 ]
+    [ "$(get skip)" = "true" ]
+    [ "$(get channel)" = "unfrozen-line" ]
+}
+
+@test "vcluster: RC of a never-frozen old-major minor after the new major is frozen → skip (unfrozen-line)" {
+    freeze_vcluster_1_0
+    VERSION=v0.35.0-rc.1 EVENT_TYPE=vcluster-released run "$SCRIPT"
+    [ "$status" -eq 0 ]
+    [ "$(get channel)" = "unfrozen-line" ]
+}
+
+@test "vcluster-cli: never-frozen old-major minor after the new major is frozen → skip (unfrozen-line)" {
+    freeze_vcluster_1_0
+    VERSION=v0.35.1 EVENT_TYPE=vcluster-cli-released run "$SCRIPT"
+    [ "$status" -eq 0 ]
+    [ "$(get channel)" = "unfrozen-line" ]
+}
+
+@test "platform: never-frozen old-major minor after the new major is frozen → skip (unfrozen-line)" {
+    freeze_platform_5_0
+    cut_over_to_next_major
+    VERSION=v4.10.0 EVENT_TYPE=platform-released run "$SCRIPT"
+    [ "$status" -eq 0 ]
+    [ "$(get channel)" = "unfrozen-line" ]
+}
+
+@test "frozen, pruned, archived and gap lines stay quiet after the new major is frozen" {
+    freeze_vcluster_1_0
+    VERSION=v0.34.5 EVENT_TYPE=vcluster-released run "$SCRIPT"
+    [ "$(get target_folder)" = "vcluster_versioned_docs/version-0.34.0" ]
+    VERSION=v0.26.3 EVENT_TYPE=vcluster-released run "$SCRIPT"
+    [ "$(get channel)" = "stable" ]
+    VERSION=v0.20.1 EVENT_TYPE=vcluster-released run "$SCRIPT"
+    [ "$(get channel)" = "stable" ]
+    VERSION=v0.29.1 EVENT_TYPE=vcluster-released run "$SCRIPT"
+    [ "$(get channel)" = "stable" ]
+    VERSION=v1.0.2 EVENT_TYPE=vcluster-released run "$SCRIPT"
+    [ "$(get target_folder)" = "vcluster_versioned_docs/version-1.0.0" ]
+    VERSION=v1.1.0 EVENT_TYPE=vcluster-released run "$SCRIPT"
+    [ "$(get target_folder)" = "vcluster" ]
+}
+
+@test "platform: frozen old-major lines stay stale-line after the new major is frozen" {
+    freeze_platform_5_0
+    cut_over_to_next_major
+    VERSION=v4.9.6 EVENT_TYPE=platform-released run "$SCRIPT"
+    [ "$(get channel)" = "stale-line" ]
+    VERSION=v4.3.1 EVENT_TYPE=platform-released run "$SCRIPT"
+    [ "$(get channel)" = "stale-line" ]
 }
