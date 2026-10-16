@@ -1,0 +1,138 @@
+---
+title: OS Image Store
+sidebar_label: OS Image Store
+sidebar_position: 2.5
+description: Connect an S3-compatible bucket that holds uploaded OS images, and check that the platform can reach it.
+---
+
+An OS image store is the bucket that holds the OS images you upload to the platform. You connect it with an OS Image Store connector, and an [OS image](./os-images.mdx) names that connector to store its file.
+
+Upload bytes never pass through the platform. The platform signs short-lived URLs, and the browser or the CLI sends the image straight to the bucket.
+
+The image store works with AWS S3 and with S3-compatible stores such as MinIO or SeaweedFS.
+
+## Create the connector
+
+```yaml title="os-image-store.yaml"
+apiVersion: management.loft.sh/v1
+kind: Connector
+metadata:
+  name: os-images
+spec:
+  displayName: OS images
+  imageStore:
+    protocol: s3
+    s3:
+      # Leave the endpoint empty for AWS S3. Set it for a self-hosted store.
+      endpoint: ""
+      bucket: my-os-images
+      region: eu-central-1
+      # Most self-hosted stores need path-style addressing.
+      forcePathStyle: false
+      accessKey: AKIAEXAMPLE
+      secretKey: <secret-key>
+```
+
+| Field | Description |
+|---|---|
+| `s3.endpoint` | Address of the object store, starting with `http://` or `https://`. Leave it empty for AWS S3. |
+| `s3.bucket` | Bucket that holds the images. |
+| `s3.region` | Region of the bucket. Required for every store, because the request signature covers it. |
+| `s3.forcePathStyle` | Address the bucket as a path (`https://endpoint/bucket`) instead of a host name. |
+| `s3.accessKey`, `s3.secretKey` | Credentials of the key the platform signs with. |
+| `s3.sessionToken` | Session token of temporary credentials. AWS keys that start with `ASIA` need it. |
+
+Use long-lived credentials where possible. A signed upload URL stays valid for 24 hours, but only while the credentials that signed it are valid. Temporary credentials end every upload that outlasts them.
+
+## Grant the permissions
+
+The key needs these permissions on the objects in the bucket:
+
+| Permission | Used for |
+|---|---|
+| `s3:PutObject` | Starting an upload, uploading its parts, and completing it. |
+| `s3:ListMultipartUploadParts` | Checking that every part arrived before completing an upload. |
+| `s3:AbortMultipartUpload` | Dropping an upload that was not finished. |
+| `s3:GetObject` | Reading an image's size and downloading it during provisioning. |
+| `s3:DeleteObject` | Removing an image's file when the OS image is deleted. |
+| `s3:ListBucket` | Optional. Lets the store test report a bucket that doesn't exist. |
+
+A policy for AWS S3:
+
+```json title="os-image-store-policy.json"
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "s3:PutObject",
+        "s3:ListMultipartUploadParts",
+        "s3:AbortMultipartUpload",
+        "s3:GetObject",
+        "s3:DeleteObject"
+      ],
+      "Resource": "arn:aws:s3:::my-os-images/*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": "s3:ListBucket",
+      "Resource": "arn:aws:s3:::my-os-images"
+    }
+  ]
+}
+```
+
+## Allow browser uploads
+
+A browser upload sends `PUT` requests to the bucket from the platform's web address, so the bucket needs a CORS rule that allows that origin. Uploads from the CLI don't need one.
+
+Set the origin to the address you open the platform UI with:
+
+```json title="os-image-store-cors.json"
+{
+  "CORSRules": [
+    {
+      "AllowedOrigins": ["https://platform.example.com"],
+      "AllowedMethods": ["PUT"],
+      "AllowedHeaders": ["*"]
+    }
+  ]
+}
+```
+
+Apply it to an AWS S3 bucket:
+
+```bash
+aws s3api put-bucket-cors --bucket my-os-images --cors-configuration file://os-image-store-cors.json
+```
+
+If the UI reaches the platform under more than one address, list each one in `AllowedOrigins`.
+
+## Check the connection
+
+Each time you save the connector, the platform tests the store: it starts an upload in the bucket under `.platform-probe/` and drops it right away. The result is the `StoreAccessible` condition on the connector. Saving never fails because of the test, so you can create the connector before the bucket is ready.
+
+```bash
+kubectl get connectors.management.loft.sh os-images -o jsonpath='{.status.conditions[?(@.type=="StoreAccessible")]}'
+```
+
+When the condition is `False`, its message names the setting to fix:
+
+| Reason | Fix |
+|---|---|
+| `MissingSessionToken` | The access key is temporary (`ASIA`). Add its session token. |
+| `UnknownAccessKey` | The store doesn't recognize the access key. Check the key and the endpoint. |
+| `SecretKeyMismatch` | The secret key doesn't belong to the access key. |
+| `CredentialsRejected` | The store rejected the credentials. Check the key pair and its permissions. |
+| `AccessDenied` | The key may not write to the bucket. The bucket may belong to another account, or a policy denies access. |
+| `WrongRegion` | The bucket is in another region. The message names the region to set. |
+| `WrongEndpoint` | The bucket must be reached through another region or endpoint. |
+| `StoreNotFound` | The bucket doesn't exist. |
+| `InvalidStoreName` | The bucket name contains `/`. Set only the bucket name. |
+| `Refused` | The store refused the request for another reason, which the message names. |
+| `Unreachable` | The store didn't answer. Check the endpoint and that the store is running. |
+
+After you fix the store, save the connector again to repeat the test. The condition shows the result of the last save. Credentials that expire later surface when an upload fails, with the same message.
+
+The test doesn't check the CORS rule. A missing rule shows when a browser upload fails.
