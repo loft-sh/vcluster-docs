@@ -324,43 +324,37 @@ vCluster Platform procedures.
 
 <Sleep />
 
-### AWS Gateway API HTTPRoutes fail to deregister when the cluster is paused
+#### HTTPRoutes return 502 on AWS ALB while a cluster sleeps
 
-When using a cluster with the AWS Gateway API (AWS Load Balancer Controller), pausing or sleeping a cluster does not automatically clean up or redirect traffic. The `HTTPRoute` objects remain active on the AWS Application Load Balancer (ALB), pointing to an inactive target group.
+When a cluster with platform-managed sleep goes to sleep, the platform adds a routing rule to the top of each `HTTPRoute` that the cluster syncs to the control plane cluster. The rule sends all traffic to the platform agent's wakeup endpoint in the platform namespace. With the AWS Load Balancer Controller, the Application Load Balancer (ALB) can fail to serve this rule. Users get 502 or 503 errors, and their traffic doesn't wake the cluster.
 
-#### Symptoms
+The wakeup endpoint is in a different namespace from the route, so the controller may not reach a healthy target for it. Cross-namespace routing, the target type, or health check settings can each cause this. The controller also creates an extra target group for the rule's backend.
 
-- Gateway returns 502 or 503 errors when users access a paused cluster.
-- Wake-up failures occur because initial traffic does not trigger the wake-up hook.
+To avoid the broken rule, remove the `HTTPRoute` before the cluster sleeps and restore it after the cluster wakes.
 
-#### Cause
-
-When a cluster enters sleep mode, the platform adds a routing rule to the top of the `HTTPRoute` to send traffic to the platform agent's wake-up endpoint. Because this endpoint sits in a different namespace, the AWS Load Balancer Controller may fail to reach a healthy target due to cross-namespace routing, target type limitations, or health check mismatches. The controller also creates an extra target group for this new backend rule.
-
-#### Resolution
-
-To prevent broken routing rules, you must manage the lifecycle of the `HTTPRoute` resource when pausing the cluster.
-
-:::note Trade-off
-While the route is deleted, HTTP traffic cannot wake the cluster, so it must be resumed manually. This workaround is ideal for manual pauses or GitOps pruning tied to a strict sleep schedule. It is not suitable for activity-based auto sleep, as the cluster may sleep while it is still serving traffic and AWS Load Balancer does not support the request mirroring filters used to track activity. See the [request mirroring limitation](#gateway-api-httproute-activity-detection) section for more details.
+:::note
+While the route is deleted, HTTP traffic can't wake the cluster, so you must resume it manually. This workaround fits manual pauses and GitOps pruning tied to a sleep schedule. It doesn't fit activity-based auto sleep. ALB doesn't support request mirroring, so auto sleep can put the cluster to sleep while it's still serving traffic. See [Gateway API HTTPRoute activity](#gateway-api-httproute-activity-detection).
 :::
 
-1. Delete the active route from the host namespace while the syncer is still active. The syncer must be running to remove the route's copy from the control plane cluster.
+1. With your kubeconfig pointing at the cluster, delete the route. Do this before you pause the cluster. The syncer must be running to remove the route's copy from the control plane cluster.
    ```bash
-   kubectl delete httproute <your-route-name> -n <namespace>
+   kubectl delete httproute <route-name> -n <namespace>
    ```
 2. Pause the cluster.
    ```bash
-   vcluster pause <cluster-name> -n <namespace>
+   vcluster pause <cluster-name> -n <cluster-namespace>
    ```
-3. When you are ready to wake the cluster, resume it.
+3. When you're ready to wake the cluster, resume it.
    ```bash
-   vcluster resume <cluster-name> -n <namespace>
+   vcluster resume <cluster-name> -n <cluster-namespace>
    ```
-4. Re-apply your routing manifest to the host namespace after the syncer is fully running.
+4. After the cluster is running, re-apply the route with your kubeconfig pointing at the cluster.
    ```bash
    kubectl apply -f httproute-manifest.yaml
    ```
+5. Confirm the route is accepted. The output should show an `Accepted` condition with status `True`.
+   ```bash
+   kubectl describe httproute <route-name> -n <namespace>
+   ```
 
-You can also automate this workflow using a GitOps lifecycle pattern. Configure Argo CD or Flux to prune the `HTTPRoute` manifest before the cluster sleeps, and then trigger a resync to re-apply it once the cluster wakes up.
-
+To automate this, configure Argo CD or Flux to prune the `HTTPRoute` manifest before the cluster sleeps and re-sync it after the cluster wakes.
