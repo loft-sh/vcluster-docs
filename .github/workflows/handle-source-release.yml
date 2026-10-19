@@ -79,16 +79,18 @@ jobs:
           EVENT_TYPE: ${{ steps.inputs.outputs.event }}
         run: bash hack/release/classify-version.sh
 
-      # RCs targeting versioned (live) docs report channel=rc-patch. Wait for
-      # the stable release instead of creating a superseded docs-sync PR.
+      # Routine skips (e.g. channel=rc-patch, an RC of a versioned line that
+      # waits for stable) are a notice. Skips that need a person fail the job
+      # here, which fires the Slack alert below; vcluster-cli-released only
+      # warns, since its paired vcluster-released run alerts. skip-notice.sh
+      # holds the list.
       - name: Skip notice
         if: steps.classify.outputs.skip == 'true'
         env:
           EVENT: ${{ steps.inputs.outputs.event }}
           VERSION: ${{ steps.inputs.outputs.version }}
           CHANNEL: ${{ steps.classify.outputs.channel }}
-        run: |
-          echo "::notice::No docs change for $EVENT $VERSION (channel=$CHANNEL)"
+        run: bash hack/release/skip-notice.sh
 
       - name: Set up Go
         if: steps.classify.outputs.skip != 'true'
@@ -187,7 +189,8 @@ jobs:
       # produce no PR. The legacy sync-api.yaml `update-docs` job did this
       # bump before opening the docs PR; with that job removed in DEVOPS-889
       # PR #4, the bump moves here. Major-version segment is taken from the
-      # released version itself, so a future v5 cutover doesn't need code.
+      # released version itself, but a new major only gets here after the
+      # generator's loft-sh/api import moves to it (classifier major-cutover).
       #
       # `go mod vendor` is load-bearing: this repo carries a `vendor/` tree
       # and `go run` resolves with vendor semantics. Without re-vendoring,
@@ -293,6 +296,9 @@ jobs:
           fi
 
           git add -A
+          # classify-version.sh greps merged "docs: sync ${EVENT} ${VERSION}"
+          # subjects to tell which line owns current docs. Keep this and the
+          # PR title below in that format.
           git commit -m "docs: sync ${EVENT} ${VERSION}" -m "Channel: ${CHANNEL}. Target: ${TARGET_FOLDER}."
           git push -u origin "$branch" --force
 
@@ -495,16 +501,15 @@ jobs:
             } | gh pr comment "$pr" --body-file -
           fi
 
-      # Alerts a chosen Slack channel when a non-skip receiver run fails.
-      # Guarded on `skip != 'true'` because the classifier reports skip
-      # through outputs (alpha/beta/invalid versions) without failing the
-      # job — those runs are green by design and must not page anyone.
-      # `if: failure()` already excludes successful runs and dispatches
-      # that exit cleanly on no-content-diff. Webhook is optional: when
+      # Alerts a chosen Slack channel when a receiver run fails. Routine
+      # skips (alpha/beta/invalid/stale-line) leave the job green, so they
+      # never page anyone; the skip notice step fails only for the channels
+      # that need a person. `if: failure()` also excludes dispatches that
+      # exit cleanly on no-content-diff. Webhook is optional: when
       # the secret is unset (fork PRs, pre-provisioning), `ci-test-notify`
       # logs a warning and no-ops, so this step never breaks the workflow.
       - name: Notify Slack on receiver failure
-        if: failure() && steps.classify.outputs.skip != 'true'
+        if: failure()
         uses: loft-sh/github-actions/.github/actions/ci-test-notify@ci-test-notify/v1
         with:
           test-name: "docs-sync receiver — ${{ steps.inputs.outputs.event }} ${{ steps.inputs.outputs.version }}"
