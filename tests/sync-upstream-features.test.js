@@ -33,7 +33,7 @@ function fixture(t, { upstream = [], plans = {}, features = {}, assignments = {}
     run: (...args) => spawnSync(process.execPath, [script, ...args], {
       encoding: 'utf8', timeout: 10000,
       env: { ...process.env, PATH: `${path.join(root, 'bin')}${path.delimiter}${process.env.PATH}`,
-        NODE_PATH: path.dirname(path.dirname(require.resolve('js-yaml'))) },
+        NODE_PATH: require.resolve.paths('js-yaml').join(path.delimiter) },
     }),
     bytes: () => locations.map(file => fs.readFileSync(file, 'utf8')),
     read: () => locations.map(file => yaml.load(fs.readFileSync(file, 'utf8'))),
