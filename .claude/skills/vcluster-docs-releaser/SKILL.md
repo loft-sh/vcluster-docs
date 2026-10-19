@@ -407,6 +407,7 @@ Ready to commit and push!
 - Keep 5-6 versions in `onlyIncludeVersions` for build performance
 - Hurl tests validate redirects work correctly
 - User runs build — AI does not run npm commands
+- New major (1.0): the docs-sync receiver routes 1.0 to current docs automatically. Once a 1.0 sync merges, a 0.Y+1 release is skipped as `unfrozen-line` and the `vcluster-released` run fails, which sends the Slack alert. That still holds after 1.0 is frozen. If a 0.Y+1 synced first and isn't frozen yet, 1.0 is skipped as `out-of-range` until 0.Y+1 is frozen.
 
 ## CRITICAL: Cross-Plugin Links to Platform
 

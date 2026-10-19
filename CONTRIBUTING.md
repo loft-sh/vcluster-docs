@@ -139,6 +139,13 @@ where the code lives. These are the placement questions that come up most:
 If you're not sure where a page belongs, say so in the PR description. A
 maintainer will place it.
 
+### Moving or renaming a page
+
+A move needs more than a `git mv`. Links into the page, imports, and redirects
+all have to follow it. The scripts in `hack/move-docs/` move the files, rewrite
+the links, and write the redirects. Their README lists what they don't catch
+and the checks to run before you push. Keep each move in its own PR.
+
 ### Generated pages
 
 Some reference pages are generated from source on each release, so an edit to
@@ -391,25 +398,38 @@ kubectl get pods <pod-name>
 Instead of hardcoding version numbers that go stale, use these tokens:
 
 | Token | Renders as |
-|-------|------------|
-| `__PLATFORM_VERSION__` | Latest platform version (e.g., 4.5.0) |
-| `__VCLUSTER_VERSION__` | Latest vCluster version (e.g., 0.30.0) |
-| `__PLATFORM_VERSION_MINOR__` | Minor version only (e.g., 4.5) |
-| `__VCLUSTER_VERSION_MINOR__` | Minor version only (e.g., 0.30) |
+| --- | --- |
+| `__PLATFORM_VERSION__` | Latest stable Platform patch release, as `X.Y.Z` |
+| `__VCLUSTER_VERSION__` | Latest stable vCluster patch release, as `X.Y.Z` |
+| `__PLATFORM_VERSION_MINOR__` | Minor version of that Platform release, as `X.Y` |
+| `__VCLUSTER_VERSION_MINOR__` | Minor version of that vCluster release, as `X.Y` |
 
 ```bash
 export PLATFORM_VERSION=__PLATFORM_VERSION__
 helm install vcluster --version __VCLUSTER_VERSION__
 ```
 
-Tokens are replaced at build time by a remark plugin. In versioned docs
-(e.g., `/platform/4.3.0/`), tokens resolve to that version instead of latest.
+The values come from `src/data/latest-versions.json`, which a daily workflow
+(`sync-latest-versions.yml`) keeps at the latest stable patch of each
+product's `lastVersion`. Don't edit that file by hand. A remark plugin
+replaces tokens at build time in text, inline code, code blocks, and string
+JSX attributes, and `InterpolatedCodeBlock` replaces them in its `code` prop.
+Both read the same file, so they agree.
+
+In versioned docs, tokens resolve to that folder's version instead. A page in
+`platform_versioned_docs/version-4.11.0/` renders `__PLATFORM_VERSION__` as
+`4.11.0`, not the latest 4.11 patch.
+
+Use tokens only for "the current version". For a fixed minimum, such as
+"requires vCluster 0.34 or later", write the number. A token would render
+the current version on every page and in every versioned copy.
 
 #### Interactive code blocks
 
 For code blocks that contain values users need to customize, use the `InterpolatedCodeBlock` component instead of regular code blocks. This allows users to edit values directly in the documentation.
 
 **Using local variables** (user can edit each instance):
+
 ```mdx
 import InterpolatedCodeBlock from '@site/src/components/InterpolatedCodeBlock';
 
@@ -420,6 +440,7 @@ import InterpolatedCodeBlock from '@site/src/components/InterpolatedCodeBlock';
 ```
 
 **Using global variables** (define once, use everywhere on the page):
+
 ```mdx
 import PageVariables from '@site/src/components/PageVariables';
 import InterpolatedCodeBlock from '@site/src/components/InterpolatedCodeBlock';
@@ -436,6 +457,7 @@ export REGISTRY=[[GLOBAL:REGISTRY]]`}
 This eliminates repeated export statements across multiple code blocks. Use `PageVariables` when the same values (like version numbers or registry URLs) appear in multiple code examples on a page.
 
 Notes:
+
 - Place `PageVariables` before any code blocks that use those variables
 - Can be placed anywhere on the page (doesn't have to be at the top)
 - Multiple `PageVariables` components will merge together
@@ -794,6 +816,7 @@ write them.
   - Install [mason.nvim](https://github.com/williamboman/mason.nvim) and add
     vale_ls LSP. Configure and use like any other LSP.
   - Install `vale_ls` on start with `lazy.nvim`
+
     ```lua
     return {
       "williamboman/mason.nvim",
