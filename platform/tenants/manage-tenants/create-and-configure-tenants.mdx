@@ -92,22 +92,31 @@ A tenant name is a DNS label, 32 characters or fewer, and can't contain `--`. A
 leaves room for the five-character suffix. A tenant name can't be changed
 afterwards, so a rename means creating a new tenant.
 
+A name that matches the NICo org of an existing NICo node provider is refused,
+because that org is reserved for platform workloads.
+
 [Full name rules, including `generateName` →](./tenant-boundary-reference.mdx#tenant-names)
 
 ### What gets created with it
 
-Creating a tenant also creates two objects.
+Creating a tenant also creates three objects.
 
 | Object | Name | Purpose |
 |--------|------|---------|
-| User | `<tenant>--admin` | The tenant admin, holding full rights inside the boundary |
+| User | `<tenant>--admin` | The tenant admin |
+| Team | `<tenant>--admins` | Holds the tenant admin's rights inside the boundary |
 | Project | `<tenant>--default` | Somewhere for the tenant admin to start |
 
-For a tenant named `acme` that's the user `acme--admin` and the project
-`acme--default`. Both are left alone if they already exist, so nothing here
-overwrites an account someone has since modified. Recreating a tenant you
-deleted earlier therefore reuses the old admin account and its credentials
-rather than issuing a fresh one.
+For a tenant named `acme` that's the user `acme--admin`, the team
+`acme--admins`, and the project `acme--default`. The admin user belongs to the
+team through a group rather than by name, so the team keeps working if the user
+is deleted and recreated. To make another tenant user a tenant admin, add them
+to the team.
+
+All three are left alone if they already exist, so nothing here overwrites an
+account someone has since modified. Recreating a tenant you deleted earlier
+therefore reuses the old admin account and its credentials rather than issuing
+a fresh one.
 
 :::note Names are prefixed
 Cluster-scoped resource names are shared across the whole platform. A
@@ -122,12 +131,14 @@ Every tenant starts with no grants to platform inventory. Each capability has
 to be switched on explicitly, and switching it on alone isn't enough. You also
 have to say which instances the tenant may use.
 
-Two rules matter before you start.
+Three rules matter before you start.
 
 - **Enabled but no selector grants nothing.** The capability is on, and the
   tenant still sees no instances.
 - **An empty label selector grants everything.** `byLabels: {}` matches every
   admin-owned instance of that kind. An absent selector matches none.
+- **A disabled capability withholds everything of that kind.** That includes
+  instances lent to the tenant and instances the tenant created itself.
 
 <Tabs>
 <TabItem value="ui" label="UI" default>
@@ -144,9 +155,10 @@ Two rules matter before you start.
     Turn on the capability you want to grant, then choose how to select
     instances. <Label>Node Types</Label> offers <Label>By Label</Label> or
     <Label>By Name</Label>. <Label>Control Plane Clusters</Label>,
-    <Label>OS Images</Label>, and <Label>Templates</Label> offer
-    <Label>By Label</Label>. <Label>SSH Keys</Label> has no selector, because
-    turning it on lets the tenant create its own keys.
+    <Label>OS Images</Label>, <Label>Templates</Label>, and
+    <Label>Connectors</Label> offer <Label>By Label</Label>.
+    <Label>SSH Keys</Label> has no selector, because turning it on lets the
+    tenant create its own keys.
   </Step>
   <Step>
     For <Label>Node Types</Label>, optionally set quotas to cap how many
@@ -204,6 +216,11 @@ spec:
     allow:
       custom:
         enabled: true
+  connectors:
+    enabled: true
+    allow:
+      byLabels:
+        tenant.example.com/tier: standard
 ```
 
 </TabItem>
@@ -235,15 +252,27 @@ capability has no option to let it try.
 | OS images | Yes | No | Yes | No |
 | SSH keys | No | No | Yes | No |
 | Templates | Yes | No | No | No |
+| Connectors | Yes | No | No | No |
 
-SSH keys are never shared from the platform's own keys, so the only question is
-whether the tenant may register keys of its own.
+The SSH keys capability has no selector for the platform's own keys. Turning it
+on decides whether the tenant may register keys of its own. A platform admin can
+still lend a specific key with an exclusive assignment.
+
+A tenant reading a connector sees its configuration but never its credentials.
+A cluster or OS image that names a connector the tenant can't use is refused
+when written. If you withdraw a connector later, a cluster that's already using
+it keeps its database. See
+[Troubleshoot tenants](../troubleshoot/tenants.mdx#a-connector-isnt-usable).
 
 :::note Node type quotas cap usage, they don't reserve machines
 `nodeTypes.quota.byType` caps how many instances of each node type the tenant
 can hold, counted across all its projects. It applies to every vMetal driver.
-Platform refuses a request that would exceed the quota with a quota exhausted
-error. Requests pinned to a specific machine don't count against it.
+Requests pinned to a specific machine don't count against it.
+
+How Platform enforces the quota depends on the request. A request that names
+the node type directly is refused with a `quota exhausted` error. A request that
+lets Platform choose the node type, such as from a node pool, waits as Pending
+with the reason `TenantNodeTypeQuotaExceeded` until capacity frees up.
 
 A quota doesn't set machines aside for the tenant. To reserve hardware, assign
 machines to the tenant. To cap a single project, set
@@ -279,13 +308,28 @@ Capabilities select from shared inventory. Some resources instead belong to one
 tenant outright, and a platform admin assigns them by hand.
 
 Machines and network environments work this way. An assigned resource leaves the
-platform's available pool and can't be claimed by another tenant.
+platform's available pool and can't be claimed by another tenant. Only a
+platform admin creates network environments. A tenant uses the ones assigned to
+it.
+
+Any other resource can be assigned the same way, except projects, users, and
+teams. If a capability governs the resource, enable it for the tenant first, or
+the assignment is refused.
+
+To share one resource with every tenant instead of one, label it
+`tenant.vcluster.com/all` with the value `"true"`. See the
+[tenant boundary reference](./tenant-boundary-reference.mdx#tenantvclustercomall).
 
 :::warning Network environment assignment is one-way
 Read this before assigning a network environment. Once assigned, the assignment
-can't be changed or removed, and the network environment's spec can no longer be
-edited. A network environment must also be assigned to a tenant or to the
-platform when it's created. Machines carry no such restriction.
+can't be changed or removed. Its node provider and properties can't be edited
+either, although the display name, owner, and access still can. A network
+environment must name a node provider and be assigned to a tenant or to the
+platform when it's created.
+
+A machine can be reassigned, but not while it's provisioned. Platform refuses any
+change to a claimed machine's assignment, including adding or removing one. The
+UI doesn't let you select a provisioned machine.
 :::
 
 <Tabs>
@@ -299,7 +343,7 @@ platform when it's created. Machines carry no such restriction.
     Select the machines you want to assign.
   </Step>
   <Step>
-    Click the assign action for the selection.
+    Click <Button>Assign to tenant</Button>.
   </Step>
   <Step>
     Choose the tenant and click <Button>Assign</Button>.
@@ -318,11 +362,30 @@ metadata:
 ```
 
 Remove the label to return the resource to the platform pool. That works for a
-machine. A network environment's assignment is permanent, so removing the label
-is refused.
+machine that isn't provisioned. A network environment's assignment is
+permanent, so removing the label is refused.
 
 </TabItem>
 </Tabs>
+
+## Onboard a tenant to NICo
+
+If the tenant gets NICo capacity, Platform onboards it to NICo automatically.
+Onboarding starts once you grant a node type or assign a network environment
+that references a NICo node provider. The tenant name becomes the tenant's NICo
+org, so there's nothing to configure.
+
+Platform reports progress as conditions on the tenant.
+
+| Condition | `False` means |
+|-----------|---------------|
+| `NICoOnboarded` | The NICo org isn't ready yet, or onboarding failed. The reason says which |
+| `NICoNodeProviderFound` | A referenced node provider is missing or isn't a NICo provider, or the tenant's grants point at more than one |
+| `NICoSiteCredentialsAvailable` | Platform couldn't load the tenant's credentials for the NICo endpoint |
+
+```bash
+kubectl get tenant acme -o jsonpath='{.status.conditions}' | jq
+```
 
 ## Configure hostnames and branding
 
@@ -399,9 +462,9 @@ They can't see the platform's other tenants, and they can't change what you
 granted them.
 
 :::note Users belong to one tenant
-A user is bound to a tenant and stays there. A tenant user can't be added to a
-platform-level team, and a platform user can't be added to a tenant's team.
-Attempting either is refused when written.
+A user is bound to a tenant and stays there. Team membership only counts inside
+the user's own tenant. A platform team can list a tenant user, and Platform
+accepts the write, but that user never gets the team's roles.
 :::
 
 ### Verify the boundary
@@ -410,10 +473,14 @@ The quickest check is to look at the platform as the tenant admin does.
 
 <Flow id="verify-tenant-boundary">
   <Step>
-    Click <NavStep>Platform > Users & Roles</NavStep>.
+    Click <NavStep>Platform > Tenants</NavStep>.
   </Step>
   <Step>
-    Find the tenant's admin user and impersonate it.
+    Open the tenant's row menu and click <Button>Impersonate</Button>.
+  </Step>
+  <Step>
+    In the <Label>Switch to Tenant</Label> dialog, choose the tenant's admin user
+    and click <Button>Impersonate</Button>.
   </Step>
   <Step>
     Confirm the tenant sees the inventory you granted and nothing else. A
