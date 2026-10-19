@@ -1,0 +1,67 @@
+---
+title: Connect to NetBox
+sidebar_label: NetBox
+sidebar_position: 3
+description: Configure a NetBox Connector resource for Platform-managed bare metal inventory.
+---
+
+import InterpolatedCodeBlock from '@site/src/components/InterpolatedCodeBlock';
+
+[NetBox](https://netboxlabs.com/docs/netbox/) records data center devices and network information. vCluster Platform uses a NetBox connector to synchronize bare metal machine inventory.
+
+## Prerequisites
+
+- Platform admin access to the management API.
+- The `auto-nodes-metal3` license feature.
+- A NetBox HTTP or HTTPS endpoint reachable from Platform.
+- A NetBox API token with access to the inventory selected by your node provider.
+
+Create the token in the NetBox UI and grant read access to the selected devices, interfaces, IP addresses, MAC addresses, modules, module types, and tags. Scope access to the inventory selected by your node provider. Follow the NetBox documentation for token permissions and installation.
+
+## Create the connector
+
+Save this manifest as `netbox-connector.yaml`. Replace the URL and token with your NetBox settings:
+
+<InterpolatedCodeBlock
+  language="yaml"
+  code={"apiVersion: management.loft.sh/v1\nkind: Connector\nmetadata:\n  name: [[VAR:CONNECTOR:netbox-main]]\nspec:\n  displayName: Primary NetBox\n  # This payload section selects the netbox type.\n  netBox:\n    url: [[VAR:NETBOX_URL:https://netbox.example.com]]\n    apiToken: \"[[VAR:NETBOX_TOKEN:replace-with-netbox-token]]\"\n    insecure: false"}
+/>
+
+Create it against the Platform management API:
+
+```bash
+kubectl create -f netbox-connector.yaml
+kubectl get connectors.management.loft.sh netbox-main -o yaml
+```
+
+`url` must be an HTTP or HTTPS URL. `apiToken` is required when no stored token exists. `insecure` defaults to false.
+
+`Configured=True` validates the payload, without testing NetBox connectivity or the token's inventory permissions. Check the node provider and inventory synchronization if machines don't appear.
+
+## Reference it from a node provider
+
+In the existing Metal3 NodeProvider, set the NetBox Secret reference to the connector name and the Platform namespace:
+
+<InterpolatedCodeBlock
+  language="yaml"
+  code={"spec:\n  metal3:\n    netBox:\n      secretRef:\n        name: [[VAR:CONNECTOR:netbox-main]]\n        namespace: [[VAR:PLATFORM_NAMESPACE:vcluster-platform]]"}
+/>
+
+The Connector is cluster-scoped, but its backing Secret lives in the Platform namespace. This consumer still uses `secretRef`. Keep the reference in that namespace.
+
+Use this workflow as a platform admin. Connector visibility grants alone don't establish tenant authorization for this NetBox reference. That behavior requires separate release validation.
+
+## Manage existing Secrets and credentials
+
+A Secret labeled `loft.sh/connector-type: netbox` in the Platform namespace appears through the API. Its `url`, `apiToken`, and `insecure` data keys map to `spec.netBox`.
+
+Viewers and tenant sessions see the URL and `insecure` flag, but no API token. A connector admin can read the token. An empty token on update keeps the stored value.
+
+For credential rotation, use a merge patch with the new token. Don't remove the connector while a node provider still references it.
+
+## Troubleshoot synchronization
+
+- If creation returns a validation error, check the URL scheme and API token field.
+- If creation returns Forbidden, check management permissions and the Metal3 license feature.
+- If configuration passes but synchronization fails, check Platform-to-NetBox connectivity, TLS trust, token permissions, and the node provider's inventory selection.
+- If an API read omits the token, confirm whether your session has update permission. A tenant session always receives the reduced view.
