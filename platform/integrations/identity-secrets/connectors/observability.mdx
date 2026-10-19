@@ -1,13 +1,17 @@
 ---
 title: Configure an observability connector
 sidebar_label: Observability
-sidebar_position: 4
+sidebar_position: 5
 description: Manage observability connector settings through the Connector API and retrieve cluster writer credentials.
 ---
 
 import InterpolatedCodeBlock from '@site/src/components/InterpolatedCodeBlock';
 
 An observability connector holds the endpoints and TLS Secret references that Platform uses for telemetry. Use the [observability quickstart](../../../fleet-operations/observability/quickstart.mdx) to install and connect the telemetry components.
+
+:::warning Grants don't isolate observability references
+Connector grants don't currently validate a cluster's observability connector reference. Don't rely on those grants to isolate tenant access to telemetry credentials. The database and Argo CD grant-loss behavior doesn't apply here.
+:::
 
 ## Manage the connector resource
 
@@ -19,11 +23,18 @@ The API maps existing observability Secrets to the same resource. Viewers and te
 
 ## Configure additional destinations
 
-`destinations` is a YAML string containing named OTLP destinations. Each entry selects metrics or logs with `signal`. For example, add this field to an existing connector's `spec.observability` configuration:
+`destinations` is a YAML string containing named OTLP destinations. Each entry selects metrics or logs with `signal`. This is the field as it appears under an existing connector's `spec.observability` configuration:
 
 <InterpolatedCodeBlock
   language="yaml"
   code={"spec:\n  observability:\n    # Raw YAML text, not a nested Connector API array.\n    destinations: |\n      - name: tenant-logs\n        signal: logs\n        endpoint: [[VAR:LOGS_ENDPOINT:https://logs.example.com/otlp]]\n        insecureSkipVerify: false\n        certSecretName: [[VAR:TLS_SECRET:logs-client-tls]]"}
+/>
+
+To set it, save the `destinations` text to a file and merge-patch it into the connector as a connector admin. This example uses `jq` to encode the file as a JSON string. A patch rewrites the whole `destinations` string:
+
+<InterpolatedCodeBlock
+  language="bash"
+  code={"kubectl patch connectors.management.loft.sh [[VAR:CONNECTOR:observability]] --type=merge -p \"$(jq -n --rawfile d [[VAR:DESTINATIONS_FILE:destinations.yaml]] '{spec:{observability:{destinations:$d}}}')\""}
 />
 
 `certSecretName` names a `kubernetes.io/tls` Secret for mutual TLS. Omit it when the destination doesn't require a client certificate. Keep TLS verification enabled when using trusted certificates.
@@ -38,8 +49,9 @@ With `integrations.observability` enabled, Platform issues a scoped `metrics-wri
 
 Don't distribute the backend connector's credentials to collectors. See [Configure metrics access](../../../fleet-operations/observability/configure-metrics-access.mdx) for manual writer and reader provisioning.
 
-Connector grants don't currently validate an instance's observability connector reference. Don't rely on those grants to isolate tenant access to telemetry credentials. The database and Argo CD grant-loss behavior doesn't apply here.
 
 ## Delete a connector
 
 The gateway cleanup controller manages a finalizer on the backing Secret. API deletion can leave cleanup pending, particularly when an expired license prevents the controller from running. Keep gateway resources and the finalizer under controller management until cleanup completes.
+
+The controller starts with Platform only when the license includes `fleet-observability`. If cleanup stays pending after a license lapse, restore the license and restart Platform. Don't remove the finalizer by hand while the controller can still run, because that skips gateway cleanup.

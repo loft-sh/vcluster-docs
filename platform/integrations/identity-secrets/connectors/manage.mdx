@@ -1,7 +1,7 @@
 ---
 title: Manage connectors and tenant grants
 sidebar_label: Manage connectors
-sidebar_position: 2
+sidebar_position: 1
 description: Create Connector resources, update credentials, grant tenant use, and troubleshoot revoked grants.
 ---
 
@@ -57,7 +57,7 @@ Assign the connector exclusively to the tenant:
   code={"kubectl label connectors.management.loft.sh [[VAR:CONNECTOR:prod-db]] tenant.vcluster.com/exclusive-to=[[VAR:TENANT:acme]] --overwrite"}
 />
 
-An assignment to another tenant takes precedence over label-based grants and sharing with all tenants.
+An assigned connector is visible only to that tenant, so other tenants' label grants don't match it.
 
 ### Share matching connectors
 
@@ -68,9 +68,20 @@ Label a connector and grant matching connectors to the Tenant:
   code={"kubectl label connectors.management.loft.sh [[VAR:CONNECTOR:prod-db]] tier=shared --overwrite\nkubectl patch tenants.management.loft.sh [[VAR:TENANT:acme]] --type=merge -p '{\"spec\":{\"connectors\":{\"enabled\":true,\"allow\":{\"byLabels\":{\"tier\":\"shared\"}}}}}'"}
 />
 
-Use labels that the Connector API passes through. Don't select the projected connector-type or fleet-observability labels in `byLabels`.
+Use labels that the Connector API passes through. Tenant admission refuses a `byLabels` selector on the projected connector-type or fleet-observability labels, with `this label is not served on connectors, so it cannot select one`.
 
 An empty selector (`byLabels: {}`) grants every eligible admin-managed connector. An absent or null selector grants none by label. To replace an existing selector with an empty map through a merge patch, clear it with null first.
+
+### Share a connector with all tenants
+
+Set the `tenant.vcluster.com/all` label to `"true"` to share a connector with every tenant that has connector use enabled. A connector can't carry both that label and the `tenant.vcluster.com/exclusive-to` label at once.
+
+<InterpolatedCodeBlock
+  language="bash"
+  code={"kubectl label connectors.management.loft.sh [[VAR:CONNECTOR:prod-db]] tenant.vcluster.com/all=true --overwrite"}
+/>
+
+### Verify the grant
 
 Switch to the tenant's management API session and run `kubectl get connectors.management.loft.sh`. The granted connector appears with a reduced configuration. A connector assigned elsewhere stays hidden.
 
@@ -78,7 +89,7 @@ Switch to the tenant's management API session and run `kubectl get connectors.ma
 
 The grant and the caller's resource permissions both matter. Naming a connector in a template doesn't grant the tenant access to it.
 
-For database and Argo CD cluster configuration, writes introducing a literal connector reference check the owning tenant's usable connectors. Missing, hidden, and wrong-type connectors receive the same refusal. The API returns a validation error on the reference field.
+For database and Argo CD cluster configuration, writes introducing a literal connector reference check the owning tenant's usable connectors. Missing, hidden, and wrong-type connectors receive the same refusal, a validation error that reads `does not name a usable connector`. The error is reported on the cluster's template reference or Helm values, not on the connector field itself.
 
 For example, adding this configuration to a granted cluster template doesn't let an ungranted tenant use `prod-db`:
 
@@ -93,7 +104,7 @@ controlPlane:
 
 Create a cluster from that template as the tenant. Without the connector grant, the literal reference is rejected. Restore the grant and retry the cluster creation.
 
-Rendered connector names are checked during reconciliation. Admission doesn't render template parameters. An update retaining or removing a reference doesn't repeat the initial-use check, so unrelated edits can remain possible after revocation.
+Rendered connector names are checked during reconciliation. Admission doesn't render template parameters. An update retaining or removing a reference doesn't repeat the initial-use check, so unrelated edits can remain possible after revocation. A versioned template is the exception: it always applies, so once it names a connector the tenant can't use, every write to the cluster is refused until the grant returns or the template changes.
 
 OSImage creation checks `spec.connectorRef`. Upload and finalize requests also check whether the owning tenant can still use the image-store connector.
 
@@ -108,7 +119,7 @@ Remove an exclusive assignment:
   code={"kubectl label connectors.management.loft.sh [[VAR:CONNECTOR:prod-db]] tenant.vcluster.com/exclusive-to-"}
 />
 
-Also remove any matching label grant or shared-with-all grant if the tenant must lose all access. Disabling `spec.connectors.enabled` blocks all connector access for that tenant.
+Also remove any matching label grant or the `tenant.vcluster.com/all` label if the tenant must lose all access. Disabling `spec.connectors.enabled` blocks all connector access for that tenant.
 
 Grant loss limits new use. It doesn't immediately dismantle resources already provisioned through the connector.
 
@@ -121,7 +132,7 @@ Grant loss limits new use. It doesn't immediately dismantle resources already pr
 
 Changing a Tenant's selector doesn't immediately enqueue every dependent object. Checks run when the object next reconciles. Don't use a condition's unchanged value as proof that a revoked grant still works.
 
-Delete a cluster after revocation through its normal lifecycle:
+When offboarding the tenant, delete its clusters through their normal lifecycle:
 
 <InterpolatedCodeBlock
   language="bash"
@@ -147,7 +158,7 @@ Use a connector-admin session and update the full configuration. A reduced viewe
 | OS image store | Keeps `s3.secretKey`. An empty `s3.sessionToken` removes that token. |
 | Observability | References TLS Secrets instead of embedding these credentials. Manage the referenced Secrets separately. |
 
-Non-credential fields don't generally use empty-means-keep behavior. To change just one field, use a merge patch rather than constructing a replacement from a reduced response:
+Non-credential fields don't generally use empty-means-keep behavior. To change just one field, use a merge patch rather than constructing a replacement from a reduced response. Any API update, including a patch, rewrites the backing Secret from the modeled fields, so unmodeled Secret data keys and withheld annotations are dropped:
 
 <InterpolatedCodeBlock
   language="bash"
@@ -182,4 +193,4 @@ Inspect the cluster's `DBConnectorSynced` condition and the owning Tenant's gran
 
 ### A connector stays pending deletion
 
-Check the backing Secret's finalizers. An observability connector can remain pending when its cleanup controller isn't running after a license expires. Restore the license so cleanup can finish. If manual recovery is necessary, remove gateway resources before removing the cleanup finalizer.
+Check the backing Secret's finalizers. An observability connector can remain pending when its cleanup controller isn't running after a license expires. The controller starts with Platform only when the license includes `fleet-observability`, so restore the license and restart Platform to let cleanup finish. Don't remove the finalizer by hand while the controller can still run. See [Delete a connector](./observability.mdx#delete-a-connector).
