@@ -2,11 +2,12 @@
 title: Troubleshoot tenants
 sidebar_label: Tenants
 sidebar_class_name: pro
-description: Diagnose why a tenant can't see granted inventory, why a name or membership write is refused, and why a tenant can't be created.
+description: Diagnose why a tenant can't see granted inventory, why a tenant write is refused, why NICo onboarding stalls, and why a tenant can't be created.
 ---
 
 import NavStep from "@site/src/components/NavStep";
 import Label from "@site/src/components/Label";
+import Button from "@site/src/components/Button";
 
 Effective access is the intersection of three layers, so start by working out
 which one is denying.
@@ -42,8 +43,8 @@ Work down this table. The first two causes account for most reports.
 |---------|-------|-----|
 | Capability is on, nothing visible | No `allow` is set, or its selectors match nothing | Add an `allow`, or widen the selector |
 | Some instances visible, others not | The missing instances don't carry the label your selector requires | Label them, or grant by name where the capability supports it |
-| Only the tenant's own instances are visible, and it can't create more | The capability is present but `enabled: false` | Set `enabled: true` |
-| A whole resource is missing, and no capability covers it | The shipped default hides the platform's instances of that kind | For a machine or a network environment, assign one exclusively. Other kinds have no grant path |
+| Nothing of that kind is visible, not even the tenant's own instances or ones you assigned | The capability is absent or `enabled: false`, which withholds the whole resource | Set `enabled: true` |
+| A whole resource is missing, and no capability covers it | The shipped default hides the platform's instances of that kind | Assign an instance to the tenant, or share it with every tenant. Projects, users, and teams can't be shared. See [ownership labels](../manage-tenants/tenant-boundary-reference.mdx#ownership-labels) |
 
 Two rules cause most of the confusion.
 
@@ -92,25 +93,65 @@ Cluster-scoped resources a tenant creates are named `<tenant>--<name>`. The
 error names the exact prefix required. Namespace-scoped resources aren't
 affected, and neither are resources a platform admin grants or assigns.
 
-### A user and a team belong to different Tenants
+### A username, email, or subject is unavailable
+
+A tenant that creates or updates a user with a username, email, or identity
+subject already in use elsewhere on the platform gets a `422` error. The detail reads
+`value is unavailable`. Platform doesn't say who holds the value, because one
+tenant isn't entitled to know about another's users. Choose a different value.
+
+### A connector isn't usable
+
+A cluster that names a connector the tenant can't use is refused with this
+message.
 
 ```text
-cannot add user "acme--dev" to this team: the user belongs to tenant "acme",
-and this team belongs to the platform
+does not name a usable connector
 ```
 
-A user is bound to one tenant and stays there. A tenant user can't join a
-platform team, and a platform user can't join a tenant's team. The same check
-runs from both directions, so writing the user can be refused as well as writing
-the team.
+An OS image that names an image store connector the tenant can't use is refused
+with this message.
 
 ```text
-cannot write user "acme--dev" while a team already names it: the user belongs to
-tenant "acme", and this team belongs to the platform
+does not name a usable image store
 ```
 
-The refusal doesn't name the team, because the caller may not be entitled to see
-it.
+The connector might not exist, might be the wrong type, or might not be granted
+to the tenant. The error is the same in each case, so it doesn't reveal which
+connectors exist. Grant the connector through the tenant's `connectors`
+capability, or name one the tenant already has.
+
+Platform checks a cluster's connector again after the write. A cluster that
+hasn't finished setting up its database reports the `DBConnectorSynced`
+condition as `False` with the reason `ConnectorUnusable`. A cluster that already
+set up its database keeps it.
+
+### A network environment can't be created
+
+```text
+network environments are created by platform admins and assigned to tenants
+```
+
+A tenant can't create network environments. A platform admin creates one and
+assigns it to the tenant.
+
+### An assignment is refused
+
+```text
+tenant "acme" has this resource switched off, so it would never be served the
+assignment; enable the capability first
+```
+
+You assigned a resource to a tenant with the `tenant.vcluster.com/exclusive-to` label
+while the governing capability is switched off for that tenant. Enable the
+capability first, then assign.
+
+Projects, users, and teams can't be assigned at all. Trying returns a refusal
+like this one.
+
+```text
+projects cannot be assigned to a tenant with tenant.vcluster.com/exclusive-to
+```
 
 ### A hostname is already claimed
 
@@ -126,6 +167,33 @@ you can find it:
 kubectl get tenants -o json \
   | jq -r '.items[] | select(.status.hostnames[]?.hostname == "acme.example.com") | .metadata.name'
 ```
+
+The check is best effort. Two writes claiming the same hostname seconds apart
+can both be accepted. Requests on a hostname held by more than one tenant then
+return `404`. If a tenant's hostname returns `404`, run the query above and
+remove the duplicate claim.
+
+## A tenant user doesn't get a team's roles
+
+Team membership only counts inside the user's own tenant. A platform team can
+list a tenant user, and Platform accepts the write, but that user never gets the
+team's roles. Add the user to a team in their own tenant instead.
+
+## NICo onboarding doesn't finish
+
+Platform onboards a tenant to NICo once it has a NICo node type granted or a
+NICo network environment assigned. Check the tenant's conditions.
+
+```bash
+kubectl get tenant acme -o jsonpath='{.status.conditions}' \
+  | jq '.[] | select(.type | startswith("NICo"))'
+```
+
+| Condition is `False` | Cause | Fix |
+|----------------------|-------|-----|
+| `NICoNodeProviderFound` | A referenced node provider is missing or isn't a NICo provider, or the tenant's grants point at more than one | Grant node types and assign network environments from a single NICo node provider |
+| `NICoSiteCredentialsAvailable` | Platform couldn't load the tenant's credentials for the NICo endpoint | Check the node provider's NICo endpoint configuration |
+| `NICoOnboarded` | The NICo org, which is the tenant name, isn't ready yet or failed to be created | Read the condition's reason and message |
 
 ## A Tenant can't be created
 
@@ -159,6 +227,9 @@ A `generateName` prefix is capped at 27 characters to leave room for the
 generated suffix. See
 [name rules](../manage-tenants/tenant-boundary-reference.mdx#tenant-names).
 
+A name that matches the NICo org of an existing NICo node provider is refused
+as reserved for platform workloads. Choose another name.
+
 ## A Tenant is stuck deleting
 
 A tenant that's already being deleted can still have its finalizers removed
@@ -166,14 +237,19 @@ without the Multi-Tenancy feature, so a lapsed license can't strand it. That
 exemption covers metadata-only updates. A change to the tenant's spec is still
 refused, even during deletion.
 
+As soon as deletion starts, the tenant's users lose access to everything. The
+same applies to users whose tenant no longer exists. Expect tenant users to be
+refused while a tenant is terminating.
+
 ## A tenant admin can't do something they should
 
 A tenant admin holds full rights inside the boundary, so a refusal usually means
 the action reaches outside it rather than that a role is missing.
 
 The quickest check is to look at the platform as they do. Click
-<NavStep>Platform > Users & Roles</NavStep>, find the tenant's admin user, and
-impersonate it. A banner shows while you're impersonating. Impersonation needs
+<NavStep>Platform > Tenants</NavStep>, open the tenant's row menu, and click
+<Button>Impersonate</Button>. Choose the tenant's admin user in the
+<Label>Switch to Tenant</Label> dialog. A banner shows while you're impersonating. Impersonation needs
 the management admin role or the `Impersonator` management role. See
 [Impersonate a user](../users-permissions/managing-users/impersonate.mdx).
 
@@ -182,6 +258,8 @@ Things that are outside the boundary by design, whatever the role:
 - Registering a control plane cluster
 - Creating templates or stacks
 - Creating connectors
+- Creating network environments
+- Creating cluster accesses
 - Seeing or editing any other tenant
 
 See [current limitations](../manage-tenants/overview.mdx#current-limitations).

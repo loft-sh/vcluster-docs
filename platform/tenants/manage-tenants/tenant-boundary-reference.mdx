@@ -18,16 +18,17 @@ symptoms and error messages, see
 Every Platform resource resolves to two facts for a given tenant.
 
 - **Can the tenant author its own instances?** This gates creating, not reading.
-  A tenant always sees what it owns, even where it can no longer add to it.
+  A tenant sees what it owns even where it can't add to it, unless a disabled
+  capability withholds the whole resource.
 - **What happens to the platform's own instances?** Either `hidden`, meaning the
   tenant sees only what a grant singles out, or `shared`, meaning the tenant sees
   all of them.
 
 Those two facts come from one of three places, in order.
 
-1. **A capability governs the resource.** The tenant's capability decides. Absent
-   or disabled means the platform's instances stay hidden and the tenant can't
-   author new ones. Instances the tenant already owns stay readable.
+1. **A capability governs the resource.** The tenant's capability decides. An
+   absent or disabled capability withholds the resource outright. The tenant
+   sees none of the platform's instances, none lent to it, and none of its own.
 2. **A shipped default covers it.** The table below applies.
 3. **Neither.** The resource withholds the platform's instances and lets the
    tenant keep its own. A resource reaches this case by being new and not yet
@@ -46,6 +47,7 @@ kubectl get tenant acme -o jsonpath='{.status.boundary}' | jq
 | Field | Meaning |
 |-------|---------|
 | `resource` | The Platform resource name, lowercase plural |
+| `enabled` | The governing capability's switch. Absent where no capability governs the resource. `false` means the tenant reaches nothing of this resource |
 | `own` | Whether the tenant can author its own instances |
 | `baseline` | `hidden` or `shared`, for instances no selector matches |
 | `byLabels` | The label selector the capability grants with |
@@ -83,11 +85,17 @@ enabled and a selector matches.
 | `spacetemplates` | `templates` | No |
 | `machineconfigtemplates` | `templates` | No |
 | `argocdapplicationtemplates` | `templates` | No |
+| `connectors` | `connectors` | No |
 
-A capability that's present but disabled hides every one of the platform's
-instances and stops the tenant creating new ones. Instances the tenant already
-owns stay readable, because ownership is a fact the instance carries rather than
-a permission the capability grants.
+A capability that's absent or disabled withholds the resource outright. The
+tenant can't read the platform's instances, instances lent to it, or instances it
+owns, and it can't create new ones. Instances it created before the capability
+was switched off stay in place, but the tenant can't see them until the
+capability is enabled again.
+
+A tenant reading a connector sees its configuration but not its credentials.
+Platform redacts them for any caller who can't update the connector, and a tenant
+can't update one it doesn't own.
 
 ## Shipped defaults
 
@@ -106,17 +114,27 @@ platform's.
 | `projectsecrets` | Project secrets |
 | `nodeclaims` | Instances (`NodeClaim`) |
 | `argocdapplications` | Argo CD applications |
+| `appinstances` | App instances |
+| `stackinstances` | Stack instances |
 | `virtualclusterschemas` | Cluster schemas |
 | `nodeproviders` | Node providers |
 | `machines` | Machine inventory mirrors (physical servers) |
 | `networkenvironments` | Network environments |
+| `users` | Users |
+| `teams` | Teams |
 | `sharedsecrets` | Shared secrets |
 | `oidcclients` | OIDC clients |
 | `databaseconnectors` | Database connectors |
 
 `machines` and `networkenvironments` are the resources a platform admin lends by
 hand. No capability grants them, so a tenant reaches one of the platform's only
-through an exclusive assignment.
+through an exclusive assignment or the share-with-every-tenant label. A tenant
+can't create either one. The inventory sync writes machines, and a tenant that
+tries to create a network environment is refused with
+`network environments are created by platform admins and assigned to tenants`.
+
+`users` and `teams` are the tenant's own identities. A tenant never sees the
+platform's users or teams, and a platform team can't be lent to a tenant.
 
 `sharedsecrets`, `oidcclients`, and `databaseconnectors` are sensitive, which is
 a reason to hide the platform's instances rather than a reason a tenant may not
@@ -137,14 +155,17 @@ role template is writing RBAC.
 | Resource | What it is | Tenant can author its own |
 |----------|-----------|---------------------------|
 | `tenants` | Tenants | No |
+| `clusteraccesses` | Cluster accesses | No |
 
-Managing tenants belongs to a platform admin session.
+Managing tenants belongs to a platform admin session. Cluster accesses stay with
+the platform admin too, because a cluster access becomes RBAC inside the control
+plane cluster it names.
 
 ## Ownership labels
 
-Two labels record a tenant's relationship to a resource. They answer different
-questions and are mutually exclusive. A resource carrying both is refused on
-write, and is visible to no tenant if it somehow exists.
+Three labels record a tenant's relationship to a resource. They answer different
+questions, and no resource can carry more than one of them. Platform refuses a
+write that combines them.
 
 ### `tenant.vcluster.com/owner`
 
@@ -173,6 +194,37 @@ assignment can't be changed or removed once set.
 
 The holding tenant reads and references the resource. Every write, including
 deletion, stays with the platform admin.
+
+Any resource can carry the label except projects, users, and teams. Assigning
+one of those would hand over authority rather than lend capacity, so Platform
+refuses it.
+
+If a capability governs the resource, the tenant must have that capability
+enabled before you assign to it. Otherwise the assignment is refused, because the
+tenant would never be served it.
+
+```text
+tenant "acme" has this resource switched off, so it would never be served the
+assignment; enable the capability first
+```
+
+### `tenant.vcluster.com/all`
+
+A platform admin shared this resource with every tenant. Only the value `"true"`
+shares, so any other value withholds.
+
+```yaml
+metadata:
+  labels:
+    tenant.vcluster.com/all: "true"
+```
+
+Every tenant can read and reference the resource, and none can write to it. The
+label can't go on projects, users, teams, or tenants. It also can't be combined with the
+`tenant.vcluster.com/owner` label or the `tenant.vcluster.com/exclusive-to` label.
+
+A disabled capability still wins. A tenant with the governing capability
+switched off doesn't see a shared resource of that kind.
 
 ## Name rules
 
@@ -224,14 +276,15 @@ shared with every tenant on the platform
 | Object | Name |
 |--------|------|
 | Tenant admin user | `<tenant>--admin` |
+| Tenant admin team | `<tenant>--admins` |
 | Default project | `<tenant>--default` |
 
 ## Selector semantics
 
 | Written | Means |
 |---------|-------|
-| Capability absent | Denied. The platform's instances stay hidden and the tenant can't author new ones |
-| `enabled: false` | Same as absent. Instances the tenant already owns stay readable |
+| Capability absent | Withheld. The tenant sees none of the platform's instances, none lent to it, and none of its own, and can't author new ones |
+| `enabled: false` | Same as absent |
 | `enabled: true`, no `allow` | Enabled, nothing selected, so nothing visible |
 | `allow.byLabels: {}` | Every admin-owned instance of that resource |
 | `allow.byLabels` absent or null | No admin-owned instances |
