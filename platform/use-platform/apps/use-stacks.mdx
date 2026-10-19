@@ -17,7 +17,7 @@ Use an App for one independently managed application. Use a Stack when several a
 
 ## Understand licensing
 
-Stacks don't have a separate license feature. App tasks use the Apps feature, which is available on every plan. Argo CD Application tasks also require the Argo CD Integration feature, which isn't available on the free plan.
+Stacks don't have a separate license feature. App tasks use the Apps feature, and Argo CD Application tasks use the Argo CD Integration feature. Both are available on every plan, including the free plan.
 
 If a task isn't licensed, the StackInstance is blocked with the `FeatureNotAllowed` reason.
 
@@ -25,44 +25,49 @@ If a task isn't licensed, the StackInstance is blocked with the `FeatureNotAllow
 
 You can install a Stack three ways:
 
-- From the catalog, to add a Stack to a cluster or control plane cluster that already exists.
+- From the destination's **Stacks** tab, to add a Stack to a cluster or control plane cluster that already exists.
 - During cluster creation, when the Stack should exist from the start.
 - Through `vcluster.yaml`, when you manage the cluster's configuration declaratively, such as through GitOps.
 
 <br/>
 
 <Tabs>
-<TabItem value="catalog" label="From the catalog" default>
+<TabItem value="catalog" label="From the Stacks tab" default>
 
-The current Platform UI shows **Stacks & Apps**. Older Platform versions can show **Apps** instead.
+Install a Stack from the destination it deploys to. The **Stacks** tab appears on a cluster when you can list StackInstances in its project. On a control plane cluster, the tab appears only when the Argo CD Integration feature is enabled.
+
+Before you install, check these requirements:
+
+- **Permissions.** The default **Project Admin** role can install Stacks. The default **Project User** role can't, so project users don't see the **Stacks** tab unless a custom project role grants StackInstance permissions. See [Stack permissions](../../tenants/users-permissions/permissions/stacks.mdx).
+- **Allowed templates.** The project's [allowed templates](../../tenants/projects/allowed/templates.mdx) must include the StackTemplate, or `*` for every StackTemplate. The template list doesn't filter by this setting, so a template the project doesn't allow is rejected only when you install it.
+- **Destination access.** Both you and the StackInstance owner need access to the destination. A control plane cluster must also be in the project's allowed clusters.
+- **Published outputs.** Reading published output values requires `get` on the `stackinstances/outputs` subresource.
 
 <Flow id="install-stack-ui">
   <Step>
-    Select the project that owns the destination cluster.
+    Open the destination cluster or control plane cluster, and select its **Stacks** tab.
   </Step>
   <Step>
-    Go to <NavStep>Stacks & Apps</NavStep>, or open the destination and select its applications view.
+    Click <Button>Install Stack</Button>.
   </Step>
   <Step>
-    Select a StackTemplate. Review its description, parameters, and dependency graph.
+    For a control plane cluster, select the project that owns the StackInstance.
   </Step>
   <Step>
-    Select the destination cluster or control plane cluster.
+    In <Label>Stack Template</Label>, select a StackTemplate. Review its description, parameters, and dependency graph.
   </Step>
   <Step>
-    Enter the required parameters, and click <Button>Install</Button>.
+    Enter the required parameters. Optionally, set the prune policy and task timeout in the <Label>Advanced Configuration</Label> section.
   </Step>
   <Step>
-    Open the StackInstance and monitor the aggregate status and each task.
+    Click <Button>Install Stack</Button>, then monitor the aggregate status and each task on the Stack card.
   </Step>
 </Flow>
-
-You need access to the StackTemplate and permission to create StackInstances in the project. Published output values require separate permission to get the `stackinstances/outputs` subresource. See [Stack permissions](../../tenants/users-permissions/permissions/stacks.mdx).
 
 </TabItem>
 <TabItem value="creation" label="During cluster creation">
 
-vCluster 0.37 adds a **Stacks** configuration section to cluster creation. The UI hides this section for older vCluster versions.
+Cluster creation has a **Stacks** configuration section for clusters that run vCluster 0.37 or later. It isn't available when you create a cluster from a template, or for Standalone and external clusters. The section lists only the StackTemplates that the project allows.
 
 <Flow id="install-stack-during-vcluster-creation">
   <Step>
@@ -82,7 +87,7 @@ vCluster 0.37 adds a **Stacks** configuration section to cluster creation. The U
   </Step>
 </Flow>
 
-The StackInstance is created for the new cluster, and its lifecycle follows the cluster's.
+The platform adds each Stack to the cluster's `vcluster.yaml` under `deploy.stacks`, so its lifecycle follows the cluster's. See the **vcluster.yaml** tab for how those entries behave.
 
 </TabItem>
 <TabItem value="vcluster-yaml" label="vcluster.yaml">
@@ -107,6 +112,17 @@ Each entry needs a stable `name` and exactly one of `templateRef` or an inline `
 You can also set `defaults.taskTimeout` and `prunePolicy`. The default task timeout is 10 minutes. The default prune policy is `Retain`.
 
 The destination is always the cluster whose configuration contains the entry. Removing an entry deletes its managed StackInstance, and deleting the cluster deletes all StackInstances it manages. The generated StackInstance name combines the cluster and Stack names and adds a hash suffix when needed to stay within the Kubernetes name limit. The `platform.vcluster.com/stack-config-name` label records the original Stack name.
+
+Managed StackInstances follow these rules:
+
+- **Owner.** Each StackInstance inherits the cluster's owner.
+- **Allowed templates.** A `templateRef` must be in the project's allowed templates, the same as when you install a Stack in the UI.
+- **Configuration wins.** Each sync rewrites the StackInstance from `vcluster.yaml`, so edit the configuration instead of the StackInstance. A StackInstance with the same name that the cluster doesn't own blocks the sync.
+- **Limits.** A cluster can declare up to 50 Stacks, and each `name` must be a unique DNS label. Unknown keys are rejected.
+- **Argo CD tasks.** A Stack with Argo CD Application tasks needs the cluster's Argo CD integration configured.
+- **Failed entries.** An entry that's invalid or blocked keeps its existing StackInstance unchanged until you fix it.
+
+The cluster reports the result on its `StacksSynced` condition. See [Stacks deployed from vcluster.yaml](../../tenants/troubleshoot/stacks.mdx#stacks-deployed-from-vclusteryaml) to resolve its reasons.
 
 </TabItem>
 </Tabs>
@@ -135,14 +151,16 @@ kubectl get stackinstance <stack-name> -n <project-namespace> \
 
 ## Update or remove a Stack
 
-Edit the StackInstance to change its parameters. The controller renders the template again and reconciles its tasks.
+On the Stack card, edit the StackInstance to change its parameters, or use **Retry Sync** to retry failed tasks. You can also edit the StackInstance through the management API. The controller renders the template again and reconciles its tasks.
+
+The controller also reapplies the fields it manages on each child App and Argo CD Application, so manual edits to those fields revert. Change the StackTemplate or StackInstance instead.
 
 When a referenced StackTemplate removes a task, `prunePolicy` controls the existing child:
 
-- `Retain`, the default, keeps the child and reports it in `status.orphanedApplications`.
+- `Retain`, the default, keeps the child and reports it in `status.orphanedApplications`. The cluster's **Apps** tab marks the app as an orphaned application, and you can delete it there. You can't delete an app that a Stack still manages from that tab.
 - `Prune` deletes removed children in reverse dependency order.
 
-Deleting a StackInstance removes the applications that it still owns. Application charts can leave persistent volumes, namespaces, hooks, or custom resource definitions behind. Review the application's uninstall behavior before deletion.
+Deleting a StackInstance removes every application it still owns, including retained orphans. Application charts can leave persistent volumes, namespaces, hooks, or custom resource definitions behind. Review the application's uninstall behavior before deletion.
 
 ## Next steps
 

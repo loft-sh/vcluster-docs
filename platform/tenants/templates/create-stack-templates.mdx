@@ -49,6 +49,10 @@ Both features are available on every plan, including the free plan. If a task's 
 
 You can also apply the resource through the management API using the **YAML** editor.
 
+Each template in the list has **Edit**, **Duplicate**, and **Delete** actions, shown when you have the `update`, `create`, and `delete` permissions for them. A template you can't edit shows **View** instead of **Edit**. Certified Stack templates are read-only and can't be deleted. Deleting a template leaves existing StackInstances running, but a StackInstance that references it reports `TemplateNotFound`.
+
+Tenant users can't author StackTemplates. A tenant consumes only the templates that its `templates` capability grants, and the **Stacks & Apps** page is hidden from tenant users.
+
 ## Deploy a starter stack
 
 Use this complete example as a starting point for your own Stack. It has no external chart or infrastructure dependencies.
@@ -146,9 +150,24 @@ Give each task a unique DNS-label-safe `name`. A duplicate name is rejected when
 
 Within the selected type, set either an inline `template` or a reusable `templateRef`. Don't set both. Parameters are valid only with `templateRef`. They pass through to the referenced template.
 
-:::caution
-For an `app` task, keep the combined StackInstance and task name short. The generated child name only enforces the 63-character Kubernetes object-name limit, but Helm's own release-name limit is 53 characters. A longer combination fails to deploy with a `release name is invalid` error that doesn't mention length.
-:::
+An inline App must deploy exactly one of a chart, manifests, or a bash script. Setting more than one, or none, is rejected.
+
+### Helm release names
+
+An `app` task generates a Helm release name from the task name and a hash, and the generated name always fits Helm's 53-character limit. An inline App task can set its own release name in `app.template.spec.releaseName`. An explicit release name must follow these rules:
+
+- It must be a valid DNS subdomain of at most 53 characters.
+- `app.template.spec.defaultNamespace` must also be set.
+- It can't contain output references, because the release is claimed before any output is captured.
+- Two `app` tasks in one Stack can't deploy the same release into the same namespace.
+
+After a task deploys, its release can't move. Changing `releaseName` or `defaultNamespace` on a deployed inline task fails the task with `ReleaseIdentityChanged`. Revert the change, or recreate the child.
+
+### Chart credentials from project secrets
+
+A chart can read its repository credentials from a project secret, through `usernameRef.projectSecretRef` or `passwordRef.projectSecretRef`. Whoever saves an App, or a StackTemplate with inline App tasks, must have `get` on each project secret the chart newly references. The same check applies when a referenced secret is sent to a different repository URL or chart. Installing a Stack doesn't require access to the secret.
+
+When a chart in a StackTemplate uses a project secret, the chart's `repoURL` and the secret reference's `project`, `name`, and `key` can't contain parameters or outputs. An inline StackInstance template checks both the caller and the StackInstance owner for access to the secret.
 
 This task uses a reusable ArgoCDApplicationTemplate:
 
@@ -183,7 +202,7 @@ Values that don't have declarations are still available to tasks. However, vClus
 
 ## Pass outputs between tasks
 
-A task can capture one scalar value from a Secret or namespaced Kubernetes resource. A later task reads the value with `{{ .Outputs.<task>.<output> }}` and must list the source task in `dependsOn`. See [Template values and outputs in Stacks](./use-go-template.mdx#template-values-and-outputs-in-stacks) for more Go template examples.
+Each output captures one scalar value from a Secret or namespaced Kubernetes resource. A later task reads the value with `{{ .Outputs.<task>.<output> }}` and must list the source task in `dependsOn`. See [Template values and outputs in Stacks](./use-go-template.mdx#template-values-and-outputs-in-stacks) for more Go template examples.
 
 ```yaml
 tasks:
@@ -222,6 +241,8 @@ publishedOutputs:
       output: serviceip
 ```
 
+A `jsonPath` must use kubectl JSONPath template syntax, wrapped in braces, such as `{.metadata.name}`, and must select one scalar value.
+
 Output names and the names of tasks that declare outputs can contain only lowercase letters and digits. Other task names can also contain hyphens. Resource outputs can't read cluster-scoped resources, and `fromResource` rejects `kind: Secret` outright. Read a Secret value with `fromSecret`, which also keeps it flagged as sensitive. The source namespace must be a namespace this Stack has already deployed an App or Argo CD Application into. vCluster Platform rejects a resource output whose source is in any other namespace before it reads the resource, even if the controller could otherwise reach it.
 
 Output references support template functions and pipelines. For example, `{{ .Outputs.database.password | quote }}` is valid. Keep the reference in the canonical `.Outputs.<task>.<output>` form. An output reference can't control an `if`, `range`, or `with` action, declare a variable, or share one action with a `.Values` reference because parameters and outputs are rendered at different times. Parameter-driven control flow can contain output references in its body:
@@ -232,11 +253,31 @@ endpoint: '{{ if .Values.tls }}https://{{ .Outputs.api.hostname }}{{ else }}http
 
 The text `<%` is reserved for internal output rendering and isn't valid in a task payload.
 
-Published outputs are available through the StackInstance outputs subresource. They aren't written to `status`. See the [StackInstanceOutputs reference](../../api/resources/stackinstanceoutputs.mdx) for the response schema. Access to sensitive values requires separate permission to retrieve StackInstance outputs. See [Stack permissions](../users-permissions/permissions/stacks.mdx).
+### Capture and refresh outputs
+
+A task captures its outputs after its child becomes healthy. Until capture finishes, the task stays `Progressing` with the reason `CapturingOutputs`, and dependent tasks keep waiting. A task captures all of its outputs or none of them. Capture has its own timeout, equal to the task timeout, which starts when capture begins.
+
+A healthy task doesn't read its sources again, so a later change to a source value isn't picked up on its own. A task captures again in these cases:
+
+- It becomes healthy again after leaving the `Healthy` phase, for example when its child redeploys or recovers.
+- You retry the task. See [Retry a stack](../troubleshoot/stacks.mdx#retry-a-stack).
+- The output's declared source changes, or the stored value is dropped.
+
+When a captured value changes, the tasks that read it render again and redeploy.
+
+The platform stores captured values in a Secret named `stack-outputs-<stackinstance-name>` in the project namespace. Each value can hold at most 64 KiB, and all values together must fit in that one Secret. A captured value that contains `{{` is refused.
+
+### Publish outputs
+
+Published outputs are available through the StackInstance outputs subresource. They aren't written to `status`. See the [StackInstanceOutputs reference](../../api/resources/stackinstanceoutputs.mdx) for the response schema.
+
+Reading any published output requires `get` on the `stackinstances/outputs` subresource. The response marks values captured with `fromSecret` as `sensitive`, but the same permission returns them. There's no separate permission for sensitive values. Task status messages replace output values with `[redacted]`, and withhold an error that could quote a secret output or a password parameter. See [Stack permissions](../users-permissions/permissions/stacks.mdx).
 
 ## Test a stack template
 
-Create a StackInstance that references the template. A destination and, once set, an owner are both immutable after creation. A cluster destination must be in the same project as the StackInstance. There's no cross-project form of this field, so deploying the same Stack into clusters across several projects takes one StackInstance per project, all referencing the same template.
+Create a StackInstance that references the template. A destination and, once set, an owner are both immutable after creation. A `virtualCluster` destination must be a cluster in the same project as the StackInstance. A `cluster` destination must be a control plane cluster in the project's allowed clusters. There's no cross-project form of this field, so deploying the same Stack into clusters across several projects takes one StackInstance per project, all referencing the same template.
+
+The project's [allowed templates](../projects/allowed/templates.mdx) must include the StackTemplate, or `*` for every StackTemplate. Otherwise the StackInstance is rejected with `template is not allowed in project <project>`. Both the caller and the owner also need access to the destination.
 
 ```yaml title="stack-instance.yaml"
 apiVersion: management.loft.sh/v1
@@ -268,7 +309,11 @@ kubectl apply -f stack-instance.yaml
 kubectl get stackinstance example-platform -n p-example
 ```
 
-The default `prunePolicy` is `Retain`. If a task is removed from the template, its existing child remains and appears in `status.orphanedApplications`. Set `Prune` to delete removed children in reverse dependency order.
+The default `prunePolicy` is `Retain`. If a task is removed from the template, its existing child remains and appears in `status.orphanedApplications`. Retained children are still owned by the StackInstance, so deleting the StackInstance deletes them too. Set `Prune` to delete removed children in reverse dependency order.
+
+A task's timeout counts only the time the task spends `Progressing`. A task that's `Waiting` or `Blocked` never times out. While a task is progressing, `status.tasks[].timeoutAt` shows when it will time out. A task that times out stays `Failed` until its child becomes ready or fails, or until you retry it.
+
+On every reconciliation, the controller reapplies the fields it manages on each child. Manual edits to those fields revert, so change the StackTemplate or StackInstance instead.
 
 :::warning
 A referenced StackTemplate is resolved during every reconciliation. Stack templates don't have Stack revisions. Review template changes before applying them, to avoid an unwanted rollout to existing StackInstances.
