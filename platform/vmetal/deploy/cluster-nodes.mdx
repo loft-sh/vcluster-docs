@@ -40,7 +40,7 @@ Node types are defined on the NodeProvider. Add one describing the hardware you 
   resources:
     cpu: "32"
     memory: 128Gi
-  bareMetalHosts:
+  machines:
     selector:
       matchLabels:
         role: compute
@@ -77,6 +77,31 @@ Set `privateNodes` in the cluster's configuration. This is the canonical form. O
 - **`nodeTypeSelector`** matches the node type by property. `vcluster.com/node-type` carries the node type's fully qualified name, which the platform generates as `<provider>.<node type>`. A bare node type name still matches today, but the platform is migrating to the qualified form, and that's what the API and the platform UI show you. List them with `kubectl --context <management-context> get nodetypes`.
 
 The platform creates one instance per requested node, each claiming an eligible server. Instances wait for the cluster to be online before they provision, because a node needs a live API server to join. For every field this block accepts, see the [Auto Nodes configuration reference](/docs/vcluster/next/reference/vcluster-yaml/private-nodes#privateNodes-autoNodes).
+
+### Use servers assigned to your tenant
+
+When the cluster belongs to a tenant, its instances draw only from servers the node type's [machine allocation policy](../concepts/machine-types-and-nodetypes.mdx#machine-allocation) allows:
+
+- **`Assigned`**: only servers assigned to your tenant. This is the default for Metal3 and NICo.
+- **`OnDemand`**: your tenant's assigned servers first, then unassigned servers.
+
+Neither policy ever places your instances on another tenant's server. You choose servers through the node type, as in the example above. A node type's `machines.selector` decides which servers it covers, but users in a tenant don't see the selector, so ask an operator which node type covers your assigned hardware. [Server pinning](../drivers/bare-metal/metal3/gpu-fleet-operations.mdx#server-pinning) narrows a pool to one named server, but only among the servers the node type and its policy already allow.
+
+To confirm where an instance landed, read the `BareMetalHost` it claimed. The matching Machine is named `<provider>.<host>`.
+
+<InterpolatedCodeBlock
+  code={`kubectl --context <management-context> get nodeclaims -n loft-p-[[GLOBAL:PROJECT]] \\
+  -o custom-columns='NAME:.metadata.name,HOST:.metadata.annotations.machines\\.vcluster\\.com/machine-id'`}
+  language="bash"
+/>
+
+An instance that finds no eligible server waits, and its `Provisioned` condition reports why with reason `InsufficientCapacity`. Under `Assigned`, the message ends by saying how many unassigned servers are free but withheld:
+
+```text
+... among the hosts assigned to tenant <tenant> (1 free unassigned host(s) are only used by OnDemand node types)
+```
+
+Free one of your tenant's servers, ask an operator to assign another, or have the node type switched to `OnDemand`. An instance doesn't wait forever. If no server becomes available within 30 minutes, the platform marks it as failed and stops retrying. See [Instance stays pending without a server](../drivers/bare-metal/metal3/troubleshooting.mdx#instance-stays-pending-without-a-server).
 
 ## 3. Verify the nodes joined
 

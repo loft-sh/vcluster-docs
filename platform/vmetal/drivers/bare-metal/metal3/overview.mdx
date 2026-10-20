@@ -64,9 +64,9 @@ Bare metal provisioning and lifecycle management. Deploys the Bare Metal Operato
 Install [cert-manager](https://cert-manager.io/) on the control plane cluster before enabling this component. The Bare Metal Operator uses it for admission webhooks, and internal components use it for mutual TLS (mTLS). The Platform UI checks this prerequisite and warns when it is missing.
 
 :::warning Upgrading from a Metal3 chart earlier than 0.6.0
-The default Metal3 chart version is `0.6.0`. This version replaces the legacy single-pod deployment with separate workloads and a MariaDB backend. Review this architecture and database change before upgrading an existing Metal3 deployment.
+The default Metal3 chart version is `0.7.2`. Chart `0.6.0` replaced the legacy single-pod deployment with separate workloads and a MariaDB backend, and chart `0.7.0` switched Ironic to a vCluster Labs build. Review these architecture and database changes before upgrading an existing Metal3 deployment.
 
-To retain the legacy topology temporarily, pin `spec.metal3.deploy.metal3.version` to the version that is already deployed. The previous <GlossaryTerm term="vcluster">vCluster</GlossaryTerm> Platform default was `0.4.1`.
+<GlossaryTerm term="vcluster">vCluster</GlossaryTerm> Platform 4.12 deploys chart `0.4.1`, so upgrading the platform moves an unpinned provider across both changes. To retain the legacy topology temporarily, pin `spec.metal3.deploy.metal3.version` to the version that is already deployed.
 :::
 
 The components use the following runtime topology:
@@ -400,7 +400,7 @@ spec:
       resources:
         cpu: "32"
         memory: 128Gi
-      bareMetalHosts:
+      machines:
         selector:
           matchLabels:
             role: compute
@@ -433,7 +433,7 @@ Add `vcluster.com/ssh-keys` to the node type in step 1 if you'll want shell acce
 <Step>
 Apply the NodeProvider.
 
-Create a NodeProvider that references your control plane cluster and defines at least one node type. The node type's label selector determines which BareMetalHosts it can claim.
+Create a NodeProvider that references your control plane cluster and defines at least one node type. The node type's `machines.selector` determines which servers it can claim.
 
 ```yaml
 apiVersion: management.loft.sh/v1
@@ -473,7 +473,7 @@ spec:
       resources:
         cpu: "32"
         memory: 128Gi
-      bareMetalHosts:
+      machines:
         selector:
           matchLabels:
             role: compute
@@ -581,11 +581,13 @@ In every case the platform selects an eligible server, allocates an IP, renders 
 
 ## Define node types
 
-Each node type specifies which BareMetalHosts it can claim and what properties to apply during provisioning.
+Each node type specifies which servers it can claim and what properties to apply during provisioning.
 
-### Select BareMetalHosts by label
+### Select machines by label
 
-Use `bareMetalHosts.selector` to match BareMetalHosts by labels. The provider checks requested CPU and memory against the inspected BareMetalHost inventory. Other resource keys don't affect BareMetalHost selection, so use labels to select hardware such as GPUs.
+Use `machines.selector` to match the provider's Machines by label. Every BareMetalHost has a Machine in the platform's inventory, and the platform copies the host's labels onto it. A selector written against BareMetalHost labels therefore matches the same servers. An unset or empty selector matches every Machine of the provider.
+
+The provider checks requested CPU and memory against the inspected BareMetalHost inventory. Other resource keys don't affect selection, so use labels to select hardware such as GPUs.
 
 ```yaml
 nodeTypes:
@@ -594,7 +596,7 @@ nodeTypes:
   resources:
     cpu: "64"
     memory: 256Gi
-  bareMetalHosts:
+  machines:
     selector:
       matchLabels:
         role: gpu
@@ -605,11 +607,46 @@ nodeTypes:
   resources:
     cpu: "32"
     memory: 128Gi
-  bareMetalHosts:
+  machines:
     selector:
       matchLabels:
         role: compute
 ```
+
+#### How host labels reach Machines
+
+The platform keeps each Machine's labels in step with its BareMetalHost:
+
+- It copies every host label except keys under the `vcluster.com` and `loft.sh` domains and their subdomains. Keys with no domain prefix are always copied.
+- When the Machine and its host set the same key, the host's value wins.
+- Removing a label from the host removes it from the Machine.
+- Labels you set on the Machine itself, under keys the host doesn't set, are kept.
+
+The `machines.vcluster.com/provider-labels` annotation on each Machine lists the keys copied from the host. The annotation can't be changed, and the platform refuses an edit to a copied label on the Machine. Change the label on the BareMetalHost instead.
+
+Selection reads the host's current labels, so a server matches as soon as you label its BareMetalHost. A selector on a `vcluster.com` or `loft.sh` key matches only labels set on the Machine itself, and saving such a node type returns a warning that says so.
+
+#### Migrate from `bareMetalHosts.selector`
+
+`machines.selector` replaces `bareMetalHosts.selector`, which is deprecated. The platform still reads the old field while `machines.selector` is unset, and saving a node type that uses it returns a deprecation warning. A node type can't set both. The platform refuses the NodeProvider with `deprecated; set only machines.selector`.
+
+To migrate, move the selector under `machines` and keep its contents:
+
+```yaml
+nodeTypes:
+- name: "general-compute"
+  # Before (deprecated):
+  # bareMetalHosts:
+  #   selector:
+  #     matchLabels:
+  #       role: compute
+  machines:
+    selector:
+      matchLabels:
+        role: compute
+```
+
+Editing a node type in the platform UI migrates it for you. The form reads and writes only `machines.selector`, and it removes `bareMetalHosts` when you save.
 
 For how the platform determines each node type's capacity and cost, see [Capacity](../../../concepts/machine-types-and-nodetypes.mdx#capacity) and [Cost](../../../concepts/machine-types-and-nodetypes.mdx#cost).
 

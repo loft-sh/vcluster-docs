@@ -144,6 +144,29 @@ kubectl --context <control-plane-context> describe baremetalhost [[GLOBAL:BMH_NA
 - **Stop and create a new instance** when the error is a checksum mismatch or image URL failure. The image URL and checksum are written to Ironic's database at provisioning time, so updating the `OSImage` resource doesn't affect an in-flight request. Delete the instance in the UI, or delete its `NodeClaim` through the API, then create a new one with corrected image configuration.
 - **Correct the BareMetalHost configuration** when the BMC address, credentials reference, or boot MAC is wrong. Edit the resource in place when the field permits it. If you must recreate the host, release its instance first and wait for the `NodeClaim` to finish deleting before recreating it. Deleting a claimed BareMetalHost doesn't by itself clean up the claim.
 
+### Instance stays pending without a server
+
+An instance that can't find an eligible `BareMetalHost` waits, and its `NodeClaim` conditions say why:
+
+| Condition and reason | Message contains | Cause |
+|---|---|---|
+| `Provisioned`, `InsufficientCapacity` | `no available BareMetalHost found for NodeType <provider>.<node type>` | No free host passes the node type's selector and resource check. |
+| `Provisioned`, `InsufficientCapacity` | `among the hosts assigned to tenant <tenant> (N free unassigned host(s) are only used by OnDemand node types)` | The node type uses the `Assigned` policy. Every host assigned to the tenant is in use, and free unassigned hosts are withheld. |
+| `Scheduled`, `FailedToSchedule` | `no available and matching node type found for node claim requirements` | The instance didn't name a node type, and no compatible node type has free capacity. |
+
+The wait isn't open-ended. If no host becomes available within 30 minutes, the platform marks the `Provisioned` condition as an error with `no machine became available within 30m0s` and stops retrying. Set the `machines.vcluster.com/provisioning-wait-timeout` property to a Go duration such as `2h` to change the limit. It can be set on the NodeProvider, node type, network environment, or `NodeClaim`.
+
+A selector that matches nothing doesn't raise a condition on the node type. Its `HasCapacity` condition stays true, and only the capacity total shows the problem:
+
+<InterpolatedCodeBlock
+  code={`kubectl --context <management-context> get nodetype [[VAR:NODE_TYPE:metal3-provider.compute-node]] \\
+  -o jsonpath='{.status.capacity}'`}
+/>
+
+A `total` of `0` means no usable host matches the node type. Check that the hosts carry the labels the node type's `machines.selector` names. Also check that their inspected CPU and memory meet the node type's resources and that they're in `available` state. Keys under `vcluster.com` and `loft.sh` aren't copied from a host to its Machine. See [How host labels reach Machines](./overview.mdx#how-host-labels-reach-machines).
+
+For the `Assigned` case, assign another host to the tenant, release one of its instances, or switch the node type to `OnDemand`. See [Machine allocation](../../../concepts/machine-types-and-nodetypes.mdx#machine-allocation).
+
 ## Outcome-specific failures
 
 Use these checks after Metal3 reports the `BareMetalHost` as provisioned. First, map the instance to its underlying host.
@@ -295,7 +318,7 @@ kubectl --context <control-plane-context> get validatingwebhookconfiguration bar
 
 ## Log locations
 
-Metal3 0.6.0 deploys separate workloads on the control plane cluster, in the namespace configured in the NodeProvider's `clusterRef`.
+Metal3 chart `0.6.0` and later deploy separate workloads on the control plane cluster, in the namespace configured in the NodeProvider's `clusterRef`.
 
 | Component | Container | Log command |
 |---|---|---|
