@@ -1,0 +1,205 @@
+---
+title: Host devices and GPU passthrough
+sidebar_label: Host devices and GPU passthrough
+sidebar_position: 4
+sidebar_class_name: pro
+description: Prepare KubeVirt nodes for full-GPU PCI passthrough with the vCluster Device Operator, and give VMs a passthrough GPU through their node type.
+---
+
+import Flow, {Step} from "@site/src/components/Flow";
+import NavStep from "@site/src/components/NavStep";
+import Button from "@site/src/components/Button";
+import Label from "@site/src/components/Label";
+import InterpolatedCodeBlock from '@site/src/components/InterpolatedCodeBlock';
+
+A KubeVirt VM can take a whole physical GPU through PCI passthrough. Two pieces work together:
+
+- The **vCluster Device Operator** prepares the KubeVirt cluster's GPU nodes. It enables IOMMU, binds the GPUs to `vfio-pci`, and makes KubeVirt advertise them under a resource name. You describe the nodes and GPUs to prepare in a `HostDevice` resource.
+- A **node type** requests that resource in its VM template, so every VM of that type gets a GPU.
+
+The KubeVirt path passes through whole GPUs only. For vGPU or other GPU sharing, hand the nodes to the NVIDIA GPU Operator instead. See [Use the NVIDIA GPU Operator](#use-the-nvidia-gpu-operator).
+
+## Before you begin
+
+- A [KubeVirt node provider](./kubevirt.mdx) whose cluster has nodes with GPUs.
+- CPUs and firmware that support IOMMU, Intel VT-d or AMD-Vi. The operator can turn IOMMU on in the kernel, but the hardware has to support it.
+- Platform administrator access, and a license with VM management. The **Host Devices** tab is shown only to platform administrators.
+
+Node preparation can reboot nodes or restart their kubelets. The operator cordons nodes but doesn't drain workloads. Plan a maintenance window before configuring host devices. See [What preparing a node costs](#what-preparing-a-node-costs).
+
+## Deploy the device operator
+
+The KubeVirt node provider deploys the operator with Helm into its `clusterRef.namespace`. Turn it on when you create the provider:
+
+```yaml
+spec:
+  kubeVirt:
+    deploy:
+      vClusterDeviceOperator:
+        enabled: true
+```
+
+In the platform UI, the **vCluster Device Operator** toggle can only be set when the provider is created. The platform installs chart `vcluster-device-operator` version `0.0.7` from `oci://ghcr.io/loft-sh/charts` by default. Override it with `chartRepo`, `chart`, `version`, and `helmValues` under `vClusterDeviceOperator`. The platform uninstalls the operator when you delete the provider, as long as `enabled` is still `true` at that point.
+
+## Configure host devices
+
+A `HostDevice` selects the GPU nodes, says how to prepare them, and names the resource KubeVirt advertises. It's a cluster-scoped resource on the KubeVirt cluster, with API version `devices.vcluster.com/v1alpha1`.
+
+<Flow>
+<Step>
+Open <NavStep>Bare Metal</NavStep> > <NavStep>VMs</NavStep>, select the KubeVirt cluster, and click the <NavStep>Host Devices</NavStep> tab.
+</Step>
+
+<Step>
+Click <Button>Configure Host Devices</Button> and enter a <Label>Display name</Label> and a <Label>Host Device ID</Label>.
+</Step>
+
+<Step>
+In <Label>Node selector</Label>, add at least one label that matches the GPU nodes, such as `nvidia.com/gpu.present: "true"`. An empty selector selects no nodes.
+</Step>
+
+<Step>
+Turn on <Label>Manage IOMMU</Label> only if IOMMU isn't already active on the nodes. The operator then edits the kernel command line and reboots each node.
+</Step>
+
+<Step>
+Under <Label>Device selector</Label>, narrow the GPUs to manage with <Label>GPU vendor ID</Label>, such as `10de` for NVIDIA, and optionally <Label>GPU device IDs</Label>. Without them, the operator manages every display controller on the selected nodes.
+</Step>
+
+<Step>
+Under <Label>GPU passthrough</Label>, select **KubeVirt** and set <Label>KubeVirt resource name</Label>, such as `nvidia.com/A100`. VMs request the GPU by this name. Use a different name in each host device.
+</Step>
+
+<Step>
+Optionally turn on <Label>Configure hugepages</Label> and <Label>Configure NUMA</Label> for NUMA-pinned GPU VMs. See [Align a VM with its GPU](#align-a-vm-with-its-gpu).
+</Step>
+
+<Step>
+Click <Button>Configure Host Devices</Button> to save.
+</Step>
+</Flow>
+
+The same configuration as YAML, applied to the KubeVirt cluster:
+
+```yaml title="hostdevice.yaml"
+apiVersion: devices.vcluster.com/v1alpha1
+kind: HostDevice
+metadata:
+  name: a100
+spec:
+  nodeSelector:
+    nvidia.com/gpu.present: "true"
+  # Omit iommu if IOMMU is already active on the nodes.
+  iommu:
+    enabled: true
+  deviceSelector:
+    vendor: "10de"
+  kubevirt:
+    resourceName: nvidia.com/A100
+```
+
+### What preparing a node costs
+
+Preparing nodes disrupts them, so plan a window:
+
+- Turning on IOMMU or hugepages reboots the node. One reboot applies both.
+- NUMA settings restart the kubelet instead.
+- The operator cordons each node first but doesn't drain it. It works through one node at a time within each host device.
+
+If a kubelet reconfiguration doesn't come back healthy, the operator restores the previous configuration and marks the node `Failed`. It retries only after the desired NUMA configuration changes.
+
+### Watch progress
+
+The **Host Devices** tab shows each host device's status and its ready nodes against the nodes it selects. Click **Show Devices** to see each node's phase, IOMMU, hugepage, and NUMA state, and every GPU with its PCI address, vendor and device ID, driver, IOMMU group, and whether it's selected and bound.
+
+A node moves through `Pending`, `RebootPending`, `Rebooting`, `Configuring`, and `Binding` to `Ready`. Once a node is `Ready`, KubeVirt advertises its GPUs under the resource name.
+
+## Give each VM a GPU
+
+Request the resource name in the node type's VM template, under `domain.devices.gpus`. Each entry passes through one whole GPU:
+
+```yaml
+spec:
+  kubeVirt:
+    nodeTypes:
+    - name: vm-gpu
+      resources:
+        cpu: "4"
+        memory: 8Gi
+        nvidia.com/gpu: "1"
+      virtualMachineTemplate:
+        spec:
+          template:
+            spec:
+              domain:
+                devices:
+                  gpus:
+                  - name: gpu1
+                    # Must match the host device's KubeVirt resource name.
+                    deviceName: nvidia.com/A100
+                cpu:
+                  cores: 4
+                memory:
+                  guest: 8Gi
+                resources:
+                  requests:
+                    cpu: "4"
+                    memory: 8Gi
+```
+
+The `gpus` list is what attaches GPUs. The `nvidia.com/gpu` entry in `resources`, the **GPU count** field in the platform UI, only describes the node type for sizing and display. Keep the two in step.
+
+The node type editor in the platform UI offers **GPU passthrough** and **GPU with NUMA pinning** examples to start from.
+
+### Align a VM with its GPU
+
+For the best GPU performance, keep a VM's CPUs and memory on the GPU's NUMA node. Configure hugepages and NUMA in the host device first:
+
+```yaml
+spec:
+  hugePages:
+    pageSize: "1Gi"
+    count: 16
+  numa:
+    reservedCPUs: "0"
+    memoryManager: true
+```
+
+Then back the VM with dedicated CPUs and hugepages in the node type's template:
+
+```yaml
+domain:
+  devices:
+    gpus:
+    - name: gpu1
+      deviceName: nvidia.com/A100
+  cpu:
+    cores: 4
+    dedicatedCpuPlacement: true
+    numa:
+      guestMappingPassthrough: {}
+  memory:
+    guest: 8Gi
+    hugepages:
+      pageSize: "1Gi"
+```
+
+NUMA settings edit the kubelet configuration at `/var/lib/kubelet/config.yaml`, so they apply to kubeadm-style nodes.
+
+## Use the NVIDIA GPU Operator
+
+To let the NVIDIA GPU Operator bind and advertise the GPUs, select **NVIDIA GPU Operator** under <Label>GPU passthrough</Label> instead of **KubeVirt**. The device operator then only prepares the nodes, with IOMMU, hugepages, and NUMA. It sets the `nvidia.com/gpu.workload.config` label from <Label>Workload configuration</Label>:
+
+| Workload configuration | Label value | Use |
+|---|---|---|
+| VM passthrough | `vm-passthrough` | Full-GPU passthrough to VMs |
+| vGPU | `vm-vgpu` | NVIDIA vGPU |
+| Container | `container` | GPUs for containers |
+
+The platform doesn't install or configure the NVIDIA GPU Operator. A host device can use the KubeVirt path or the NVIDIA GPU Operator path, not both.
+
+## Limitations
+
+- One host device owns a given set of nodes. If two node selectors overlap, the host device whose name sorts first wins. The other reports a `Conflict` condition and doesn't prepare any of its nodes.
+- Settings only apply forward. Clearing IOMMU, hugepages, or NUMA settings doesn't revert a node, and allocated hugepages aren't reclaimed.
+- The KubeVirt path binds each selected GPU to `vfio-pci` as a whole device, so a VM always gets whole GPUs. MIG, time slicing, and vGPU aren't available on it.
