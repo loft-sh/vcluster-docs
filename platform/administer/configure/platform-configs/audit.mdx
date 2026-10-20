@@ -25,6 +25,7 @@ The platform can log activities related to:
 - Management instance changes, such as creation of new clusters, spaces, and so on.
 - Changes within a <GlossaryTerm term="tenant-cluster">cluster</GlossaryTerm> or space
 - Changes within a connected cluster
+- Sign-ins through password, SSO, token exchange, and the platform's OIDC provider, including failed attempts. See [Authentication events](#authentication-events).
 
 Auditing in the platform is similar to [auditing Kubernetes clusters](https://kubernetes.io/docs/tasks/debug-application-cluster/audit/) in general.
 
@@ -43,10 +44,10 @@ The audit logging feature increases the memory consumption of the platform becau
 :::info Two separate audit fields
 `values.yaml` has two distinct `audit` fields with different purposes:
 
-- **`audit`** (top-level Helm value) — configures the audit sidecar and log persistence (PVC) for the platform pod. This is a Helm-only setting. Changes require a Helm upgrade and a platform restart.
-- **`config.audit`** (under the `config` section) — controls audit recording and policy, and enables the Audit Log UI. This can be set in **Platform > Platform Config > Config** in the UI or under `config` in `values.yaml`. `config.audit.enabled` defaults to `true`, so audit events are recorded without any additional configuration.
+- **`audit`** (top-level Helm value) configures the audit sidecar and log persistence (PVC) for the platform pod. This is a Helm-only setting. Changes require a Helm upgrade and a platform restart.
+- **`config.audit`** (under the `config` section) controls audit recording and policy, and enables the Audit Log UI. You can set it in **Platform > Platform Config > Config** in the UI or under `config` in `values.yaml`. `config.audit.enabled` defaults to `true`, so audit events are recorded without any additional configuration.
 
-Changes to `config.audit` made through the UI take effect automatically within about 10-15 seconds, no restart required. Changing `config.audit` through a Helm upgrade also restarts the platform pod, since the chart stamps the pod template with a config hash. The setting itself still takes effect through the same hot-reload mechanism either way.
+Changes to `config.audit` made through the UI take effect automatically within about 10-15 seconds, with no restart required. Changing `config.audit` through a Helm upgrade also restarts the platform pod, since the chart stamps the pod template with a config hash. The setting itself still takes effect through the same hot-reload mechanism either way.
 :::
 
 Configure auditing through the platform config in the platform UI (**Platform > Platform Config > Config**). Content added in the UI goes automatically under the `config` section of `values.yaml`.
@@ -134,7 +135,7 @@ Audit policy is a more complex alternative to audit levels, letting you define e
 - `RequestResponse`: Log event metadata, and request and response bodies. This doesn't apply for non-resource requests.
 
 :::warning Custom rules replace the defaults entirely
-Setting a non-empty `policy.rules` list under `config.audit` replaces the resolved default policy outright, and the platform then ignores the `level` field. None of the [default policy exclusions](#default-policy-exclusions) apply automatically. Start from the [default rules for a level](#default-policy-rules-by-level) and add to them, rather than writing a custom policy from scratch. An empty `rules: []` list doesn't count as a custom policy: the platform still resolves and applies the configured level's defaults.
+Setting a non-empty `policy.rules` list under `config.audit` replaces the resolved default policy outright, and the platform then ignores the `level` field. None of the [default policy exclusions](#default-policy-exclusions) apply automatically. Authentication events and connector requests then follow your rules too, so a policy without the built-in rules can drop sign-in events or record connector request bodies. Start from the [default rules for a level](#default-policy-rules-by-level) and add to them, rather than writing a custom policy from scratch. An empty `rules: []` list doesn't count as a custom policy. The platform still resolves and applies the configured level's defaults.
 :::
 
 An example policy that catches all requests:
@@ -154,7 +155,13 @@ See the [complete policy reference](../../../api/resources/config.mdx#status-aud
 
 ## Default policy exclusions
 
-Before a request reaches an audit level's own rules, three built-in rules run first, in this order. Because the platform uses the first matching rule, these built-ins take priority over anything the level would otherwise log. They apply to all four audit levels.
+Before a request reaches an audit level's own rules, six built-in rules run first, in this order. Because the platform uses the first matching rule, these built-ins take priority over anything the level would otherwise log. They apply to all four audit levels.
+
+1. [Never logged](#never-logged)
+1. [Authentication activity](#metadata-only-for-authentication-activity)
+1. [Tenant configuration and connectors](#metadata-only-for-tenant-configuration-and-connectors), as two separate rules
+1. [Sensitive data](#metadata-only-for-sensitive-data)
+1. [Long-running requests](#metadata-only-for-long-running-requests)
 
 ### Never logged
 
@@ -172,6 +179,24 @@ The platform never logs these requests, at any level, including level 4:
 Because `virtualclusterinstances/kubeconfig` is on the never-logged list, there's no audit record of who retrieved a cluster's kubeconfig, or when, at any level. To get a `Metadata` record of these requests instead (who, when, which cluster, without the returned credentials), remove `virtualclusterinstances/kubeconfig` from the never-logged resources in a [custom policy built from the defaults](#default-policy-rules-by-level). The [sensitive data rule](#metadata-only-for-sensitive-data) then takes over and audits it at `Metadata`, since it already lists this resource.
 :::
 
+### Metadata-only for authentication activity
+
+For `create` requests only, the platform logs sign-in events, and the access keys a sign-in creates, at `Metadata` regardless of the configured level. Both carry credentials in their bodies. See [Authentication events](#authentication-events) for what these events contain.
+
+| Resource | API group | Why |
+|---|---|---|
+| `users/login` | `management.loft.sh` | The sign-in request carries a password or an SSO token. |
+| `accesskeys` | `storage.loft.sh` | The access key a successful sign-in creates. The key value is never recorded. |
+
+### Metadata-only for tenant configuration and connectors
+
+These are two separate rules, one for each resource. For every verb, including reads, the platform logs these resources at `Metadata`. Reads are recorded too, even at level 1, which otherwise drops reads.
+
+| Resource | API group | Why |
+|---|---|---|
+| `tenants/config` | `management.loft.sh` | The request and response carry decrypted per-tenant SSO client secrets. Changes to a tenant's sign-in configuration still leave a record of who made them. |
+| `connectors` | `management.loft.sh` | Connector requests and responses can carry credentials for the external systems they connect to. |
+
 ### Metadata-only for sensitive data
 
 For `create` requests only, the platform always logs these resources at `Metadata`, never `Request` or `RequestResponse`, regardless of the configured level:
@@ -184,6 +209,9 @@ For `create` requests only, the platform always logs these resources at `Metadat
 | `users/profile` | `management.loft.sh` | The request can contain a new password. |
 | `virtualclusterinstances/kubeconfig` | `management.loft.sh` | The response contains a working kubeconfig. This rule only applies if you remove the resource from the never-logged list above, since that rule matches first. |
 | `virtualclusterinstances/snapshotcredentials` | `management.loft.sh` | The response contains sensitive storage credentials. |
+| `virtualclusterinstances/observabilityconnector` | `management.loft.sh` | The response contains the metrics-writer token a cluster uses to reach the [Fleet Observability](../../../fleet-operations/observability/overview.mdx) write gateway. |
+| `osimages/upload` | `management.loft.sh` | The response contains upload targets, each of which grants write access to the image until it expires. |
+| `metal3bmcs/redfish` | `cluster.loft.sh` | Proxied BMC requests and responses carry BMC account passwords and session tokens. |
 
 This keeps the event auditable (who did it, when, on which object) without writing the credential itself into the audit log, which is typically retained longer and read more widely than the underlying secret store.
 
@@ -193,10 +221,11 @@ This keeps the event auditable (who did it, when, on which object) without writi
 |---|---|---|
 | `pods/log`, `pods/exec`, `pods/portforward` | core (`""`) | Streaming requests inside a cluster or connected cluster. There's no discrete response body to capture, and exec or port-forward would mean logging the interactive session traffic. |
 | `virtualclusterinstances/log`, `appinstances/log` | `management.loft.sh` | Same reasoning, for log streaming through the platform API. |
+| `metal3bmcs/console` | `cluster.loft.sh` | Interactive serial console sessions to a bare metal server's BMC. |
 
 ## Default policy rules by level
 
-Each audit level resolves to a fixed list of policy rules, evaluated in order, where the first match sets an event's granularity. Copy the rules for a level below as a starting point for a custom policy, then add, remove, or reorder rules to fit your needs. All four levels start with the same three rules, covered in [Default policy exclusions](#default-policy-exclusions), followed by level-specific rules for everything else.
+Each audit level resolves to a fixed list of policy rules, evaluated in order, where the first match sets an event's granularity. Copy the rules for a level below as a starting point for a custom policy, then add, remove, or reorder rules to fit your needs. All four levels start with the same six rules, covered in [Default policy exclusions](#default-policy-exclusions), followed by level-specific rules for everything else.
 
 <Tabs
   defaultValue="1"
@@ -236,6 +265,32 @@ config:
           resources:
             - group: management.loft.sh
               resources:
+                - users/login
+            - group: storage.loft.sh
+              resources:
+                - accesskeys
+        - level: Metadata
+          omitStages:
+            - RequestReceived
+          resources:
+            - group: management.loft.sh
+              resources:
+                - tenants/config
+        - level: Metadata
+          omitStages:
+            - RequestReceived
+          resources:
+            - group: management.loft.sh
+              resources:
+                - connectors
+        - level: Metadata
+          omitStages:
+            - RequestReceived
+          verbs:
+            - create
+          resources:
+            - group: management.loft.sh
+              resources:
                 - ownedaccesskeys
                 - resetaccesskeys
                 - sharedsecrets
@@ -243,6 +298,11 @@ config:
                 - users/profile
                 - virtualclusterinstances/kubeconfig
                 - virtualclusterinstances/snapshotcredentials
+                - virtualclusterinstances/observabilityconnector
+                - osimages/upload
+            - group: cluster.loft.sh
+              resources:
+                - metal3bmcs/redfish
         - level: Metadata
           omitStages:
             - RequestReceived
@@ -256,6 +316,9 @@ config:
               resources:
                 - virtualclusterinstances/log
                 - appinstances/log
+            - group: cluster.loft.sh
+              resources:
+                - metal3bmcs/console
         - level: None
           verbs:
             - get
@@ -301,6 +364,32 @@ config:
           resources:
             - group: management.loft.sh
               resources:
+                - users/login
+            - group: storage.loft.sh
+              resources:
+                - accesskeys
+        - level: Metadata
+          omitStages:
+            - RequestReceived
+          resources:
+            - group: management.loft.sh
+              resources:
+                - tenants/config
+        - level: Metadata
+          omitStages:
+            - RequestReceived
+          resources:
+            - group: management.loft.sh
+              resources:
+                - connectors
+        - level: Metadata
+          omitStages:
+            - RequestReceived
+          verbs:
+            - create
+          resources:
+            - group: management.loft.sh
+              resources:
                 - ownedaccesskeys
                 - resetaccesskeys
                 - sharedsecrets
@@ -308,6 +397,11 @@ config:
                 - users/profile
                 - virtualclusterinstances/kubeconfig
                 - virtualclusterinstances/snapshotcredentials
+                - virtualclusterinstances/observabilityconnector
+                - osimages/upload
+            - group: cluster.loft.sh
+              resources:
+                - metal3bmcs/redfish
         - level: Metadata
           omitStages:
             - RequestReceived
@@ -321,6 +415,9 @@ config:
               resources:
                 - virtualclusterinstances/log
                 - appinstances/log
+            - group: cluster.loft.sh
+              resources:
+                - metal3bmcs/console
         - level: Request
           omitStages:
             - RequestReceived
@@ -365,6 +462,32 @@ config:
           resources:
             - group: management.loft.sh
               resources:
+                - users/login
+            - group: storage.loft.sh
+              resources:
+                - accesskeys
+        - level: Metadata
+          omitStages:
+            - RequestReceived
+          resources:
+            - group: management.loft.sh
+              resources:
+                - tenants/config
+        - level: Metadata
+          omitStages:
+            - RequestReceived
+          resources:
+            - group: management.loft.sh
+              resources:
+                - connectors
+        - level: Metadata
+          omitStages:
+            - RequestReceived
+          verbs:
+            - create
+          resources:
+            - group: management.loft.sh
+              resources:
                 - ownedaccesskeys
                 - resetaccesskeys
                 - sharedsecrets
@@ -372,6 +495,11 @@ config:
                 - users/profile
                 - virtualclusterinstances/kubeconfig
                 - virtualclusterinstances/snapshotcredentials
+                - virtualclusterinstances/observabilityconnector
+                - osimages/upload
+            - group: cluster.loft.sh
+              resources:
+                - metal3bmcs/redfish
         - level: Metadata
           omitStages:
             - RequestReceived
@@ -385,6 +513,9 @@ config:
               resources:
                 - virtualclusterinstances/log
                 - appinstances/log
+            - group: cluster.loft.sh
+              resources:
+                - metal3bmcs/console
         - level: Request
           omitStages:
             - RequestReceived
@@ -424,6 +555,32 @@ config:
           resources:
             - group: management.loft.sh
               resources:
+                - users/login
+            - group: storage.loft.sh
+              resources:
+                - accesskeys
+        - level: Metadata
+          omitStages:
+            - RequestReceived
+          resources:
+            - group: management.loft.sh
+              resources:
+                - tenants/config
+        - level: Metadata
+          omitStages:
+            - RequestReceived
+          resources:
+            - group: management.loft.sh
+              resources:
+                - connectors
+        - level: Metadata
+          omitStages:
+            - RequestReceived
+          verbs:
+            - create
+          resources:
+            - group: management.loft.sh
+              resources:
                 - ownedaccesskeys
                 - resetaccesskeys
                 - sharedsecrets
@@ -431,6 +588,11 @@ config:
                 - users/profile
                 - virtualclusterinstances/kubeconfig
                 - virtualclusterinstances/snapshotcredentials
+                - virtualclusterinstances/observabilityconnector
+                - osimages/upload
+            - group: cluster.loft.sh
+              resources:
+                - metal3bmcs/redfish
         - level: Metadata
           omitStages:
             - RequestReceived
@@ -444,6 +606,9 @@ config:
               resources:
                 - virtualclusterinstances/log
                 - appinstances/log
+            - group: cluster.loft.sh
+              resources:
+                - metal3bmcs/console
         - level: RequestResponse
           omitStages:
             - RequestReceived
@@ -455,6 +620,75 @@ config:
 
   </TabItem>
 </Tabs>
+
+## Authentication events
+
+The platform records an audit event for each sign-in attempt, whether it succeeds or fails, for these sign-in methods:
+
+| Method | `authentication-method` value | Records the connector |
+|---|---|---|
+| Username and password | `password` | No |
+| SSO callback | `sso` | Yes |
+| SSO token exchange | `token-exchange` | Yes |
+| Platform OIDC provider token request | `oidc-provider` | No |
+
+A sign-in produces up to two events. They share a correlation ID annotation:
+
+- **The sign-in event.** `verb` is `create`, and `objectRef` is the `users/login` subresource in `management.loft.sh`, named after the user when the platform can resolve one. For a successful sign-in, `user` is the signed-in user. For a failed sign-in, `user` is empty, and `responseStatus.code` holds the HTTP status the platform returned.
+- **The access key event.** Successful password, SSO, and token-exchange sign-ins create an access key for the session, and so do OIDC provider sign-ins that request `offline_access`. This event records that `create` on `accesskeys` in `storage.loft.sh`, with the key's name but never its value.
+
+Both events carry these annotations:
+
+| Annotation | Value |
+|---|---|
+| `audit.platform.vcluster.com/authentication-method` | The method from the table above. |
+| `audit.platform.vcluster.com/authentication-outcome` | `success` when the request the event describes returned a status below 400, otherwise `failure`. |
+| `audit.platform.vcluster.com/authentication-connector` | The SSO connector ID. Only present for `sso` and `token-exchange`. |
+| `audit.platform.vcluster.com/authentication-correlation-id` | The same ID on both events for one sign-in attempt. |
+| `audit.platform.vcluster.com/direct-host-write` | `"true"` on the access key event only. |
+
+When a user creates an access key through the platform API or UI, the platform records an `ownedaccesskeys` request. That event carries the key's display name, truncated to 256 characters, in the `audit.platform.vcluster.com/access-key-display-name` annotation.
+
+The platform doesn't record these as authentication events:
+
+- Requests it rejects before checking any credential, such as a disabled sign-in endpoint, the wrong HTTP method, or a malformed request body.
+- Successful OIDC refresh-token requests.
+- The start of an SSO redirect, and SSO logout. Signing out through the platform deletes the session's access key, which the level's catch-all rule records as a `delete` on `ownedaccesskeys`.
+- Access keys the platform deletes itself, such as expired keys, and keys removed when a user changes their password.
+
+All sign-in events stay at `Metadata` at every level through the [authentication activity rule](#metadata-only-for-authentication-activity). A [custom audit policy](#audit-policy) decides whether they're recorded at all, so include that rule when you write one.
+
+### Verify that sign-in events are recorded
+
+With the [audit sidecar](#enable-audit-sidecar) enabled, sign in to the platform, and then filter the sidecar output for sign-in events:
+
+```bash title="List recent sign-in events"
+kubectl logs -n vcluster-platform -l app=loft -c audit --tail=500 \
+  | jq -c 'select(.objectRef.subresource == "login") | {
+      time: .stageTimestamp,
+      user: .objectRef.name,
+      method: .annotations["audit.platform.vcluster.com/authentication-method"],
+      outcome: .annotations["audit.platform.vcluster.com/authentication-outcome"],
+      code: .responseStatus.code
+    }'
+```
+
+Each line shows the user, `method`, and `outcome`. A successful password sign-in shows `"method":"password","outcome":"success"`.
+
+To find failed attempts only, filter on the outcome annotation. Raise `--tail` to search further back:
+
+```bash title="List failed sign-in attempts"
+kubectl logs -n vcluster-platform -l app=loft -c audit --tail=500 \
+  | jq -c 'select(.annotations["audit.platform.vcluster.com/authentication-outcome"] == "failure")'
+```
+
+If no sign-in events appear, check that `config.audit.enabled` is `true`. If you use a custom `policy.rules` list, check that a rule matches `create` on `users/login` with a level other than `None`, and that no earlier rule matches it with `None`.
+
+### Identity in audit events
+
+Audit events don't carry a tenant field or annotation. To attribute an event to a tenant, map the `user` or `objectRef` in the event to the tenant that owns that user or object. A user's tenant is the value of the `tenant.vcluster.com/owner` label on the user. Changes to a tenant's own configuration appear as requests on the `tenants/config` subresource, with the tenant's name in `objectRef.name`.
+
+When a request uses impersonation, `user` holds the caller and `impersonatedUser` holds the impersonated identity.
 
 ## Persist audit logs
 
