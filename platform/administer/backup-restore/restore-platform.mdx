@@ -1,0 +1,141 @@
+---
+title: Restore vCluster Platform
+sidebar_label: Restore Platform
+sidebar_position: 2
+description: Recover management resources and platform identity from an existing backup.
+---
+
+import InterpolatedCodeBlock from '@site/src/components/InterpolatedCodeBlock';
+import PageVariables from '@site/src/components/PageVariables';
+
+<PageVariables NAMESPACE="vcluster-platform" RELEASE="vcluster-platform" DEPLOYMENT="loft" BACKUP="backup.yaml" CHART_VERSION="__PLATFORM_VERSION__" />
+
+As a system admin, restore vCluster Platform management resources and identity after an outage or during migration to another control plane cluster.
+Use an existing [management backup](./backup-platform.mdx) for installations that store management resources in the control plane cluster's Kubernetes API.
+For an external database, follow [Restore an external database](../external-database/restore.mdx) and preserve the platform identity Secrets separately.
+
+For administrator lockout on an existing installation, use [Reset the admin password](../authentication/reset-admin-password.mdx).
+Account recovery doesn't require restoring the management plane.
+
+## Before you begin
+
+- Use the vCluster 0.38 backup format for these Platform 5.0 procedures.
+- Install kubectl, Helm, and [Mike Farah's yq v4](https://mikefarah.gitbook.io/yq/) for the commands below.
+- Use credentials that can manage the destination Helm release, Deployment, namespaces, and backed-up resources and Secrets.
+- Check the [backup contents and limits](./backup-platform.mdx#backup-contents-and-limits) before choosing a restore path.
+- Keep the original Helm values, chart version, domain, and environment-specific credentials available.
+- Schedule a maintenance window. Restoration overwrites resources and can require a platform restart.
+- Before changing versions, review [platform upgrades](../upgrade-migrate/upgrade.mdx) and the [CLI upgrade guidance](/docs/vcluster/next/operate/upgrade/upgrade-version).
+
+:::warning UI restore doesn't restore platform identity
+UI restore ignores `loft-cert`, `loft-network-control-key`, and `loft-license-cache`, even in an uploaded CLI backup.
+UI backups omit these Secrets. Preserve and restore them separately through Kubernetes.
+A CLI backup omits Tenant resources and their configuration Secrets. For installations using Tenants, review the recovery plan with support before migration.
+:::
+
+The backup contains credentials and private keys. Handle it in encrypted storage with controlled access, and don't print Secret data into shared logs.
+
+For GitOps-managed installations, make replica and configuration changes through the owning GitOps manifests.
+The Helm commands below assume Helm manages the release directly.
+
+Choose the sequence for your target. Keep the source platform stopped during a migration cutover, and verify the target Kubernetes context before applying anything.
+Don't run two active installations with the same identity against the same connected clusters.
+
+## Restore onto a fresh cluster
+
+This procedure uses the same platform namespace and compatible chart version as the source.
+It applies to management resources stored in Kubernetes, without Tenants or other required resources omitted from the CLI backup.
+Use a rehearsed recovery plan for other configurations.
+
+1. Prepare the destination namespace and restore environment-specific TLS and other prerequisites separately.
+   Keep the intended domain and DNS cutover plan consistent with the connected clusters' platform endpoint.
+
+2. Install the chart with zero replicas, using the complete source values file:
+
+   <InterpolatedCodeBlock
+     language="bash"
+     code={'helm upgrade --install [[GLOBAL:RELEASE]] vcluster-platform --repo https://charts.loft.sh --namespace [[GLOBAL:NAMESPACE]] --create-namespace --version [[GLOBAL:CHART_VERSION]] --values values.yaml --set replicaCount=0'}
+   />
+
+   Zero replicas prevent the platform from generating a new identity before restoration.
+
+3. Extract only the three identity Secrets, then apply them before starting the platform:
+
+   <InterpolatedCodeBlock
+     language="bash"
+     code={"umask 077\n" +
+       "yq eval 'select(.kind == \"Secret\" and (.metadata.name == \"loft-cert\" or .metadata.name == \"loft-network-control-key\" or .metadata.name == \"loft-license-cache\"))' [[GLOBAL:BACKUP]] > platform-identity.yaml\n" +
+       "kubectl apply -f platform-identity.yaml"}
+   />
+
+   Confirm the expected Secrets exist in the destination namespace. Don't apply the full backup yet.
+   The backup contains custom resource instances, not the Custom Resource Definitions (CRDs) that define them.
+   The platform process creates those CRDs at startup.
+
+4. Start the platform with the intended replica count from the complete values file:
+
+   <InterpolatedCodeBlock
+     language="bash"
+     code={'helm upgrade [[GLOBAL:RELEASE]] vcluster-platform --repo https://charts.loft.sh --namespace [[GLOBAL:NAMESPACE]] --version [[GLOBAL:CHART_VERSION]] --values values.yaml\n' +
+       'kubectl --namespace [[GLOBAL:NAMESPACE]] rollout status deployment/[[GLOBAL:DEPLOYMENT]]'}
+   />
+
+   Ensure `values.yaml` sets your intended nonzero `replicaCount`.
+
+5. Review the backup's namespaces and local-cluster registration, then apply the management resources:
+
+   <InterpolatedCodeBlock
+     language="bash"
+     code={'kubectl apply -f [[GLOBAL:BACKUP]]'}
+   />
+
+   Project namespaces can take time to appear after their Projects are restored.
+   If namespaced resources fail for that reason, wait for Project reconciliation and apply the file again.
+   Resolve every apply error before continuing. Move DNS to the destination when it's ready, then complete the verification steps below.
+
+## Restore onto an existing installation
+
+Review which existing resources the backup overwrites before applying it. Use a backup from the same installation for same-cluster recovery.
+If you apply identity Secrets after the platform has started, restart the platform Deployment so it loads them:
+
+<InterpolatedCodeBlock
+  language="bash"
+  code={'kubectl apply -f [[GLOBAL:BACKUP]]\n' +
+    'kubectl --namespace [[GLOBAL:NAMESPACE]] rollout restart deployment/[[GLOBAL:DEPLOYMENT]]\n' +
+    'kubectl --namespace [[GLOBAL:NAMESPACE]] rollout status deployment/[[GLOBAL:DEPLOYMENT]]'}
+/>
+
+Applying a file through the UI skips identity Secrets. Restore those separately through Kubernetes, then restart if their values changed.
+
+## Verify the restore
+
+Before declaring recovery complete:
+
+1. Confirm the Deployment is ready, the platform endpoint is reachable, and administrator login works.
+2. Compare the license instance ID with the source and check license validity. See [Restore license](./preserve-license.mdx).
+3. Confirm the expected Projects, users, instances, and remote registrations exist.
+4. Confirm connected clusters reconnect after DNS cutover without restarting their control planes to repair tunnel identity.
+5. During a planned test, restart a connected cluster's control plane. Confirm it adopts the existing instance without creating a suffixed duplicate.
+6. Check the local control plane cluster registration for `ClusterUID` failures. Verify Argo CD cluster Secrets when you use that integration.
+7. Test workload access and separately restored storage using your workload recovery plan.
+
+Record the platform and CLI versions, backup contents, and test results with your recovery plan.
+Retire the source only after verification, and remove temporary backup copies according to your retention policy.
+
+## Troubleshoot a restore
+
+| Symptom | Check |
+| --- | --- |
+| Apply reports an unknown resource kind | Confirm platform startup created the required CRDs. Check whether the installation uses an external database. |
+| License identity changes | Restore the original `loft-cert` and restart the platform. See [license recovery](./preserve-license.mdx#license-invalid). |
+| Connected clusters don't reconnect | Confirm DNS, ingress TLS, and the restored `loft-network-control-key`. Restart the platform after replacing identity Secrets. |
+| A duplicate instance appears after restart | Check that the original backup retained `status.serviceUID`. Contact support before deleting either instance. |
+| Local registration reports `ClusterUID` | Check whether a source `loft-cluster` registration was restored onto a different Kubernetes cluster. |
+
+If identity, database, or registration recovery remains uncertain, contact support before replacing more resources.
+Share versions and redacted errors, never the raw backup file.
+
+## Next steps
+
+- [Create and verify the next management backup](./backup-platform.mdx)
+- [Recover administrator access](../authentication/reset-admin-password.mdx)
