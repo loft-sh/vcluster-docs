@@ -23,7 +23,7 @@ DEVOPS-1693 targets `next`, where the redesigned 5.0 docs live. A
 base. The routing change must also land on `main` for real release dispatches.
 
 The workflow sets `PLATFORM_V5_DOCS_BRANCH=next`. Remove that flag when the
-5.0 docs cut over to `main` in DOC-1854. Other events and Platform majors
+5.0 docs move to `main` as part of DOC-1761. Other events and Platform majors
 continue to target `main`.
 
 | Stage | Trigger and reads | Mutation | Failure handling and evidence |
