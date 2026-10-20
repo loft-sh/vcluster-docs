@@ -82,11 +82,22 @@ Use a rehearsed recovery plan for other configurations.
 
    Ensure `values.yaml` sets your intended nonzero `replicaCount`.
 
-5. Review the backup's namespaces and local-cluster registration, then apply the management resources:
+5. Review the backup's namespaces and local-cluster registration.
+   If the backup includes the source's `loft-cluster` Cluster and the destination is a different Kubernetes cluster, remove that document.
+   Its `loft.sh/cluster-uid` annotation doesn't match the destination, and the destination creates its own local registration.
+   See [Exclude resources](./backup-platform.mdx#exclude-resources) for the reason and for remote registrations:
 
    <InterpolatedCodeBlock
      language="bash"
-     code={'kubectl apply -f [[GLOBAL:BACKUP]]'}
+     code={"umask 077\n" +
+       "yq eval 'select(.kind != \"Cluster\" or .metadata.name != \"loft-cluster\")' [[GLOBAL:BACKUP]] > restore.yaml"}
+   />
+
+   Apply the management resources. If you kept the `loft-cluster` document, set the file to the original backup instead:
+
+   <InterpolatedCodeBlock
+     language="bash"
+     code={'kubectl apply -f [[VAR:RESTORE_FILE:restore.yaml]]'}
    />
 
    Project namespaces can take time to appear after their Projects are restored.
@@ -105,7 +116,15 @@ If you apply identity Secrets after the platform has started, restart the platfo
     'kubectl --namespace [[GLOBAL:NAMESPACE]] rollout status deployment/[[GLOBAL:DEPLOYMENT]]'}
 />
 
-Applying a file through the UI skips identity Secrets. Restore those separately through Kubernetes, then restart if their values changed.
+### Restore through the UI
+
+Navigate to **Admin > Platform Config > Backup and Restore**, click **Restore** under **Restore Configuration**, and select the backup file.
+
+- UI restore skips identity Secrets. Restore those separately through Kubernetes, then restart if their values changed.
+- UI restore records each object that fails to apply in the platform logs and continues with the rest. The success message doesn't confirm that every object applied.
+  Check the platform logs for `apply backup` errors, then complete the verification steps below.
+- Restore a UI backup that contains Tenants through the UI. UI restore re-establishes each Tenant configuration Secret's owner reference.
+  Applying the same file with kubectl leaves those Secrets unowned, so the platform doesn't read the Tenants' configuration, including hostnames.
 
 ## Verify the restore
 
@@ -127,6 +146,7 @@ Retire the source only after verification, and remove temporary backup copies ac
 | Symptom | Check |
 | --- | --- |
 | Apply reports an unknown resource kind | Confirm platform startup created the required CRDs. Check whether the installation uses an external database. |
+| Apply reports `resource name may not be empty` for a Secret | A User or Cluster referenced a Secret that was missing at backup time. Remove the empty Secret document, apply again, then recreate that credential. For the admin account, use [Helm recovery](../authentication/reset-admin-password.mdx#recover-through-helm). |
 | License identity changes | Restore the original `loft-cert` and restart the platform. See [license recovery](./preserve-license.mdx#license-invalid). |
 | Connected clusters don't reconnect | Confirm DNS, ingress TLS, and the restored `loft-network-control-key`. Restart the platform after replacing identity Secrets. |
 | A duplicate instance appears after restart | Check that the original backup retained `status.serviceUID`. Contact support before deleting either instance. |
