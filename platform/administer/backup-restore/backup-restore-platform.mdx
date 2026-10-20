@@ -1,97 +1,232 @@
 ---
-title: Backup and restore vCluster Platform
+title: Back up and restore vCluster Platform
 sidebar_label: Backup and restore
 sidebar_position: 1
 ---
 
-This guide describes how to backup and restore the vCluster Platform management plane. To back up the connected clusters, reuse a regular Kubernetes backup solution such as [Velero](https://velero.io/).
+import InterpolatedCodeBlock from '@site/src/components/InterpolatedCodeBlock';
+import PageVariables from '@site/src/components/PageVariables';
 
-:::important Preserve your license
-When performing disaster recovery or cluster migrations, ensure you preserve your platform license. See [Preserve license during disaster recovery](./preserve-license.mdx) for detailed instructions.
+<PageVariables NAMESPACE="vcluster-platform" RELEASE="vcluster-platform" DEPLOYMENT="loft" BACKUP="backup.yaml" CHART_VERSION="__PLATFORM_VERSION__" />
+
+As a system admin, back up the vCluster Platform management resources and identity before recovery or migration to another control plane cluster.
+Use this guide for installations that store management resources in the control plane cluster's Kubernetes API.
+For an external database, use [database backup and restore](../external-database/restore.mdx) and preserve the identity Secrets separately.
+
+For recovery of administrator access on an existing installation, use [Reset the admin password](../authentication/reset-admin-password.mdx).
+Account recovery doesn't require restoring the management plane.
+Before changing versions, review [platform upgrades](../upgrade-migrate/upgrade.mdx) and the [CLI upgrade guidance](/docs/vcluster/next/operate/upgrade/upgrade-version).
+
+## Before you begin
+
+- Use the vCluster 0.38 CLI for the Platform 5.0 procedures on this page.
+- Install kubectl, Helm, and [Mike Farah's yq v4](https://mikefarah.gitbook.io/yq/) for the restore commands.
+- Log the CLI in to the source platform before taking a backup. It reads the project namespace prefix through the platform API.
+- Select the source Kubernetes context and confirm the platform namespace.
+- Use credentials that can list the management resources and read their referenced Secrets, including the platform identity Secrets.
+- For restoration, you need permission to manage the Helm release and apply the backed-up resources and Secrets.
+- Keep the original Helm values, chart version, domain, and environment-specific credentials available outside the platform.
+- Schedule a maintenance window for restoration. Stop changes to the source while taking the final migration backup.
+
+:::warning Protect the backup file
+The file contains credentials, access keys, and private keys. Restrict file permissions and store it in encrypted storage with controlled access.
+Don't commit the file to a source repository or attach it to a support ticket.
 :::
 
-See the [Platform CLI hub](../../reference/platform-cli.mdx) for UI-to-CLI equivalents across common Platform tasks, including backup and destroy commands.
+## Backup contents and limits
 
-The vCluster Platform saves its state as Kubernetes custom resource (CR) objects. You can back up this state using [Velero](https://velero.io) or the vCluster CLI command we created for convenience. This command saves all relevant Kubernetes resources to a single file.
+### CLI backup
 
-You can run the vCluster CLI to back up these components at any time. The backup includes the following resources:
+`vcluster platform backup management` writes these resource types and selected associated Secrets:
 
-<!-- vale off -->
-- `ClusterRoleTemplates`
-- `ClusterAccesses`
-- `SpaceConstraints`
-- `Users`
-- `Teams`
-- `SharedSecrets`
-- `AccessKeys`
-- `Apps`
-- `SpaceTemplates`
-- `VirtualClusterTemplates`
-- `Clusters` and associated Kubernetes Secret objects
-- `Projects`
-- `VirtualClusterInstances`
-- `SpaceInstances`
-- `ProjectSecrets`
-<!-- vale on -->
+- ClusterRoleTemplate and ClusterAccess
+- User, including password and authentication-code Secrets
+- Team, SharedSecret, and AccessKey
+- App, SpaceTemplate, and VirtualClusterTemplate
+- Cluster and its referenced configuration Secret
+- Project
+- VirtualClusterInstance and SpaceInstance in the backed-up Projects
+- Secrets labeled `loft.sh/project-secret: "true"` in those Projects
 
-The platform backup includes the custom resources listed previously and their associated Kubernetes Secret objects. It does not include other resources used by the platform deployment or connected clusters, such as persistent volumes that store cost data. Use a Kubernetes backup solution such as [Velero](https://velero.io) to back up these resources separately.
+The command also includes these Secrets from the platform namespace when they exist:
 
-:::warning Back up persistent volumes separately
-The `vcluster platform backup` command backs up the custom resources and associated Secrets listed previously. You must separately back up the following PersistentVolumeClaims (PVCs):
+| Secret | Purpose |
+| --- | --- |
+| `loft-cert` | Preserves the license instance identity, signing key, and token certificate authority. |
+| `loft-network-control-key` | Preserves the coordinator key used by connected clusters' tunnels. |
+| `loft-license-cache` | Preserves the cached license for temporary license-server outages. It doesn't determine the instance identity. |
 
-- `platform-db` - stores platform state and configuration
-- `storage-volume-global-prometheus-server-0` - stores cost metrics data
+The identity Secrets appear first in the file. Missing identity Secrets are skipped, so inspect the source and backup before relying on them.
+The backup retains each VirtualClusterInstance object's `status.serviceUID` and clears its other status fields.
+This identifier lets a connected cluster register against its existing instance after a control-plane restart.
 
-Use [Velero](https://velero.io) or your preferred Kubernetes backup solution to include these PVCs in your backup strategy.
-:::
+### UI backup and restore
 
-To create a backup using the default settings, run the following command. It saves the manifests for all of the components listed previously to a file named `backup.yaml` in the current directory:
+The UI uses the server's backup implementation. Its contents differ from the CLI backup:
 
-```bash
-vcluster platform backup management
-```
+- UI backup omits the three platform identity Secrets.
+- UI backup includes Tenant resources and their referenced configuration Secrets. The CLI backup doesn't include these.
+- UI restore ignores the three identity Secrets, including when you upload a CLI-created backup that contains them.
 
-Alternatively, you cab specify the name for the backup file by running the command as:
+Preserve identity Secrets separately when using a UI backup for disaster recovery.
+Uploading them through the UI doesn't replace the identity loaded by the running platform.
+For installations using Tenants, a CLI backup alone is insufficient. Review the recovery plan with support before migration.
 
-```bash
-vcluster platform backup management --filename vcluster-platform-backup.yaml
-```
+### Resources to back up separately
 
-In some cases, the vCluster Platform might have been installed in a different namespace instead of the default `vcluster-platform`. If so, you can specify the correct namespace as shown in the following command:
+Neither path is a full infrastructure or workload backup. Back up these items separately:
 
-```bash
-vcluster platform backup management --namespace my-namespace
-```
+- Ingress TLS certificates, including `loft-tls` or another configured TLS Secret.
+- Helm values, platform configuration, and deployment resources outside the listed backup contents.
+- External databases and persistent volumes, including metrics storage.
+- Connected clusters' workloads and persistent volumes.
+- Management types outside the lists above, including Machines, node providers, node types, and snapshot records.
 
-You can also exclude specific components from the backup by passing their names as a comma-separated list. The following example excludes `users` and `teams` from the backup:
+Use your database's backup tools and a Kubernetes backup solution such as [Velero](https://velero.io/) for the applicable resources.
+Don't use this file as a substitute for a tested disaster-recovery plan.
+
+## Create a CLI backup
+
+Set a restrictive file-creation mask before running the command:
+
+<InterpolatedCodeBlock
+  language="bash"
+  code={'umask 077\n' +
+    'vcluster platform backup management --namespace [[GLOBAL:NAMESPACE]] --filename [[GLOBAL:BACKUP]]\n' +
+    'chmod 600 [[GLOBAL:BACKUP]]'}
+/>
+
+With no flags, the command detects the installation namespace and writes `backup.yaml` in the current directory.
+Review every warning. The command can write a backup file after resource reads fail, so a written file alone doesn't confirm completeness.
+Inspect the file securely for the expected resources, identity Secrets, and `status.serviceUID` values.
+Don't print Secret data into shared logs.
+
+### Exclude resources
+
+Pass skip keys as a comma-separated list:
 
 ```bash
 vcluster platform backup management --skip users,teams
 ```
 
-### Restore vCluster Platform from backup
+The supported keys are:
 
-The backup file contains the resource manifests for the vCluster Platform management plane. You can apply it like any standard Kubernetes manifest.
-
-To restore, apply the backup to your cluster using the following command:
-
-:::note
-The backup contains vCluster Platform custom resources and associated Secrets, not the Custom Resource Definitions (CRDs) that define them. Install vCluster Platform on the target cluster before restoring. Its Helm chart installs the required CRDs automatically. Restoring onto a cluster without vCluster Platform already installed fails, because the CRDs for those resources don't exist yet.
-:::
-
-```bash
-kubectl apply -f <backup-filename>.yaml
+```text
+platformsecrets, clusterroletemplates, clusteraccesses, users, teams,
+sharedsecrets, accesskeys, apps, spacetemplates, virtualclustertemplates,
+clusters, projects, virtualclusterinstances, spaceinstances, projectsecrets
 ```
 
-You might see warning messages similar to the following:
+`--skip platformsecrets` excludes the three identity Secrets.
+Skipping `projects` also prevents collection of instances and project Secrets, because those depend on the collected Project list.
 
-```
-Warning: resource apps/argocd is missing the kubectl.kubernetes.io/last-applied-configuration annotation which is required by kubectl apply. kubectl apply should only be used on resources created declaratively by either kubectl create --save-config or kubectl apply. The missing annotation is patched automatically.
-```
+For a migration whose only Cluster object is `loft-cluster`, use `--skip clusters` and let the destination create its local registration with ordinary defaults enabled.
+The source registration carries a `loft.sh/cluster-uid` annotation that doesn't match a fresh Kubernetes cluster.
+Restoring it unchanged can leave the registration failing with `ClusterUID` and prevent Argo CD cluster registration.
+Don't skip all Cluster objects if you need remote cluster registrations. Review those registrations individually before migration.
 
-These are just warnings and should not affect the restoration task.
+<!-- vale Vale.Terms = NO -->
+{/* The legacy heading ID contains the literal lowercase product route. */}
+## Restore the platform from backup {#restore-vcluster-platform-from-backup}
+<!-- vale Vale.Terms = YES -->
 
-:::warning Multiple Kubernetes clusters with the same vCluster Platform config
-Do not install vCluster Platform (or its agents) into a cluster where it is already running. Running multiple vCluster Platform instances in the same cluster can cause reconciliation conflicts and lead to unexpected issues.
-:::
+For GitOps-managed installations, make replica and configuration changes through the owning GitOps manifests.
+The Helm commands below assume Helm manages the release directly.
 
+Choose the sequence for your target. Keep the source platform stopped during a migration cutover, and verify the target Kubernetes context before applying anything.
+Don't run two active installations with the same identity against the same connected clusters.
+
+### Restore onto a fresh cluster
+
+This procedure uses the same platform namespace and compatible chart version as the source.
+It applies to management resources stored in Kubernetes, without Tenants or other required resources omitted from the CLI backup.
+Use a rehearsed recovery plan for other configurations.
+
+1. Prepare the destination namespace and restore environment-specific TLS and other prerequisites separately.
+   Keep the intended domain and DNS cutover plan consistent with the connected clusters' platform endpoint.
+
+2. Install the chart with zero replicas, using the complete source values file:
+
+   <InterpolatedCodeBlock
+     language="bash"
+     code={'helm upgrade --install [[GLOBAL:RELEASE]] vcluster-platform --repo https://charts.loft.sh --namespace [[GLOBAL:NAMESPACE]] --create-namespace --version [[GLOBAL:CHART_VERSION]] --values values.yaml --set replicaCount=0'}
+   />
+
+   Zero replicas prevent the platform from generating a new identity before restoration.
+
+3. Extract only the three identity Secrets, then apply them before starting the platform:
+
+   <InterpolatedCodeBlock
+     language="bash"
+     code={"umask 077\n" +
+       "yq eval 'select(.kind == \"Secret\" and (.metadata.name == \"loft-cert\" or .metadata.name == \"loft-network-control-key\" or .metadata.name == \"loft-license-cache\"))' [[GLOBAL:BACKUP]] > platform-identity.yaml\n" +
+       "kubectl apply -f platform-identity.yaml"}
+   />
+
+   Confirm the expected Secrets exist in the destination namespace. Don't apply the full backup yet.
+   The backup contains custom resource instances, not the Custom Resource Definitions (CRDs) that define them.
+   The platform process creates those CRDs at startup.
+
+4. Start the platform with the intended replica count from the complete values file:
+
+   <InterpolatedCodeBlock
+     language="bash"
+     code={'helm upgrade [[GLOBAL:RELEASE]] vcluster-platform --repo https://charts.loft.sh --namespace [[GLOBAL:NAMESPACE]] --version [[GLOBAL:CHART_VERSION]] --values values.yaml\n' +
+       'kubectl --namespace [[GLOBAL:NAMESPACE]] rollout status deployment/[[GLOBAL:DEPLOYMENT]]'}
+   />
+
+   Ensure `values.yaml` sets your intended nonzero `replicaCount`.
+
+5. Review the backup's namespaces and local-cluster registration, then apply the management resources:
+
+   <InterpolatedCodeBlock
+     language="bash"
+     code={'kubectl apply -f [[GLOBAL:BACKUP]]'}
+   />
+
+   Project namespaces can take time to appear after their Projects are restored.
+   If namespaced resources fail for that reason, wait for Project reconciliation and apply the file again.
+   Resolve every apply error before continuing. Move DNS to the destination when it's ready, then complete the verification steps below.
+
+### Restore onto an existing installation
+
+Review which existing resources the backup overwrites before applying it. Use a backup from the same installation for same-cluster recovery.
+If you apply identity Secrets after the platform has started, restart the platform Deployment so it loads them:
+
+<InterpolatedCodeBlock
+  language="bash"
+  code={'kubectl apply -f [[GLOBAL:BACKUP]]\n' +
+    'kubectl --namespace [[GLOBAL:NAMESPACE]] rollout restart deployment/[[GLOBAL:DEPLOYMENT]]\n' +
+    'kubectl --namespace [[GLOBAL:NAMESPACE]] rollout status deployment/[[GLOBAL:DEPLOYMENT]]'}
+/>
+
+Applying a file through the UI skips identity Secrets. Restore those separately through Kubernetes, then restart if their values changed.
+
+## Verify the restore
+
+Before declaring recovery complete:
+
+1. Confirm the Deployment is ready, the platform endpoint is reachable, and administrator login works.
+2. Compare the license instance ID with the source and check license validity. See [Restore license](./preserve-license.mdx).
+3. Confirm the expected Projects, users, instances, and remote registrations exist.
+4. Confirm connected clusters reconnect after DNS cutover without restarting their control planes to repair tunnel identity.
+5. During a planned test, restart a connected cluster's control plane. Confirm it adopts the existing instance without creating a suffixed duplicate.
+6. Check the local control plane cluster registration for `ClusterUID` failures. Verify Argo CD cluster Secrets when you use that integration.
+7. Test workload access and separately restored storage using your workload recovery plan.
+
+Record the platform and CLI versions, backup contents, and test results with your recovery plan.
+Retire the source only after verification, and remove temporary backup copies according to your retention policy.
+
+## Troubleshoot a restore
+
+| Symptom | Check |
+| --- | --- |
+| Backup warnings or missing resources | Check read permissions, source namespace, and skip keys. Take another backup after resolving the cause. |
+| Apply reports an unknown resource kind | Confirm platform startup created the required CRDs. Check whether the installation uses an external database. |
+| License identity changes | Restore the original `loft-cert` and restart the platform. See [license recovery](./preserve-license.mdx#license-invalid). |
+| Connected clusters don't reconnect | Confirm DNS, ingress TLS, and the restored `loft-network-control-key`. Restart the platform after replacing identity Secrets. |
+| A duplicate instance appears after restart | Check that the original backup retained `status.serviceUID`. Contact support before deleting either instance. |
+| Local registration reports `ClusterUID` | Check whether a source `loft-cluster` registration was restored onto a different Kubernetes cluster. |
+
+If identity, database, or registration recovery remains uncertain, contact support before replacing more resources.
+Share versions and redacted errors, never the raw backup file.
