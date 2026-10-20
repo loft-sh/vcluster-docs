@@ -519,8 +519,8 @@ Every destination receives telemetry after the gateway stamps it with the verifi
 metrics in the main backend. The gateway forwards everything it receives for a signal to
 every destination for that signal. It doesn't filter by tenant or cluster.
 
-Changing `destinations` restarts the gateway pod, and collectors retry their writes while it
-starts. See [When the gateway restarts](#when-the-gateway-restarts).
+Changing `destinations` restarts the gateway pod, which loses any telemetry still queued for
+delivery. See [When the gateway restarts](#when-the-gateway-restarts).
 
 `destinations` is a YAML list stored as a string. The Platform UI connector form has no field
 for it. Set it as `spec.observability.destinations` on the Connector resource, which
@@ -591,10 +591,13 @@ block the metrics backend or the other destinations. The gateway retries a faile
 up to 30 seconds. After that, or when the queue is full, it drops the data for that
 destination.
 
+The queues are held in memory only, with no persistent storage. A gateway restart loses
+whatever is still queued. See [When the gateway restarts](#when-the-gateway-restarts).
+
 With the default 512 MiB memory limit, each destination queue holds about 51 MiB for one or
 two destinations, and less as you add more. All destination queues together use at most a
-fifth of the gateway's memory limit. Raise the
-limit with `gatewayResources` if a destination is often unavailable for long periods. See
+fifth of the gateway's memory limit. Raise the limit with `gatewayResources` if a
+destination is often unavailable for long periods. See
 [Observability pods are OOMKilled or evicted](./troubleshooting.mdx#observability-pods-are-oomkilled-or-evicted).
 
 ### When the gateway restarts
@@ -607,9 +610,14 @@ the gateway pod when any of the following changes:
 - The contents of the gateway serving certificate Secret, the metrics backend certificate
   Secret, or any destination's `certSecretName` Secret.
 
-Rotating one of these certificate Secrets therefore restarts the gateway, and collectors
-retry their writes while the new pod starts. Changing only labels or annotations on these
-Secrets doesn't restart it.
+Rotating one of these certificate Secrets therefore restarts the gateway. Changing only
+labels or annotations on these Secrets doesn't restart it.
+
+Collectors retry writes the gateway hasn't accepted yet, so those survive the restart. Data
+the gateway already accepted but hasn't delivered is lost, because its queues are held in
+memory only. A restart while a destination is unavailable loses that destination's queued
+telemetry, and the collectors can't resend it. Rotate certificates and change the connector
+while every destination is reachable.
 
 If the connector configuration is invalid, for example a malformed `destinations` list,
 Platform leaves the running gateway unchanged and logs
