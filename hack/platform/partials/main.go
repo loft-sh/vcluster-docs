@@ -1276,7 +1276,7 @@ spec:
 		Title:       "Connector",
 		Name:        "Connector",
 		Resource:    "connectors",
-		Description: "A connector configures a platform integration. Platform admins manage connectors; tenants can read a redacted view of connectors assigned to them.",
+		Description: "A connector configures a platform integration, such as a shared database, Argo CD, or observability. Connectors are cluster-scoped. Callers who can update a connector see its full spec. All other callers, including connector viewers and tenants, see a redacted view without credentials or connection details. Tenants see only the connectors assigned to them and cannot change them. Watch isn't supported.",
 		File:        path.Join(util.BaseResourcesPath, "connector.mdx"),
 		Object: &managementv1.Connector{
 			TypeMeta:   metav1.TypeMeta{Kind: "Connector", APIVersion: managementv1.SchemeGroupVersion.String()},
@@ -1295,13 +1295,15 @@ spec:
 		Create: true, Retrieve: true, Update: true, Delete: true,
 	})
 
-	// Machine is inventory maintained by the provider, not a user-authored resource.
+	// Machine is inventory maintained by the provider. Create and delete are refused, and
+	// spec and status are frozen, but labels and annotations can be edited (tenant assignment).
 	util.GenerateObjectOverview(&util.ObjectInformation{
-		Title:       "Machine",
-		Name:        "Machine",
-		Resource:    "machines",
-		Description: "A machine is a read-only mirror of a physical machine in a bare metal provider's inventory. The platform inventory sync manages these objects.",
-		File:        path.Join(util.BaseResourcesPath, "machine.mdx"),
+		Title:                     "Machine",
+		Name:                      "Machine",
+		Resource:                  "machines",
+		Description:               "A machine mirrors one physical machine in a bare metal provider's inventory, such as Metal3, NICo, or NetBox through Metal3. The platform inventory sync creates, updates, and deletes machines.",
+		ExtraContentBeforeExample: "Through this API you can read machines and edit their labels and annotations, for example to assign a machine to a tenant. Creating and deleting machines is refused, and spec, status, and platform-owned labels can't be changed.\n",
+		File:                      path.Join(util.BaseResourcesPath, "machine.mdx"),
 		Object: &managementv1.Machine{
 			TypeMeta:   metav1.TypeMeta{Kind: "Machine", APIVersion: managementv1.SchemeGroupVersion.String()},
 			ObjectMeta: metav1.ObjectMeta{Name: "metal3.worker-01"},
@@ -1314,7 +1316,7 @@ spec:
 				PowerState: storagev1.MachinePowerStateOff,
 			}},
 		},
-		Retrieve: true,
+		Retrieve: true, Update: true,
 	})
 
 	// NetworkEnvironment
@@ -1322,7 +1324,7 @@ spec:
 		Title:       "Network Environment",
 		Name:        "NetworkEnvironment",
 		Resource:    "networkenvironments",
-		Description: "A network environment defines network settings for nodes provisioned through a NodeProvider. Its provider reference is required at creation and cannot be changed.",
+		Description: "A network environment defines network settings for nodes provisioned through a NodeProvider. Platform admins create network environments and assign each one to a tenant or the platform. Tenants can't create them. The provider reference is required at creation and can't be changed.",
 		File:        path.Join(util.BaseResourcesPath, "networkenvironment.mdx"),
 		Object: &managementv1.NetworkEnvironment{
 			TypeMeta:   metav1.TypeMeta{Kind: "NetworkEnvironment", APIVersion: managementv1.SchemeGroupVersion.String()},
@@ -1340,7 +1342,7 @@ spec:
 		Title:       "Tenant",
 		Name:        "Tenant",
 		Resource:    "tenants",
-		Description: "A Tenant defines which platform resources a tenant may use. Platform admins manage tenant capabilities; the config subresource stores tenant configuration.",
+		Description: "A Tenant defines which platform resources a tenant may use, such as control plane clusters, node types, templates, and connectors. Access to tenants is governed by RBAC on the tenants resource. The config subresource stores the tenant's configuration.",
 		File:        path.Join(util.BaseResourcesPath, "tenant.mdx"),
 		Object: &managementv1.Tenant{
 			TypeMeta:   metav1.TypeMeta{Kind: "Tenant", APIVersion: managementv1.SchemeGroupVersion.String()},
@@ -1363,7 +1365,7 @@ spec:
 		Resource:              "tenants",
 		SubResource:           "config",
 		SubResourceParentName: "Tenant",
-		Description:           "Read or replace a tenant's configuration. A write replaces the entire configuration. Hostname assignments require platform admin permissions.",
+		Description:           "Read or replace a tenant's configuration. A write replaces the entire configuration. Changing the hostname list also requires update permission on the tenant. Requires the Multi-Tenancy license.",
 		File:                  path.Join(util.BaseResourcesPath, "tenant/config.mdx"),
 		Object: &managementv1.TenantConfig{
 			TypeMeta:   metav1.TypeMeta{Kind: "TenantConfig", APIVersion: managementv1.SchemeGroupVersion.String()},
@@ -1399,25 +1401,6 @@ spec:
 			}},
 		},
 		Create: true, Retrieve: true, Update: true, Delete: true,
-	})
-
-	// NetworkPeer
-	util.GenerateObjectOverview(&util.ObjectInformation{
-		Title:       "Network Peer",
-		Name:        "NetworkPeer",
-		Resource:    "networkpeers",
-		Description: "A NetworkPeer records a node's addresses, routes, and reachable endpoints.",
-		File:        path.Join(util.BaseResourcesPath, "networkpeer.mdx"),
-		Object: &managementv1.NetworkPeer{
-			TypeMeta:   metav1.TypeMeta{Kind: "NetworkPeer", APIVersion: managementv1.SchemeGroupVersion.String()},
-			ObjectMeta: metav1.ObjectMeta{Name: "node-a"},
-			Spec: managementv1.NetworkPeerSpec{NetworkPeerSpec: storagev1.NetworkPeerSpec{
-				Addresses:  []string{"198.51.100.10"},
-				AllowedIPs: []string{"10.0.0.0/24"},
-				Endpoints:  []string{"198.51.100.10:41641"},
-			}},
-		},
-		Retrieve: true,
 	})
 
 	// OIDCClient

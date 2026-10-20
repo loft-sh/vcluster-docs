@@ -12,8 +12,9 @@ go run ./hack/platform/check-resource-coverage
 Each user-facing resource needs a `GenerateObjectOverview` call with an example.
 The coverage tool compares these calls with the vendored management API registry.
 Its exclusion manifest records reviewed action endpoints and information
-projections that are not user-authored resources. A read-only resource such as
-Machine must not advertise create, update, or delete operations.
+projections that are not user-authored resources. Advertise only the operations the API
+serves. Machine, for example, refuses create and delete but accepts label and
+annotation updates, so it advertises retrieve and update with a note.
 
 ## Release routing before the 5.0 cutover
 

@@ -30,10 +30,18 @@ func TestGenerateV5ResourceReferences(t *testing.T) {
 		})
 	}
 
-	for _, operation := range []string{"create", "update", "delete"} {
+	// The machine API refuses create and delete, but accepts label and annotation
+	// updates (tenant assignment), so it documents retrieve and update only.
+	for _, operation := range []string{"create", "delete"} {
 		if _, err := os.Stat(filepath.Join(partials, "machines", operation+".mdx")); !os.IsNotExist(err) {
-			t.Errorf("read-only machine inventory has a %s operation: %v", operation, err)
+			t.Errorf("machine inventory has a %s operation: %v", operation, err)
 		}
+	}
+	if _, err := os.Stat(filepath.Join(partials, "machines", "update.mdx")); err != nil {
+		t.Errorf("machine inventory is missing its update operation: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(partials, "networkpeers")); !os.IsNotExist(err) {
+		t.Errorf("internal networkpeers resource is documented: %v", err)
 	}
 
 	for file, want := range map[string]string{
