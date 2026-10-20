@@ -7,9 +7,14 @@ setup() {
     SCRIPT="${BATS_TEST_DIRNAME}/resolve-inputs.sh"
     export GITHUB_OUTPUT="${BATS_TEST_TMPDIR}/gh_output"
     : >"$GITHUB_OUTPUT"
-    unset GITHUB_EVENT_NAME DISPATCH_EVENT DISPATCH_VERSION MANUAL_EVENT MANUAL_VERSION
-    # base_sha comes from git rev-parse HEAD, so run inside the repo.
-    cd "$BATS_TEST_DIRNAME"
+    unset GITHUB_EVENT_NAME DISPATCH_EVENT DISPATCH_VERSION MANUAL_EVENT MANUAL_VERSION PLATFORM_V5_DOCS_BRANCH
+    # Model the remote refs fetched by the receiver without depending on the
+    # runner's checkout depth or on which branch invoked the workflow.
+    git init -q "${BATS_TEST_TMPDIR}/repo"
+    cd "${BATS_TEST_TMPDIR}/repo"
+    git -c user.name=test -c user.email=test@example.com commit -qm baseline --allow-empty
+    git update-ref refs/remotes/origin/main HEAD
+    git update-ref refs/remotes/origin/next HEAD
 }
 
 @test "repository_dispatch with a v-prefixed rc resolves event, version and base_sha" {
@@ -78,4 +83,60 @@ setup() {
     [ "$status" -eq 1 ]
     value=$(grep '^version=' "$GITHUB_OUTPUT" | cut -d= -f2-)
     [ "${#value}" -eq 64 ]
+}
+
+@test "platform v5 release and RC target next before cutover" {
+    for version in v5.0.0-rc.1 v5.0.0 v5.1.0; do
+        : >"$GITHUB_OUTPUT"
+        PLATFORM_V5_DOCS_BRANCH=next DISPATCH_EVENT=platform-released DISPATCH_VERSION="$version" run "$SCRIPT"
+        [ "$status" -eq 0 ]
+        grep -qx 'target_branch=next' "$GITHUB_OUTPUT"
+    done
+}
+
+@test "manual platform v5 sync selects the same target branch" {
+    GITHUB_EVENT_NAME=workflow_dispatch PLATFORM_V5_DOCS_BRANCH=next \
+        MANUAL_EVENT=platform-released MANUAL_VERSION=v5.0.0-rc.1 run "$SCRIPT"
+    [ "$status" -eq 0 ]
+    grep -qx 'target_branch=next' "$GITHUB_OUTPUT"
+}
+
+@test "other release lines and events keep targeting main" {
+    for pair in platform-released:v4.12.4 platform-released:v6.0.0 vcluster-released:v5.0.0 vcluster-cli-released:v0.38.0; do
+        : >"$GITHUB_OUTPUT"
+        PLATFORM_V5_DOCS_BRANCH=next DISPATCH_EVENT="${pair%%:*}" DISPATCH_VERSION="${pair#*:}" run "$SCRIPT"
+        [ "$status" -eq 0 ]
+        grep -qx 'target_branch=main' "$GITHUB_OUTPUT"
+    done
+}
+
+@test "platform v5 targets main after the cutover flag is removed" {
+    DISPATCH_EVENT=platform-released DISPATCH_VERSION=v5.0.0 run "$SCRIPT"
+    [ "$status" -eq 0 ]
+    grep -qx 'target_branch=main' "$GITHUB_OUTPUT"
+}
+
+@test "invalid target branch fails before checkout or PR creation" {
+    PLATFORM_V5_DOCS_BRANCH=unreviewed DISPATCH_EVENT=platform-released DISPATCH_VERSION=v5.0.0 run "$SCRIPT"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *'PLATFORM_V5_DOCS_BRANCH must be main or next'* ]]
+    ! grep -q '^target_branch=' "$GITHUB_OUTPUT"
+}
+
+@test "manual dispatch from another ref uses the selected main baseline for drift" {
+    expected=$(git rev-parse refs/remotes/origin/main)
+    git -c user.name=test -c user.email=test@example.com commit -qm other-ref --allow-empty
+    GITHUB_EVENT_NAME=workflow_dispatch MANUAL_EVENT=vcluster-released MANUAL_VERSION=v0.38.0 run "$SCRIPT"
+    [ "$status" -eq 0 ]
+    grep -qx "base_sha=$expected" "$GITHUB_OUTPUT"
+}
+
+@test "platform v5 baseline comes from next rather than the initial checkout" {
+    git -c user.name=test -c user.email=test@example.com commit -qm next-docs --allow-empty
+    git update-ref refs/remotes/origin/next HEAD
+    expected=$(git rev-parse refs/remotes/origin/next)
+    git checkout -q --detach refs/remotes/origin/main
+    PLATFORM_V5_DOCS_BRANCH=next DISPATCH_EVENT=platform-released DISPATCH_VERSION=v5.0.0 run "$SCRIPT"
+    [ "$status" -eq 0 ]
+    grep -qx "base_sha=$expected" "$GITHUB_OUTPUT"
 }

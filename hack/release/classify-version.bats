@@ -540,6 +540,15 @@ cut_over_to_next_major() {
     [ "$(get channel)" = "rc" ]
 }
 
+@test "platform: first RC of next major after the cutover → current docs folder, channel=rc" {
+    cut_over_to_next_major
+    VERSION=v5.0.0-rc.1 EVENT_TYPE=platform-released run "$SCRIPT"
+    [ "$status" -eq 0 ]
+    [ "$(get skip)" = "false" ]
+    [ "$(get target_folder)" = "platform" ]
+    [ "$(get channel)" = "rc" ]
+}
+
 @test "platform: stable release of next major after the cutover → current docs folder" {
     cut_over_to_next_major
     VERSION=v5.0.0 EVENT_TYPE=platform-released run "$SCRIPT"
@@ -547,6 +556,15 @@ cut_over_to_next_major() {
     [ "$(get skip)" = "false" ]
     [ "$(get target_folder)" = "platform" ]
     [ "$(get channel)" = "stable" ]
+}
+
+@test "platform: v6 after the v5 generator cutover → skip (major-cutover)" {
+    cut_over_to_next_major
+    VERSION=v6.0.0 EVENT_TYPE=platform-released run "$SCRIPT"
+    [ "$status" -eq 0 ]
+    [ "$(get skip)" = "true" ]
+    [ "$(get target_folder)" = "" ]
+    [ "$(get channel)" = "major-cutover" ]
 }
 
 @test "platform: patch on the last frozen line after the cutover → skip (stale-line)" {
