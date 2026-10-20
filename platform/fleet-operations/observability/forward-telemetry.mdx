@@ -1,0 +1,120 @@
+---
+title: Forward telemetry to additional destinations
+sidebar_label: Forward to destinations
+sidebar_position: 8
+description: Send copies of fleet metrics, or cluster pod logs, from the observability gateway to additional OTLP endpoints.
+---
+
+The Write Gateway always sends metrics to the connector's metrics backend. Add
+`destinations` to the connector to send a copy of the metrics, or the cluster pod logs, to
+other OTLP endpoints, such as a security analytics system or a logs backend.
+
+Every destination receives telemetry after the gateway stamps it with the verified
+`vcluster_platform_*` attributes, so each copy carries the same trusted identity as the
+metrics in the main backend. The gateway forwards everything it receives for a signal to
+every destination for that signal. It doesn't filter by tenant or cluster.
+
+Changing `destinations` restarts the gateway pod, which loses any telemetry still queued for
+delivery. See [When the gateway restarts](#when-the-gateway-restarts).
+
+`destinations` is a YAML list stored as a string. The Platform UI connector form has no field
+for it. Set it as `spec.observability.destinations` on the Connector resource, which
+validates the list when you save it. You can also set the `destinations` key in the
+connector Secret directly, as in this example:
+
+```yaml title="fleet-observability-connector.yaml"
+apiVersion: v1
+kind: Secret
+metadata:
+  name: fleet-observability
+  namespace: vcluster-platform
+  labels:
+    loft.sh/connector-type: observability
+    platform.vcluster.com/fleet-observability-connector: "true"
+type: Opaque
+stringData:
+  metricsBackendOtlpEndpoint: https://metrics.example.com/otlp
+  metricsBackendPromQLEndpoint: https://metrics.example.com
+  destinations: |
+    - name: logs
+      signal: logs
+      endpoint: https://logs.example.com/otlp
+      certSecretName: logs-client-tls
+    - name: siem-metrics
+      signal: metrics
+      endpoint: https://siem.example.com/otlp
+```
+
+Each entry takes these fields:
+
+| Field | Required | Description |
+|---|---:|---|
+| `name` | Yes | Unique name for the destination. A lowercase DNS label of at most 40 characters. |
+| `signal` | Yes | `metrics` or `logs`. |
+| `endpoint` | Yes | Base `http` or `https` URL of an OTLP HTTP receiver. The gateway appends `/v1/metrics` or `/v1/logs`, like `metricsBackendOtlpEndpoint`. |
+| `certSecretName` | No | `kubernetes.io/tls` Secret in the Platform namespace for mutual TLS. The gateway presents `tls.crt` and `tls.key` and verifies the destination with `ca.crt`. |
+| `insecureSkipVerify` | No | Set to `true` only for test endpoints with unverifiable TLS. The gateway then doesn't read `ca.crt` from `certSecretName`. |
+
+A connector accepts at most 16 destinations, and Platform rejects unknown fields. Only OTLP
+over HTTP is supported. To forward to a system that accepts another protocol, put an
+OpenTelemetry Collector in front of it.
+
+When a destination sets `certSecretName` with verification turned on, the Secret must
+contain `ca.crt` as well as `tls.crt` and `tls.key`. Without `certSecretName`, the gateway
+verifies the destination against the system CA trust store. There's no field that sets
+only a CA. To trust a private CA, supply a client certificate and key in `certSecretName`
+along with `ca.crt`.
+
+How each signal flows:
+
+- **Metrics destinations** receive the same metrics as the metrics backend, in addition to
+  it.
+- **Logs destinations** are the only place logs go. The gateway builds its logs pipeline
+  only when the connector has at least one `signal: logs` destination. Without one, the
+  gateway rejects incoming logs. The collectors record export errors and discard the
+  records.
+
+To confirm a destination receives data, check the gateway logs for export errors on
+`otlp_http/dest-<name>`. See
+[A destination receives no data](./troubleshooting.mdx#a-destination-receives-no-data). To collect pod logs, see
+  [Collect pod logs](./collect-pod-logs.mdx).
+
+## Unavailable destinations
+
+Each destination has its own send queue, so a slow or unreachable destination doesn't
+block the metrics backend or the other destinations. The gateway retries a failed send for
+up to 30 seconds. After that, or when the queue is full, it drops the data for that
+destination.
+
+The queues are held in memory only, with no persistent storage. A gateway restart loses
+whatever is still queued. See [When the gateway restarts](#when-the-gateway-restarts).
+
+With the default 512 MiB memory limit, each destination queue holds about 51 MiB for one or
+two destinations, and less as you add more. All destination queues together use at most a
+fifth of the gateway's memory limit. Raise the limit with `gatewayResources` if a
+destination is often unavailable for long periods. See
+[Observability pods are OOMKilled or evicted](./troubleshooting.mdx#observability-pods-are-oomkilled-or-evicted).
+
+## When the gateway restarts
+
+The gateway reads its configuration and certificates only at startup. Platform restarts
+the gateway pod when any of the following changes:
+
+- The rendered gateway configuration, including the `destinations` list.
+- `metricsBackendOtlpEndpoint`.
+- The contents of the gateway serving certificate Secret, the metrics backend certificate
+  Secret, or any destination's `certSecretName` Secret.
+
+Rotating one of these certificate Secrets therefore restarts the gateway. Changing only
+labels or annotations on these Secrets doesn't restart it.
+
+Collectors retry writes the gateway hasn't accepted yet, so those survive the restart. Data
+the gateway already accepted but hasn't delivered is lost, because its queues are held in
+memory only. A restart while a destination is unavailable loses that destination's queued
+telemetry, and the collectors can't resend it. Rotate certificates and change the connector
+while every destination is reachable.
+
+If the connector configuration is invalid, for example a malformed `destinations` list,
+Platform leaves the running gateway unchanged and logs
+`connector config invalid, skipping until the secret is updated`. Correct the Secret to
+apply new settings.
