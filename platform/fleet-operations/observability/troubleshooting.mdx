@@ -108,9 +108,64 @@ Common causes:
 | Symptom | Likely cause |
 |---|---|
 | Missing bearer token | Collector didn't set the `Authorization` header. |
-| Scope denied | Key scope doesn't include the requested cluster or cluster. |
+| Scope denied | Key scope doesn't include the requested cluster or control plane cluster. |
 | Ambiguous scope | Request included both cluster and tenant scope, or multiple values for one scope header. |
 | Headerless write rejected | The key has zero or multiple concrete tenant scopes, so scope can't be derived. |
+
+## Gateway ignores connector changes
+
+The gateway keeps running with its last valid configuration when the connector Secret is
+invalid. Check the Platform logs:
+
+```bash
+kubectl logs -n vcluster-platform -l app=loft -c manager --tail=-1 | grep 'connector config invalid'
+```
+
+A `connector config invalid, skipping until the secret is updated` message names the
+problem. A malformed `destinations` list is a common cause, for example an unknown field,
+a duplicate name, a `signal` other than `metrics` or `logs`, or more than 16 entries. See
+[Forward telemetry to additional destinations](./install-observability-gateway.mdx#forward-telemetry-to-additional-destinations)
+for the field rules, then correct the Secret.
+
+## A destination receives no data
+
+Check the gateway logs for export errors that name the destination's exporter,
+`otlp_http/dest-<name>`:
+
+```bash
+kubectl logs -n vcluster-platform deploy/gateway-fleet-observability -c otel-gateway \
+  | grep 'dest-'
+```
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| Gateway pod stuck in `ContainerCreating` after you add a destination | The `certSecretName` Secret doesn't exist in the Platform namespace, or lacks `ca.crt` while TLS verification is on. | Create the Secret with `tls.crt`, `tls.key`, and `ca.crt`. |
+| TLS or certificate errors for `dest-<name>` | The destination's certificate isn't trusted by the `ca.crt` in `certSecretName`, or by the system trust store when `certSecretName` is unset. | Add the issuing CA to the `certSecretName` Secret. |
+| `404` or similar responses for `dest-<name>` | `endpoint` includes the signal path, so the gateway sends to a doubled path such as `/v1/logs/v1/logs`. | Set the base URL only. The gateway appends `/v1/metrics` or `/v1/logs`. |
+| Dropped data after an outage | The destination was unreachable for longer than the 30-second retry window, or its queue filled. | See [Unavailable destinations](./install-observability-gateway.mdx#unavailable-destinations). |
+
+The gateway doesn't resend dropped data, so a destination misses the telemetry from the
+time it was unavailable.
+
+## Pod logs don't arrive
+
+Work through the path in order:
+
+1. Check that the connector has at least one destination with `signal: logs`. Without one,
+   the gateway has no logs pipeline and rejects incoming logs. The `otel-daemon` logs then
+   show export errors.
+1. Check that the cluster's `cluster-collector` application sets `collectLogs: "true"`, and
+   that the `otel-daemon` pods restarted after the change.
+1. Check that an `otel-daemon` pod runs on each node whose pod logs you expect. The
+   DaemonSet tolerates every taint, so a missing pod usually points to a scheduling or
+   resource problem on that node.
+1. Check that the logs destination accepts the writes. See
+   [A destination receives no data](#a-destination-receives-no-data).
+
+If logs arrive labeled with the wrong cluster, the collector runs on nodes shared with other
+tenants. Turn off `collectLogs` there, and remove the misattributed records from the logs
+backend, since they contain other tenants' data. See
+[Collect pod logs](./configure-edge-collectors.mdx#collect-pod-logs).
 
 ## Queries are rejected
 
