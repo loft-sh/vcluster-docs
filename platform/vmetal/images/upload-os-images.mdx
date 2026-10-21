@@ -1,8 +1,8 @@
 ---
-title: Upload OS Images
-sidebar_label: Upload OS Images
+title: Upload OS images
+sidebar_label: Upload OS images
 sidebar_position: 2.6
-description: Upload an OS image file to an image store with the vCluster CLI or the platform API, and track it until node providers can use it.
+description: Upload an OS image file to an image store with the platform UI, the vCluster CLI, or the platform API, and track it until node providers can use it.
 ---
 
 An [OS image](./os-images.mdx) that names an [OS image store](./os-image-store.mdx) holds its own file. You upload the file once, and node providers download it from the platform when they provision a machine.
@@ -14,11 +14,12 @@ The file never passes through the platform. The platform splits the upload into 
 - An [OS image store connector](./os-image-store.mdx) whose `StoreAccessible` condition is `True`.
 - A license that includes machine management. Creating an image that names an image store, uploading, and finalizing require it.
 - Permission to update the `OSImage`. Uploading counts as an update, so `spec.owner` and `spec.access` decide who may upload.
-- A file in `qcow2` format. Images can be up to 1.25 TiB.
+- For users who aren't admins, a role that allows `create` on the `osimages/upload` and `osimages/finalize` subresources. Tenant users also need the OS images capability on their tenant and a grant for the image store connector.
+- A file in `qcow2` format. Images can be up to 1,250 GiB.
 
 ## Create the OS image
 
-The upload targets an `OSImage` that already exists. Create it in the platform UI or with `kubectl`:
+The upload targets an `OSImage` that already exists. Create it with `kubectl`:
 
 ```yaml title="ubuntu-noble.yaml"
 apiVersion: management.loft.sh/v1
@@ -40,12 +41,25 @@ kubectl create -f ubuntu-noble.yaml
 | Field | Description |
 |---|---|
 | `spec.connectorRef` | Name of the OS image store connector. The platform rejects a name that isn't an OS image store connector. You can't change it after you set it. |
-| `spec.format` | Format of the file. Set it to `qcow2`. |
+| `spec.format` | Format of the file. Must be `qcow2` before you upload. You can't change it after you set it. |
 | `spec.properties` | Optional provider properties, such as `kubevirt.vcluster.com/root-disk-size`. |
 
 The uploaded file is the image source, so the platform rejects an image that also sets a provider's own source, such as `metal3.vcluster.com/image-url`, `metal3.vcluster.com/image-checksum`, `kubevirt.vcluster.com/image-url`, or `kubevirt.vcluster.com/image-datasource`. Provider properties that don't name a source still apply.
 
+The Metal3, KubeVirt, and NICO node providers use the uploaded file. Set the properties the provider needs besides the source. For KubeVirt, add `kubevirt.vcluster.com/root-disk-size`, and `machines.vcluster.com/os-image-type: kubevirt` to show the image in KubeVirt image selection. See [Provider-specific properties](./os-images.mdx#provider-specific-properties).
+
 A new image starts in the `Pending` phase. If no upload starts within 24 hours, the image moves to `Failed`. You can still upload to it afterwards.
+
+## Upload in the platform UI
+
+The platform UI creates the image and uploads the file in one step. Browser uploads need a [CORS rule on the bucket](./os-image-store.mdx#allow-browser-uploads).
+
+1. In the sidebar, select **Operating System**, then click **Create OS Image**.
+2. In the **OS Image** section, set **Image source** to **File Upload**.
+3. Drop the `qcow2` file into the upload field, or select it.
+4. Click **Upload**. Keep the page open until the upload finishes.
+
+If the upload fails, click **Retry upload**.
 
 ## Upload with the CLI
 
@@ -167,6 +181,7 @@ To refresh targets that are about to expire, call `upload` again with `fromPart`
 When every part has landed, send the sha256 checksum of the whole file as 64 lowercase hex characters:
 
 ```bash
+# On Linux, use sha256sum instead of shasum -a 256.
 CHECKSUM=$(shasum -a 256 "$FILE" | cut -d ' ' -f 1)
 
 curl -s -X POST "$API/finalize" \
@@ -208,7 +223,7 @@ The status carries these fields:
 | `status.store.location` | Object key of the file in the bucket. |
 | `status.store.sizeBytes` | Size of the file as the store reports it. |
 | `status.store.checksum` | sha256 checksum sent with `finalize`. |
-| `status.conditions` | The `Uploaded` condition, with the reason for a `Failed` phase. |
+| `status.conditions` | The `Uploaded` condition, with the reason for a `Failed` phase. While the store fails an upload call, also the `StoreAccessible` condition with the store's error. |
 
 The `Uploaded` condition reports one of these reasons when the upload fails:
 
@@ -217,6 +232,7 @@ The `Uploaded` condition reports one of these reasons when the upload fails:
 | `Expired` | The deadline passed before the upload was finalized. |
 | `SizeMismatch` | The assembled file doesn't have the size sent as `sizeBytes`. |
 | `ObjectMissing` | The upload was finalized but the store doesn't hold the file. |
+| `InvalidSession` | The platform can't read the recorded size of the upload session. Start the upload again. |
 
 ## Retry and replace an image
 
@@ -238,8 +254,8 @@ To upload a file of a different size while a session is open, delete the image a
 | `409` with `no open upload session to finalize` | No upload was started, or the session failed. Start again with `upload`. |
 | `422` on `spec.connectorRef` | The image names no image store, or the connector can't be used. Check the connector name and its `StoreAccessible` condition. |
 | `422` on `spec.format` | The image format isn't `qcow2`. |
-| `422` on `spec.sizeBytes` or `spec.fromPart` | The size is 0 or larger than 1.25 TiB, or `fromPart` is outside 1 to `totalParts`. |
+| `422` on `spec.sizeBytes` or `spec.fromPart` | The size is 0 or larger than 1,250 GiB, or `fromPart` is outside 1 to `totalParts`. |
 | `400` naming the image store connector | The store refused the request. The message names the setting to fix. See [Check the connection](./os-image-store.mdx#check-the-connection). |
 | `403 Forbidden` | You can't update the image, or the license doesn't include machine management. |
-| `403` from the store on a `PUT` | The target expired, a header was added, or the host differs from the signed URL. Request the target again with `fromPart`. |
+| `403` from the store on a `PUT` | The target expired, the request added an `x-amz-*` header, or the host differs from the signed URL. Request the target again with `fromPart`. |
 | CORS error in the browser | The bucket has no CORS rule for the platform address. See [Allow browser uploads](./os-image-store.mdx#allow-browser-uploads). |

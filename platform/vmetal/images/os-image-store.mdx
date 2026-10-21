@@ -1,6 +1,6 @@
 ---
-title: OS Image Store
-sidebar_label: OS Image Store
+title: OS image store
+sidebar_label: OS image store
 sidebar_position: 2.5
 description: Connect an S3-compatible bucket that holds uploaded OS images, and check that the platform can reach it.
 ---
@@ -11,47 +11,14 @@ Upload bytes never pass through the platform. The platform signs short-lived URL
 
 The image store works with AWS S3 and with S3-compatible stores such as MinIO or SeaweedFS.
 
-## Create the connector
-
-```yaml title="os-image-store.yaml"
-apiVersion: management.loft.sh/v1
-kind: Connector
-metadata:
-  name: os-images
-spec:
-  displayName: OS images
-  imageStore:
-    protocol: s3
-    s3:
-      # Leave the endpoint empty for AWS S3. Set it for a self-hosted store.
-      endpoint: ""
-      bucket: my-os-images
-      region: eu-central-1
-      # Most self-hosted stores need path-style addressing.
-      forcePathStyle: false
-      accessKey: AKIAEXAMPLE
-      secretKey: <secret-key>
-```
-
-| Field | Description |
-|---|---|
-| `s3.endpoint` | Address of the object store, starting with `http://` or `https://`. Leave it empty for AWS S3. |
-| `s3.bucket` | Bucket that holds the images. |
-| `s3.region` | Region of the bucket. Required for every store, because the request signature covers it. |
-| `s3.forcePathStyle` | Address the bucket as a path (`https://endpoint/bucket`) instead of a host name. |
-| `s3.accessKey`, `s3.secretKey` | Credentials of the key the platform signs with. |
-| `s3.sessionToken` | Session token of temporary credentials. AWS keys that start with `ASIA` need it. |
-
-Use long-lived credentials where possible. A signed upload URL stays valid for 24 hours, but only while the credentials that signed it are valid. Temporary credentials end every upload that outlasts them.
-
 ## Grant the permissions
 
-The key needs these permissions on the objects in the bucket:
+The access key that the connector uses needs these permissions on the objects in the bucket:
 
 | Permission | Used for |
 |---|---|
 | `s3:PutObject` | Starting an upload, uploading its parts, and completing it. |
-| `s3:ListMultipartUploadParts` | Checking that every part arrived before completing an upload. |
+| `s3:ListMultipartUploadParts` | Checking that the upload session is still open on every `upload` call after the first, and that every part arrived before completing an upload. |
 | `s3:AbortMultipartUpload` | Dropping an upload that was not finished. |
 | `s3:GetObject` | Reading an image's size and downloading it during provisioning. |
 | `s3:DeleteObject` | Removing an image's file when the OS image is deleted. |
@@ -109,9 +76,50 @@ aws s3api put-bucket-cors --bucket my-os-images --cors-configuration file://os-i
 
 If the UI reaches the platform under more than one address, list each one in `AllowedOrigins`.
 
+## Create the connector
+
+```yaml title="os-image-store.yaml"
+apiVersion: management.loft.sh/v1
+kind: Connector
+metadata:
+  name: os-images
+spec:
+  displayName: OS images
+  imageStore:
+    protocol: s3
+    s3:
+      # Leave the endpoint empty for AWS S3. Set it for a self-hosted store.
+      endpoint: ""
+      bucket: my-os-images
+      region: eu-central-1
+      # Most self-hosted stores need path-style addressing.
+      forcePathStyle: false
+      accessKey: AKIAEXAMPLE
+      secretKey: <secret-key>
+```
+
+:::warning
+The manifest holds the secret key in plain text. Don't commit it to version control.
+:::
+
+```bash
+kubectl apply -f os-image-store.yaml
+```
+
+| Field | Description |
+|---|---|
+| `s3.endpoint` | Address of the object store, starting with `http://` or `https://`. Leave it empty for AWS S3. |
+| `s3.bucket` | Bucket that holds the images. |
+| `s3.region` | Region of the bucket. Required for every store, because the request signature covers it. |
+| `s3.forcePathStyle` | Address the bucket as a path (`https://endpoint/bucket`) instead of a host name. |
+| `s3.accessKey`, `s3.secretKey` | Credentials of the key the platform signs with. |
+| `s3.sessionToken` | Session token of temporary credentials. AWS keys that start with `ASIA` need it. |
+
+Use long-lived credentials where possible. A signed upload URL stays valid for 24 hours, but only while the credentials that signed it are valid. Temporary credentials end every upload that outlasts them.
+
 ## Check the connection
 
-Each time you save the connector, the platform tests the store: it starts an upload in the bucket under `.platform-probe/` and drops it right away. The result is the `StoreAccessible` condition on the connector. Saving never fails because of the test, so you can create the connector before the bucket is ready.
+Each time you save the connector, the platform tests the store. It starts an upload in the bucket under `.platform-probe/` and drops it right away. The result is the `StoreAccessible` condition on the connector. Saving never fails because of the test, so you can create the connector before the bucket is ready.
 
 ```bash
 kubectl get connectors.management.loft.sh os-images -o jsonpath='{.status.conditions[?(@.type=="StoreAccessible")]}'
@@ -133,6 +141,6 @@ When the condition is `False`, its message names the setting to fix:
 | `Refused` | The store refused the request for another reason, which the message names. |
 | `Unreachable` | The store didn't answer. Check the endpoint and that the store is running. |
 
-After you fix the store, save the connector again to repeat the test. The condition shows the result of the last save. Credentials that expire later surface when an upload fails, with the same message.
+After you fix the store, save the connector again to repeat the test. The condition shows the result of the last store call, from a save, an upload, or a finalize. Credentials that expire later surface when an upload fails, with the same message.
 
 The test doesn't check the CORS rule. A missing rule shows when a browser upload fails.
