@@ -1,0 +1,289 @@
+---
+title: Brand a tenant
+sidebar_label: Brand a tenant
+sidebar_position: 3
+description: Give a tenant's users their own logo and colors in the vCluster Platform UI, and control which of the platform's UI settings reach them.
+---
+
+import Flow, { Step } from "@site/src/components/Flow";
+import NavStep from "@site/src/components/NavStep";
+import Button from "@site/src/components/Button";
+import Label from "@site/src/components/Label";
+import InterpolatedCodeBlock from "@site/src/components/InterpolatedCodeBlock";
+import PageVariables from "@site/src/components/PageVariables";
+
+Each tenant can carry its own branding. Its users see the tenant's logo and
+colors in the Platform UI instead of the platform's. A platform admin sets the
+branding for each tenant.
+
+Tenant branding builds on the platform's own
+[custom branding](../../administer/configure/platform-configs/custom-branding.mdx).
+The platform's settings are the starting point, and the tenant's settings
+replace them field by field.
+
+## How Platform chooses the branding
+
+Platform chooses the branding from the signed-in user, not from the hostname.
+
+- **Tenant users** see their tenant's branding once they sign in. A logo or
+  color the tenant hasn't set falls back to the platform's. The platform's
+  custom CSS, JavaScript, sidebar links, and legal text never reach them. See
+  [Which platform settings carry over](#which-platform-settings-carry-over).
+- **Everyone else** sees the platform's branding. That covers platform admins,
+  users outside any tenant, and platforms without tenants.
+- **The sign-in page** shows the platform's branding to everyone, including on
+  a tenant's hostname. No user is known yet, so there's no tenant to choose.
+- **Impersonation** follows the impersonated user. A platform admin
+  impersonating a tenant user sees that tenant's branding.
+
+Changes take a few seconds to reach tenant users. Reload the page to see them.
+
+## Set branding in the UI
+
+The UI sets the logo, the colors, and custom sidebar links.
+
+<Flow id="tenant-branding-ui">
+  <Step>
+    Go to <NavStep>Platform > Tenants</NavStep> and click <Button>Edit</Button>
+    for the tenant.
+  </Step>
+  <Step>
+    Click <Label>UI Customization</Label>.
+  </Step>
+  <Step>
+    Set any of <Label>Logo</Label>, <Label>Primary color</Label>,
+    <Label>Accent color</Label>, <Label>Sidebar background color</Label>, and
+    <Label>Custom sidebar links</Label>. Leave a logo or color field empty to
+    use the platform's value. Empty custom sidebar links show no custom links.
+  </Step>
+  <Step>
+    Click <Button>Save changes</Button>.
+  </Step>
+  <Step>
+    Sign in as one of the tenant's users, or impersonate one, and confirm the
+    new logo and colors appear. A platform admin's own session keeps showing
+    the platform's branding.
+  </Step>
+</Flow>
+
+## Set branding through the API
+
+The favicon, the small logo, custom CSS and JavaScript, legal text, and
+external URL settings have no UI field. Set them through the tenant's `config`
+subresource in the `management.loft.sh/v1` API. Through the platform URL, the
+endpoint is `/kubernetes/management/apis/management.loft.sh/v1/tenants/<tenant>/config`.
+Read it with `GET` and write it with `POST`. The subresource doesn't support
+`PUT` or `PATCH`.
+
+:::warning A write replaces the whole configuration
+The subresource holds the tenant's whole configuration, including its
+hostnames. Any field left out of a write is cleared, so writing only
+`uiSettings` removes the tenant's hostnames. Read the current configuration
+first, change the fields you need, and write the whole object back.
+:::
+
+The following example changes only the tenant's favicon. You need `curl`, `jq`,
+and an [access key](../../administer/authentication/access-keys.mdx) for a user
+outside any tenant with the [required permissions](#required-permissions).
+Your license must include Multi-Tenancy. Set `ACCESS_KEY` to that key in your shell.
+
+<PageVariables TENANT_NAME="acme" />
+
+<Flow id="tenant-branding-api">
+<Step>
+Set the platform URL and tenant name.
+
+<InterpolatedCodeBlock
+  code={'PLATFORM_URL="[[VAR:PLATFORM_URL:https://platform.example.com]]"\n' +
+    'TENANT_NAME="[[GLOBAL:TENANT_NAME]]"\n' +
+    'TENANT_CONFIG_URL="${PLATFORM_URL%/}/kubernetes/management/apis/management.loft.sh/v1/tenants/${TENANT_NAME}/config"'}
+  language="bash"
+/>
+
+</Step>
+<Step>
+Read the whole configuration into a file. These files can contain tenant
+authentication secrets, so keep them private. The `umask 077` command makes
+new files readable only by you, and it stays in effect for the rest of your
+shell session.
+
+```bash
+umask 077
+curl --fail --silent --show-error \
+  -H "Authorization: Bearer $ACCESS_KEY" \
+  "$TENANT_CONFIG_URL" --output tenant-config.json
+```
+
+</Step>
+<Step>
+Change the favicon while preserving hostnames and every other setting.
+
+<InterpolatedCodeBlock
+  code={'jq --arg favicon "[[VAR:FAVICON_URL:https://acme.example.com/static/favicon.ico]]" \\\n' +
+    '  \'.spec.uiSettings.faviconURL = $favicon\' \\\n' +
+    '  tenant-config.json > tenant-config.updated.json'}
+  language="bash"
+/>
+
+</Step>
+<Step>
+Submit the whole modified object with `POST`.
+
+```bash
+curl --fail --silent --show-error --request POST \
+  -H "Authorization: Bearer $ACCESS_KEY" \
+  -H "Content-Type: application/json" \
+  --data-binary @tenant-config.updated.json \
+  "$TENANT_CONFIG_URL" --output tenant-config.saved.json
+```
+
+</Step>
+<Step>
+Read the configuration again and compare it with the requested settings.
+`true` confirms that the favicon changed and the other settings were preserved.
+
+```bash
+curl --fail --silent --show-error \
+  -H "Authorization: Bearer $ACCESS_KEY" \
+  "$TENANT_CONFIG_URL" --output tenant-config.verified.json
+jq --exit-status --slurpfile expected tenant-config.updated.json \
+  '.spec == $expected[0].spec' tenant-config.verified.json
+```
+
+</Step>
+</Flow>
+
+Sign in as a tenant user and reload after a few seconds to confirm the new
+favicon appears. Keep the local files only as long as you need them.
+
+The `uiSettings` fields are the same ones the platform config uses. See
+[Custom branding](../../administer/configure/platform-configs/custom-branding.mdx)
+for examples of colors, legal text, sidebar links, and custom CSS and JavaScript.
+
+### Required permissions
+
+These are Platform permissions in the `management.loft.sh` API group, not RBAC
+on the control plane cluster. The built-in **Management Admin** global role
+already includes them.
+
+| Task | Resource | Verbs |
+|------|----------|-------|
+| Read a tenant's configuration | `tenants/config` | `get` |
+| Write a tenant's configuration | `tenants/config` | `create` |
+| Change the tenant's hostnames in that write | `tenants` | `update` |
+
+Writing the hostnames back unchanged needs no `update` permission, so a
+branding-only role can still write the whole object.
+
+To let someone manage one tenant's branding without the platform config, create
+a global role that names the tenant in `resourceNames`. See
+[Project roles](../users-permissions/permissions/project.mdx#project-roles) for
+creating a role in the UI.
+
+<InterpolatedCodeBlock
+  code={'apiVersion: management.loft.sh/v1\n' +
+    'kind: ClusterRoleTemplate\n' +
+    'metadata:\n' +
+    '  name: [[GLOBAL:TENANT_NAME]]-branding\n' +
+    'spec:\n' +
+    '  displayName: Tenant branding\n' +
+    '  management: true\n' +
+    '  clusterRoleTemplate:\n' +
+    '    rules:\n' +
+    '      - apiGroups:\n' +
+    '          - management.loft.sh\n' +
+    '        resources:\n' +
+    '          - tenants/config\n' +
+    '        resourceNames:\n' +
+    '          - [[GLOBAL:TENANT_NAME]]\n' +
+    '        verbs:\n' +
+    '          - get\n' +
+    '          - create'}
+  language="yaml"
+  title="Global role for one tenant's branding"
+/>
+
+Two limits apply regardless of role:
+
+- Users inside a tenant can't read or write the subresource, tenant admins
+  included. For them it doesn't exist.
+- Reads and writes need the Multi-Tenancy feature in your license.
+
+## Which platform settings carry over
+
+Each `uiSettings` field resolves independently for a tenant user.
+
+| Field | What a tenant user sees |
+|-------|-------------------------|
+| `logoURL`, `smallLogoURL`, `faviconURL`, `logoBackgroundColor` | The tenant's value when set, otherwise the platform's. |
+| `primaryColor`, `sidebarColor`, `accentColor` | The tenant's value when set, otherwise the platform's. |
+| `customCss`, `customJavaScript` | The tenant's own list only. The platform's files never load for tenant users. |
+| `navBarButtons` | The tenant's own links only. The platform's links never appear. |
+| `legalTemplate` | The tenant's own text only. |
+| `externalURLs.block` | The returned setting is `true` when either the platform or the tenant sets it. |
+| `externalURLs.allow` | The returned setting contains the tenant's own list only. |
+| `loftVersion` | The running platform's version. Tenant input has no effect. |
+
+Logos and colors are public by design, so they fall back to the platform's. A
+tenant that sets nothing still looks like the platform it runs on. Custom CSS,
+JavaScript, sidebar links, and legal text are the platform operator's own
+content. Scripts would run in tenant users' browsers, and links and file URLs
+can reveal the operator's internal systems, so none of it carries over.
+
+:::info Platform customizations don't reach tenant users
+If your platform config loads custom JavaScript or CSS, or adds sidebar links,
+tenant users no longer get them. That includes analytics, support widgets, and
+links to internal documentation. Add anything a tenant's users need to that
+tenant's own configuration.
+:::
+
+The sign-in page shows legal text, and it always uses the platform's branding.
+A tenant's `legalTemplate` therefore doesn't replace the platform's terms on
+the sign-in page.
+
+### Security policy header
+
+The Content-Security-Policy header always comes from the platform config. A
+tenant's `externalURLs` settings are returned in the UI settings but aren't
+enforced. They don't change the header. If the platform blocks external URLs,
+a tenant's `allow` list can't reopen them.
+
+## License behavior
+
+Reading and writing a tenant's configuration needs the Multi-Tenancy feature.
+Serving the branding doesn't. Losing the Multi-Tenancy entitlement doesn't
+switch tenant users back to the platform's branding. The branding entitlements
+below still apply.
+
+The branding features are checked when the UI loads its settings, against what
+the user would see.
+
+- Without **Custom Branding**, the logo, small logo, favicon, and logo
+  background color are removed.
+- Without **Advanced UI Customizations**, custom CSS, custom JavaScript, and
+  custom sidebar links are removed.
+
+The same checks apply to a tenant's own settings. A tenant's logo needs Custom
+Branding even when the platform config sets no logo of its own.
+
+## When branding can't be loaded
+
+Sometimes Platform knows a user belongs to a tenant but can't load that
+tenant's branding. The tenant may be missing or being deleted, or its
+configuration can't be read. That user then sees the platform's logo and
+colors, without the platform's custom CSS, JavaScript, sidebar links, or legal
+text. The fallback never shows operator content to a tenant user.
+
+## Where the configuration is stored
+
+Platform stores each tenant's configuration in a tenant-specific Secret in the
+platform namespace, such as `acme--loft-manager-config` for tenant `acme`. The Secret is
+encrypted when `SECRETS_ENCRYPTION_KEY` is set, and it's deleted along with the
+tenant. Platform backups include it.
+
+## Next steps
+
+- [Create and configure a tenant](./create-and-configure-tenants.mdx)
+- [Custom branding](../../administer/configure/platform-configs/custom-branding.mdx)
+  for the platform's own settings
+- [Tenant boundary reference](./tenant-boundary-reference.mdx)
