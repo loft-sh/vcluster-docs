@@ -218,11 +218,59 @@ on its own for a reader who doesn't know that product yet:
 - Document only the vCluster or platform side in detail, plus the settings
   that connect the two.
 
+## Document the Contract, Not the Implementation
+
+Document what a reader can observe and rely on. Leave out how the code gets
+there.
+
+**The contract** includes API fields, defaults, allowed values, permissions,
+conditions and events, timeouts after which the state changes, limits, failure
+behavior, cleanup and deletion semantics, and upgrade and recovery behavior.
+Retry intervals aren't part of it. Write "retries automatically" instead.
+
+**The implementation** includes controller and scheduling order, retry and
+backoff mechanics, locks and bookkeeping annotations, internal storage such as
+Secret names and encryption, admission code paths, and lists of which fields
+each response strips.
+
+Keep a passage when it helps a reader do at least one of these:
+
+- Choose a design.
+- Configure it.
+- Verify that it works.
+- Diagnose a failure they're likely to hit.
+- Upgrade, remove, or recover it safely.
+
+Being true to the source isn't enough on its own. Detail you read in the code
+while checking a claim belongs in the review, not on the page.
+
+Describe outcomes rather than code paths. For example:
+
+- **Implementation:** "The controller requeues the claim with exponential
+  backoff and takes a lock annotation before it selects a machine."
+- **Contract:** "If no machine matches, the claim stays `Pending` and retries
+  automatically. Check the claim's conditions for the reason."
+
+Some internals are part of the contract for one reader. Where the product
+stores configuration matters to someone restoring from a backup, so it
+belongs on the backup and restore page, not on the task that changes the
+setting. Put the detail on the page where it changes what the reader does.
+
+**Never cut a limitation to make a page shorter or to avoid revealing
+internals.** State its impact and what the reader can do about it. If a
+limitation hasn't been approved for publication, ask Engineering how to
+describe it. Don't drop it while the page still promises the guarantee it
+weakens.
+
+Don't link to private repositories or cite source file paths in published
+docs.
+
 ## Page Templates
 
 Start a new page from the template for its type in
-[templates/](templates/README.md): feature pages, task pages, and
-troubleshooting pages. The templates apply this guide to those page types.
+[templates/](templates/README.md): feature, task, troubleshooting, and
+reference pages. The README there also maps each kind of information to the
+page type where it belongs. The templates apply this guide to those page types.
 Where a template and this guide disagree, this guide wins.
 
 ## Controlling Vale Rules

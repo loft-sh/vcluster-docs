@@ -144,7 +144,8 @@ arrives relative to where it's needed.
   sitting inside one subsection.
 - **Hedging that hides determinism.** "May preserve the existing password" when the
   code branch always preserves it. Vague wording on deterministic behavior sends
-  readers hunting for a nondeterminism that isn't there.
+  readers hunting for a nondeterminism that isn't there. The fix is to state the
+  outcome plainly, not to describe the branch that produces it.
 - **Branches that aren't signposted.** When scenario A takes one pass and scenario B
   takes two, say so before the reader picks a path.
 
@@ -218,6 +219,61 @@ roles above and habits 1 and 2, which are the part that actually matters.
 - **Ordering versus the sidebar.** If the intro routes most readers to the last
   section on the page, either reorder or make sure the intro links jump directly.
 
+### Depth and placement
+
+The checks above catch pages that say too little. This one catches pages that
+say too much, or say it on the wrong page. Source-grounded writing produces both,
+because detail read in the code while verifying a claim tends to end up in the
+prose.
+
+Test each substantial passage against the reader you named. Keep it if it helps
+them choose a design, configure it, verify it works, diagnose a likely failure,
+or upgrade, remove, or recover it safely. "Document the Contract, Not the
+Implementation" in the writer skill's `references/style-guide.md` has the full
+rule and examples. Each passage you question gets one of three outcomes:
+
+- **Keep** it where it is, because it passes the test for this page's reader.
+- **Move** it, because it passes the test for a reader of a different page.
+  Leave a one-sentence summary and link behind. Name the target type (concept,
+  task, reference, or troubleshooting) and the target path. If that page
+  doesn't exist yet, name the path to create and leave the content in place
+  until it does. The page types, where reference pages go, and the signs of
+  misplaced content are in the writer skill's `references/templates/README.md`.
+- **Cut** it, because no reader needs it on any page.
+
+Prefer move over cut. Most detail that looks excessive on a task page is right
+for a reference or concept page, and cutting it leaves a gap a later reader
+hits.
+
+Detail that usually fails the test: scheduling or arbitration order, retry and
+backoff mechanics, locks and bookkeeping annotations, where the product stores
+data, admission or validation code paths, and lists of the fields each response
+strips. Replace a narrative of code paths with a short behavior table that has
+one row per situation and the outcome the reader sees. A table that grows long
+enough to be looked up rather than read becomes a move to a reference page.
+
+Detail that usually passes: API fields, defaults, permissions, public condition
+reasons, operational cost, cleanup and deletion semantics, and anything a
+recovery procedure depends on.
+
+Timing sits on both sides. A timeout after which the state changes is
+contract, because the reader plans around it. The interval between retries
+isn't. Write "retries automatically" instead.
+
+**Limitations are never cut.** If a limitation is described through its
+mechanism, rewrite it as impact plus mitigation. Don't remove it while the page
+still promises the guarantee it weakens. A review that trims a real limitation
+has made the page less accurate, not more concise. This holds even when the
+limitation also raises a disclosure question, or a question about whether it's
+a bug. Ask Engineering for wording and a mitigation, not for permission to
+drop it.
+
+**Possible disclosure.** Some passages describe internals that a competitor
+could learn from and that have no reader consequence. Flag them. Whether a
+mechanism is proprietary is Product's and Engineering's call, not the
+reviewer's, so report it as a question for them rather than a verdict. A link to
+a private repository or a path into product source is always a finding.
+
 ## Close out
 
 1. Re-run `vale` and an MDX compile check. Passes 2 and 3 cause rewrites that
@@ -259,6 +315,10 @@ placed after the procedure it invalidates. Accuracy verdicts come from
 `docs-fact-check`. Report them in their own section rather than folding them into
 a pass, so the author can see at a glance which findings are about what the page
 says versus how it says it.
+
+Report depth and placement findings as keep, move (with the target page type
+and path), or cut. Put possible disclosure findings in their own section headed "Questions
+for Engineering", so the author can send them on as a group.
 
 Open with one line naming the reader you reviewed against and the runner-up you
 rejected. Every Pass 3 finding depends on it, and it's the cheapest thing in the
