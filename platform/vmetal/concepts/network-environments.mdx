@@ -17,43 +17,43 @@ See the [NICo driver guide](../drivers/bare-metal/nico.mdx#create-a-network) for
 
 ## Decide who a network belongs to
 
-Every environment records who it is for.
-An operator creates the environment and states the assignment as a label:
+Every environment records who it's for.
+A platform administrator creates the environment and states the assignment with a label:
 
 | Label | Value | Meaning |
 | --- | --- | --- |
-| `tenant.vcluster.com/exclusive-to` | a Tenant name | An operator lends this environment to that Tenant. |
-| `tenant.vcluster.com/exclusive-to` | empty string | The environment is reserved for the platform. |
-| `tenant.vcluster.com/owner` | a Tenant name | A Tenant created this environment for itself. |
+| `tenant.vcluster.com/exclusive-to` | a Tenant name | The operator lends this environment to that Tenant. |
+| (no label) | | The environment belongs to the platform and serves platform workloads. |
 
-The platform assignment is an empty value rather than a name, because the platform has no Tenant name of its own.
-The label must still be present.
-Its presence, not its value, is what records an assignment, so an environment with no label at all is unassigned rather than platform owned.
+The label must name a Tenant. The API refuses an empty value, so leave the label off to keep an environment for the platform.
 
-Don't set both labels.
-An environment is either lent to a Tenant by an operator or owned by a Tenant, never both.
-
-The API requires an assignment when you create the environment:
+Tenants can't create environments. The API refuses a create from a Tenant session:
 
 ```text
-network environment must be assigned to a tenant or the platform
+network environments are created by platform admins and assigned to tenants
 ```
 
-When you create an environment as a Tenant administrator, omit the label.
-The API records Tenant ownership for you.
-Tenant-scoped reads hide these labels, so an absent label in that view doesn't mean the environment is unassigned.
+The API also requires a `providerRef` that names an existing NodeProvider:
+
+```text
+network environment must reference a node provider
+```
+
+Tenant-scoped reads hide the assignment label, so a Tenant's view of an environment never shows it.
 
 ## What you can't change later
 
-Once an environment carries an assignment, both the assignment and the whole `spec` are immutable:
+After you create an environment, its assignment, `providerRef`, and driver properties can't change.
+The API refuses the update with errors like these:
 
 ```text
-tenant assignment cannot be changed or removed
-spec cannot be changed after assignment to a tenant
+tenant assignment cannot be changed after creation; delete and recreate the network environment to assign it differently
+providerRef cannot be changed
+properties cannot be changed after creation
 ```
 
-This includes `providerRef` and every driver property.
-To change any of it, create a replacement environment and move its workloads across.
+You can still edit the display name.
+To change anything else, create a replacement environment and move its workloads across.
 Decide the assignment and the network settings before you apply the manifest.
 
 ## How a machine selects a network
@@ -63,18 +63,22 @@ A `NodeClaim` reaches an environment in one of two ways:
 - It names one explicitly, through the network environment property or `spec.environmentRef`.
 - It names none, and the provider's default applies.
   Mark that default by setting the `machines.vcluster.com/is-default-environment` annotation on the environment to `"true"`.
-  Only environments whose `providerRef` matches the claim's provider are candidates, and each provider can have only one default.
+  Only environments whose `providerRef` matches the claim's provider are candidates.
+  If more than one default is visible to a claim, the claim fails, so mark only one per provider.
 
 A project restricts which environments its claims may use.
 A claim that names an environment its project excludes fails with `network environment is not allowed in project`.
 
-Set `providerRef` to the provider of the workloads that use the environment.
-The API doesn't compare the two when a claim names an environment explicitly, so a mismatch surfaces later as a provisioning failure.
+An environment serves only claims of its own provider.
+The API refuses a claim that names an environment of another provider:
+
+```text
+network environment "<name>" belongs to node provider "<a>", not "<b>"
+```
 
 ## Check that an environment is ready
 
 Every environment reports a `Ready` condition, summarizing whether its driver has provisioned and synced the infrastructure.
-An environment without a `providerRef` provisions nothing and becomes ready immediately.
 Wait for `Ready` before you create machines against it:
 
 ```bash
