@@ -33,12 +33,14 @@ Every instance, regardless of driver, passes through the same milestones:
   <MachineModelLifecycle style={{width: '100%', height: 'auto'}} role="img" aria-label="instance lifecycle from requested through scheduled, provisioned, joined, ready, and destroyed, where joined is satisfied without a worker join for independent and control plane instances" />
 </figure>
 
-1. **Requested** - a cluster or an administrator asks for capacity matching a node type, and the platform creates a `NodeClaim` for the instance.
-2. **Scheduled** - vMetal selects an eligible node type and driver. The driver either claims existing inventory or creates new infrastructure.
-3. **Provisioned** - the driver finishes preparing the capacity, which can include creating a VM, installing an OS, configuring networking, and supplying startup configuration. This condition doesn't prove that cloud-init or the services it starts succeeded inside the OS.
-4. **Joined** - for worker capacity on a cluster, the server has joined as a Kubernetes node. For instances requested outside a cluster and instances that run a control plane, no worker join is required, so the platform marks this condition satisfied after provisioning.
+1. **Requested** - a cluster or an administrator asks for capacity by node type, requirements, or a specific machine reference. The platform creates a `NodeClaim` for the instance.
+2. **Scheduled** - vMetal selects an eligible node type and driver. A pinned claim uses its named machine and provider instead.
+3. **Provisioned** - the driver claims or creates capacity, then finishes preparing it. This can include creating a VM, installing an OS, configuring networking, and supplying startup configuration. This condition doesn't prove that cloud-init or the services it starts succeeded inside the OS.
+4. **Joined** - for worker capacity on a cluster, the server has joined as a Kubernetes node. Control plane instances and independent instances without an infrastructure join target satisfy this condition after provisioning.
 5. **Ready** - the platform's required milestones are satisfied. For a worker, that includes joining the cluster. For an independent or control plane instance, `Joined` is satisfied without a worker join, so verify SSH access or cluster API health separately.
 6. **Destroyed** - the cluster or administrator no longer needs the instance, and the platform deletes its `NodeClaim`.
+
+Servers provisioned as KubeVirt infrastructure must register with the KubeVirt cluster to satisfy `Joined`, even without a `vClusterRef`. They fail with `JoinTimeout` if registration doesn't complete within 20 minutes of provisioning.
 
 Teardown is driver-specific. Metal3 cleans the claimed physical server and returns it to the available inventory. KubeVirt deletes the `VirtualMachine`, and Terraform runs its destroy workflow. For the Metal3 driver's `BareMetalHost` states, see [Bare metal server lifecycle](../drivers/bare-metal/metal3/server-lifecycle.mdx#server-lifecycle).
 
@@ -93,7 +95,7 @@ The **tenant node type quota**, `spec.nodeTypes.quota.byType` on the Tenant, cap
 - An instance pinned with `machineRef` never counts.
 - A node type from a provider without a machine inventory, such as Terraform, counts every instance.
 
-One exception applies under `OnDemand`. The platform checks the quota before it picks a machine, so a request that's over quota waits even when a machine assigned to the tenant is free. To use that machine, pin the instance to it with `machineRef`.
+One exception applies under `OnDemand`. The platform checks the quota before it picks a machine, even when a machine assigned to the tenant is free. An over-quota request is refused at creation or waits during scheduling, as described below. To use the assigned machine, pin the instance to it with `machineRef`.
 
 The **project instance quota** caps the number of `NodeClaim` resources in a project, optionally per provider and per user or team. It counts every instance, including instances on machines assigned to the tenant. See [Instance quotas](../../tenants/projects/quotas.mdx#instance-quotas).
 
@@ -104,7 +106,9 @@ The platform enforces the tenant quota in two ways, depending on the request:
 
 The platform schedules a tenant's waiting requests one at a time. Requests that name a node type go through oldest first. Requests that let the platform choose have no guaranteed order.
 
-An instance keeps counting against the quota until its `NodeClaim` is fully deleted, including while it's `Failed`. Delete failed instances to free their slots.
+NICo has a placement race that can exceed the quota. A claim that loses a reserved machine to another claim can retry on unassigned capacity after it has passed the quota check.
+
+An instance of a node type the quota limits reserves a slot before placement. A claim that names its node type counts from creation. A claim that lets the platform choose its node type counts once scheduled. Once placed on a machine assigned to the tenant, it stops counting. An instance that counts keeps its slot until its `NodeClaim` is fully deleted, including while it's `Failed` or being deleted. Delete failed instances to free their slots.
 
 ## Phases and conditions
 
@@ -114,7 +118,7 @@ A `NodeClaim` has one of three phases. The platform derives the phase from the `
 |---|---|
 | `Pending` | A milestone isn't met yet. The platform is still working on it or waiting for something to change. |
 | `Available` | Every milestone is met. |
-| `Failed` | A milestone failed with an error. A provisioning failure isn't retried, and the claim stays `Failed` until you delete it. A scheduling or teardown failure keeps retrying. See [When provisioning fails](#when-provisioning-fails) and [Release and reclaim](#release-and-reclaim). |
+| `Failed` | A milestone failed with an error. A provisioning failure isn't retried, and the claim stays `Failed` until deleted. A scheduling or teardown failure keeps retrying. See [When provisioning fails](#when-provisioning-fails) and [Release and reclaim](#release-and-reclaim). |
 
 The most common reasons are in the following table. The condition message names the specific node type, machine, or tenant involved.
 
@@ -128,25 +132,29 @@ The most common reasons are in the following table. The condition message names 
 | `Provisioned` | `InsufficientCapacity` | `Pending`, then `Failed` | No eligible machine is free. Waits 30 minutes by default. See [When provisioning fails](#when-provisioning-fails). |
 | `Provisioned` | `Provisioning` | `Pending` | The driver is still working. No time limit. |
 | `Provisioned` | `ProvisioningError` | `Pending` | The driver returned an error. Retries with a growing delay, up to three minutes apart. |
-| `Provisioned` | `InvalidConfiguration`, `MachineNotFound`, `NetworkEnvironmentNotAllowed`, `TenantRequired`, or a driver reason such as Metal3's `HostProvisioningFailed` | `Failed` | Not retried. Fix the cause and replace the instance. |
+| `Provisioned` | `InvalidConfiguration`, `MachineNotFound`, `NetworkEnvironmentNotAllowed`, or `TenantRequired` | `Failed` | Not retried. Fix the cause and replace the instance. |
 | `Joined` | `NotJoined` | `Pending` | The server hasn't registered as a node in its cluster yet. |
+| `Joined` | `JoinFailed` | `Pending` | A KubeVirt infrastructure registration attempt returned an error. Retries until registration succeeds or the 20-minute timeout expires. |
+| `Joined` | `JoinTimeout` | `Failed` | A server provisioned for KubeVirt infrastructure hasn't registered within 20 minutes of provisioning. Fix the cause and replace the instance. |
 
 A node type is chosen once. After the `Scheduled` condition is met, the claim keeps that node type for the rest of its life, even while it waits for capacity.
 
 ## When provisioning fails
 
-Most waits have no time limit. A claim waiting for its network environment, for the driver to finish, or for the server to join keeps waiting and reports progress in its conditions.
+Most waits have no platform time limit. A claim waiting for its network environment, for the driver to finish, or for a worker to join keeps waiting. It reports progress in its conditions. Servers provisioned for KubeVirt infrastructure have a separate 20-minute registration timeout.
 
-The wait for a free machine is the exception. When no eligible machine is free, the `Provisioned` condition reports `InsufficientCapacity` and the claim keeps checking. If no machine frees up within 30 minutes of scheduling, the claim moves to `Failed`, and its message starts with `no machine became available within 30m0s`. Time spent waiting for quota doesn't count toward the limit.
+Waiting for a free machine also has a limit. When no eligible machine is free, the `Provisioned` condition reports `InsufficientCapacity` and the claim keeps checking. If no machine frees up within 30 minutes of scheduling, the claim moves to `Failed`, and its message starts with `no machine became available within 30m0s`. Time spent waiting for quota doesn't count toward the limit.
 
-To change the limit, set the `machines.vcluster.com/provisioning-wait-timeout` property to a Go duration such as `2h`. You can set it on the node provider, node type, network environment, or `NodeClaim`. An invalid value falls back to 30 minutes, and the condition message says so.
+To change the limit, set the `machines.vcluster.com/provisioning-wait-timeout` property to a positive Go duration such as `2h`. You can set it on the node provider, node type, network environment, or `NodeClaim`. Later entries in that list override earlier ones. An invalid, zero, or negative value falls back to 30 minutes, and the condition message says so.
 
 A claim that failed during provisioning isn't retried. Fixing the cause, adding capacity, or raising the timeout doesn't restart it. To recover:
 
 1. Read the reason and message on the `NodeClaim`, and fix the cause.
-2. Delete the failed instance in the platform UI, or delete its `NodeClaim`.
-3. Request a replacement through the workflow that created the original. For a cluster using Auto Nodes, vCluster records a `PlatformNodeClaimProvisioningFailed` event on the node claim inside the cluster, and its node pool requests the replacement.
+2. For a directly requested instance, delete the failed instance in the platform UI, or delete its `NodeClaim`.
+3. Request a replacement through the workflow that created the original. Auto Nodes handles replacement automatically, as described below.
 4. Confirm that the replacement `NodeClaim` reaches `Available`.
+
+Auto Nodes records a `PlatformNodeClaimProvisioningFailed` event on its node claim inside the cluster. Karpenter then deletes that claim after its launch timeout, and vCluster cleans up the corresponding platform claim. A static pool restores its configured count. A dynamic pool requests capacity when workloads still need it. These replacements are new claims. They don't restart the failed platform claim.
 
 For Metal3 causes and checks, see [Instance stays pending without a server](../drivers/bare-metal/metal3/troubleshooting.mdx#instance-stays-pending-without-a-server).
 
