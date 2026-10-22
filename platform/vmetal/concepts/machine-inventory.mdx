@@ -44,17 +44,22 @@ A Machine is cluster-scoped. Its resource name is `<providerRef>.<provider-nativ
 
 ## What you can and can't change
 
-You can't create or delete a Machine or change its `spec` or `status`. The inventory sync owns both, and the spec is immutable once written. You can add or change ordinary labels and annotations on it, the same way you would on any Kubernetes object.
+You can't create or delete a Machine or change its `spec` or `status`. The inventory sync owns both, and the spec is immutable once written. You can add or change your own labels and annotations on it, the same way you would on any Kubernetes object.
 
 The following metadata is platform-owned. The API rejects attempts to change it:
 
 - The `machines.vcluster.com/source` label, which records which inventory source produced the Machine.
+- The `machines.vcluster.com/node-claim` annotation, which records the claim holding the Machine.
+- The `machines.vcluster.com/provider-labels` annotation, and the labels the sync copies from the provider, such as a `BareMetalHost`'s labels. Change those on the provider's own resource.
+- The `nico.vcluster.com/instance-type-id` label on Machines synced from NICo.
 - The `machines.vcluster.com/netbox-device` annotation on Machines synced from NetBox.
 - Labels and annotations in the `netbox.vcluster.com/` namespace on Machines synced from NetBox.
 
+While an instance holds a Machine, the API also refuses changes to its `tenant.vcluster.com/owner` and `tenant.vcluster.com/exclusive-to` labels. See [Release and reclaim](./machine-lifecycle.mdx#release-and-reclaim).
+
 ## Provider-dependent fields
 
-`status.phase` is `Pending`, `Available`, `Provisioned`, `Provisioning`, `Maintenance`, `Error`, or `Unknown`. `status.powerState` is `On`, `Off`, or `Unknown`, and `status.hardware` normalizes CPU, memory, storage, GPU, DPU, network, and InfiniBand capabilities across drivers.
+`status.phase` is `Pending`, `Available`, `Provisioning`, `Provisioned`, `Deprovisioning`, `Maintenance`, `Error`, or `Unknown`. `status.powerState` is `On`, `Off`, or `Unknown`, and `status.hardware` normalizes CPU, memory, storage, GPU, DPU, network, and InfiniBand capabilities across drivers.
 
 Not every provider reports every field. Power state is empty when a driver doesn't support it. The platform UI hides an unavailable value instead of showing a false one. Check which fields your provider reports.
 
@@ -72,9 +77,11 @@ A Machine is removed only after a *successful* inventory listing confirms the pr
 
 ## Claim a specific machine
 
-`NodeClaimSpec.MachineRef` pins a claim to one named Machine from the provider's inventory. The platform doesn't select from a node type's eligible pool. `MachineRef` is mutually exclusive with `TypeRef`, and a pinned claim consumes no node-type capacity. Metal3 and NICo currently support it. A provider without machine inventory doesn't.
+`NodeClaimSpec.MachineRef` pins a claim to one named Machine from the provider's inventory. The platform doesn't select from a node type's eligible pool. `MachineRef` is mutually exclusive with `TypeRef`, and a pinned claim consumes no node-type capacity or tenant node type quota. Metal3 and NICo support it, as does the external platform provider, which mirrors another platform's inventory.
+{/* Deferred link (DOC-1854 section 5): link "external platform provider" to
+    the external platform driver page once this branch includes next (#2859). */} A provider without machine inventory doesn't. Pinning requires the Machine Management license feature.
 
-The referenced Machine must exist, be unclaimed, and belong to the same `providerRef` as the claim. The API rejects a missing, claimed, or mismatched Machine during admission.
+The referenced Machine must exist, be unclaimed, and belong to the same `providerRef` as the claim. The API rejects a missing, claimed, or mismatched Machine during admission. For a request made inside a tenant, admission looks up the Machine in the tenant's view of the inventory. A Machine that isn't assigned to the tenant reads as missing, and the request is refused with `machine "<name>" does not exist`. If a pin gets past admission and the Machine is out of reach by the time it's provisioned, the claim fails with the reason `InvalidConfiguration`.
 
 Apply a `NodeClaim` that identifies the provider and the full Machine name:
 
