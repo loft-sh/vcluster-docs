@@ -36,10 +36,12 @@ outgrows one page, split it along these types instead of adding sections.
 
 ### Where reference pages go
 
-Most reference material doesn't need its own page. A table stays at the step
-where the reader sets its values, even when readers come back to it later.
-Give reference material its own page only when no single task step uses it,
-or when several pages need it.
+Most reference material doesn't need its own page. Keep the fields a step
+needs, and the caveats that change what the reader does, at that step, even
+when readers come back to them later. Give reference material its own page
+when no single task step uses it, when several pages need it, or when a step
+uses only a few rows of a much larger table. In that last case, keep those
+rows at the step and link to the full table.
 
 - **A feature whose pages share one folder.** Put the reference page in that
   folder as `<topic>-reference.mdx`, for example
@@ -63,8 +65,8 @@ or when several pages need it.
   procedures applies to them. It stops them from following the wrong one.
 - A task or concept page carries a long field table or behavior matrix that
   no step on the page uses, or that several pages repeat. Move it to a
-  reference page and link to it. A table the reader uses at a step stays at
-  that step, however long it is.
+  reference page and link to it. When a step uses part of a table, keep that
+  part at the step and move the rest.
 - A concept page has instructions the reader carries out, such as commands
   to run or settings to change. Move them to a task or troubleshooting page.
   A numbered list that explains an ordered process, such as the stages of a

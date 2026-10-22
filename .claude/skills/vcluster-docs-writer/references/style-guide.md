@@ -235,10 +235,11 @@ backoff mechanics, locks and bookkeeping annotations, internal storage such as
 Secret names and encryption, admission code paths, and lists of which fields
 each response strips.
 
-Any of these becomes contract when a step tells the reader to read, set,
-clear, or follow it. Examples are the Secret names a restore step extracts, an
+Keep one of these details when it's necessary to perform or verify a
+supported operation. Examples are the Secret names a restore extracts, an
 annotation the reader checks before reusing a machine, a status field a verify
-step checks, and the order in which a restore must bring components back.
+step checks, and the order in which a restore must bring components back. A
+step added only to justify the detail doesn't count.
 
 Keep a passage when it helps a reader do at least one of these:
 

@@ -253,13 +253,14 @@ sidebar, and the reader is no better off.
 Detail that usually fails the test: scheduling or arbitration order, retry and
 backoff mechanics, locks and bookkeeping annotations, where the product stores
 data, admission or validation code paths, and lists of the fields each response
-strips. Any of these becomes contract when a step tells the reader to read,
-set, clear, or follow it, such as Secret names a restore step extracts, an
-annotation the reader checks, or the order a restore must follow. Replace a
-narrative of code paths with a short behavior table that has one row per
-situation and the outcome the reader sees. A table stays at the step that uses
-it. Move a table only when no step on the page uses it, or when several pages
-repeat it.
+strips. Keep one of these details when it's necessary to perform or verify a
+supported operation, such as Secret names a restore extracts, an annotation the
+reader checks before reusing a machine, or the order a restore must follow. A
+step that exists only to justify the detail doesn't count. Replace a narrative
+of code paths with a short behavior table that has one row per situation and
+the outcome the reader sees. Keep the fields a step needs, and the caveats
+that change what the reader does, at that step. The exhaustive remainder of a
+large table can live on a reference page linked from the step.
 
 Detail that usually passes: API fields, defaults, permissions, public condition
 reasons, operational cost, cleanup and deletion semantics, and anything a
@@ -294,6 +295,9 @@ could learn from and that have no reader consequence. Flag them. Whether a
 mechanism is proprietary is Product's and Engineering's call, not the
 reviewer's, so report it as a question for them rather than a verdict. A link to
 a private repository or a path into product source is always a finding.
+
+When you change this check, re-run the regression cases in
+`evals/depth-placement.md`.
 
 ## Close out
 
