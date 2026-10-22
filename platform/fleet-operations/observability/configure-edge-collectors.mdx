@@ -1,7 +1,7 @@
 ---
 title: Configure edge collectors
 sidebar_label: Configure collectors
-sidebar_position: 5
+sidebar_position: 6
 description: Configure OpenTelemetry Collectors to send fleet metrics to the vCluster observability Write Gateway.
 ---
 
@@ -28,8 +28,8 @@ OpenTelemetry Collector by hand.
 
 :::note vCluster Standalone clusters
 The out-of-the-box collector path relies on the Argo CD integration, which vCluster
-Standalone clusters can't use. There is no bundled collector for them. Configure a
-collector manually instead, as described below.
+Standalone clusters can't use. There is no bundled collector for them.
+[Configure collectors manually](./configure-collectors-manually.mdx) instead.
 :::
 
 The collectors read the gateway endpoint, their `metrics-writer` token, and the gateway CA
@@ -47,7 +47,7 @@ a restart. A changed endpoint or CA takes effect only after you restart the coll
 How the Secret gets there depends on the destination:
 
 - **Cluster:** turn on the observability integration in the cluster's
-  `vcluster.yaml`. Platform issues the `metrics-writer` key, and the cluster writes
+  `vcluster.yaml`. The integration requires vCluster 0.38 or later. Platform issues the `metrics-writer` key, and the cluster writes
   the Secret into its `observability` namespace and keeps it up to date:
 
   ```yaml title="vcluster.yaml"
@@ -158,6 +158,7 @@ spec:
 | `gatewaySecretName` | `metrics-writer` | Name of the Secret the collectors read the endpoint, token, and CA from. |
 | `otlpCaData` | _(empty)_ | PEM CA data used to verify the gateway serving certificate in place of the Secret's `ca.crt`. |
 | `collectionInterval` | `30s` | Scrape interval for the jobs the collectors scrape themselves. |
+| `collectLogs` | `false` | Collects pod logs from every node the `otel-daemon` collector runs on and sends them to the gateway. Use it only on clusters with private nodes. See [Collect pod logs](./collect-pod-logs.mdx). |
 | `otelDaemonResources` | _(empty)_ | Resource requests and limits for the `otel-daemon` collector container, as a multiline YAML block. See the example below. When empty, the chart default applies, which sets no requests or limits. |
 | `otelDeployResources` | _(empty)_ | Resource requests and limits for the `otel-deploy` collector container, in the same format as `otelDaemonResources`. When empty, the chart default applies, which sets no requests or limits. |
 | `bearerToken` | _(empty)_ | Deprecated. Leave empty so the collectors read the `metrics-writer` Secret. See [Upgrade collectors that use the token parameters](#upgrade-collectors-that-use-the-token-parameters). |
@@ -186,8 +187,8 @@ The collectors stamp the request scope from the destination, so target a cluster
 for tenant-scoped writes or a control plane cluster for cluster-scoped writes. Set
 `destination.cluster` instead of `destination.virtualCluster` to target a control plane
 cluster. Don't set `vcluster_platform_*` labels in collector configuration; the Write
-Gateway owns that namespace. See [Protect platform labels](#protect-platform-labels) for
-the label rules, and [Gateway endpoints](#gateway-endpoints) below for the scope headers
+Gateway owns that namespace. See [Protect platform labels](./configure-collectors-manually.mdx#protect-platform-labels) for
+the label rules, and [Gateway endpoints](./configure-collectors-manually.mdx#gateway-endpoints) for the scope headers
 the template sets on your behalf.
 
 On a cluster with the GPU stack deployed, this template also scrapes GPU metrics without
@@ -217,7 +218,7 @@ For a gateway certificate issued by a public CA, create an empty `ca.crt` file i
 On the control plane cluster, create the Secret. Use the in-cluster Service endpoint for
 the cluster where Platform runs, or the gateway LoadBalancer address
 (`https://<loadbalancer-address>:4318`) for any other cluster. See
-[Gateway endpoints](#gateway-endpoints).
+[Gateway endpoints](./configure-collectors-manually.mdx#gateway-endpoints).
 
 ```bash
 kubectl create namespace observability
@@ -246,10 +247,16 @@ release. Until then, the template still reads them from existing applications:
   cluster-collector: the deprecated bearerToken and otlpEndpoint must be set together, or both cleared to read the Metrics-Writer Secret
   ```
 
+  The collectors keep running only while that application exists. If you delete and
+  re-create it, for example by reinstalling or rebuilding the cluster, Argo CD removes the
+  collectors and metrics stop until you migrate.
+
 To move an application to the delivered `metrics-writer` Secret:
 
-1. Turn on the observability integration in the cluster's `vcluster.yaml`, as described in
-   [Deploy collectors with Argo CD](#deploy-collectors-with-argo-cd). The collectors must
+1. Upgrade the cluster to vCluster 0.38 or later, then turn on the observability
+   integration in its `vcluster.yaml`, as described in
+   [Deploy collectors with Argo CD](#deploy-collectors-with-argo-cd). Earlier vCluster
+   versions don't have `integrations.observability`. The collectors must
    reach the endpoint Platform hands out, which needs either a DNS mapping or a gateway
    LoadBalancer depending on where the cluster runs. See
    [step 3 of the quickstart](./quickstart.mdx#3-turn-on-the-observability-integration).
@@ -281,7 +288,9 @@ To move an application to the delivered `metrics-writer` Secret:
         project: default
    ```
 
-4. In the cluster, restart the collectors so they read the new Secret:
+4. When Argo CD syncs the edit, the collectors roll on their own, because their pod spec
+   now mounts the `metrics-writer` Secret. If the collector pods didn't restart, restart
+   them so they read the new Secret:
 
    ```bash
    kubectl rollout restart daemonset,deployment -n observability -l app.kubernetes.io/name=opentelemetry-collector
@@ -337,152 +346,6 @@ on embedded etcd:
 ```promql
 up{job="vcluster-etcd"} == 0
 ```
-
-## Configure collectors manually
-
-To configure a collector yourself instead of using the bundled template, or to customize
-behavior the template doesn't expose as a parameter, wire it up directly.
-
-### Gateway endpoints
-
-Inside the Platform cluster, the fleet gateway Service is:
-
-```text
-gateway-fleet-observability.vcluster-platform.svc.cluster.local
-```
-
-This endpoint assumes the example connector ID `fleet-observability`. For another ID,
-replace the Service name with `gateway-<connector-id>`.
-
-A collector inside a cluster resolves names through that cluster's own CoreDNS, so this
-name only resolves after you replicate the gateway Service into the cluster. See
-[Use a ClusterIP gateway with clusters on the Platform cluster](./install-observability-gateway.mdx#use-a-clusterip-gateway-with-clusters-on-the-platform-cluster).
-
-Use this OTLP endpoint:
-
-| Protocol | Endpoint |
-|---|---|
-| OTLP HTTP | `https://gateway-fleet-observability.vcluster-platform.svc.cluster.local:4318` |
-
-The examples on this page use OTLP HTTP on port `4318`. The gateway also accepts OTLP gRPC
-on port `4317`, but the bundled OpenTelemetry Collector sends over HTTP, so use `4318`.
-
-The gateway always uses TLS. The OpenTelemetry Collector `otlp_http` exporter accepts the
-base URL shown above. Direct OTLP HTTP clients send metrics to the `/v1/metrics` path on
-that host. Mount the CA that issued the gateway serving certificate into the collector and
-set the exporter `tls.ca_file`. The default Platform-managed certificate stores its trust
-anchor in `ca.crt` in the `gateway-<connector-id>-tls` Secret.
-
-Collectors outside the Platform cluster can't resolve the in-cluster Service DNS name.
-Expose the gateway with a LoadBalancer, then use the LoadBalancer address in the exporter
-endpoint instead of the Service name, for example
-`https://<loadbalancer-address>:4318`. See
-[Expose the gateway with a LoadBalancer](./install-observability-gateway.mdx#expose-the-gateway-with-a-loadbalancer)
-to enable it and retrieve the address. The exporter `endpoint` and TLS settings in the
-examples below are otherwise unchanged; only the host differs.
-
-### Store the writer key
-
-Create a Secret for the collector, using a `metrics-writer` access key from
-[Create a writer key for a cluster](./configure-metrics-access.mdx#create-a-writer-key-for-a-cluster)
-or [Create a writer key for a control plane cluster](./configure-metrics-access.mdx#create-a-writer-key-for-a-control-plane-cluster):
-
-```yaml title="metrics-writer-token.yaml"
-apiVersion: v1
-kind: Secret
-metadata:
-  name: metrics-writer-token
-  namespace: observability
-type: Opaque
-stringData:
-  token: REPLACE_WITH_METRICS_WRITER_KEY
-```
-
-Mount or project this Secret into your collector pod and expose it as an environment
-variable or file.
-
-### Cluster collector
-
-Use tenant scope headers when a collector writes metrics for a specific cluster.
-
-```yaml title="otel-collector-tenant-exporter.yaml"
-exporters:
-  otlp_http/fleet:
-    endpoint: https://gateway-fleet-observability.vcluster-platform.svc.cluster.local:4318
-    tls:
-      ca_file: /etc/otel-gateway-tls/ca.crt
-    headers:
-      Authorization: Bearer ${env:METRICS_WRITER_TOKEN}
-      X-Vcluster-Platform-Project: my-project
-      X-Vcluster-Platform-Instance: my-vcluster
-
-service:
-  pipelines:
-    metrics:
-      receivers: [prometheus]
-      processors: [batch]
-      exporters: [otlp_http/fleet]
-```
-
-The `metrics-writer` key must include a matching `spec.scope.virtualClusters` entry.
-
-### Control plane cluster collector
-
-Use cluster scope headers when a collector writes metrics for a control plane cluster.
-
-```yaml title="otel-collector-cluster-exporter.yaml"
-exporters:
-  otlp_http/fleet:
-    endpoint: https://gateway-fleet-observability.vcluster-platform.svc.cluster.local:4318
-    tls:
-      ca_file: /etc/otel-gateway-tls/ca.crt
-    headers:
-      Authorization: Bearer ${env:METRICS_WRITER_TOKEN}
-      X-Vcluster-Platform-Cluster: local-cluster
-
-service:
-  pipelines:
-    metrics:
-      receivers: [prometheus]
-      processors: [batch]
-      exporters: [otlp_http/fleet]
-```
-
-The `metrics-writer` key must include a matching `spec.scope.clusters` entry.
-
-### Scrape custom targets
-
-Use the collector's `prometheus` receiver to scrape exporters such as kubelet,
-cAdvisor, DCGM exporter, or application endpoints. The gateway doesn't require a
-specific scrape receiver. It only requires OTLP metrics with valid authentication and
-scope.
-
-Example DCGM scrape job:
-
-```yaml title="dcgm-prometheus-receiver.yaml"
-receivers:
-  prometheus:
-    config:
-      scrape_configs:
-        - job_name: dcgm-exporter
-          kubernetes_sd_configs:
-            - role: pod
-          relabel_configs:
-            - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name]
-              action: keep
-              regex: dcgm-exporter
-            - source_labels: [__meta_kubernetes_pod_ip]
-              target_label: __address__
-              replacement: ${1}:9400
-```
-
-## Protect platform labels
-
-Don't set labels with the `vcluster_platform_*` prefix in edge collectors. The Write
-Gateway strips this namespace from incoming resource, scope, and datapoint attributes
-before stamping authenticated labels.
-
-Use your own label prefix for application or infrastructure dimensions.
 
 ## Verify writes
 
