@@ -12,10 +12,11 @@ findable by scanning and don't make them read prose to find it.
   (`platform/api/_partials/resources/`), and the Platform CLI reference come
   from generators. Don't hand-write what they already cover. Link to the
   generated page and add only what it can't say, such as how fields interact.
-- **Check whether it needs its own page.** A table of five rows that only one
-  task uses can stay on that task page, under its own heading after the steps.
-  Give reference material its own page when several tasks link to it, or when
-  it pushes a task's steps far down the page.
+- **Check whether it needs its own page.** A table stays at the task step
+  where the reader sets its values, however long it is. Give reference
+  material its own page only when no single task step uses it, or when
+  several pages link to it. See "Where reference pages go" in
+  [README.md](README.md).
 
 ## Frontmatter and title
 

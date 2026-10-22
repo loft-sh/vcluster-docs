@@ -226,12 +226,19 @@ there.
 **The contract** includes API fields, defaults, allowed values, permissions,
 conditions and events, timeouts after which the state changes, limits, failure
 behavior, cleanup and deletion semantics, and upgrade and recovery behavior.
-Retry intervals aren't part of it. Write "retries automatically" instead.
+Retry intervals usually aren't, and "retries automatically" is enough. Keep
+an interval when it changes an operational decision, such as how long to wait
+before stepping in, or how much load the retries put on an external API.
 
 **The implementation** includes controller and scheduling order, retry and
 backoff mechanics, locks and bookkeeping annotations, internal storage such as
 Secret names and encryption, admission code paths, and lists of which fields
 each response strips.
+
+Any of these becomes contract when a step tells the reader to read, set,
+clear, or follow it. Examples are the Secret names a restore step extracts, an
+annotation the reader checks before reusing a machine, a status field a verify
+step checks, and the order in which a restore must bring components back.
 
 Keep a passage when it helps a reader do at least one of these:
 
@@ -242,7 +249,8 @@ Keep a passage when it helps a reader do at least one of these:
 - Upgrade, remove, or recover it safely.
 
 Being true to the source isn't enough on its own. Detail you read in the code
-while checking a claim belongs in the review, not on the page.
+while checking a claim belongs in the review, not on the page, unless it
+changes what the reader does or checks.
 
 Describe outcomes rather than code paths. For example:
 

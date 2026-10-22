@@ -234,7 +234,7 @@ into the docs. Keep the evidence and the page apart.
   should do, not whether to leave it out.
 - **Hand depth questions to `docs-review`.** A claim can be correct and still be
   implementation detail the reader doesn't need. Note it in your report and leave
-  the keep, move, or cut decision to the depth and placement check in
+  the keep, summarize, move, or cut decision to the depth and placement check in
   `docs-review`.
 
 ## Reporting

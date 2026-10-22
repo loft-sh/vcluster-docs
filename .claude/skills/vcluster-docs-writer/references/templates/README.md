@@ -36,15 +36,18 @@ outgrows one page, split it along these types instead of adding sections.
 
 ### Where reference pages go
 
+Most reference material doesn't need its own page. A table stays at the step
+where the reader sets its values, even when readers come back to it later.
+Give reference material its own page only when no single task step uses it,
+or when several pages need it.
+
 - **A feature whose pages share one folder.** Put the reference page in that
   folder as `<topic>-reference.mdx`, for example
-  `platform/fleet-operations/observability/labels-reference.mdx`. When the
-  feature has two or more reference pages, group them in a `reference/`
-  subfolder.
-- **A section already split into subfolders by type**, such as `concepts/`,
+  `platform/fleet-operations/observability/labels-reference.mdx`.
+- **A section split into subfolders by type**, such as `concepts/`,
   `deploy/`, and `troubleshoot/`. Put reference pages in a `reference/`
-  subfolder beside them, even the first one, for example
-  `platform/vmetal/reference/`.
+  subfolder beside them. Create that folder only when a page that meets the
+  test above needs it, not in advance.
 - **Reference that spans features.** Put it in the product's top-level
   Reference section, such as licensing, lifecycle policy, annotations, and the
   glossary.
@@ -54,18 +57,29 @@ outgrows one page, split it along these types instead of adding sections.
 
 ### Signs that content is on the wrong page
 
-- A task page explains the design trade-offs before the steps. Move the
-  explanation to a concept page and link to it from the intro.
-- A task or concept page carries a long field table or behavior matrix. Short
-  tables that a reader reads in passing stay inline. Once a table is long
-  enough that readers come back to look things up in it, move it to a
-  reference page and link to it from where it's needed.
-- A concept page has numbered steps. Move them to a task or troubleshooting
-  page.
+- A task page explains design trade-offs at length before the steps. Move the
+  explanation to a concept page and link to it from the intro. Keep a short
+  decision the reader has to make before starting, such as which of two
+  procedures applies to them. It stops them from following the wrong one.
+- A task or concept page carries a long field table or behavior matrix that
+  no step on the page uses, or that several pages repeat. Move it to a
+  reference page and link to it. A table the reader uses at a step stays at
+  that step, however long it is.
+- A concept page has instructions the reader carries out, such as commands
+  to run or settings to change. Move them to a task or troubleshooting page.
+  A numbered list that explains an ordered process, such as the stages of a
+  lifecycle, is explanation and stays.
 - One integration's or provider's setup sits inside a general procedure. Give
   it its own task page and link to it from the branch point.
 - A get started page offers choices. Pick one path and link to the task pages
   for the others.
+
+Before moving anything, try saying it more briefly where it is. Move detail
+only when a reader you can name needs to look it up. Otherwise the result is a
+set of thin pages nobody visits.
+
+If the generated reference that a move would link to is wrong or stale, keep
+the detail where it is and ask Engineering to fix the source.
 
 If the target page doesn't exist yet, name the path it should have and keep
 the content where it is until someone creates that page. Moving content into

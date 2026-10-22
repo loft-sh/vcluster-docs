@@ -230,35 +230,46 @@ Test each substantial passage against the reader you named. Keep it if it helps
 them choose a design, configure it, verify it works, diagnose a likely failure,
 or upgrade, remove, or recover it safely. "Document the Contract, Not the
 Implementation" in the writer skill's `references/style-guide.md` has the full
-rule and examples. Each passage you question gets one of three outcomes:
+rule and examples. Each passage you question gets one of four outcomes:
 
-- **Keep** it where it is, because it passes the test for this page's reader.
-- **Move** it, because it passes the test for a reader of a different page.
-  Leave a one-sentence summary and link behind. Name the target type (concept,
-  task, reference, or troubleshooting) and the target path. If that page
-  doesn't exist yet, name the path to create and leave the content in place
-  until it does. The page types, where reference pages go, and the signs of
-  misplaced content are in the writer skill's `references/templates/README.md`.
-- **Cut** it, because no reader needs it on any page.
+- **Keep** it as it is, because it passes the test for this page's reader at
+  its current length.
+- **Summarize** it, because the reader needs the outcome but not the detail
+  around it. State the necessary outcome in fewer words.
+- **Move** it, because a reader you can name needs to look the detail up, and
+  this page's reader doesn't. Name that reader, the target type (concept, task,
+  reference, or troubleshooting), and the target path. Leave a one-sentence
+  summary and link behind. If the target page doesn't exist yet, name the path
+  to create and leave the content in place until it does. The page types,
+  where reference pages go, and the signs of misplaced content are in the
+  writer skill's `references/templates/README.md`.
+- **Cut** it, because no reader needs it.
 
-Prefer move over cut. Most detail that looks excessive on a task page is right
-for a reference or concept page, and cutting it leaves a gap a later reader
-hits.
+Try summarizing first. Move supporting detail only when a named reader needs to
+look it up. Moving is not a way to avoid cutting: a new reference page that
+holds detail nobody looks up adds a page to maintain and a thin page to the
+sidebar, and the reader is no better off.
 
 Detail that usually fails the test: scheduling or arbitration order, retry and
 backoff mechanics, locks and bookkeeping annotations, where the product stores
 data, admission or validation code paths, and lists of the fields each response
-strips. Replace a narrative of code paths with a short behavior table that has
-one row per situation and the outcome the reader sees. A table that grows long
-enough to be looked up rather than read becomes a move to a reference page.
+strips. Any of these becomes contract when a step tells the reader to read,
+set, clear, or follow it, such as Secret names a restore step extracts, an
+annotation the reader checks, or the order a restore must follow. Replace a
+narrative of code paths with a short behavior table that has one row per
+situation and the outcome the reader sees. A table stays at the step that uses
+it. Move a table only when no step on the page uses it, or when several pages
+repeat it.
 
 Detail that usually passes: API fields, defaults, permissions, public condition
 reasons, operational cost, cleanup and deletion semantics, and anything a
 recovery procedure depends on.
 
 Timing sits on both sides. A timeout after which the state changes is
-contract, because the reader plans around it. The interval between retries
-isn't. Write "retries automatically" instead.
+contract, because the reader plans around it. Retry intervals usually aren't,
+and "retries automatically" is enough. Keep an interval when it changes an
+operational decision, such as how long to wait before stepping in, or how much
+load the retries put on an external API.
 
 **Limitations are never cut.** If a limitation is described through its
 mechanism, rewrite it as impact plus mitigation. Don't remove it while the page
@@ -267,6 +278,16 @@ has made the page less accurate, not more concise. This holds even when the
 limitation also raises a disclosure question, or a question about whether it's
 a bug. Ask Engineering for wording and a mitigation, not for permission to
 drop it.
+
+**Repeated detail.** When sibling pages repeat the same supporting detail,
+keep it on the page whose procedure uses it, and link to it from the others.
+
+**Splitting a long page.** For a long page, decide whether to split it before
+judging passages. Split only when each resulting page has its own reader, its
+own way in (search, the sidebar, or a link from a decision), and enough
+content to finish that reader's job without going back. A section that only
+makes sense inside another page stays a heading. Report a split as one finding
+that lists each target path, its page type, and the source line ranges.
 
 **Possible disclosure.** Some passages describe internals that a competitor
 could learn from and that have no reader consequence. Flag them. Whether a
@@ -316,9 +337,10 @@ placed after the procedure it invalidates. Accuracy verdicts come from
 a pass, so the author can see at a glance which findings are about what the page
 says versus how it says it.
 
-Report depth and placement findings as keep, move (with the target page type
-and path), or cut. Put possible disclosure findings in their own section headed "Questions
-for Engineering", so the author can send them on as a group.
+Report depth and placement findings as keep, summarize, move (with the reader
+who needs it, the target page type, and the path), or cut. Put possible disclosure findings, and limitations that need wording or a
+mitigation from Engineering, in their own section headed "Questions for
+Engineering", so the author can send them on as a group.
 
 Open with one line naming the reader you reviewed against and the runner-up you
 rejected. Every Pass 3 finding depends on it, and it's the cheapest thing in the
