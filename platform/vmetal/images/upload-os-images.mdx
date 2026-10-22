@@ -1,0 +1,268 @@
+---
+title: Upload OS images
+sidebar_label: Upload OS images
+sidebar_position: 2.6
+description: Upload an OS image file to an image store with the platform UI, the vCluster CLI, or the platform API, and track it until node providers can use it.
+---
+
+import InterpolatedCodeBlock from '@site/src/components/InterpolatedCodeBlock';
+import PageVariables from '@site/src/components/PageVariables';
+
+<PageVariables
+  IMAGE_NAME="ubuntu-noble"
+  CONNECTOR="os-images"
+  FILE="noble-server-cloudimg-amd64.img"
+/>
+
+An [OS image](./os-images.mdx) that names an [OS image store](./os-image-store.mdx) holds its own file. You upload the file once, and node providers download it from the platform when they provision a machine.
+
+The file never passes through the platform. The platform splits the upload into parts, signs a URL for each part, and the client sends each part straight to the bucket. After the last part, the client asks the platform to assemble the file.
+
+## Prerequisites
+
+- An [OS image store connector](./os-image-store.mdx) whose `StoreAccessible` condition is `True`.
+- A license that includes machine management. Creating an image that names an image store, uploading, and finalizing require it.
+- Permission to update the `OSImage`. Uploading counts as an update, so `spec.owner` and `spec.access` decide who may upload.
+- For users who aren't admins, a role that allows `create` on the `osimages/upload` and `osimages/finalize` subresources. Tenant users also need a tenant whose OS images capability allows custom images, and a grant for the image store connector.
+- A file in `qcow2` format. Images can be up to 1,250 GiB.
+
+## Create an OSImage
+
+The CLI and the API upload to an `OSImage` that already exists, so create it with `kubectl` first. To create the image and upload the file in one step, skip to [Upload in the platform UI](#upload-in-the-platform-ui).
+
+For the `kubectl` commands on this page, [connect to the platform management API](../../api/use-api.mdx).
+
+<InterpolatedCodeBlock
+  title="ubuntu-noble.yaml"
+  language="yaml"
+  code={'apiVersion: management.loft.sh/v1\nkind: OSImage\nmetadata:\n  name: [[GLOBAL:IMAGE_NAME]]\nspec:\n  displayName: Ubuntu Noble (24.04 LTS)\n  # Name of the OS image store connector that holds the file.\n  connectorRef: [[GLOBAL:CONNECTOR]]\n  # qcow2 is the only supported format.\n  format: qcow2'}
+/>
+
+```bash
+kubectl create -f ubuntu-noble.yaml
+```
+
+| Field | Description |
+|---|---|
+| `spec.connectorRef` | Name of the OS image store connector. The platform rejects a name that isn't an OS image store connector. You can't change it after you set it. |
+| `spec.format` | Format of the file. Must be `qcow2` before you upload. You can't change it after you set it. |
+| `spec.properties` | Optional provider properties, such as `kubevirt.vcluster.com/root-disk-size`. |
+
+The uploaded file is the image source, so the platform rejects an image that also sets a provider's own source, such as `metal3.vcluster.com/image-url`, `metal3.vcluster.com/image-checksum`, `kubevirt.vcluster.com/image-url`, or `kubevirt.vcluster.com/image-datasource`. Provider properties that don't name a source still apply.
+
+The Metal3, KubeVirt, and NICO node providers use the uploaded file. Set the properties the provider needs besides the source. In the platform UI, set them in the **Image Properties** section. For KubeVirt, add `kubevirt.vcluster.com/root-disk-size`, and `machines.vcluster.com/os-image-type: kubevirt` to show the image in KubeVirt image selection. See [Provider-specific properties](./os-images.mdx#provider-specific-properties).
+
+A new image starts in the `Pending` phase. If no upload starts within 24 hours, the image moves to `Failed`. You can still upload to it afterwards.
+
+## Upload in the platform UI
+
+The platform UI creates the image and uploads the file in one step. Browser uploads need a [CORS rule on the bucket](./os-image-store.mdx#allow-browser-uploads).
+
+1. In the sidebar, click **Operating System**. Click **Images** if it's shown, then click **Create OS Image**.
+2. Enter a name for the image.
+3. In the **OS Image** section, set **Image source** to **File Upload**.
+4. In **Bucket**, choose the OS image store connector. You can't change it later.
+5. Drop the `qcow2` file into the upload field.
+6. Click **Create OS Image**. Keep the page open until the upload finishes.
+
+The image's status in the list moves from **Uploading** through **Verifying** to **Ready**.
+
+To upload a file to an image that already exists, open the image, drop the file, and click **Upload**. If the upload fails, click **Retry upload**.
+
+## Upload with the CLI
+
+[Log in to the platform](../../reference/platform-cli.mdx#log-in-and-access-keys) with the vCluster CLI, then upload to an existing image:
+
+<InterpolatedCodeBlock
+  language="bash"
+  code={'vcluster platform upload osimage "[[GLOBAL:IMAGE_NAME]]" --file "[[GLOBAL:FILE]]"'}
+/>
+
+The command waits until the image is `Ready`. Pass `--skip-wait` to return as soon as the upload is finalized.
+
+The CLI doesn't create images. If the image doesn't exist, create it first as shown in [Create an OSImage](#create-an-osimage).
+
+## Upload with the API
+
+Use the API to upload from your own tooling. The flow has four steps:
+
+1. Request upload targets with `upload`, one batch of up to 10 parts at a time.
+2. `PUT` each part to its target URL.
+3. Complete the upload with `finalize` and the file's sha256 checksum.
+4. Wait until the image phase is `Ready`.
+
+Both endpoints are subresources of the `OSImage` in the `management.loft.sh/v1` API group. Authenticate with a platform [access key](../../administer/authentication/access-keys.mdx):
+
+<InterpolatedCodeBlock
+  language="bash"
+  code={'export PLATFORM_HOST="[[VAR:PLATFORM_HOST:platform.example.com]]"\nexport ACCESS_KEY="[[VAR:ACCESS_KEY:<access-key>]]"\nexport IMAGE="[[GLOBAL:IMAGE_NAME]]"\nexport FILE="[[GLOBAL:FILE]]"\nexport API="https://$PLATFORM_HOST/kubernetes/management/apis/management.loft.sh/v1/osimages/$IMAGE"'}
+/>
+
+### Request upload targets
+
+Send the size of the file in bytes. The first call opens the upload session:
+
+```bash
+SIZE=$(wc -c < "$FILE" | tr -d ' ')
+
+curl -s -X POST "$API/upload" \
+  -H "Authorization: Bearer $ACCESS_KEY" \
+  -H "Content-Type: application/json" \
+  -d "{\"apiVersion\":\"management.loft.sh/v1\",\"kind\":\"OSImageUpload\",\"spec\":{\"sizeBytes\":$SIZE}}" \
+  > batch.json
+```
+
+The response is an `OSImageUpload` with one batch of targets. This example omits targets 3 through 10:
+
+```json
+{
+  "kind": "OSImageUpload",
+  "apiVersion": "management.loft.sh/v1",
+  "spec": {
+    "sizeBytes": 2071724032
+  },
+  "status": {
+    "partSizeBytes": 134217728,
+    "totalParts": 16,
+    "nextPart": 11,
+    "targets": [
+      { "partNumber": 1, "url": "https://my-os-images.s3.eu-central-1.amazonaws.com/..." },
+      { "partNumber": 2, "url": "https://my-os-images.s3.eu-central-1.amazonaws.com/..." }
+    ],
+    "expiresAt": "2026-10-15T10:00:00Z"
+  }
+}
+```
+
+| Field | Description |
+|---|---|
+| `spec.sizeBytes` | Size of the whole file in bytes. Every call of the same session must send the same value. |
+| `spec.fromPart` | Optional. Part number the batch starts at. Defaults to `1`. |
+| `status.partSizeBytes` | Size of every part except the last, currently 128 MiB. Read it from the response instead of hard-coding it. |
+| `status.totalParts` | Number of parts the file is split into. |
+| `status.targets` | Up to 10 targets, each with a `partNumber` and a `url`. |
+| `status.nextPart` | Value to send as `spec.fromPart` for the next batch. Absent on the last batch. |
+| `status.expiresAt` | Time when the target URLs in this batch stop working, 24 hours after the call. |
+
+### Upload the parts
+
+Part numbers start at `1`. Part `n` covers the `partSizeBytes` bytes that start at offset `(n - 1) * partSizeBytes`. The last part holds the remaining bytes.
+
+Send each part with a plain `PUT` to its target URL. The URL already carries its authorization, so don't add any headers. The request must state a `Content-Length`. The store rejects chunked uploads.
+
+```bash
+PART_SIZE=$(jq -r '.status.partSizeBytes' batch.json)
+
+jq -r '.status.targets[] | "\(.partNumber) \(.url)"' batch.json |
+while read -r PART URL; do
+  dd if="$FILE" of=part.bin bs="$PART_SIZE" skip=$((PART - 1)) count=1 2>/dev/null
+  curl -sf -X PUT --upload-file part.bin "$URL" || echo "part $PART failed"
+done
+```
+
+A failed part can be sent again. Uploading the same part number again replaces it.
+
+The client must reach the store at the address in the URL. The signature covers the host name, so a proxy or port-forward has to keep the original `Host` header.
+
+### Request the next batch
+
+While the response has a `nextPart`, call `upload` again with the same `sizeBytes` and `nextPart` as `fromPart`, then upload that batch:
+
+```bash
+NEXT=$(jq -r '.status.nextPart // empty' batch.json)
+
+curl -s -X POST "$API/upload" \
+  -H "Authorization: Bearer $ACCESS_KEY" \
+  -H "Content-Type: application/json" \
+  -d "{\"apiVersion\":\"management.loft.sh/v1\",\"kind\":\"OSImageUpload\",\"spec\":{\"sizeBytes\":$SIZE,\"fromPart\":$NEXT}}" \
+  > batch.json
+```
+
+Repeat until a response has no `nextPart`. Later calls reuse the open session, so you can request batches ahead of the parts you're still uploading.
+
+To refresh targets that are about to expire, call `upload` again with `fromPart` set to the first part that hasn't landed yet. Each call also extends the image's 24-hour deadline.
+
+### Finalize the upload
+
+When every part has landed, send the sha256 checksum of the whole file as 64 lowercase hex characters:
+
+```bash
+# On Linux, use sha256sum instead of shasum -a 256.
+CHECKSUM=$(shasum -a 256 "$FILE" | cut -d ' ' -f 1)
+
+curl -s -X POST "$API/finalize" \
+  -H "Authorization: Bearer $ACCESS_KEY" \
+  -H "Content-Type: application/json" \
+  -d "{\"apiVersion\":\"management.loft.sh/v1\",\"kind\":\"OSImageFinalize\",\"spec\":{\"checksum\":\"$CHECKSUM\"}}"
+```
+
+The platform checks that every part arrived, assembles the file in the bucket, and answers with `status.completedAt`. If parts are missing, it answers `409` and names how many parts landed. Upload the missing ones and call `finalize` again.
+
+The platform records the checksum and hands it to node providers, which verify the file when they download it. The platform doesn't verify the checksum itself, so compute it from the same file you uploaded.
+
+Calling `finalize` again with the same checksum is safe and returns the original `completedAt`. Retry it when a connection drops.
+
+### Wait until the image is ready
+
+`finalize` doesn't make the image `Ready`. The platform first checks that the assembled file has the size you declared. Watch the phase:
+
+<InterpolatedCodeBlock
+  language="bash"
+  code={'kubectl get osimage [[GLOBAL:IMAGE_NAME]] -w -o custom-columns=NAME:.metadata.name,PHASE:.status.phase'}
+/>
+
+Node providers can use the image once the phase is `Ready`. A machine that references an image that isn't `Ready` yet waits for it. A machine that references a `Failed` image fails to provision.
+
+## Image status
+
+| Phase | Meaning |
+|---|---|
+| `Pending` | The image exists and no upload has started. |
+| `Uploading` | An upload session is open. |
+| `Ready` | The file is assembled and has the declared size. |
+| `Failed` | The upload didn't finish. The `Uploaded` condition names the reason. |
+
+The status carries these fields:
+
+| Field | Description |
+|---|---|
+| `status.expiresAt` | Deadline of a `Pending` or `Uploading` image: 24 hours after the last `upload` call, or after creation if no upload has started. |
+| `status.store.location` | Object key of the file in the bucket. |
+| `status.store.sizeBytes` | Size of the file as the store reports it. |
+| `status.store.checksum` | sha256 checksum sent with `finalize`. |
+| `status.conditions` | The `Uploaded` condition, with the reason for a `Failed` phase. While the store fails an upload call, also the `StoreAccessible` condition with the store's error. |
+
+The `Uploaded` condition reports one of these reasons when the upload fails:
+
+| Reason | Cause |
+|---|---|
+| `Expired` | The deadline passed before the upload was finalized. |
+| `SizeMismatch` | The assembled file doesn't have the size sent as `sizeBytes`. |
+| `ObjectMissing` | The upload was finalized but the store doesn't hold the file. |
+| `InvalidSession` | The platform can't read the recorded size of the upload session. Start the upload again. |
+
+## Retry and replace an image
+
+A `Failed` image accepts a new upload. Run the CLI again, or start the API flow again from the first `upload` call. The image keeps its name, owner, and access rules, and node providers that already reference it keep working.
+
+An image that is `Ready` refuses another upload with `409 Conflict`. To use a different file, delete the image and create it again. Deleting an image removes its file from the bucket and aborts an open upload.
+
+To upload a file of a different size while a session is open, delete the image and create it again. A session only accepts the size it was opened for.
+
+## Troubleshoot uploads
+
+| Response | Cause and fix |
+|---|---|
+| `409 Conflict` on the first `upload` call right after creating the image | The platform was still updating the new image. Call `upload` again. Retrying is safe, because `upload` opens one session only. |
+| `409` with `the upload is already complete` | The image already holds a file. Delete the image and create it again to upload a different file. |
+| `409` with `upload session was opened for <n> bytes` | `sizeBytes` doesn't match the size of the open session. Send the original size, or delete and recreate the image. |
+| `409` with `<n> of <m> parts have been uploaded` | `finalize` found missing parts. Upload them and call `finalize` again. |
+| `409` with `the upload was completed with checksum` | `finalize` was called again with a different checksum than the first call. |
+| `409` with `no open upload session to finalize` | No upload was started, or the session failed. Start again with `upload`. |
+| `422` on `spec.connectorRef` | The image names no image store, or the connector can't be used. Check the connector name and its `StoreAccessible` condition. |
+| `422` on `spec.format` | The image format isn't `qcow2`. |
+| `422` on `spec.sizeBytes` or `spec.fromPart` | The size is 0 or larger than 1,250 GiB, or `fromPart` is outside 1 to `totalParts`. |
+| `400` naming the image store connector | The store refused the request. The message names the setting to fix. See [Check the connection](./os-image-store.mdx#check-the-connection). |
+| `403 Forbidden` | You can't update the image, or the license doesn't include machine management. |
+| `403` from the store on a `PUT` | The target expired, the request added an `x-amz-*` header, or the host differs from the signed URL. Request the target again with `fromPart`. |
+| CORS error in the browser | The bucket has no CORS rule for the platform address. See [Allow browser uploads](./os-image-store.mdx#allow-browser-uploads). |
