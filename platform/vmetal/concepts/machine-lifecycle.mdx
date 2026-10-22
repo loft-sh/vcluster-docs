@@ -104,11 +104,9 @@ The platform enforces the tenant quota in two ways, depending on the request:
 - A request that names a node type directly is refused when it's created, with a `quota exhausted` error.
 - A request that lets the platform choose the node type, such as one from an Auto Nodes pool, waits as `Pending` with the reason `TenantNodeTypeQuotaExceeded`. It proceeds without any action once a slot frees up.
 
-The platform schedules a tenant's waiting requests one at a time. Requests that name a node type go through oldest first. Requests that let the platform choose have no guaranteed order.
+On NICo, concurrent requests for an `OnDemand` node type can occasionally put a tenant over its node type quota.
 
-NICo has a placement race that can exceed the quota. A claim that loses a reserved machine to another claim can retry on unassigned capacity after it has passed the quota check.
-
-An instance of a node type the quota limits reserves a slot before placement. A claim that names its node type counts from creation. A claim that lets the platform choose its node type counts once scheduled. Once placed on a machine assigned to the tenant, it stops counting. An instance that counts keeps its slot until its `NodeClaim` is fully deleted, including while it's `Failed` or being deleted. Delete failed instances to free their slots.
+An instance that counts against the quota holds its slot until its `NodeClaim` is fully deleted, including while it's `Failed`. Delete failed instances to free their slots.
 
 ## Phases and conditions
 
@@ -124,14 +122,14 @@ The most common reasons are in the following table. The condition message names 
 
 | Condition | Reason | Phase | What happens next |
 |---|---|---|---|
-| `Scheduled` | `TenantNodeTypeQuotaExceeded` | `Pending` | The tenant's quota for the node type is used up. Retries every 10 seconds. See [Quotas](#quotas). |
-| `Scheduled` | `FailedToSchedule` | `Pending` | No compatible node type has free capacity. Retries every 10 seconds, with no time limit. |
-| `Scheduled` | `FailedToSchedule` | `Failed` | Scheduling hit an error, such as a missing node provider. Retries with a growing delay. |
+| `Scheduled` | `TenantNodeTypeQuotaExceeded` | `Pending` | The tenant's quota for the node type is used up. Retries automatically. See [Quotas](#quotas). |
+| `Scheduled` | `FailedToSchedule` | `Pending` | No compatible node type has free capacity. Retries automatically, with no time limit. |
+| `Scheduled` | `FailedToSchedule` | `Failed` | Scheduling hit an error, such as a missing node provider. Retries automatically. |
 | `Provisioned` | `WaitingForNetworkEnvironment` | `Pending` | Waits until the cluster's network environment is ready. |
-| `Provisioned` | `PrivateNodesDisabled` | `Pending` | The cluster doesn't have private nodes enabled. Retries every minute. |
+| `Provisioned` | `PrivateNodesDisabled` | `Pending` | The cluster doesn't have private nodes enabled. Retries automatically. |
 | `Provisioned` | `InsufficientCapacity` | `Pending`, then `Failed` | No eligible machine is free. Waits 30 minutes by default. See [When provisioning fails](#when-provisioning-fails). |
 | `Provisioned` | `Provisioning` | `Pending` | The driver is still working. No time limit. |
-| `Provisioned` | `ProvisioningError` | `Pending` | The driver returned an error. Retries with a growing delay, up to three minutes apart. |
+| `Provisioned` | `ProvisioningError` | `Pending` | The driver returned an error. Retries automatically. |
 | `Provisioned` | `InvalidConfiguration`, `MachineNotFound`, `NetworkEnvironmentNotAllowed`, or `TenantRequired` | `Failed` | Not retried. Fix the cause and replace the instance. |
 | `Joined` | `NotJoined` | `Pending` | The server hasn't registered as a node in its cluster yet. |
 | `Joined` | `JoinFailed` | `Pending` | A KubeVirt infrastructure registration attempt returned an error. Retries until registration succeeds or the 20-minute timeout expires. |
@@ -154,7 +152,7 @@ A claim that failed during provisioning isn't retried. Fixing the cause, adding 
 3. Request a replacement through the workflow that created the original. Auto Nodes handles replacement automatically, as described below.
 4. Confirm that the replacement `NodeClaim` reaches `Available`.
 
-Auto Nodes records a `PlatformNodeClaimProvisioningFailed` event on its node claim inside the cluster. Karpenter then deletes that claim after its launch timeout, and vCluster cleans up the corresponding platform claim. A static pool restores its configured count. A dynamic pool requests capacity when workloads still need it. These replacements are new claims. They don't restart the failed platform claim.
+Auto Nodes records a `PlatformNodeClaimProvisioningFailed` event on its node claim inside the cluster. It removes the failed instance and replaces it with a new claim, rather than restarting the failed one. A static pool restores its configured count. A dynamic pool requests capacity when workloads still need it.
 
 For Metal3 causes and checks, see [Instance stays pending without a server](../drivers/bare-metal/metal3/troubleshooting.mdx#instance-stays-pending-without-a-server).
 
@@ -163,7 +161,7 @@ For Metal3 causes and checks, see [Instance stays pending without a server](../d
 Deleting a `NodeClaim` starts its teardown. Deleting a cluster deletes its instances too.
 
 1. **Drain.** For a worker that joined a cluster, the platform first deletes the cluster's Node so its workloads evict gracefully, for up to 30 minutes. Control plane instances and instances that never joined skip this step. To skip the drain, set the `vcluster.com/skip-node-drain` annotation on the `NodeClaim`, or click **Force delete**. See [Graceful drain on deprovisioning](./machine-types-and-nodetypes.mdx#node-claims).
-2. **Teardown.** The driver releases a server it drew from inventory, or destroys infrastructure it created for the claim. If teardown fails, the claim shows `Failed` with the reason `FailedToDestroy`. The platform keeps retrying every 30 seconds and deletes the `NodeClaim` only after teardown succeeds. Check the driver's resource, such as the `BareMetalHost` or `VirtualMachine`, for the teardown error.
+2. **Teardown.** The driver releases a server it drew from inventory, or destroys infrastructure it created for the claim. If teardown fails, the claim shows `Failed` with the reason `FailedToDestroy`. The platform keeps retrying and deletes the `NodeClaim` only after teardown succeeds. Check the driver's resource, such as the `BareMetalHost` or `VirtualMachine`, for the teardown error.
 3. **Reclaim.** For a driver with a machine inventory, the platform removes the `machines.vcluster.com/node-claim` annotation from the `Machine` once no claim holds it. The `Machine` is free for another claim once the driver reports the server available again.
 
 Release doesn't change tenant assignment. A machine assigned to a tenant stays assigned after its instance is deleted, and its next instance comes from the same tenant. While an instance holds a machine, the API refuses changes to the machine's tenant assignment. Release the instance first to reassign the machine.
