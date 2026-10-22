@@ -50,14 +50,21 @@ It mirrors what the access key can read from the remote Metal3 provider, and it 
 ### Node types and capacity
 
 The provider mirrors every node type of the remote provider that the access key can read, and refreshes them periodically.
-A mirrored node type copies the remote resources, cost, display name, and properties.
+A mirrored node type copies the remote resources, cost, display name, properties, and machine allocation policy.
 It records the remote node type in the `platform.vcluster.com/remote-node-type` property.
 The local platform resolves some properties itself and drops them from the mirrored node type, such as `vcluster.com/os-image`. See [Configuration properties](#configuration-properties).
 
-A remote node type counts the servers of every Tenant on the remote platform.
-The local capacity is therefore the remote node type's free capacity, capped at the free remote Machines the access key can read.
-Without the cap, servers assigned to another Tenant would look free on the local platform.
-A remote node type with unlimited capacity stays unlimited.
+A remote node type counts the servers of every tenant on the remote platform.
+The local capacity depends on the remote node type's `spec.machineAllocationPolicy`:
+
+- `Assigned`: the remote node type's free capacity is capped at the free Machines the access key can read across that remote provider.
+  Claims use Machines the tenant owns or has been assigned exclusively.
+  The cap doesn't check which node type's pool a Machine belongs to, so it can overstate capacity for a specific node type.
+- `OnDemand`: the remote capacity is used without that cap.
+  Claims can also use unassigned Machines, which the tenant's access key can't list before allocation.
+
+A remote node type with unlimited capacity stays unlimited regardless of its allocation policy.
+Metal3 node types default to `Assigned` unless the remote provider sets another policy.
 
 ### Node provisioning
 
@@ -89,12 +96,15 @@ Make sure you have the following before you set up the provider:
   - The local platform reaches the remote platform's URL.
   - The remote servers reach the cluster they join, as with any private node.
   - The remote site can download the OS image, because the remote Metal3 provider installs the server from its URL.
-- An [OSImage](../../images/os-images.mdx) on the local platform that sets the Metal3 [image properties](./metal3/overview.mdx#image-configuration). The examples on this page use one named `ubuntu-noble`.
+- An [OSImage](../../images/os-images.mdx) on the local platform that sets the Metal3 [image properties](./metal3/overview.mdx#image-configuration), including the image URL and checksum.
+  Leave `spec.connectorRef` unset. The external platform provider rejects images backed by an OS image store.
+  The examples on this page use an image named `ubuntu-noble`.
 
 ## Prepare the remote platform
 
 Complete these steps on the remote platform.
-They give the local platform an access key for one Tenant, so it can only use the node types and servers you grant that Tenant.
+They give the local platform an access key scoped to one tenant.
+The granted node types and their machine allocation policies determine which servers it can use.
 
 If someone else operates the remote platform, send them these steps and ask for the following:
 
@@ -127,14 +137,16 @@ spec:
 Creating the Tenant also creates the tenant admin user `acme--admin` and the project `acme--default`.
 </Step>
 <Step>
-Assign servers to the Tenant.
+Assign servers for `Assigned` node types.
 
-A Tenant's NodeClaims only land on Machines the Tenant owns or that you assign to it.
-Assign each Machine the local platform may use with the `tenant.vcluster.com/exclusive-to` label.
+For `Assigned` node types, NodeClaims only use Machines the tenant owns or that you assign to it exclusively.
+Assign each Machine with the `tenant.vcluster.com/exclusive-to` label.
 
 ```bash title="Assign a Machine to the Tenant"
 kubectl label machines.management.loft.sh metal3-provider.gpu-server-1 tenant.vcluster.com/exclusive-to=acme
 ```
+
+For `OnDemand` node types, skip manual assignment if you want the remote platform to allocate from its unassigned Machines.
 </Step>
 <Step>
 Create an access key for the tenant admin.
@@ -231,6 +243,7 @@ kubectl get machines.management.loft.sh
 ```
 
 The Machines the access key can read appear as `<local provider>.<machine ID>`, for example `remote-metal3.gpu-server-1`.
+A tenant access key can't list unassigned Machines, even when an `OnDemand` node type has capacity.
 When a cluster claims a node, the server joins that cluster and its NodeClaim reports as provisioned.
 </Step>
 </Flow>
@@ -324,8 +337,10 @@ After the cluster requests nodes, list the NodeClaims on the local platform:
 kubectl get nodeclaims.management.loft.sh --all-namespaces
 ```
 
-A NodeClaim starts in the `Pending` phase and reports `Available` once the remote server is provisioned.
-The `Joined` condition shows when the node has joined the cluster.
+A NodeClaim starts in the `Pending` phase.
+The `Provisioned` condition confirms that the remote server is provisioned.
+The `Joined` condition confirms that the node has joined the cluster.
+A healthy NodeClaim reports the `Available` phase after both succeed.
 A `Failed` phase means provisioning failed. See [Troubleshoot](#troubleshoot).
 
 ## Rotate or revoke access
@@ -369,6 +384,7 @@ Check that the provider is available again.
 ## Limitations
 
 - The remote provider must be a Metal3 provider.
+- OSImages backed by an OS image store (`spec.connectorRef`) aren't supported. Use image URL and checksum properties instead.
 - You can't change `nodeProvider` or `project` after you create the provider, because the provider finds its remote NodeClaims through them. Create another provider to target a different remote provider or project.
 - One provider uses one access key. To consume the inventory of another remote Tenant, create another provider.
 
@@ -386,7 +402,7 @@ kubectl get nodeproviders.management.loft.sh remote-metal3 -o jsonpath='{.status
 |--------|---------|
 | `RemoteNodeProviderNotFound` | The remote node provider doesn't exist, or the access key can't read it. |
 | `UnsupportedRemoteNodeProvider` | The remote node provider isn't a Metal3 provider. |
-| `InvalidConfiguration` | The Secret has no `accessKey` key, or a NodeClaim references an OSImage that doesn't exist on the local platform. |
+| `InvalidConfiguration` | The Secret has no `accessKey` key, or a NodeClaim references a missing OSImage or one backed by an OS image store. |
 | `RemoteNodeClaimConflict` | A NodeClaim with the same name in the remote project belongs to another claim, for example of another platform that shares the project. |
 | `RemoteNodeClaimDeleted` | The remote NodeClaim is being deleted on the remote platform, for example because someone deleted it there. |
 
