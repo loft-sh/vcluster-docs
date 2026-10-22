@@ -1,25 +1,25 @@
-<!-- 
-When changing something in a file, our linting system `vale`, will treat the whole file as changed and will lint it. 
-In this case, follow the instructions from vale and fix the linting issues. 
-If there are too many errors, ask the tech writer in PR comment to fix the issues.
+<!--
+The Lint check runs Vale on the lines your PR adds and posts its findings as review comments. Vale errors on added lines fail the check, and warnings don't.
+Fix what it flags in the prose, but don't change file paths, commands, or config keys to satisfy it. If you can't resolve a finding, ask the docs team in a PR comment.
+PRs into the `next` branch don't run the Lint check, so run `vale` on your changed files locally.
 Read more about working with vale in the contribution guidelines: https://github.com/loft-sh/vcluster-docs/blob/main/CONTRIBUTING.md#style-guide-automation-style-guide-automation
 -->
-# Content Description
+# Content description
 <!-- Brief overview of changes (1-2 sentences) -->
 
 
-## Preview Link 
+## Preview link
 <!-- The preview link or links to the documents-->
 
 
-## Internal Reference
+## Internal reference
 <!--Add the GitHub or Linear ticket reference-->
 Closes DOC-
 
 
-AI review: mention `@claude` in a comment to request a review or changes. See [CONTRIBUTING.md](https://github.com/loft-sh/vcluster-docs/blob/main/CONTRIBUTING.md#ai-assisted-pr-review) for available commands.
+AI review: mention `@claude` in a comment to request a review. Claude reads the PR and posts review comments. See [CONTRIBUTING.md](https://github.com/loft-sh/vcluster-docs/blob/main/CONTRIBUTING.md#ai-assisted-pr-review) for example commands.
 
-> FORK LIMITATION: `@claude` does not work on pull requests opened from forks. GitHub Actions cannot access the required secrets for fork-originated PRs. To use AI review, push your branch directly to this repository.
+> Only members of the `loft-sh` organization can trigger `@claude`. If you're contributing from outside vCluster Labs, ask a maintainer to request the review.
 
 <!-- Do not change the line below -->
 @netlify /docs

@@ -8,9 +8,9 @@
  * - Tiers: loft-sh/plans/*.yaml (free.yaml, dev.yaml, prod.yaml, scale.yaml)
  *
  * This script MERGES upstream data with local files:
- * - Adds new features from upstream
+ * - Adds new features using ui.description / ui.docsLink, with legacy top-level fallbacks
  * - Updates tier assignments to match upstream plans
- * - Warns about features in local that are deprecated upstream
+ * - Filters features retired in the curated DEPRECATED_FEATURES set and warns about local entries
  * - Preserves local-only metadata (categories, docs_url overrides)
  *
  * Usage:
@@ -42,8 +42,9 @@ const UPSTREAM = {
   }
 };
 
-// Known deprecated/removed features (comments in upstream YAML are not parsed)
-// These should be filtered out from tier assignments
+// admin-apis provides no deprecated/removed flags. Maintain this set by hand
+// when a feature is retired; upstream YAML comments are not parsed.
+// Listed features are skipped during import and filtered from tier assignments.
 const DEPRECATED_FEATURES = new Set([
   'auto-ingress-authentication',
   'vcluster-enterprise-plugins',
@@ -90,17 +91,6 @@ function extractPlanFeatures(planData) {
 }
 
 /**
- * Build upstream feature lookup by ID
- */
-function buildUpstreamLookup(upstreamFeatures) {
-  const lookup = {};
-  for (const f of upstreamFeatures) {
-    lookup[f.name] = f;
-  }
-  return lookup;
-}
-
-/**
  * Main
  */
 function main() {
@@ -116,7 +106,6 @@ function main() {
     const featuresRaw = fetchGitHub(UPSTREAM.features.repo, UPSTREAM.features.path);
     const upstreamFeaturesData = yaml.load(featuresRaw);
     const upstreamFeatures = upstreamFeaturesData.features || [];
-    const upstreamLookup = buildUpstreamLookup(upstreamFeatures);
     console.log(`[OK] Fetched ${upstreamFeatures.length} features\n`);
 
     console.log('Fetching upstream plans...');
@@ -160,7 +149,7 @@ function main() {
     const localFeatureIds = new Set(Object.keys(localFeatures.features || {}));
 
     for (const upstream of upstreamFeatures) {
-      if (upstream.deprecated || upstream.removed || DEPRECATED_FEATURES.has(upstream.name)) continue;
+      if (DEPRECATED_FEATURES.has(upstream.name)) continue;
 
       if (!localFeatureIds.has(upstream.name)) {
         changes.featuresAdded.push(upstream.name);
@@ -172,19 +161,26 @@ function main() {
         localFeatures.features[upstream.name] = {
           name: upstream.displayName || upstream.name,
         };
-        if (upstream.description) {
-          localFeatures.features[upstream.name].description = upstream.description.trim();
+        const description = upstream.ui?.description ?? upstream.description;
+        const docsLink = upstream.ui?.docsLink ?? upstream.docsLink;
+        if (description) {
+          localFeatures.features[upstream.name].description = description.trim();
+          if (isVerbose) {
+            console.log(`    description: ${localFeatures.features[upstream.name].description}`);
+          }
         }
-        if (upstream.docsLink) {
-          localFeatures.features[upstream.name].docs_url = upstream.docsLink.replace('https://www.vcluster.com', '');
+        if (docsLink) {
+          localFeatures.features[upstream.name].docs_url = docsLink.replace('https://www.vcluster.com', '');
+          if (isVerbose) {
+            console.log(`    docs_url: ${localFeatures.features[upstream.name].docs_url}`);
+          }
         }
       }
     }
 
-    // Check for features in local that are deprecated upstream
+    // Warn about local definitions listed as retired; leave their metadata intact.
     for (const featureId of localFeatureIds) {
-      const upstream = upstreamLookup[featureId];
-      if (upstream && (upstream.deprecated || upstream.removed)) {
+      if (DEPRECATED_FEATURES.has(featureId)) {
         changes.featuresDeprecated.push(featureId);
         if (isVerbose) {
           console.log(`  [DEPRECATED] ${featureId}`);
@@ -205,11 +201,7 @@ function main() {
     for (const tier of tiers) {
       const upstreamFeatureIds = upstreamPlans[tier] || [];
       // Filter out deprecated features
-      const activeFeatures = upstreamFeatureIds.filter(id => {
-        if (DEPRECATED_FEATURES.has(id)) return false;
-        const upstream = upstreamLookup[id];
-        return !upstream || (!upstream.deprecated && !upstream.removed);
-      });
+      const activeFeatures = upstreamFeatureIds.filter(id => !DEPRECATED_FEATURES.has(id));
 
       if (!localProducts.products[tier]) {
         // Initialize tier if missing
@@ -237,7 +229,8 @@ function main() {
           allUpstreamPlanIds.add(id);
         }
       }
-      const localOnlyFeatures = localTierFeatures.filter(f => !allUpstreamPlanIds.has(f));
+      const localOnlyFeatures = localTierFeatures.filter(f =>
+        !allUpstreamPlanIds.has(f) && !DEPRECATED_FEATURES.has(f));
       if (localOnlyFeatures.length > 0 && isVerbose) {
         console.log(`  [${tier}] Preserving local-only: ${localOnlyFeatures.join(', ')}`);
       }
@@ -292,7 +285,7 @@ function main() {
     if (!hasChanges) {
       console.log('>> All files are in sync with upstream');
       if (changes.featuresDeprecated.length > 0) {
-        console.log(`\n[WARN] ${changes.featuresDeprecated.length} local features are deprecated upstream:`);
+        console.log(`\n[WARN] ${changes.featuresDeprecated.length} local features are listed in DEPRECATED_FEATURES:`);
         for (const id of changes.featuresDeprecated) {
           console.log(`  - ${id}`);
         }
@@ -355,7 +348,7 @@ function main() {
     }
 
     if (changes.featuresDeprecated.length > 0) {
-      console.log(`\n[WARN] ${changes.featuresDeprecated.length} local features are deprecated upstream:`);
+      console.log(`\n[WARN] ${changes.featuresDeprecated.length} local features are listed in DEPRECATED_FEATURES:`);
       for (const id of changes.featuresDeprecated) {
         console.log(`  - ${id}`);
       }

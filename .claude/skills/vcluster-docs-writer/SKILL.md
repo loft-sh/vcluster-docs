@@ -26,7 +26,7 @@ Trigger when:
 ### Writing New Documentation
 
 1. Review style guidelines in `references/style-guide.md`
-2. Follow document template structure (Overview → How to use → Examples → Limitations)
+2. Start from the page template for the page type in `references/templates/` (feature, task, or troubleshooting)
 3. Discover available resources:
    ```bash
    scripts/discover_partials.sh          # Find partials
@@ -278,10 +278,13 @@ scripts/generate_import.sh <path> <dir>   # Generate import statement
 import Code from '!!raw-loader!@site/docs/_code/example.yaml';
 <CodeBlock language="yaml">{Code}</CodeBlock>
 
-// Regular partial
-import Partial from '@site/docs/_partials/example.mdx';
-<Partial />
+// Hand-written reusable snippet (fragment), same product: relative path
+import Fragment from '../../_fragments/example.mdx';
+<Fragment />
 ```
+
+`_partials/` is for generated content only. Put new hand-written snippets in
+`_fragments/`. See "Partials vs fragments" in the repo's `CLAUDE.md`.
 
 See `references/partials-guide.md` for complete patterns and troubleshooting.
 
@@ -381,3 +384,4 @@ Key terms (see `references/vcluster-terms.md` for complete guide):
 - `partials-guide.md` - Complete partials and components guide
 - `mdx-components.md` - MDX/JSX component usage and admonition rules
 - `vcluster-terms.md` - vCluster product terminology and naming
+- `templates/` - Page templates for feature, task, and troubleshooting pages

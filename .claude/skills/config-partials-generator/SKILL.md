@@ -30,11 +30,15 @@ Trigger this skill when:
 | `<VCLUSTER_REPO>/chart/values.yaml` | Default values |
 | `<VCLUSTER_REPO>/.github/workflows/sync-config-schema.yaml` | CI automation (reference for manual steps) |
 | `hack/vcluster/partials/main.go` | vCluster MDX partials generator |
-| `hack/platform/partials/main.go` | Platform MDX partials generator |
 | `configsrc/vcluster/` | Per-version schema source directories |
-| `configsrc/platform/` | Platform schema source directory |
 
 `<VCLUSTER_REPO>` defaults to `~/loft/vcluster`. Confirm path before starting.
+
+This skill covers vCluster partials only. The Platform API partials come from
+`hack/platform/partials/main.go`, which builds from the pinned `loft-sh/api` Go
+types rather than a schema file. `handle-source-release.yml` runs it through
+`hack/release/run-generator.sh` on a Platform release, so don't run it from
+this skill.
 
 ## Automation Gap
 
@@ -107,29 +111,7 @@ Expected warnings (safe to ignore):
 - `Skipping path "controlPlane/distro/k3s"` — removed in v0.33+
 - `Skipping path "controlPlane/distro/k0s"` — removed in v0.33+
 
-### Step 6: Platform configsrc
-
-Update the platform schema reference:
-
-```bash
-cp <VCLUSTER_REPO>/chart/values.schema.json configsrc/platform/main/vcluster.schema.json
-```
-
-**Platform partials generator:** Before running, check whether it preserves manual content:
-
-```bash
-gh pr view 1663 --json state --jq '.state'
-```
-
-<!-- TODO: Remove this guard once PR #1663 is merged -->
-If `MERGED`, safe to run:
-```bash
-go run hack/platform/partials/main.go configsrc/platform/main/vcluster.schema.json
-```
-
-If `OPEN`, do NOT run — the generator overwrites manually-added sections in API reference docs.
-
-### Step 7: Commit and open PR
+### Step 6: Commit and open PR
 
 ```bash
 git checkout -b chore/update-config-partials-vX.Y.Z
@@ -152,5 +134,4 @@ The generator produces/updates MDX files under `vcluster/_partials/config/`:
 ## Never Do
 
 - Modify generated partials by hand — they get overwritten on next generation
-- Run the platform generator without checking its manual-content-preservation status
 - Modify files under `vcluster_versioned_docs/` unless explicitly targeting a released version
