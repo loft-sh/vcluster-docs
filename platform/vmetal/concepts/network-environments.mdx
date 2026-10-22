@@ -27,43 +27,39 @@ See the [NICo driver guide](../drivers/bare-metal/nico.mdx#create-a-network) for
 
 ## Decide who a network belongs to
 
-Every environment records who it is for.
-An operator creates the environment and states the assignment as a label:
+Every environment records who it's for.
+A platform administrator creates the environment and states the assignment with a label:
 
 | Label | Value | Meaning |
 | --- | --- | --- |
-| `tenant.vcluster.com/exclusive-to` | a Tenant name | An operator lends this environment to that Tenant. |
+| `tenant.vcluster.com/exclusive-to` | a Tenant name | The operator lends this environment to that Tenant. |
 | Neither label | | The environment belongs to the platform. |
-| `tenant.vcluster.com/owner` | a Tenant name | The platform recorded the environment as owned by a Tenant. Don't set this label yourself. |
+| `tenant.vcluster.com/owner` | a Tenant name | A Tenant created this environment on an earlier release. Tenants can't create environments now. Don't set this label yourself. |
 
-The platform uses whatever no Tenant holds, so an environment with neither label belongs to the platform.
-The `exclusive-to` label must name a Tenant. The platform refuses an empty value, so remove the label rather than emptying it.
+The `exclusive-to` label must name a Tenant. The API refuses an empty value, so leave the label off to keep an environment for the platform.
 
-Don't set both labels.
-An environment is either lent to a Tenant by an operator or owned by a Tenant, never both.
-
-The API requires an assignment when you create the environment:
+Tenants can't create environments. The API refuses a create from a Tenant session:
 
 ```text
-network environment must be assigned to a tenant or the platform
+network environments are created by platform admins and assigned to tenants
 ```
 
 Tenant-scoped reads hide these labels, so an absent label in that view doesn't mean the environment belongs to the platform.
 
 ## What you can't change later
 
-Once an environment carries an assignment, both the assignment and the whole `spec` are immutable:
+After you create an environment, its assignment, `providerRef`, and driver properties can't change.
+The API refuses the update with errors like these:
 
 ```text
-tenant assignment cannot be changed or removed
-spec cannot be changed after assignment to a tenant
+tenant assignment cannot be changed after creation; delete and recreate the network environment to assign it differently
+providerRef cannot be changed
+properties cannot be changed after creation
 ```
 
-{/* TODO before merge: loft-enterprise#8321 (ENGCP-1539) makes displayName, owner, and access editable after assignment. Update this list when it merges. */}
-This includes the display name, `providerRef`, every driver property, and the owner and access settings.
-To change any of it, create a replacement environment and move its workloads across.
+You can still edit the display name, the owner and access settings, and metadata, such as the default annotation.
+To change anything else, create a replacement environment and move its workloads across.
 Decide the assignment and the network settings before you create the environment.
-Metadata stays editable, so you can still mark or unmark the environment as its provider's default.
 
 ## Create an environment
 
@@ -84,7 +80,8 @@ Enter a <Label>Display name</Label> and a <Label>Network Environment ID</Label>.
 The ID is the resource name. It can be up to 63 characters, can't contain dots, and can't change later.
 </Step>
 <Step>
-In <Label>Tenant</Label>, select **Platform Tenant** to keep the environment for the platform, or select the Tenant to lend it to.
+In <Label>Tenant</Label>, select **Platform-owned** to keep the environment for the platform, or select the Tenant to lend it to.
+You can't change this after you create the environment.
 This field appears only when the platform has Tenants. Without it, the environment belongs to the platform.
 </Step>
 <Step>
@@ -150,9 +147,8 @@ See [allowed network environments](../../tenants/projects/allowed/network-enviro
 Standalone control plane nodes created through Auto Nodes copy the properties of the first `privateNodes.autoNodes` entry that uses the same provider.
 They land in the same environment as that entry's worker nodes. Without a matching entry, the provider's default applies.
 
-{/* MERGE GATE: this section describes loft-enterprise#8322 (ENGCP-1557), confirmed for 4.13 but unmerged as of 2026-09-25. Don't merge until it lands, and recheck the error strings against the merged code. */}
 An environment serves only its own provider's node claims.
-A project is offered only the environments whose provider one of its allowed node types names.
+A project is offered only environments whose provider one of its allowed node types names, or whose provider owns a Machine assigned to the project's Tenant.
 A claim that names another provider's environment is refused when it's created:
 
 ```text
@@ -160,7 +156,9 @@ network environment "<name>" belongs to node provider "<provider>", not "<claim 
 ```
 
 Creating an environment without a `providerRef` fails with `network environment must reference a node provider`.
-Environments created without one on an earlier release still exist, but they can't serve node claims.
+Naming a NodeProvider that doesn't exist fails with `node provider "<name>" does not exist`.
+Environments created without a provider on an earlier release still exist.
+New node claims can't use them, and you can't add a provider later, so replace them.
 
 ## Check that an environment is ready
 
@@ -171,6 +169,13 @@ Wait for `Ready` before you create machines against it:
 kubectl get networkenvironments.management.loft.sh <name> -o yaml
 kubectl wait networkenvironments.management.loft.sh/<name> --for=condition=Ready --timeout=10m
 ```
+
+## Delete an environment
+
+Deleting an environment waits until no node claim uses it.
+Until then it stays terminating, and its status reports the reason `NodeClaimsBound` with the names of the claims that hold it.
+The driver then removes the infrastructure it provisioned for the environment.
+Delete the clusters and instances that use an environment before you delete it.
 
 ## Next steps
 
