@@ -293,8 +293,8 @@ The full style guide is
 with product names and terminology in
 [vcluster-terms.md](https://github.com/loft-sh/vcluster-docs/blob/main/.claude/skills/vcluster-docs-writer/references/vcluster-terms.md).
 Both are part of the docs-writer skill in this repository, so AI tools that
-work in the repository follow the same rules. For a new feature, task, or
-troubleshooting page, start from the matching
+work in the repository follow the same rules. For a new feature, task,
+troubleshooting, or reference page, start from the matching
 [page template](https://github.com/loft-sh/vcluster-docs/blob/main/.claude/skills/vcluster-docs-writer/references/templates/README.md). The sections below summarize the
 rules contributors run into most.
 
