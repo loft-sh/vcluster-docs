@@ -35,8 +35,9 @@
 # `go mod tidy` and `go mod vendor`, and vendor mode cannot answer a
 # version query against an inconsistent tree.
 #
-# The major-version segment is derived from VERSION, so a future v5 cutover
-# needs no change here.
+# The major-version segment is derived from VERSION. A new major still needs
+# hack/platform/partials moved to its api import first; until then the
+# classifier skips it as major-cutover, so it never reaches this script.
 #
 # Inputs (env):
 #   VERSION   Released platform version, vX.Y.Z[-pre] (required).

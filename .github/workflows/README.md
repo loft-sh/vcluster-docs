@@ -33,6 +33,18 @@ differ from the failed build. A green run that skips an alpha or stale release
 does not test the generator. The PR check covers the committed dependencies;
 the receiver still validates newly released API versions after bumping them.
 
+## Check partials (`check-partials.yml`)
+
+`_partials/` holds generated content only, and hand-written reusable snippets
+go in `_fragments/` (see "Partials vs fragments" in `CLAUDE.md`). On PRs into
+`main` and `next`, this runs `hack/check-partials.sh`, which fails when the PR
+adds a file under any `_partials/` folder in `vcluster/`, `platform/`, or
+`docs/`, other than the generated paths in `GENERATED_PATTERN`. Edits and
+moves of existing files pass (moves are detected as renames), and versioned
+docs aren't checked. The workflow first runs `hack/check-partials_test.sh`.
+
+Break-glass: the `partials-check-skip` label skips the job.
+
 ## Stacked PR preview (`stacked-pr-preview.yml`)
 
 Netlify builds Deploy Previews only for PRs against branches it deploys:

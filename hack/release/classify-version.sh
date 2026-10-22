@@ -5,13 +5,17 @@
 # Maps a released VERSION + EVENT_TYPE to a routing decision:
 #   - skip:           true if the version should not produce docs
 #   - target_folder:  path (relative to REPO_ROOT) where generated docs land
-#   - channel:        stable | rc | rc-patch | alpha | beta | next | stale-line | invalid | unknown-event
+#   - channel:        stable | rc | rc-patch | alpha | beta | next | stale-line | out-of-range |
+#                     unfrozen-line | major-cutover | generator-unknown | history-unknown |
+#                     invalid | unknown-event
+#                     (skip-notice.sh decides which skips fail the run)
 #
 # Inputs (env):
 #   VERSION      Released version, e.g. v0.34.5, v0.34.0-rc.3, v4.6.0-alpha.1
 #   EVENT_TYPE   One of: vcluster-released | vcluster-cli-released | platform-released
-#   REPO_ROOT    (optional) docs-repo root; default $PWD. Used for folder probes
-#                and reading versions.json. Tests override to point at fixtures.
+#   REPO_ROOT    (optional) docs-repo root; default $PWD. Used for folder probes,
+#                versions.json, go.mod, the platform generator and git history.
+#                Tests override to point at fixtures.
 #
 # Outputs:
 #   key=value lines on stdout, also appended to $GITHUB_OUTPUT when set.
@@ -20,24 +24,44 @@
 # calling workflow can branch with `if: steps.classify.outputs.skip != 'true'`
 # without conflating skip-by-design with classifier failure.
 #
-# Routing rules (matches A4 design appendix B):
+# Routing rules:
 #
 #   * alpha / beta / next → always skip (next = -next.internal.* prereleases
 #     cut from feature branches; these must never open a docs-sync PR, per
 #     DEVOPS-1092)
-#   * Immediate next minor after the highest frozen MAJOR.MINOR in the
-#     event's versions.json → target = current docs root (the unreleased
-#     "next" docs folder); RCs targeting this root still generate docs
+#   * MAJOR.MINOR is the next line after the highest frozen MAJOR.MINOR in the
+#     event's versions.json (next minor, or next major's .0) → target = current
+#     docs root (the unreleased "next" docs folder); RCs targeting this root
+#     still generate docs; anything further → skip (channel=out-of-range)
 #   * MAJOR.MINOR ≤ highest frozen, candidate folder exists →
 #     target = versioned folder (e.g. version-0.34.0); skip RCs (rc-patch)
 #     because these are live docs and only stable releases should sync them
 #   * MAJOR.MINOR ≤ highest frozen, candidate folder absent → skip
 #     (past minor we don't track)
-#   * platform-released only: MAJOR.MINOR older than the loft-sh/api pin in
-#     go.mod → skip (channel=stale-line). The platform partials generator
-#     reflects against main's pinned api Go types and only compiles against
-#     its own line; regenerating an older line is impossible and unnecessary.
+#   * vcluster events only: the next minor (X.Y+1) after a sync of X+1.0
+#     already landed on this branch → skip (channel=unfrozen-line), so the old
+#     major's next minor can't overwrite the new major in current docs
+#   * X+1.0 after a sync of X.Y+1 already landed on this branch → skip
+#     (channel=out-of-range) until X.Y+1 is frozen, so the new major can't
+#     overwrite the never-frozen minor in current docs
+#   * both history checks need the full git history; without it (no repo, or a
+#     shallow clone) → skip (channel=history-unknown) rather than guess
+#   * MAJOR.MINOR newer than the highest frozen line of its own major but
+#     older than a frozen newer major (X.Y+1 after X+1.0 was frozen) → skip
+#     (channel=unfrozen-line)
+#   * platform-released only: MAJOR.MINOR older than the generator's
+#     loft-sh/api pin → skip (channel=stale-line), or channel=unfrozen-line
+#     when that line was never frozen. Checked before the next-line rule, because
+#     once X+1.0 has moved the pin, an X.Y+1 release is also "newer than
+#     frozen" but must not pull the pin back down. The platform partials
+#     generator reflects against main's pinned api Go types and only compiles
+#     against its own line; regenerating an older line is impossible and
+#     unnecessary.
 #     See the guard below for the full rationale.
+#   * platform-released only: a major newer than the one the generator imports
+#     → skip (channel=major-cutover), frozen or not, because the pin bump
+#     cannot cross a major on its own. If the generator's api line can't be
+#     read → skip (channel=generator-unknown) rather than run unguarded.
 
 set -eo pipefail
 
@@ -50,6 +74,28 @@ emit() {
     if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
         printf '%s=%s\n' "$1" "$2" >>"$GITHUB_OUTPUT"
     fi
+}
+
+emit_route() {
+    # $1 = target folder
+    emit skip false
+    emit target_folder "$1"
+    emit channel "$channel"
+    exit 0
+}
+
+# Succeeds when a sync of MAJOR.MINOR ($1.$2) for this event family has merged
+# on this branch. Reads the sync PR title set in handle-source-release.yml.
+# A missing or shallow history would read as "never synced", so skip instead.
+synced_line() {
+    local shallow found
+    shallow=$(GIT_CEILING_DIRECTORIES="$(dirname "$REPO_ROOT")" \
+        git -C "$REPO_ROOT" rev-parse --is-shallow-repository 2>/dev/null) || shallow=
+    [[ "$shallow" == false ]] || emit_skip history-unknown
+    found=$(GIT_CEILING_DIRECTORIES="$(dirname "$REPO_ROOT")" \
+        git -C "$REPO_ROOT" log -1 --format=%h -E \
+        --grep="^docs: sync ${sync_events} v$1\.$2\." 2>/dev/null) || emit_skip history-unknown
+    [[ -n "$found" ]]
 }
 
 emit_skip() {
@@ -65,11 +111,13 @@ case "$EVENT_TYPE" in
         versioned_root="vcluster_versioned_docs"
         current_root="vcluster"
         versions_json="vcluster_versions.json"
+        sync_events="vcluster(-cli)?-released"
         ;;
     platform-released)
         versioned_root="platform_versioned_docs"
         current_root="platform"
         versions_json="platform_versions.json"
+        sync_events="platform-released"
         ;;
     *)
         emit_skip unknown-event
@@ -86,42 +134,36 @@ case "$stripped" in
     *-rc.*|*-rc[0-9]*) channel=rc ;;
 esac
 
-base="${stripped%%-*}"
-if ! [[ "$base" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
-    emit_skip invalid
-fi
-major="${BASH_REMATCH[1]}"
-minor="${BASH_REMATCH[2]}"
-incoming_key=$(( major * 100000 + minor ))
+# No leading zeros, because bash arithmetic reads them as octal (010 is 8, 08
+# errors). At most 5 digits, so a minor can never reach the next major's key.
+num='(0|[1-9][0-9]{0,4})'
+
+# Prints MAJOR*100000+MINOR for an X.Y.Z version; fails on anything else.
+version_key() {
+    [[ "$1" =~ ^${num}\.${num}\.${num}$ ]] || return 1
+    echo $(( BASH_REMATCH[1] * 100000 + BASH_REMATCH[2] ))
+}
+
+incoming_key=$(version_key "${stripped%%-*}") || emit_skip invalid
+major=$(( incoming_key / 100000 ))
+minor=$(( incoming_key % 100000 ))
 
 # Highest frozen MAJOR.MINOR from versions.json (Docusaurus convention).
 versions_path="${REPO_ROOT}/${versions_json}"
 highest_key=-1
+frozen_key=-1
 if [[ -f "$versions_path" ]]; then
-    while read -r v; do
-        [[ -z "$v" ]] && continue
-        if [[ "$v" =~ ^([0-9]+)\.([0-9]+)\.[0-9]+$ ]]; then
-            v_major="${BASH_REMATCH[1]}"
-            v_minor="${BASH_REMATCH[2]}"
-            v_key=$(( v_major * 100000 + v_minor ))
-            (( v_key > highest_key )) && highest_key=$v_key
-        fi
-    done < <(tr -d '[]" ' <"$versions_path" | tr ',' '\n')
+    # `|| -n` keeps the last entry when the file has no trailing newline.
+    while read -r v || [[ -n "$v" ]]; do
+        v_key=$(version_key "$v") || continue
+        (( v_key > highest_key )) && highest_key=$v_key
+        (( v_key / 100000 == major && v_key > frozen_key )) && frozen_key=$v_key
+    done < <(tr -d '[]" \t\r' <"$versions_path" | tr ',' '\n')
 fi
-
-if (( incoming_key > highest_key )); then
-    # Newer than anything frozen. Only the immediate next minor in the
-    # same major series can map to current docs — anything further is
-    # treated as garbage / unexpected, per A4 appendix B (e.g. v9.9.9
-    # against a 0.x history must skip, not silently write into current).
-    if (( incoming_key == highest_key + 1 )); then
-        emit skip false
-        emit target_folder "$current_root"
-        emit channel "$channel"
-        exit 0
-    fi
-    emit_skip "$channel"
-fi
+# Newest frozen line this release could be a patch of: the highest in its own
+# major, or the highest overall when nothing in its major is frozen. Anything
+# newer was never frozen, even when a newer major is (X.Y+1 after X+1.0).
+(( frozen_key >= 0 )) || frozen_key=$highest_key
 
 # ── Platform generator is current-line-only ───────────────────────────────
 # The platform partials generator (hack/platform/partials/main.go) reflects
@@ -139,38 +181,79 @@ fi
 # compile the source checked out at the released tag, so they carry no such
 # constraint and older lines still regenerate — this guard is platform-only.)
 #
-# The generator line is read from go.mod's api pin, not from highest_key, so
-# the guard stays correct in the window between manually freezing a new docs
-# version and the receiver bumping the pin to that line. If the pin can't be
-# read, gen_key stays -1 and the guard is inert (preserves prior behavior).
+# The generator line is the go.mod require for the api major that
+# hack/platform/partials/main.go (the only file run-generator.sh compiles)
+# imports. go.mod can also carry other api majors as indirect requires that
+# the generator never compiles against. A replace of that module makes the
+# real version unknowable from go.mod. The pin is read from go.mod rather than
+# highest_key, so the guard stays correct in the window between manually
+# freezing a new docs version and the receiver bumping the pin to that line.
 if [[ "$EVENT_TYPE" == "platform-released" ]]; then
-    gen_key=-1
-    if [[ -f "${REPO_ROOT}/go.mod" ]]; then
-        # Extended regex (-E) so the quantifiers are portable: BSD sed on
-        # macOS does not accept GNU basic-regex \+, which would silently
-        # extract no pin and leave the guard inert for local contributors.
-        gen_line=$(sed -nE 's#^[[:space:]]*github\.com/loft-sh/api/v[0-9]+ v([0-9]+\.[0-9]+)\..*#\1#p' "${REPO_ROOT}/go.mod" | head -n1)
-        if [[ "$gen_line" =~ ^([0-9]+)\.([0-9]+)$ ]]; then
-            gen_key=$(( BASH_REMATCH[1] * 100000 + BASH_REMATCH[2] ))
-        fi
-    fi
-    if (( gen_key >= 0 && incoming_key < gen_key )); then
+    generator="${REPO_ROOT}/hack/platform/partials/main.go"
+    gen_majors=$(grep -oE '"github\.com/loft-sh/api/v[0-9]+[/"]' "$generator" 2>/dev/null |
+        sed -E 's#.*/v([0-9]+).#\1#' | sort -u || true)
+    # Exactly one api major, or the guard below can't be trusted.
+    [[ "$gen_majors" =~ ^[0-9]+$ ]] || emit_skip generator-unknown
+    gen_major=$gen_majors
+
+    pin=$(awk -v mod="github.com/loft-sh/api/v${gen_major}" '
+        { sub(/\r$/, "") }
+        /^[[:space:]]*\)/ { block = ""; next }
+        /^[a-z]+[[:space:]]*\(/ { block = $1; sub(/\(.*/, "", block); next }
+        ($1 == "replace" && $2 == mod) || (block == "replace" && $1 == mod) { replaced = 1 }
+        $1 == "require" && $2 == mod { pin = $3 }
+        block == "require" && $1 == mod { pin = $2 }
+        END { if (!replaced) print pin }
+    ' "${REPO_ROOT}/go.mod" 2>/dev/null || true)
+    pin="${pin#v}"
+    gen_key=$(version_key "${pin%%-*}") || emit_skip generator-unknown
+
+    if (( incoming_key < gen_key )); then
+        # Newer than anything frozen yet older than the generator means the
+        # line was never documented; that needs a person, not a quiet skip.
+        (( incoming_key > frozen_key )) && emit_skip unfrozen-line
         emit_skip stale-line
     fi
+    # incoming_key >= gen_key, so a different major can only be a newer one.
+    (( major != gen_major )) && emit_skip major-cutover
 fi
+
+if (( incoming_key > highest_key )); then
+    # Newer than anything frozen. Only the immediate next line (X.Y+1, or
+    # X+1.0 after the highest frozen X.Y) maps to current docs. Anything
+    # further is unexpected (e.g. v9.9.9 against a 0.x history) and must not
+    # silently write into current. With no versions.json there is no
+    # baseline, so only the +1 rule applies.
+    next_major=$(( highest_key / 100000 + 1 ))
+    if (( incoming_key == highest_key + 1 )); then
+        # vCluster has no pin that says which line owns current docs, so use
+        # the merged sync history: once X+1.0 has synced, X.Y+1 would
+        # overwrite it. Platform gets the same protection from its api pin.
+        if [[ "$EVENT_TYPE" != "platform-released" ]] && synced_line "$next_major" 0; then
+            emit_skip unfrozen-line
+        fi
+        emit_route "$current_root"
+    fi
+    if (( highest_key >= 0 && incoming_key == next_major * 100000 )); then
+        # The reverse: X.Y+1 already synced into current docs and was never
+        # frozen, so X+1.0 would overwrite it. Freeze X.Y+1 first.
+        synced_line $(( next_major - 1 )) $(( highest_key % 100000 + 1 )) && emit_skip out-of-range
+        emit_route "$current_root"
+    fi
+    emit_skip out-of-range
+fi
+
+# Older than the newest frozen line but never frozen itself: X.Y+1 released
+# after X+1.0 was frozen. It has no folder and current docs hold X+1.
+(( incoming_key > frozen_key )) && emit_skip unfrozen-line
 
 candidate="${versioned_root}/version-${major}.${minor}.0"
 if [[ -d "${REPO_ROOT}/${candidate}" ]]; then
     # Patch RCs would produce superseded live-docs PRs and can lower Platform
     # dependency pins if merged after the stable release. Wait for stable;
     # RCs for the unreleased current root have already returned above.
-    if [[ "$channel" == "rc" ]]; then
-        emit_skip rc-patch
-    fi
-    emit skip false
-    emit target_folder "$candidate"
-    emit channel "$channel"
-    exit 0
+    [[ "$channel" == "rc" ]] && emit_skip rc-patch
+    emit_route "$candidate"
 fi
 
 # Past minor that was frozen-but-pruned (in versions.json, no folder) — skip.

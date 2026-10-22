@@ -113,7 +113,7 @@ SH
     [[ "$output" == *"v4.10.1 resolves via direct fetch"* ]]
 }
 
-@test "major version is derived from VERSION (v5 needs no code change)" {
+@test "major version is derived from VERSION" {
     VERSION=v5.2.0 run "$SCRIPT"
     [ "$status" -eq 0 ]
     grep -q "args=mod download github.com/loft-sh/agentapi/v5@v5.2.0" "$SHIM_STATE/go.log"
