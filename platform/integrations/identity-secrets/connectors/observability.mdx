@@ -9,8 +9,8 @@ import InterpolatedCodeBlock from '@site/src/components/InterpolatedCodeBlock';
 
 An observability connector holds the endpoints and TLS Secret references that Platform uses for telemetry. Use the [observability quickstart](../../../fleet-operations/observability/quickstart.mdx) to install and connect the telemetry components.
 
-:::warning Grants don't isolate observability references
-Connector grants don't currently validate a cluster's observability connector reference. Don't rely on those grants to isolate tenant access to telemetry credentials. The database and Argo CD grant-loss behavior doesn't apply here.
+:::warning Revoking a grant doesn't revoke issued writer keys
+Connector grants control which observability connector a cluster can use. Revoking a grant stops Platform from issuing new writer keys for that connector, but a key issued before the revocation keeps writing. See [Retrieve cluster writer credentials](#retrieve-cluster-writer-credentials).
 :::
 
 ## Manage the connector resource
@@ -37,7 +37,14 @@ To set it, save the `destinations` text to a file and merge-patch it into the co
   code={"kubectl patch connectors.management.loft.sh [[VAR:CONNECTOR:observability]] --type=merge -p \"$(jq -n --rawfile d [[VAR:DESTINATIONS_FILE:destinations.yaml]] '{spec:{observability:{destinations:$d}}}')\""}
 />
 
-`certSecretName` names a `kubernetes.io/tls` Secret for mutual TLS. Omit it when the destination doesn't require a client certificate. Keep TLS verification enabled when using trusted certificates.
+Confirm that the connector stored the new list:
+
+<InterpolatedCodeBlock
+  language="bash"
+  code={"kubectl get connectors.management.loft.sh [[VAR:CONNECTOR:observability]] -o jsonpath='{.spec.observability.destinations}'"}
+/>
+
+`certSecretName` names a `kubernetes.io/tls` Secret for mutual TLS. Omit it when the destination doesn't require a client certificate. Keep TLS verification enabled when using trusted certificates. See [Forward telemetry to additional destinations](../../../fleet-operations/observability/forward-telemetry.mdx) for destination limits and delivery behavior.
 
 Use the [Connector API reference](../../../api/resources/connector.mdx) for backend endpoints, certificate references, service settings, and gateway resource overrides.
 
@@ -49,9 +56,12 @@ With `integrations.observability` enabled, Platform issues a scoped `metrics-wri
 
 Don't distribute the backend connector's credentials to collectors. See [Configure metrics access](../../../fleet-operations/observability/configure-metrics-access.mdx) for manual writer and reader provisioning.
 
+The cluster's `integrations.observability.connector` must name a connector its owning tenant can use. Admission refuses a reference to any other connector with `does not name a usable connector`, the same refusal used for database and Argo CD references. See [Validate connector use](./manage.mdx#validate-connector-use).
+
+Platform checks the grant again before it issues a writer key. If the tenant can no longer use the connector, the subresource returns 400 and issues no key. The cluster reports the `ObservabilityConnectorUnresolved` condition with reason `ObservabilityConnectorUnusable`. A key issued before the grant was lost keeps writing.
 
 ## Delete a connector
 
 The gateway cleanup controller manages a finalizer on the backing Secret. API deletion can leave cleanup pending, particularly when an expired license prevents the controller from running. Keep gateway resources and the finalizer under controller management until cleanup completes.
 
-The controller starts with Platform only when the license includes `fleet-observability`. If cleanup stays pending after a license lapse, restore the license and restart Platform. Don't remove the finalizer by hand while the controller can still run, because that skips gateway cleanup.
+The controller runs only when the license includes `fleet-observability`, and never on a Platform running embedded Kubernetes. If cleanup stays pending after a license lapse, restore the license. Platform restarts itself when a licensed feature's status changes. If cleanup still doesn't run, restart Platform. Don't remove the finalizer by hand while the controller can still run, because that skips gateway cleanup.
