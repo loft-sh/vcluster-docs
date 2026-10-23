@@ -1,0 +1,140 @@
+---
+title: Back up vCluster Platform
+sidebar_label: Back up Platform
+sidebar_position: 1
+description: Create and verify a management backup before recovering or migrating the platform.
+---
+
+import InterpolatedCodeBlock from '@site/src/components/InterpolatedCodeBlock';
+import PageVariables from '@site/src/components/PageVariables';
+
+<PageVariables NAMESPACE="vcluster-platform" BACKUP="backup.yaml" />
+
+As a system admin, back up the vCluster Platform management resources and identity before recovery or migration to another control plane cluster.
+Use this guide for installations that store management resources in the control plane cluster's Kubernetes API.
+For an external database, use your database's backup tools and preserve the identity Secrets separately.
+When you need to recover an installation, use [Restore Platform](./restore-platform.mdx).
+
+## Before you begin
+
+- Use the vCluster 0.38 CLI for the Platform 5.0 procedures on this page.
+- Log the CLI in to the source platform before taking a backup. It reads the project namespace prefix through the platform API.
+  The command fails when the platform API is unreachable, so you can't take a CLI backup during an outage. Take backups on a schedule while the platform is healthy.
+- Select the source Kubernetes context and confirm the platform namespace.
+- Use credentials that can list the management resources and read their referenced Secrets, including the platform identity Secrets.
+- Keep the original Helm values, chart version, domain, and environment-specific credentials available outside the platform.
+- Stop changes to the source while taking the final migration backup.
+
+:::warning Protect the backup file
+The file contains credentials, access keys, and private keys. Restrict file permissions and store it in encrypted storage with controlled access.
+Don't commit the file to a source repository or attach it to a support ticket.
+:::
+
+## Backup contents and limits
+
+### CLI backup
+
+`vcluster platform backup management` writes these resource types and selected associated Secrets:
+
+- ClusterRoleTemplate and ClusterAccess
+- User, including password and authentication-code Secrets
+- Team, SharedSecret, and AccessKey
+- App, SpaceTemplate, and VirtualClusterTemplate
+- Cluster and its referenced configuration Secret
+- Project
+- VirtualClusterInstance and SpaceInstance in the backed-up Projects
+- Secrets labeled `loft.sh/project-secret: "true"` in those Projects
+
+The command also includes these Secrets from the platform namespace when they exist:
+
+| Secret | Purpose |
+| --- | --- |
+| `loft-cert` | Preserves the license instance identity, signing key, and token certificate authority. |
+| `loft-network-control-key` | Preserves the coordinator key used by connected clusters' tunnels. |
+| `loft-license-cache` | Preserves the cached license for temporary license-server outages. It doesn't determine the instance identity. |
+
+The identity Secrets appear first in the file. Missing identity Secrets are skipped, so inspect the source and backup before relying on them.
+The backup retains each VirtualClusterInstance object's `status.serviceUID` and clears its other status fields.
+This identifier lets a connected cluster register against its existing instance after a control-plane restart.
+
+### UI backup
+
+To create a UI backup, navigate to **Admin > Platform Config > Backup and Restore** and click **Export** under **Export Configuration**.
+The UI uses the server's backup implementation. Its contents differ from the CLI backup:
+
+- UI backup omits the three platform identity Secrets.
+- UI backup includes Tenant resources and their configuration Secrets. The CLI backup doesn't include these.
+- UI backup fails if any resource read fails, instead of writing a partial file with warnings.
+
+Preserve identity Secrets separately when using a UI backup for disaster recovery.
+For installations using Tenants, a CLI backup alone is insufficient. Review the recovery plan with support before migration.
+
+### Resources to back up separately
+
+Neither path is a full infrastructure or workload backup. Back up these items separately:
+
+- Ingress TLS certificates, including `loft-tls` or another configured TLS Secret.
+- Helm values, platform configuration, and deployment resources outside the listed backup contents.
+- External databases and persistent volumes, including metrics storage.
+- Connected clusters' workloads and persistent volumes.
+- Management types outside the lists above, including Machines, node providers, node types, and snapshot records.
+
+Use your database's backup tools and a Kubernetes backup solution such as [Velero](https://velero.io/) for the applicable resources.
+Don't use this file as a substitute for a tested disaster-recovery plan.
+
+## Create a CLI backup
+
+Set a restrictive file-creation mask before running the command:
+
+<InterpolatedCodeBlock
+  language="bash"
+  code={'umask 077\n' +
+    'vcluster platform backup management --namespace [[GLOBAL:NAMESPACE]] --filename [[GLOBAL:BACKUP]]\n' +
+    'chmod 600 [[GLOBAL:BACKUP]]'}
+/>
+
+With no flags, the command detects the installation namespace and writes `backup.yaml` in the current directory.
+
+### Exclude resources
+
+Pass skip keys as a comma-separated list:
+
+```bash
+vcluster platform backup management --skip users,teams
+```
+
+The supported keys are:
+
+```text
+platformsecrets, clusterroletemplates, clusteraccesses, users, teams,
+sharedsecrets, accesskeys, apps, spacetemplates, virtualclustertemplates,
+clusters, projects, virtualclusterinstances, spaceinstances, projectsecrets
+```
+
+`--skip platformsecrets` excludes the three identity Secrets.
+Skipping `projects` also prevents collection of instances and project Secrets, because those depend on the collected Project list.
+
+For a migration whose only Cluster object is `loft-cluster`, use `--skip clusters` and let the destination create its local registration with ordinary defaults enabled.
+The source registration carries a `loft.sh/cluster-uid` annotation that doesn't match a fresh Kubernetes cluster.
+Restoring it unchanged can leave the registration failing with `ClusterUID` and prevent Argo CD cluster registration.
+Don't skip all Cluster objects if you need remote cluster registrations. Review those registrations individually before migration.
+
+## Verify the backup
+
+Review every warning. The command can write a backup file after resource reads fail, so a written file alone doesn't confirm completeness.
+Inspect the file securely for the expected resources, identity Secrets, and `status.serviceUID` values.
+Don't print Secret data into shared logs.
+Check for Secret documents without a `metadata.name`. A User or Cluster that references a missing Secret produces an empty Secret in the backup, which fails to apply on restore.
+Recreate the missing credential, or remove the empty document from the file.
+Resolve missing resources or permission errors and take another backup before relying on it.
+
+Store the backup and its platform and CLI versions with your recovery plan.
+Test restoration in a separate environment, and remove temporary copies according to your retention policy.
+
+<!-- vale Vale.Terms = NO -->
+{/* Preserve the old combined page's restore link as a signpost to the separate task. */}
+## Next steps {#restore-vcluster-platform-from-backup}
+<!-- vale Vale.Terms = YES -->
+
+- [Restore Platform from a backup](./restore-platform.mdx)
+- [Preserve the license identity](./preserve-license.mdx)
