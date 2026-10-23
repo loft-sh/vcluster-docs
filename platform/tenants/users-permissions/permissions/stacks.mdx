@@ -7,7 +7,7 @@ description: Configure RBAC for StackTemplates, StackInstances, and published St
 
 [Stack](../../templates/what-are-stacks.mdx) permissions use Kubernetes role-based access control (RBAC) in the `management.loft.sh` API group. `StackTemplate` resources are cluster-scoped. `StackInstance` resources and their outputs subresource are project-scoped.
 
-Unlike clusters or namespaces, Stacks don't have a per-object **Permissions** tab in the UI. Grant access with a ClusterRoleTemplate instead, as shown below.
+Grant broad access with a ClusterRoleTemplate, as shown below. To share one object with specific users or teams, set its `spec.access`. A StackTemplate also sets its owner and access in the **Management Access** section of its form. A StackInstance passes its owner and access settings to every App and Argo CD Application it creates.
 
 ## Permission map
 
@@ -15,7 +15,7 @@ Grant only the verbs required by each role:
 
 | Task | Resource | Verbs |
 | --- | --- | --- |
-| Browse the Stack catalog | `stacktemplates` | `get`, `list` |
+| Browse the Stack catalog | `stacktemplates` | `get`, `list`. Every authenticated user already has these through the default management role. |
 | Create Stack templates | `stacktemplates` | `create` |
 | Manage Stack templates | `stacktemplates` | `get`, `list`, `watch`, `create`, `update`, `patch`, `delete` |
 | Install a Stack | `stackinstances` | `create` |
@@ -23,15 +23,31 @@ Grant only the verbs required by each role:
 | Change or remove a Stack | `stackinstances` | `update`, `patch`, `delete` |
 | Read published outputs | `stackinstances/outputs` | `get` |
 
-Reading a StackInstance does not grant access to its published values. Grant `get` on `stackinstances/outputs` separately because published values can include data captured from Secrets. The outputs API marks values captured from Secrets as sensitive.
+Reading a StackInstance does not grant access to its published values. Grant `get` on `stackinstances/outputs` separately because published values can include data captured from Secrets. The outputs API marks values captured from Secrets as sensitive. A value that one task passes to another is also written to the generated child, which shares the StackInstance's `spec.access`. See [Publish outputs](../../templates/create-stack-templates.mdx#publish-outputs).
 
-A user who creates a StackInstance must also be authorized for its destination cluster or control plane cluster. Task type licensing and destination access checks are independent of the resource rules in this page.
+Creating a StackInstance also runs checks beyond the resource rules on this page:
 
-## Default roles in Platform 4.12
+- **Destination access.** Both the caller and the StackInstance owner need access to the destination: `use` on the cluster's VirtualClusterInstance, or `get` on the control plane cluster. A control plane cluster destination must also be in the project's allowed clusters. Tasks read their outputs as the owner, so the owner's access is checked again at every capture. If the owner loses access, those tasks fail with `OutputReadForbidden`.
+- **Allowed templates.** A referenced StackTemplate must be in the project's [allowed templates](../../projects/allowed/templates.mdx).
+- **Project secrets.** Both the caller and the owner need `get` on any project secret that an inline App task's chart credentials reference.
+- **Licensing.** Each task type needs its license feature. See [Create a Stack template](../../templates/create-stack-templates.mdx#understand-licensing).
+
+Connectors aren't part of these checks, and the default management role doesn't grant access to them. Assign the **Connector Admin** or **Connector Viewer** role to users who manage connectors.
+
+## Default roles
 
 The built-in **Template Admin**, **Template Creator**, and **Template Viewer** global roles include `stacktemplates` alongside the other template resources. Template Admin grants all verbs, and Template Viewer grants `get`. Template Creator's rule grants only `create`, but a StackTemplate defaults its owner to whoever creates it, and owner access separately grants that creator `get`, `update`, `patch`, and `delete` on templates they created.
 
-The built-in **Project Admin** role grants all verbs on both `stackinstances` and `stackinstances/outputs`. The built-in **Project User** and **Project Viewer** roles do not grant StackInstance permissions in Platform 4.12. Add the required rules to a custom project role when those members need to install or operate Stacks.
+The built-in **Project Admin** role grants all verbs on both `stackinstances` and `stackinstances/outputs`. The built-in **Project User** and **Project Viewer** roles don't grant StackInstance permissions, so their members don't see a cluster's **Stacks** tab. Add the required rules to a custom project role when those members need to install or operate Stacks.
+
+## Tenant users
+
+Inside a tenant, the tenant boundary narrows these permissions further:
+
+- A tenant can't author StackTemplates. It sees only the StackTemplates that its `templates` capability grants. A template outside that grant reads as missing, so a StackInstance that references it reports `TemplateNotFound`.
+- A tenant creates and owns its own StackInstances, but never sees StackInstances that a platform admin owns.
+- The project's allowed templates still apply, so a Stack needs both the tenant grant and the project allow-list.
+- The destination must be available to the tenant.
 
 ## Custom project role example
 
