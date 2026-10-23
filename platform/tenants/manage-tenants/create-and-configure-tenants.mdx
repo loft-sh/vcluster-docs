@@ -1,0 +1,521 @@
+---
+title: Create and configure a tenant
+sidebar_label: Create and Configure
+sidebar_position: 2
+description: Create a tenant, grant it the platform inventory it can consume, assign dedicated resources, and hand it to a tenant admin.
+---
+
+import Flow, { Step } from "@site/src/components/Flow";
+import NavStep from "@site/src/components/NavStep";
+import Button from "@site/src/components/Button";
+import Label from "@site/src/components/Label";
+import Tabs from "@theme/Tabs";
+import TabItem from "@theme/TabItem";
+
+This page covers the platform admin workflow. You create a tenant and decide what
+platform inventory it can consume. You then assign any resources it gets
+exclusively, configure its hostnames and branding, and hand it to a tenant
+admin, who takes over from there.
+
+Only a platform admin can do this. A tenant admin can't widen their own
+boundary.
+
+## Before you start
+
+- Confirm the **Multi-Tenancy** feature is active in your license. See
+  [the overview](./overview.mdx).
+- Decide how you'll select inventory. Label-based grants scale better than
+  naming instances one by one, and most capabilities accept labels only. See
+  [what each capability offers](#what-each-capability-offers) before you
+  choose.
+
+## Create the Tenant
+
+<Tabs>
+<TabItem value="ui" label="UI" default>
+
+<Flow id="create-tenant-ui">
+  <Step>
+    Click <NavStep>Platform > Tenants</NavStep>.
+  </Step>
+  <Step>
+    Click <Button>Create Tenant</Button>.
+  </Step>
+  <Step>
+    Give the tenant a name. The name becomes a prefix on everything the tenant
+    owns, so keep it short and recognizable. See the name rules below.
+  </Step>
+  <Step>
+    Optionally set a display name and description. The display name is what
+    tenant users see.
+  </Step>
+  <Step>
+    Click <Button>Create</Button>. You can grant inventory now or come back to
+    it.
+  </Step>
+  <Step>
+    In the <Label>Invite Tenant Admin</Label> dialog, click
+    <Button>Copy & Close</Button>. Store the link securely until you're ready to
+    hand off the tenant. The dialog shows the link only once.
+  </Step>
+</Flow>
+
+</TabItem>
+<TabItem value="yaml" label="YAML">
+
+A tenant with no grants. This is a valid starting point, and the tenant can't
+reach anything until you add capabilities.
+
+```yaml title="tenant.yaml"
+apiVersion: management.loft.sh/v1
+kind: Tenant
+metadata:
+  name: acme
+spec:
+  displayName: Acme Corp
+  description: Production tenant for Acme
+```
+
+Apply it with `kubectl apply -f tenant.yaml` against the platform API.
+
+Use `metadata.generateName` instead of `metadata.name` to have the platform
+append a random suffix. One of the two is required. Both are subject to the name
+rules below.
+
+</TabItem>
+</Tabs>
+
+### Name rules
+
+A tenant name is a DNS label of 32 characters or fewer, with no dots and no
+`--`. A `generateName` prefix is limited to 27 characters. The name can't be
+changed later, so a rename means creating a new tenant. A name that matches the
+NICo org of an existing NICo node provider is refused, because that org is
+reserved for platform workloads.
+
+[Full name rules →](./tenant-boundary-reference.mdx#tenant-names)
+
+### What gets created with it
+
+Creating a tenant also creates three objects.
+
+| Object | Name | Purpose |
+|--------|------|---------|
+| User | `<tenant>--admin` | The tenant admin |
+| Team | `<tenant>--admins` | Holds the tenant admin's rights inside the boundary |
+| Project | `<tenant>--default` | Somewhere for the tenant admin to start |
+
+To make another tenant user a tenant admin, add them to the team.
+
+Platform leaves any of the three alone if it already exists. Recreating a tenant
+you deleted earlier therefore reuses the old admin account and its credentials.
+
+:::note Names are prefixed
+A cluster-scoped resource the tenant creates must be named `<tenant>--<name>`,
+or it's refused. See [resource names](./tenant-boundary-reference.mdx#resource-names).
+:::
+
+## Grant object access
+
+Every tenant starts with no grants to platform inventory. For each capability,
+turn it on and select the instances the tenant may use. A capability that's on
+without a selector grants nothing.
+
+:::warning An empty selector isn't an omitted one
+An empty label selector, `byLabels: {}`, grants every admin-owned instance of
+that kind, including ones you add later. An omitted selector grants none. A
+disabled capability withholds everything of that kind, including instances
+assigned to the tenant and ones it created. See
+[selector semantics](./tenant-boundary-reference.mdx#selector-semantics).
+:::
+
+<Tabs>
+<TabItem value="ui" label="UI" default>
+
+<Flow id="grant-object-access-ui">
+  <Step>
+    Click <NavStep>Platform > Tenants</NavStep> and click the tenant you want to
+    edit.
+  </Step>
+  <Step>
+    Click <Label>Object Access</Label>. It has one entry per capability.
+  </Step>
+  <Step>
+    Turn on the capability you want to grant, then choose how to select
+    instances. <Label>Node Types</Label> offers <Label>By Label</Label> or
+    <Label>By Name</Label>. <Label>Control Plane Clusters</Label>,
+    <Label>OS Images</Label>, <Label>Templates</Label>, and
+    <Label>Connectors</Label> offer <Label>By Label</Label>.
+    <Label>SSH Keys</Label> has no selector, because turning it on lets the
+    tenant create its own keys.
+  </Step>
+  <Step>
+    For <Label>Node Types</Label>, optionally set quotas to cap how many
+    instances of each type the tenant can hold across its projects. The form
+    lists only NICo node types. Set quotas for other node types in YAML. See
+    the note on node type quotas below.
+  </Step>
+  <Step>
+    Click <Button>Save Changes</Button>.
+  </Step>
+</Flow>
+
+</TabItem>
+<TabItem value="yaml" label="YAML">
+
+Labels under `tenant.example.com` here are your own. You choose them and apply
+them to your inventory. Labels under `tenant.vcluster.com`, later on this page,
+are reserved by the platform.
+
+```yaml title="tenant.yaml"
+apiVersion: management.loft.sh/v1
+kind: Tenant
+metadata:
+  name: acme
+spec:
+  displayName: Acme Corp
+  controlPlaneClusters:
+    enabled: true
+    allow:
+      byLabels:
+        tenant.example.com/pool: shared
+  nodeTypes:
+    enabled: true
+    allow:
+      byName:
+        - eu-west.medium
+        - eu-west.large
+    quota:
+      byType:
+        eu-west.medium: "10"
+        eu-west.large: "4"
+  osImages:
+    enabled: true
+    allow:
+      byLabels:
+        tenant.example.com/tier: standard
+      custom:
+        enabled: true
+  templates:
+    enabled: true
+    allow:
+      byLabels:
+        tenant.example.com/tier: standard
+  sshKeys:
+    enabled: true
+    allow:
+      custom:
+        enabled: true
+  connectors:
+    enabled: true
+    allow:
+      byLabels:
+        tenant.example.com/tier: standard
+```
+
+</TabItem>
+</Tabs>
+
+### Confirm the grant landed
+
+Read the controller's resolved boundary report back.
+
+```bash
+kubectl get tenant acme -o jsonpath='{.status.boundary}' | jq
+```
+
+A capability you granted should show its selectors, and a kind you didn't grant
+should show a `hidden` baseline with nothing singled out. Selector changes don't
+wait for this report to update. The derived node provider grant is the exception
+and changes when the tenant controller reconciles it.
+
+### What each capability offers
+
+Capabilities don't all support the same selectors, because they don't all mean
+the same thing. A tenant can't author a control plane cluster, so that
+capability has no option to let it try.
+
+| Capability | By label | By name | Tenant can author its own | Quota |
+|------------|----------|---------|---------------------------|-------|
+| Control plane clusters | Yes | Yes | No | No |
+| Node types | Yes | Yes | No | Yes |
+| OS images | Yes | Yes | Yes | No |
+| SSH keys | No | No | Yes | No |
+| Templates | Yes | No | No | No |
+| Connectors | Yes | Yes | No | No |
+
+The UI offers <Label>By Name</Label> only for node types. Grant control plane
+clusters, OS images, or connectors by name in YAML. Changing the selector of one
+of those capabilities in the UI clears a `byName` list set in YAML, so re-apply
+it afterwards.
+
+The SSH keys capability has no selector for the platform's own keys. Turning it
+on decides whether the tenant may register keys of its own. A platform admin can
+still lend a specific key with an exclusive assignment.
+
+A tenant reading a connector sees its configuration but never its credentials.
+A cluster or OS image that names a connector the tenant can't use is refused
+when written. If you withdraw a connector later, a cluster that's already using
+it keeps its database. See
+[Troubleshoot tenants](../troubleshoot/tenants.mdx#a-connector-isnt-usable).
+
+:::note Node type quotas cap on-demand usage, they don't reserve machines
+`nodeTypes.quota.byType` caps how many instances of each node type the tenant
+can hold, counted across all its projects. It caps on-demand capacity only, so
+what counts depends on where an instance lands:
+
+- A Metal3, NICo, or KubeVirt node type with the `Assigned` machine allocation
+  policy isn't limited, because it only draws on capacity assigned to the
+  tenant. Metal3 and NICo node types use `Assigned` unless you set otherwise.
+- Under `OnDemand`, an instance on a machine the tenant owns or is exclusively
+  assigned doesn't count. Only instances on unassigned machines count.
+- Requests pinned to a specific machine never count.
+- A node type from a provider without a machine inventory, such as Terraform,
+  counts every instance.
+
+How Platform enforces the quota depends on the request. A request that names
+the node type directly is refused with a `quota exhausted` error. A request that
+lets Platform choose the node type, such as from a node pool, waits as Pending
+with the reason `TenantNodeTypeQuotaExceeded` until capacity frees up. An
+instance keeps counting until its `NodeClaim` is fully deleted, including while
+it's `Failed`.
+
+A quota doesn't set machines aside for the tenant. To reserve hardware, assign
+machines to the tenant. To cap a single project, set
+[project quotas](../projects/quotas.mdx).
+:::
+
+A capability that offers both selectors accepts only one of them. Setting
+`byName` and a non-empty `byLabels` together is refused. To grant a named set
+plus one extra, label the extra one and widen the label selector instead. An
+empty `byLabels: {}` next to `byName` is accepted, but it grants every
+admin-owned instance and makes the name list irrelevant.
+
+A name grant reaches only admin-owned instances, never an instance another
+tenant owns. A name that doesn't match an instance yet isn't an error. The grant
+takes effect when an instance with that name is created.
+
+The templates capability covers several kinds at once with a single label
+selector. One grant reaches cluster templates, apps, stack templates, namespace
+templates, machine config templates, and Argo CD application templates together.
+You can't narrow it to one kind.
+
+### Grant a whole class
+
+To grant every admin-owned instance of a kind, including ones you add later,
+use an empty label selector.
+
+```yaml
+  osImages:
+    enabled: true
+    allow:
+      byLabels: {}
+```
+
+## Assign dedicated resources
+
+Capabilities select from shared inventory. Some resources instead belong to one
+tenant outright, and a platform admin assigns them by hand.
+
+Machines and network environments work this way. An assigned resource leaves the
+platform's available pool and can't be claimed by another tenant. Only a
+platform admin creates network environments. A tenant uses the ones assigned to
+it.
+
+Any other resource can be assigned the same way, except projects, users, and
+teams. If a capability governs the resource, enable it for the tenant first, or
+the assignment is refused.
+
+To share one resource with every tenant instead of one, label it
+`tenant.vcluster.com/all` with the value `"true"`. See the
+[tenant boundary reference](./tenant-boundary-reference.mdx#tenantvclustercomall).
+
+:::warning Network environment assignment is one-way
+Read this before assigning a network environment. Once assigned, the assignment
+can't be changed or removed. Its node provider and properties can't be edited
+either, although the display name, owner, and access still can. A network
+environment must name a node provider and be assigned to a tenant or to the
+platform when it's created.
+
+A machine can be reassigned, but not while it's provisioned. Platform refuses any
+change to a claimed machine's assignment, including adding or removing one. The
+UI doesn't let you select a provisioned machine.
+:::
+
+<Tabs>
+<TabItem value="ui" label="UI" default>
+
+<Flow id="assign-machine-ui">
+  <Step>
+    Click <NavStep>Bare Metal > Machines</NavStep>.
+  </Step>
+  <Step>
+    Select the machines you want to assign.
+  </Step>
+  <Step>
+    Click <Button>Assign to tenant</Button>.
+  </Step>
+  <Step>
+    Choose the tenant and click <Button>Assign</Button>.
+  </Step>
+</Flow>
+
+</TabItem>
+<TabItem value="yaml" label="YAML">
+
+Assignment is a label on the resource.
+
+```yaml
+metadata:
+  labels:
+    tenant.vcluster.com/exclusive-to: acme
+```
+
+Remove the label to return the resource to the platform pool. That works for a
+machine that isn't provisioned. A network environment's assignment is
+permanent, so removing the label is refused.
+
+</TabItem>
+</Tabs>
+
+## Onboard a tenant to NICo
+
+Platform onboards a tenant to NICo automatically once you grant it a node type
+or assign it a network environment that references a NICo node provider. The
+tenant name becomes its NICo org, so there's nothing to configure.
+
+Platform reports progress as conditions on the tenant.
+
+| Condition | `False` means |
+|-----------|---------------|
+| `NICoOnboarded` | The NICo org isn't ready yet, or onboarding failed. The reason says which |
+| `NICoNodeProviderFound` | A referenced node provider is missing or isn't a NICo provider, or the tenant's grants point at more than one |
+| `NICoSiteCredentialsAvailable` | Platform couldn't load the tenant's credentials for the NICo endpoint |
+
+```bash
+kubectl get tenant acme -o jsonpath='{.status.conditions}' | jq
+```
+
+## Configure hostnames and branding
+
+A tenant carries its own configuration, separate from the platform's.
+
+### Hostnames
+
+A hostname routes requests to a tenant. A request arriving on that hostname
+resolves to the tenant before anyone signs in, which is what lets the tenant get
+its own branded sign-in page.
+
+Platform admins set hostnames and branding in the UI. To delegate branding to a
+tenant admin, enable the customization control in YAML.
+
+Hostnames are set by a platform admin only, and can't be delegated. A hostname
+claims a name the whole platform shares. Completing that claim needs DNS and a
+certificate, both outside a tenant admin's reach.
+
+<Flow id="tenant-hostname-ui">
+  <Step>
+    Click <NavStep>Platform > Tenants</NavStep> and click the tenant.
+  </Step>
+  <Step>
+    Click <Label>Domains</Label>, then click <Button>Add Host</Button>.
+  </Step>
+  <Step>
+    Enter the hostname, then click <Button>Save Changes</Button>.
+  </Step>
+  <Step>
+    Point DNS at the platform and confirm your certificate covers the name.
+    Until both are in place the hostname is stored but never resolves, and the
+    UI still reports the save as successful.
+  </Step>
+</Flow>
+
+Each hostname can be claimed by one tenant. A hostname already claimed elsewhere
+is refused, and the error doesn't name the tenant holding it.
+
+Once DNS and the certificate are in place, this hostname is the URL you give the
+customer.
+
+### UI customization
+
+Branding changes what a tenant's users see. A platform admin sets it in the
+<Label>UI Customization</Label> section of the tenant.
+
+To let the tenant admin set their own branding, enable the customization control
+in the tenant's platform configuration.
+
+```yaml
+spec:
+  platformConfig:
+    uiSettings:
+      enabled: true
+      allow:
+        custom:
+          enabled: true
+```
+
+## Hand off to the tenant admin
+
+The `<tenant>--admin` user created alongside the tenant is the tenant admin.
+If you created the tenant in the UI, send the invite link you copied to whoever
+runs the customer's platform. The link lets them set a password and sign in.
+
+If you created the tenant from YAML or didn't copy the original link, generate
+a new link for the `<tenant>--admin` user. See
+[Reset a user's password](../users-permissions/managing-users/reset-password.mdx).
+After signing in, the tenant admin can create further users inside the tenant.
+
+A tenant admin holds full rights inside the boundary. They manage their own
+users and teams, configure their own projects, and use everything you granted.
+They can't see the platform's other tenants, and they can't change what you
+granted them.
+
+:::note Users belong to one tenant
+A user is bound to a tenant and stays there. Team membership only counts inside
+the user's own tenant. A platform team can list a tenant user, and Platform
+accepts the write, but that user never gets the team's roles.
+:::
+
+### Verify the boundary
+
+The quickest check is to look at the platform as the tenant admin does.
+
+<Flow id="verify-tenant-boundary">
+  <Step>
+    Click <NavStep>Platform > Tenants</NavStep>.
+  </Step>
+  <Step>
+    Open the tenant's row menu and click <Button>Impersonate</Button>.
+  </Step>
+  <Step>
+    In the <Label>Switch to Tenant</Label> dialog, choose the tenant's admin user
+    and click <Button>Impersonate</Button>.
+  </Step>
+  <Step>
+    Confirm the tenant sees the inventory you granted and nothing else. A
+    banner shows you're impersonating.
+  </Step>
+  <Step>
+    Exit impersonation to return to your own view.
+  </Step>
+</Flow>
+
+Impersonation needs the management admin role or the `Impersonator` management
+role. See [Impersonate a user](../users-permissions/managing-users/impersonate.mdx).
+
+A grant takes effect on the next request, so refresh an impersonated view you
+already had open. A stale view shows the old inventory and reads as a failed
+grant.
+
+## Troubleshoot
+
+If the tenant can't see inventory you granted, if a name or membership write is
+refused, or if a tenant can't be created, see
+[Troubleshoot tenants](../troubleshoot/tenants.mdx).
+
+## Next steps
+
+- [tenant boundary reference](./tenant-boundary-reference.mdx)
+- [Troubleshoot tenants](../troubleshoot/tenants.mdx)
+- [Create a project](../projects/create.mdx)
+- [Configure project quotas](../projects/quotas.mdx)
