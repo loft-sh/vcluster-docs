@@ -176,7 +176,7 @@ Depending on the provider, capacity is set manually or discovered automatically:
 * *Terraform*: set using `maxCapacity`, otherwise unlimited
 * *KubeVirt*: set using `maxCapacity`, otherwise unlimited
 * *BCM*: is automatically discovered
-* *Metal3*: determined by available BareMetalHosts matching the node type's label selector
+* *Metal3*: determined by the available servers matching the node type's `machines.selector` and resources
 * *External platform*: the remote node type's free capacity. For `Assigned` types with finite capacity, this is capped at the free Machines the access key can read across the remote provider. `OnDemand` and unlimited types aren't capped. See [Node types and capacity](../drivers/bare-metal/external-platform.mdx#node-types-and-capacity).
 
 If specified, the platform tracks how many nodes of this type have been created and marks the node type as unavailable once the limit is reached. vCluster stops using that node type until nodes are deprovisioned.
@@ -184,6 +184,48 @@ If specified, the platform tracks how many nodes of this type have been created 
 ### Property merging
 
 Provisioning properties, such as OS image, SSH keys, and network configuration, can be set at the node provider level, the node type level, or the individual node claim level. When the same property is set at more than one level, the most specific level wins: node claim properties override node type properties, which override node provider properties.
+
+### Machine allocation
+
+For providers that draw from a machine inventory, a node type's machine allocation policy decides which machines a tenant's node claims can use. Metal3 and NICo place servers by it. KubeVirt uses it to decide where VMs run.
+
+An operator assigns a machine to a Tenant by setting the `tenant.vcluster.com/exclusive-to` label on the Machine, or with the **Assign to tenant** action on the admin **Machines** page. A Machine can also belong to a tenant through the `tenant.vcluster.com/owner` label. A machine is unassigned only when neither label is present.
+
+| Policy | Metal3 UI option | A tenant's node claims use |
+|---|---|---|
+| `Assigned` | **Reserved hosts only** | Only machines owned by or exclusively assigned to the tenant. A claim waits when none of them is free. |
+| `OnDemand` | **Reserved, then unassigned** | Machines owned by or exclusively assigned to the tenant first, then unassigned machines. Never another tenant's machine. |
+
+A node claim made outside any tenant, such as one by a platform administrator, draws from unassigned machines under either policy.
+
+Set the policy on the node type with `machineAllocationPolicy`, or on the node provider with `spec.machineAllocationPolicy` as the default for node types that leave theirs empty. When neither is set, KubeVirt node types use `OnDemand` and every other provider uses `Assigned`.
+
+```yaml
+apiVersion: management.loft.sh/v1
+kind: NodeProvider
+metadata:
+  name: metal3-provider
+spec:
+  # Default for this provider's node types.
+  machineAllocationPolicy: Assigned
+  metal3:
+    nodeTypes:
+      - name: compute-node
+        # This node type also draws from unassigned servers.
+        machineAllocationPolicy: OnDemand
+        machines:
+          selector:
+            matchLabels:
+              role: compute
+```
+
+Under `Assigned`, free unassigned machines are withheld from tenants. A tenant's claim waits even when an unassigned server of the right type is idle. Switch the node type to `OnDemand` to let it take one.
+
+### What users without edit access see
+
+A user who can't update a node provider or node type sees a restricted copy of it, without its infrastructure configuration. They see the provider's name and the node type's spec, phase, cost, and capacity, but not labels, deploy settings, or the Metal3 `clusterRef`. When no provider the user can read exposes `clusterRef`, the platform UI hides **Add Server**.
+
+Users in a tenant see this restricted copy of any provider or node type their tenant doesn't own. If they can't tell which node type to use, or a node type needs changing, an operator with edit access has to identify or edit it.
 
 ## Node claims
 
