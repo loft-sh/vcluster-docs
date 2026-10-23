@@ -50,10 +50,7 @@ privateNodes:
 Changing fields within `privateNodes.autoNodes` will not restart the vCluster even on a `helm upgrade`
 :::
 
-It's also possible to mix different providers within the same vCluster. You can specify the provider using the `provider` field that should reference a node provider created in the platform.
-:::warning
-Once the node pool is created using the configured provider in vCluster, you can not edit the provider later.
-:::
+It's also possible to mix different providers within the same vCluster. You can specify the provider using the `provider` field that should reference a node provider created in the platform. If you change a pool's provider later, vCluster replaces the pool's nodes. See [Change a node pool's configuration](#change-a-node-pools-configuration).
 
 ## Node type selector
 
@@ -210,6 +207,29 @@ When you remove a node pool or lower its quantity, vCluster handles each of the 
 
 - **Available:** the node drains before it's removed.
 - **Pending:** vCluster deletes the node claim from the platform. A node claim can stay pending when, for example, a tenant quota holds it back. It no longer waits for capacity after its pool is gone.
+
+When you lower a static pool's quantity, vCluster removes one node claim at a time and picks it in this order:
+
+1. Node claims the platform hasn't scheduled yet, such as one a tenant quota holds back. vCluster keeps a node that's still booting and removes a claim that's only waiting.
+2. Node claims the node provider marks as preferred for deletion. Metal3 and NICo mark a claim this way when its server no longer belongs to the claim's node type.
+3. The newest node claim.
+
+vCluster decides each removal against the pool's current state. If a node claim changes while vCluster removes it, vCluster leaves it in place and decides again on the next pass.
+
+## Change a node pool's configuration {#change-a-node-pools-configuration}
+
+When you change a pool's `provider` or `properties`, or a provider-level `properties` value the pool inherits, vCluster replaces the pool's node claims to match the new configuration. This includes node claims whose node hasn't joined yet, such as one waiting for a network environment, so you don't need to delete them by hand.
+
+- **Static pools:** vCluster replaces each affected node claim with one that uses the new configuration, so the pool keeps its quantity. A node that has joined drains before it's removed.
+- **Dynamic pools:** vCluster deletes each affected node claim. Karpenter creates a replacement only if pods still need the capacity.
+
+A change to a static pool's `nodeTypeSelector` replaces only the pool's available nodes. See [Node type selector](#node-type-selector).
+
+## When a node's server is removed {#when-a-nodes-server-is-removed}
+
+If the server behind a node is removed from the node provider's inventory, the platform marks the node claim `Failed` with the reason `MachineNotFound`. Only Metal3 node providers do this. vCluster then removes the node and its node claim, because the server can't come back.
+
+A static pool creates a replacement to restore its quantity. A dynamic pool provisions a replacement only if pods still need the capacity. For how the platform tracks an instance and its server, see [Instance lifecycle](/docs/platform/next/vmetal/concepts/machine-lifecycle#instance-lifecycle).
 
 ## Taints and node labels
 
