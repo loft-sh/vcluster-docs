@@ -224,6 +224,81 @@ The Platform UI keeps these two settings in order. The guided `vcluster.yaml` ed
 
 Editing `vcluster.yaml` directly doesn't enforce that order. Entries in `deploy.argoCD.applications` stay inert until the integration is enabled with a connector, and disabling directly doesn't remove them from the file. They just stop producing `ArgoCDApplication` objects until you re-enable the integration.
 
+## Label registered clusters for ApplicationSets {#cluster-labels}
+
+Platform labels every cluster it registers in Argo CD, so an Argo CD ApplicationSet [cluster generator](https://argo-cd.readthedocs.io/en/stable/operator-manual/applicationset/Generators-Cluster/) can select it:
+
+| Registered from | Labels Platform sets |
+|-----------------|----------------------|
+| Cluster | `loft.sh/project` (the Platform project name), `loft.sh/vcluster-instance-name`, `loft.sh/vcluster-instance-namespace` |
+| Control plane cluster | `loft.sh/cluster` (the `Cluster` object name) |
+
+To select clusters by your own criteria, such as environment or region, add labels and annotations under `cluster.metadata`. On a cluster, set them in `vcluster.yaml`:
+
+```yaml title="vcluster.yaml"
+integrations:
+  argoCD:
+    enabled: true
+    connector: argocd-main
+    cluster:
+      metadata:
+        labels:
+          env: staging
+          region: eu-west
+        annotations:
+          team: payments
+```
+
+On a control plane cluster, set the same block under `spec.argoCD` in the `Cluster` object:
+
+```sh
+kubectl patch clusters.management.loft.sh <cluster-name> --type merge \
+  -p '{"spec":{"argoCD":{"cluster":{"metadata":{"labels":{"env":"staging"}}}}}}'
+```
+
+These rules apply to the metadata you set:
+
+- Platform applies its own labels last, so a label you set with one of the keys in the table is overwritten.
+- Label keys, label values, and annotation keys must be valid Kubernetes metadata, or Platform rejects the change.
+- When you remove a label or annotation from the configuration, Platform removes it from the Argo CD cluster on the next reconcile. Akuity is the exception. See [Connect to Akuity](./connect-akuity.mdx#cluster-labels).
+
+To confirm the labels arrived, list the cluster Secrets in the namespace where Argo CD runs:
+
+```sh
+kubectl get secret -n argocd -l argocd.argoproj.io/secret-type=cluster --show-labels
+```
+
+Then create an ApplicationSet in Argo CD that selects on those labels. Platform doesn't create or manage ApplicationSets, so apply it to the Argo CD instance directly:
+
+```yaml title="applicationset.yaml"
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: guestbook
+  namespace: argocd
+spec:
+  goTemplate: true
+  generators:
+    - clusters:
+        selector:
+          matchLabels:
+            env: staging
+  template:
+    metadata:
+      name: 'guestbook-{{.name}}'
+    spec:
+      project: default
+      source:
+        repoURL: https://github.com/argoproj/argocd-example-apps.git
+        targetRevision: HEAD
+        path: guestbook
+      destination:
+        server: '{{.server}}'
+        namespace: guestbook
+```
+
+Applications that an ApplicationSet generates aren't `ArgoCDApplication` objects, so Platform doesn't track or delete them. When Platform deregisters a cluster, the generator stops matching it. By default, Argo CD then deletes the Application generated for that cluster, unless the ApplicationSet's `syncPolicy` preserves it.
+
 ## Next step
 
 With the connector enabled, you can declare Argo CD Applications in your cluster or control plane cluster configuration. See [Deploy applications](./deploy-applications.mdx).
