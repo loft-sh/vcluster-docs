@@ -65,9 +65,10 @@ capability, and moves per-instance assignments onto the instances as labels.
 | An entry for `clusters`, `nodetypes`, `osimages`, `sshkeys`, or a template kind | The matching capability field: `controlPlaneClusters`, `nodeTypes`, `osImages`, `sshKeys`, or `templates` |
 | `tenant.enabled`, for the tenant's own instances | `allow.custom.enabled` on `sshKeys` or `osImages`. Tenants can't author the other kinds |
 | `admin.scope: shared` | `allow.byLabels: {}`, which matches every platform-owned instance not assigned to another tenant. SSH keys have no equivalent |
-| `admin.scope: hidden` | `enabled: true` with no `allow`, so the tenant sees none of the platform's instances |
+| `admin.scope: hidden` | `enabled: true` with no `allow`, so the tenant sees only the platform's instances assigned to it with `exclusive-to` or shared with `all` |
 | `admin.scope: rbac` | Same as `hidden`. Leave `allow` unset |
-| An exception with `scope: shared` | Label the instances and select them with `allow.byLabels`. Node types also accept `allow.byName` |
+| An exception with `scope: shared` | Label the instances and select them with `allow.byLabels`. Control plane clusters, node types, OS images, and connectors also accept `allow.byName`, but not together with a non-empty `byLabels` |
+| An exception with `scope: hidden` on a `shared` baseline | No equivalent, because a grant can't exclude instances. Select the instances to share with labels or names instead |
 | An exception with `scope: exclusive` | The `exclusive-to` [ownership label](./tenant-boundary-reference.mdx#ownership-labels) on the instance |
 | An entry for any other kind, such as `projects` | No equivalent. Those kinds follow the [shipped defaults](./tenant-boundary-reference.mdx#shipped-defaults) |
 | `spec.resourceQuotas` | `nodeTypes.quota.byType`. Node types are the only capability with a tenant quota |
@@ -80,9 +81,11 @@ Templates now span every template kind with one label selector. Grants select
 templates by label, without a kind or name selector. Give every template you
 want to grant the same label, whatever its kind.
 
-The 4.12 example shares every control plane cluster, one template, and one
-reserved node type, with a quota. These fields had no runtime effect in 4.12.
-The 5.0 example enables and enforces the corresponding grants and quota.
+The 4.12 example shares every control plane cluster and one template, assigns
+one node type to the tenant, and sets a quota. These fields had no runtime
+effect in 4.12. The 5.0 example enables and enforces the corresponding grants
+and quota. The `byType` quota caps on-demand node claims only. Claims on
+machines the tenant owns or holds with `exclusive-to` don't count against it.
 
 Customize the tenant, template, node type, and project suffix for the examples
 and commands on this page.
@@ -123,7 +126,7 @@ and commands on this page.
 />
 
 The 5.0 version expresses those grants with capabilities and labels. The
-template is selected by a label you add to it, and the reserved node type
+template is selected by a label you add to it, and the assigned node type
 carries the assignment itself.
 
 <InterpolatedCodeBlock
@@ -195,9 +198,9 @@ The cluster move endpoint is deprecated, and it never crosses a tenant boundary.
 ### Recreate a project for a tenant
 
 A tenant admin can create the project, or a platform admin can create it for
-them. Automation can use a Kubernetes service account with RBAC permissions
-on the management API, or a Platform access key. See
-[Choose the identity](#choose-the-identity).
+them. Automation that creates the project needs a Platform access key. A
+Kubernetes service account can update the project afterward, but can't create
+it. See [Choose the identity](#choose-the-identity).
 
 <Flow id="recreate-project-for-tenant">
   <Step>
@@ -208,9 +211,9 @@ on the management API, or a Platform access key. See
   <Step>
     Create the project. As the tenant admin, name it `<tenant>--<name>`, for
     example `acme--team-a`, and Platform labels it for the tenant. As a platform
-    admin or Kubernetes service account, set the owner label to the tenant
-    name. The `<tenant>--` prefix is required for every tenant-owned
-    cluster-scoped create, whoever sends it.
+    admin, use the same name and set the owner label to the tenant name. The
+    `<tenant>--` prefix is required for every tenant-owned cluster-scoped
+    create, whoever sends it.
   </Step>
   <Step>
     Recreate the project's clusters in the new project.
@@ -251,24 +254,29 @@ For tenant-owned resources, Platform also checks the owning tenant's limits.
 
 | Identity | Platform-owned resources | A tenant's resources |
 |----------|--------------------------|----------------------|
-| The tool's Kubernetes service account, or another control plane cluster identity | With the required RBAC permissions on the management API | With the required RBAC permissions. Validation uses the resource owner's tenant limits |
-| A platform admin user's [access key](../../administer/authentication/access-keys.mdx) | Within that user's permissions | Writes are held to what the tenant may do |
+| The tool's Kubernetes service account, or another control plane cluster identity | With the required RBAC permissions on the management API | Updates to existing cluster-scoped resources, and writes inside a tenant's project, with the required RBAC permissions. Not creates of cluster-scoped resources, such as projects |
+| A platform admin user's [access key](../../administer/authentication/access-keys.mdx) | Within that user's permissions | Creates and updates. Writes are held to what the tenant may do |
 | A tenant user's access key | No | Within that tenant and the user's permissions |
 
 The [GitOps end-to-end guide](../../integrations/gitops-cicd/gitops-end-to-end.mdx)
-uses the first identity. A Kubernetes identity doesn't need a Platform user
-or access key to write a tenant's projects, users, or teams. Its RBAC permissions
-still apply. The owner label on a cluster-scoped create identifies the tenant.
-An update uses the stored resource's owner. Resources inside a project use
-that project's tenant.
+uses the first identity. A Kubernetes identity isn't a Platform user, but it
+doesn't need one to update a tenant's existing projects, users, or teams. Its
+RBAC permissions still apply. An update uses the stored resource's owner, and
+a write inside a project uses that project's tenant.
+
+A Kubernetes identity can't create a tenant-owned cluster-scoped resource.
+Platform refuses the owner label from it, and refuses a `<tenant>--` name
+without that label. Create a tenant's projects, users, and teams with an
+access key, then let the service account manage them.
 
 These writes can't exceed the tenant's grants or bypass restrictions on roles
 and resource kinds. A sync identity with access to several tenants is held to
 each resource's owning tenant, rather than to one tenant selected for the sync.
 
 If you choose a Platform access key, create a dedicated user for the tool, as
-[Users and teams](../concepts/what-are-users-and-teams.mdx) recommends.
-A tenant user's key confines the sync to that tenant. Keep platform-owned
+[Users and teams](../concepts/what-are-users-and-teams.mdx) recommends. A sync
+that creates resources for several tenants needs a platform admin user. A
+tenant user's key confines the sync to that tenant. Keep platform-owned
 manifests in a separate sync with a platform identity.
 
 Build the access-key kubeconfig as described in
@@ -300,7 +308,7 @@ Recreate the clusters and plan the workload and data cutover as described in
 
 What the manifests carry depends on the identity.
 
-**With a Kubernetes identity or platform admin's access key,** add `tenant.vcluster.com/owner` to each
+**With a platform admin's access key,** add `tenant.vcluster.com/owner` to each
 cluster-scoped resource the tenant owns, such as its projects, users, and teams.
 Add it only to resources that don't exist yet. Resources inside a tenant's
 project take the tenant from the project, so they don't need the label.
@@ -331,9 +339,11 @@ tenant's write. Rename each cluster-scoped resource to start with
 Platform hides these labels when the tenant reads, so the tool doesn't report
 them as drift.
 
-Kubernetes identities and platform admins can preserve an unchanged owner label
-when updating or patching an existing resource. They can't change its tenant.
-Tenant identities still can't send managed labels, even unchanged ones.
+**With a Kubernetes identity,** keep the manifests of resources the tenant
+already owns as they are. Platform admins and Kubernetes identities can repeat
+an unchanged owner label when updating or patching an existing resource, but
+they can't change its tenant. Tenant identities can't send managed labels, even
+unchanged ones.
 
 ### What fails if a repository isn't updated
 
@@ -341,9 +351,10 @@ Tenant identities still can't send managed labels, even unchanged ones.
 |---------------------|-------|-----|
 | `a resource's tenant cannot be changed` | The manifest added, changed, or removed the owner label on a resource that already exists | Revert the label. Recreate the resource under the tenant instead |
 | RBAC `forbidden` for the service account | The sync identity lacks permission for the resource or operation on `management.loft.sh` | Grant the required RBAC permissions to the sync identity |
-| `is maintained by the platform and cannot be set` or `the patch would modify a label the platform maintains` | A tenant identity sent a `tenant.vcluster.com/` label. The message depends on the patch type and the resulting labels | Remove the label from the manifest |
-| `must start with "acme--"` | A tenant-owned cluster-scoped create omitted the prefix, including one sent by a platform admin or Kubernetes identity | Rename it with the prefix |
-| `the object must be owned by it` | A tenant-prefixed name has no matching owner | Set the matching owner on a new resource, or use a name outside tenant name prefixes for platform-owned inventory |
+| `is maintained by the platform and cannot be set` or `the patch would modify a label the platform maintains` | A tenant identity sent a `tenant.vcluster.com/` label, or a Kubernetes identity sent the owner label on a create. The message depends on the patch type and the resulting labels | Remove the label from a tenant's manifest. Create the resource with a platform admin's access key instead of the Kubernetes identity |
+| `owner tenant does not exist` | The owner label on a new resource names a tenant that doesn't exist, often a typo | Correct the label to the tenant's name |
+| `must start with "acme--"` | A tenant-owned cluster-scoped create omitted the prefix, including one sent by a platform admin | Rename it with the prefix |
+| `the object must be owned by it` | A tenant-prefixed name has no matching owner, for example a Kubernetes identity's create | Create the resource with a platform admin's access key and the matching owner, or use a name outside tenant name prefixes for platform-owned inventory |
 | `may not own instances of this resource` | The tenant can't create that kind. Its capability is off, the capability doesn't allow the tenant its own, or tenants never author that kind | Create the resource as the platform, or enable `allow.custom` where the capability offers it |
 
 ## Verify
@@ -365,8 +376,8 @@ Check the tenant's view and the GitOps sync.
   the resources you intend to retire.
 - **The permissions.** Reapply an unchanged manifest, then sync an intended
   update with the tool's actual identity. Confirm ownership stays unchanged.
-  In a test environment, confirm the same identity can't grant a resource the
-  tenant isn't allowed to use.
+  In a test environment, confirm the same identity can't give one of the
+  tenant's teams a role the tenant couldn't grant itself.
 - **The ownership.** Use a platform admin's access-key kubeconfig to confirm the
   recreated project carries `tenant.vcluster.com/owner` with the tenant name.
   Tenant users' reads hide this label, so their keys can't verify it.
