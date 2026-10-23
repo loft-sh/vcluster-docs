@@ -1,0 +1,231 @@
+---
+title: Manage connectors and tenant grants
+sidebar_label: Manage connectors
+sidebar_position: 1
+description: Create Connector resources, update credentials, grant tenant use, and troubleshoot revoked grants.
+---
+
+import InterpolatedCodeBlock from '@site/src/components/InterpolatedCodeBlock';
+
+Use the Connector management API to configure integrations and grant tenants access to admin-managed connectors.
+
+## Prerequisites
+
+- A kubeconfig pointing to the Platform management API.
+- Platform admin permissions for the grant examples.
+- The license feature for the connector type you create or update.
+- An existing Tenant named `acme` for the examples. Replace example names with your resource names.
+
+Tenants can use granted connectors, but can't create, update, patch, or delete connectors in this release. They also need a role granting get and list, such as `loft-connectors-viewer`.
+
+## Create and inspect a connector
+
+Create a database connector using the [database guide](./database.mdx#create-through-the-connector-api), or choose another [connector type](./overview.mdx#choose-a-connector).
+
+The schema's required fields don't describe every admission rule. A type's credentials are required on create, even though the schema marks them optional, unless the connector authenticates another way, such as AWS IAM database authentication. Updates follow different rules. See [Update credentials](#update-credentials).
+
+List the connectors visible to your current identity:
+
+```bash
+kubectl get connectors.management.loft.sh
+```
+
+The table shows names, types, display names, and ages. Inspect conditions as a connector admin:
+
+<InterpolatedCodeBlock
+  language="bash"
+  code={"kubectl get connectors.management.loft.sh [[VAR:CONNECTOR:prod-db]] -o jsonpath='{.status.conditions}'"}
+/>
+
+`Configured=True` means the stored payload passes validation. It doesn't prove that the external service is reachable. Additional conditions depend on the connector type.
+
+## Update credentials
+
+Use a connector-admin session and update the full configuration. A reduced viewer object isn't a configuration backup.
+
+Any API update, including a patch or a label change, rewrites the backing Secret from the fields the API models. Unmodeled Secret data keys and withheld annotations, such as the last-applied annotation, are dropped. This matters most for connectors created as Secrets by hand or by other automation.
+
+| Type | Empty credential on update |
+| --- | --- |
+| Database | Keeps `password`. Selecting `identityProvider: aws` removes the password. Switching back requires a new password. |
+| Argo CD | Keeps existing credentials within the current authentication method. Switching between token and username/password requires credentials for the new method. |
+| Akuity | Keeps `apiKeySecret` while remaining on Akuity. Switching from self-hosted Argo CD requires an Akuity API key secret. |
+| NetBox | Keeps `apiToken` when a stored token exists. |
+| OS image store | Keeps `s3.secretKey`. An empty `s3.sessionToken` removes that token. |
+| Observability | References TLS Secrets instead of embedding these credentials. Manage the referenced Secrets separately. |
+
+Non-credential fields don't generally use empty-means-keep behavior. To change just one field, use a merge patch rather than constructing a replacement from a reduced response:
+
+<InterpolatedCodeBlock
+  language="bash"
+  code={"kubectl patch connectors.management.loft.sh [[VAR:CONNECTOR:netbox-main]] --type=merge -p '{\"spec\":{\"displayName\":\"Primary NetBox\"}}'"}
+/>
+
+The API validates every update in full, including credentials already required by the selected authentication method. An incomplete legacy Secret, such as an Argo CD Secret with no usable credential or a MySQL Secret with no port, refuses any update until you supply the missing fields.
+
+## Grant use to a tenant
+
+Labeling a connector is an API update. On a connector created as a Secret, it drops data keys the API doesn't model, and it fails until any missing required fields are supplied. Review [Update credentials](#update-credentials) before you label a connector that existing automation also writes.
+
+First enable connector use on the Tenant. This is required for assignments and shared connectors alike:
+
+<InterpolatedCodeBlock
+  language="bash"
+  code={"kubectl patch tenants.management.loft.sh [[VAR:TENANT:acme]] --type=merge -p '{\"spec\":{\"connectors\":{\"enabled\":true}}}'"}
+/>
+
+Choose one of these grant methods.
+
+### Assign one connector
+
+Assign the connector exclusively to the tenant:
+
+<InterpolatedCodeBlock
+  language="bash"
+  code={"kubectl label connectors.management.loft.sh [[VAR:CONNECTOR:prod-db]] tenant.vcluster.com/exclusive-to=[[VAR:TENANT:acme]] --overwrite"}
+/>
+
+An assigned connector is visible only to that tenant, so other tenants' label grants don't match it.
+
+### Share matching connectors
+
+Label a connector and grant matching connectors to the Tenant:
+
+<InterpolatedCodeBlock
+  language="bash"
+  code={"kubectl label connectors.management.loft.sh [[VAR:CONNECTOR:prod-db]] tier=shared --overwrite\nkubectl patch tenants.management.loft.sh [[VAR:TENANT:acme]] --type=merge -p '{\"spec\":{\"connectors\":{\"enabled\":true,\"allow\":{\"byLabels\":{\"tier\":\"shared\"}}}}}'"}
+/>
+
+Use labels that the Connector API passes through. Tenant admission refuses a `byLabels` selector on the projected connector-type or fleet-observability labels, with `this label is not served on connectors, so it cannot select one`.
+
+An empty selector (`byLabels: {}`) grants every eligible admin-managed connector. An absent or null selector grants none by label. To replace an existing selector with an empty map through a merge patch, clear it with null first.
+
+### Share a connector with all tenants
+
+Set the `tenant.vcluster.com/all` label to `"true"` to share a connector with every tenant that has connector use enabled. A connector can't carry both that label and the `tenant.vcluster.com/exclusive-to` label at once.
+
+<InterpolatedCodeBlock
+  language="bash"
+  code={"kubectl label connectors.management.loft.sh [[VAR:CONNECTOR:prod-db]] tenant.vcluster.com/all=true --overwrite"}
+/>
+
+### Verify the grant
+
+Create an [access key](../../../administer/authentication/access-keys.mdx#create-an-access-key) for a user in the tenant with the `loft-connectors-viewer` role. Use a separate CLI configuration and kubeconfig for tenant checks. Keep the existing admin session for grant changes.
+
+Log in with that user's key. Then use [`vcluster platform connect management --print`](/docs/vcluster/cli/vcluster_platform_connect_management) to write the tenant kubeconfig:
+
+<InterpolatedCodeBlock
+  language="bash"
+  code={"vcluster platform login [[VAR:PLATFORM_URL:https://platform.example.com]] --access-key [[VAR:TENANT_ACCESS_KEY:tenant-access-key]] --config tenant-vcluster.json --docker-login=false\nvcluster platform connect management --config tenant-vcluster.json --print > tenant-kubeconfig.yaml\nkubectl --kubeconfig tenant-kubeconfig.yaml get connectors.management.loft.sh"}
+/>
+
+The granted connector appears with a reduced configuration. A connector assigned elsewhere stays hidden.
+
+## Validate connector use
+
+The grant and the caller's resource permissions both matter. Naming a connector in a template doesn't grant the tenant access to it.
+
+For database, Argo CD, and observability cluster configuration, writes introducing a literal connector reference check the owning tenant's usable connectors. Missing, hidden, and wrong-type connectors receive the same refusal, a validation error that reads `does not name a usable connector`. The error is reported on the cluster's template reference or Helm values, not on the connector field itself.
+
+For example, adding this configuration to a granted cluster template doesn't let an ungranted tenant use `prod-db`:
+
+```yaml title="vcluster.yaml"
+controlPlane:
+  backingStore:
+    database:
+      external:
+        # The owning tenant also needs a grant for this connector.
+        connector: prod-db
+```
+
+Create a cluster from that template as the tenant. Without the connector grant, the literal reference is rejected. Restore the grant in the admin session, then retry the cluster creation as the tenant.
+
+Checks run at different points, so some edits succeed after a grant is lost.
+
+| Situation | When it's checked | What you see |
+| --- | --- | --- |
+| A write adds a literal connector reference | On that write | The write fails with `does not name a usable connector`. |
+| A template parameter supplies the connector name | When the cluster reconciles | The cluster's connector condition reports the unusable connector. See [A cluster reports an unusable connector](#a-cluster-reports-an-unusable-connector). |
+| An edit keeps or removes a reference already in effect | Not checked again | The edit succeeds, even after the grant is revoked. |
+| The cluster uses a versioned template | On every write | If the template version names a connector the tenant can't use, writes fail until the grant returns or the template changes. |
+| A cluster requests an observability writer credential | When Platform issues the credential | The request fails. See [Retrieve cluster writer credentials](./observability.mdx#retrieve-cluster-writer-credentials). |
+| An OSImage is created, uploaded, or finalized | On each of those requests | The request fails if the tenant can't use the `spec.connectorRef` image store. |
+| A grant is revoked | When each dependent object next reconciles | New use fails. See [Revoke a grant and clean up](#revoke-a-grant-and-clean-up). |
+
+NodeProvider creation checks `spec.metal3.netBox.secretRef`, and so does an update that changes it. The reference must name a NetBox connector in the Platform namespace that the owning tenant can use. The NetBox sync also checks the grant again before it calls NetBox. See [Reference it from a node provider](./netbox.mdx#reference-it-from-a-node-provider).
+
+These checks cover database, Argo CD, observability, OSImage, and NetBox references.
+
+## Revoke a grant and clean up
+
+In the admin session, remove an exclusive assignment:
+
+<InterpolatedCodeBlock
+  language="bash"
+  code={"kubectl label connectors.management.loft.sh [[VAR:CONNECTOR:prod-db]] tenant.vcluster.com/exclusive-to-"}
+/>
+
+Also remove any matching label grant or the `tenant.vcluster.com/all` label if the tenant must lose all access. Disabling `spec.connectors.enabled` blocks all connector access for that tenant.
+
+Verify the revocation with the tenant kubeconfig created in [Verify the grant](#verify-the-grant):
+
+```bash
+kubectl --kubeconfig tenant-kubeconfig.yaml get connectors.management.loft.sh
+```
+
+The connector no longer appears.
+
+Grant loss limits new use. It doesn't immediately dismantle resources already provisioned through the connector.
+
+| Consumer | Behavior after grant loss |
+| --- | --- |
+| Database, not yet provisioned | On reconciliation, `DBConnectorSynced=False` with reason `ConnectorUnusable`. No database is provisioned. |
+| Database, already provisioned | The cluster keeps its database and existing database condition. |
+| Argo CD | New use fails. An ArgoCDApplication can report `InvalidConnector`. Existing registration remains until integration removal or cluster deletion. |
+| Observability | New writer credential requests fail, and the cluster reports `ObservabilityConnectorUnresolved` with reason `ObservabilityConnectorUnusable`. A writer key issued before the grant loss keeps working. |
+| OS image store | New upload and finalize requests refuse an unusable connector. |
+| NetBox | The NodeProvider stops syncing from NetBox and reports `ConnectorUsable=False` with reason `ConnectorUnusable`. Machines already imported are kept. |
+
+Changing a Tenant's selector doesn't immediately enqueue every dependent object. Checks run when the object next reconciles. Don't use a condition's unchanged value as proof that a revoked grant still works.
+
+When offboarding the tenant, use the admin session to delete its clusters through their normal lifecycle:
+
+<InterpolatedCodeBlock
+  language="bash"
+  code={"kubectl delete virtualclusterinstances.management.loft.sh [[VAR:CLUSTER:app-dev]] -n [[VAR:PROJECT_NAMESPACE:p-team-a]]"}
+/>
+
+Database and Argo CD cleanup use the recorded connector identity even after grant loss. Database deletion still respects the configured reclaim policy. Keep the connector and its credentials available until cleanup finishes.
+
+Don't edit Platform-recorded connector annotations to repair a grant. Platform owns `loft.sh/argocd-connector` and the connector identity recorded on per-cluster database Secrets. VirtualClusterInstance writes can't set or change the Argo CD annotation.
+
+Before deleting a connector, complete tenant offboarding and verify that no cluster or integration still depends on it.
+
+## Migrate database discovery
+
+Replace calls to the deprecated, list-only `databaseconnectors.management.loft.sh` resource with a filtered Connector list:
+
+```bash
+kubectl get connectors.management.loft.sh -l loft.sh/connector-type=shared-database
+```
+
+Keep connector names unchanged. Map `DatabaseConnector.spec.displayName` to `Connector.spec.displayName`, and `DatabaseConnector.spec.type` to `Connector.spec.sharedDatabase.dialect`.
+
+Grant the reader `loft-connectors-viewer`. Unlike the old database list, Connector discovery isn't granted to every authenticated user.
+
+No data migration or Secret deletion is needed. Existing raw-Secret consumers remain compatible. Reverting discovery to the old resource doesn't undo API configuration changes, restore discarded data keys, or make new Connector fields available on an older Platform version.
+
+## Troubleshoot connector access
+
+### A connector is missing or listing returns Forbidden
+
+Check the user's management role, the Tenant's enabled capability, and the connector's assignment or matching labels. Confirm that the requested connector has the expected type.
+
+### A cluster reports an unusable connector
+
+For a database connector, inspect the cluster's `DBConnectorSynced` condition. For an observability connector, inspect its `ObservabilityConnectorUnresolved` condition. For a NetBox connector, inspect the NodeProvider's `ConnectorUsable` condition. Then check the owning Tenant's grants. Restore the grant or choose an allowed connector. Don't repoint an existing database connector at a different database server.
+
+### A connector stays pending deletion
+
+Check the backing Secret's finalizers. An observability connector can remain pending when its cleanup controller isn't running after a license expires. The controller runs only when the license includes `fleet-observability`, and never on a Platform running embedded Kubernetes. Restore the license. Platform restarts itself when a licensed feature's status changes. If cleanup still doesn't run, restart Platform. Don't remove the finalizer by hand while the controller can still run. See [Delete a connector](./observability.mdx#delete-a-connector).

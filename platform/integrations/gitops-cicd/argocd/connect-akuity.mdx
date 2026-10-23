@@ -4,6 +4,8 @@ sidebar_label: Connect to Akuity
 sidebar_position: 3
 ---
 
+import InterpolatedCodeBlock from '@site/src/components/InterpolatedCodeBlock';
+
 import Tabs from "@theme/Tabs";
 import TabItem from "@theme/TabItem";
 import Flow, { Step } from "@site/src/components/Flow";
@@ -19,7 +21,7 @@ For a self-hosted Argo CD server, see [Connect to Argo CD](./connect-argocd.mdx)
 
 When you use an Akuity connector, Argo CD does not connect directly to your cluster's API server. Instead, Akuity uses a lightweight agent running inside each registered cluster that establishes an outbound connection to the Akuity control plane. The managed Akuity Argo CD instance communicates with the cluster through that persistent connection.
 
-This means the cluster's API server does not need to be publicly reachable — the agent runs inside the cluster and connects outward — so private clusters are fully supported.
+This means the cluster's API server doesn't need to be publicly reachable. The agent runs inside the cluster and connects outward, so private clusters are fully supported.
 
 You do not install or manage the agent manually. When a cluster is registered with an Akuity connector, Platform:
 
@@ -54,7 +56,8 @@ See the [Akuity API key documentation](https://docs.akuity.io/organizations/api-
   defaultValue="ui"
   values={[
     { label: "Platform UI", value: "ui" },
-    { label: "YAML", value: "yaml" },
+    { label: "Connector API", value: "api" },
+    { label: "Backing Secret", value: "yaml" },
   ]}
 >
   <TabItem value="ui">
@@ -95,6 +98,25 @@ See the [Akuity API key documentation](https://docs.akuity.io/organizations/api-
     Click <Button>Connect Argo CD</Button>.
   </Step>
 </Flow>
+
+  </TabItem>
+  <TabItem value="api">
+
+Use a Platform management API kubeconfig and save this manifest as `argocd-connector.yaml`. Set `server` to your Akuity Argo CD instance URL and `token` to an Argo CD API token for that instance. Set `orgId` and `instanceId` to your Akuity organization and instance IDs, and `apiKeyId` and `apiKeySecret` to the Akuity API key from the prerequisites:
+
+<InterpolatedCodeBlock
+  language="yaml"
+  code={"apiVersion: management.loft.sh/v1\nkind: Connector\nmetadata:\n  name: akuity-prod\nspec:\n  # Select exactly one Argo CD flavor.\n  argoCd:\n    akuity:\n      server: [[VAR:ARGOCD_URL:https://your-instance-id.cd.akuity.cloud/]]\n      namespace: argocd\n      token: \"[[VAR:ARGOCD_TOKEN:replace-with-argocd-token]]\"\n      orgId: \"[[VAR:ORG_ID:your-org-id]]\"\n      instanceId: \"[[VAR:INSTANCE_ID:your-instance-id]]\"\n      apiKeyId: \"[[VAR:API_KEY_ID:your-api-key-id]]\"\n      apiKeySecret: \"[[VAR:API_KEY_SECRET:replace-with-akuity-key-secret]]\"\n"}
+/>
+
+Create the connector:
+
+```bash
+kubectl create -f argocd-connector.yaml
+kubectl get connectors.management.loft.sh akuity-prod -o yaml
+```
+
+For basic authentication, replace `token` with `username` and `password`. Don't set both authentication methods. The API defaults the namespace to `argocd` on create.
 
   </TabItem>
   <TabItem value="yaml">
@@ -185,13 +207,23 @@ stringData:
   </TabItem>
 </Tabs>
 
+Whichever way you create the connector, [grant connector access](../../identity-secrets/connectors/manage.mdx#grant-use-to-a-tenant) before a tenant references it. Template access alone doesn't grant connector use.
+
 ## Agent sizing
 
-Three fields in the connector Secret control how the Akuity agent is provisioned inside each registered cluster.
+Three settings control how the Akuity agent is provisioned inside each registered cluster. Each has a Connector API field under `spec.argoCd.akuity` and a matching backing Secret data key:
+
+| Connector API field | Secret data key |
+| --- | --- |
+| `agentSize` | `akuityAgentSize` |
+| `repoServerReplicas` | `akuityRepoServerReplicas` |
+| `repoServerMemory` | `akuityRepoServerMemory` |
+
+The sections below use the Secret key names.
 
 ### `akuityAgentSize`
 
-This field is sent to the Akuity API when the cluster is registered and determines the overall resource profile of the agent as defined by Akuity. It is an Akuity-level concept, not a direct Kubernetes resource value — Akuity translates this into the appropriate CPU and memory requests for the agent workloads on its end.
+This field is sent to the Akuity API when the cluster is registered and determines the overall resource profile of the agent as defined by Akuity. It's an Akuity-level concept, not a direct Kubernetes resource value. Akuity translates this into the appropriate CPU and memory requests for the agent workloads on its end.
 
 | Value | Recommended for |
 |-------|----------------|
@@ -204,7 +236,7 @@ This field is sent to the Akuity API when the cluster is registered and determin
 These fields let you override specific resource settings on the `argocd-repo-server` Deployment inside the cluster, independently of the size profile. Platform applies a kustomization patch to the agent manifest before installing it:
 
 - `akuityRepoServerReplicas` sets `spec.replicas` on the `argocd-repo-server` Deployment.
-- `akuityRepoServerMemory` sets both `resources.requests.memory` and `resources.limits.memory` to the same value on the `argocd-repo-server` container. Accepts standard Kubernetes memory quantity strings, for example `"1Gi"` or `"512Mi"`.
+- `akuityRepoServerMemory` sets both `resources.requests.memory` and `resources.limits.memory` to the same value on the `argocd-repo-server` container. Use a number with an optional SI or binary suffix, for example `"1Gi"` or `"512Mi"`. Exponents such as `1e9` and the milli suffix aren't accepted.
 
 Both fields are optional and independent of `akuityAgentSize`. Use them when the size profile alone does not give you the control you need over repo server memory or replica count.
 
@@ -212,7 +244,7 @@ Both fields are optional and independent of `akuityAgentSize`. Use them when the
 
 ### On a cluster
 
-Add the `integrations.argoCD` block to the cluster's `vcluster.yaml`. The `connector` field references the Secret name from Step 1.
+Add the `integrations.argoCD` block to the cluster's `vcluster.yaml`. The `connector` field references the connector name from [Step 1](#step-1-create-a-connector). Every creation path uses the same name.
 
 ```yaml
 integrations:
