@@ -32,7 +32,9 @@ Before you create the connector, prepare:
   the Argo CD integration, or bring your own.
 - A backend that accepts TLS or mTLS as the sole authentication method. TLS verifies the
   backend's identity, and mTLS additionally gives the gateway a client identity the backend
-  can authenticate. There's no way to attach a bearer token, basic auth, or a static header,
+  can authenticate. Without an mTLS Secret, the gateway verifies the backend against the
+  system trust store only. There's no setting for a CA alone, so a backend with a private CA
+  needs the mTLS Secret, or `metricsBackendInsecureSkipVerify` for testing. There's no way to attach a bearer token, basic auth, or a static header,
   and the Query Proxy strips the caller's own `Authorization` header before forwarding
   reads, so backends that mandate bearer, basic, or API-key authentication aren't supported.
 - Network access from the Platform namespace to both backend endpoints, wherever the
@@ -97,7 +99,7 @@ spec:
     Go to <NavStep>Infra Management > Control Plane Clusters</NavStep>, then click the local cluster (named `loft-cluster` by default) to open its detail page.
   </Step>
   <Step>
-    Select the <Label>ArgoCD Apps</Label> tab and click <Button>Add Argo CD Application</Button>.
+    Select the <Label>Argo CD Apps</Label> tab and click <Button>Add Argo CD Application</Button>.
   </Step>
   <Step>
     In the <Label>Basics</Label> section, enter a <Label>Display Name</Label> such as `Fleet metrics backend`.
@@ -202,6 +204,7 @@ type: Opaque
 stringData:
   metricsBackendOtlpEndpoint: https://metrics.example.com/otlp
   metricsBackendPromQLEndpoint: https://metrics.example.com
+  grafanaUrl: https://grafana.example.com
 ```
 
 Apply the Secret:
@@ -210,12 +213,16 @@ Apply the Secret:
 kubectl apply -f fleet-observability-connector.yaml
 ```
 
+Writing the Secret directly skips the checks the Connector API runs, such as allowing only one
+fleet default. To manage the connector through the API instead, see the
+[Connector](../../api/resources/connector.mdx) API reference.
+
   </TabItem>
   <TabItem value="ui">
 
 <Flow>
   <Step>
-    Click <Label>Connectors</Label> and select the <Label>Observability</Label> tab.
+    Click <Label>Secrets & Credentials</Label> > <Label>Connectors</Label> and select the <Label>Observability</Label> tab.
   </Step>
   <Step>
     Click <Button>Connect Observability</Button>.
@@ -226,10 +233,18 @@ kubectl apply -f fleet-observability-connector.yaml
     The connector ID determines the gateway resource names. The first observability connector is automatically marked as the fleet default.
   </Step>
   <Step>
-    In the <Label>Metrics Backend OTLP Endpoint</Label> field, enter the OTLP endpoint that receives metrics from the Write Gateway.
+    In the <Label>Metrics backend OTLP endpoint</Label> field, enter the OTLP endpoint that receives metrics from the Write Gateway.
   </Step>
   <Step>
-    In the <Label>Metrics Backend PromQL Endpoint</Label> field, enter the Prometheus HTTP API endpoint queried by the Query Proxy.
+    In the <Label>Metrics backend PromQL endpoint</Label> field, enter the Prometheus HTTP API endpoint queried by the Query Proxy.
+  </Step>
+  <Step>
+    Both endpoint fields start with the bundled Prometheus addresses in the
+    `vcluster-platform` namespace. Keep them if you deployed the bundled Prometheus there.
+  </Step>
+  <Step>
+    Choose the gateway's Service type. Choose <Label>LoadBalancer</Label> when clusters
+    whose collectors run outside the Platform cluster deliver metrics through this connector.
   </Step>
   <Step>
     Optionally configure TLS for the metrics backend and the gateway. See [Connector keys](#connector-keys) for the available settings.
@@ -258,12 +273,12 @@ Platform reconciles the following resources:
 | `metricsBackendInsecureSkipVerify` | No | Set to `"true"` only for test backends with unverifiable TLS. |
 | `metricsBackendServerName` | No | TLS server name override for the Query Proxy's PromQL reads. It doesn't affect OTLP writes; the OTLP endpoint's certificate must still match the endpoint hostname. |
 | `observabilityGatewayCertSecretName` | No | Custom Secret with `tls.crt` and `tls.key` for gateway serving TLS. Include `ca.crt` when clients must trust a private CA. Platform creates a self-signed serving certificate when this key is omitted. |
-| `metricsBackendCertSecretName` | No | Secret with `ca.crt`, `tls.crt`, and `tls.key` for mTLS to the backend. The gateway trusts the backend with `ca.crt` and presents the certificate and key as its client identity. |
+| `metricsBackendCertSecretName` | No | Secret with `ca.crt`, `tls.crt`, and `tls.key` for mTLS to the backend. The gateway trusts the backend with `ca.crt` and presents the certificate and key as its client identity. `ca.crt` is optional when `metricsBackendInsecureSkipVerify` is `"true"`. |
 | `gatewayResources` | No | YAML `resources` block for the Write Gateway container. |
 | `queryProxyResources` | No | YAML `resources` block for the Query Proxy container. |
 | `serviceType` | No | Gateway Service type. Valid values are `ClusterIP`, the default, and `LoadBalancer`. Must be `LoadBalancer` when a cluster delivers metrics through this connector and its collector runs outside the Platform cluster. See [Which clusters need a LoadBalancer gateway](./gateway-networking-tls.mdx#which-clusters-need-a-loadbalancer-gateway). |
 | `serviceAnnotations` | No | YAML map of annotations applied to a `LoadBalancer` gateway Service. |
-| `grafanaUrl` | No | Grafana upstream URL used by the Platform `/grafana/` reverse proxy. |
+| `grafanaUrl` | Yes | Grafana upstream URL used by the Platform `/grafana/` reverse proxy. The gateway runs without it, but the Connector API and UI report a connector without it as misconfigured and refuse every update to it. The API fills in the bundled Grafana's address when you create a connector without it. |
 | `grafanaInsecureSkipVerify` | No | Set to `"true"` only to test a Grafana endpoint with an unverifiable certificate. |
 | `grafanaCertSecretName` | No | Grafana serving certificate Secret. Platform uses its `ca.crt` to trust the Grafana upstream. |
 | `fleetObservabilityDashboardUid` | No | UID of the fleet dashboard embedded by the Fleet Observability page. |
