@@ -156,20 +156,36 @@ BareMetalHost resources go through the following states:
 | State | Description |
 |---|---|
 | `registering` | The server is being registered in the Ironic database and BMC credentials are verified. |
-| `inspecting` | Hardware inventory is actively being collected — CPU, RAM, NICs, disks, firmware, and PCIe devices (such as GPUs). |
+| `inspecting` | Hardware inventory is being collected, including CPU, RAM, NICs, disks, firmware, and PCIe devices such as GPUs. |
+| `preparing` | RAID or firmware configuration is being applied. |
 | `available` | Server is ready to be provisioned. |
 | `provisioning` | OS image is being written and cloud-init is being configured. |
 | `provisioned` | Server is running with the configured OS. |
 | `deprovisioning` | Server is being cleaned and returned to available state. |
-| `error` | An error occurred. Check the BareMetalHost status for details. |
 
-When an instance claims a server, the platform powers it on and it moves from `available` through `provisioning` to `provisioned`. When the claim is removed, the server is deprovisioned, powered off, and returned to `available`.
+Errors appear separately in `status.operationalStatus`, `status.errorType`, and `status.errorMessage`. For example, `status.operationalStatus: error` can accompany `status.provisioning.state: provisioning`. See the upstream [Host state machine](https://book.metal3.io/bmo/state_machine.html).
+
+When an instance claims a server, the platform writes the OS image, user data, and network data to the `BareMetalHost` and sets `spec.online: true`. The host moves from `available` through `provisioning` to `provisioned`. When the claim is removed, the platform clears the image, user data, and network data and sets `spec.online: false`. The Bare Metal Operator (BMO) then deprovisions the host, powers it off, and returns it to `available`.
 
 Ironic controls server power through the BMC. Register a `BareMetalHost` with `spec.online: false` and let Ironic power the server on when an instance claims it. Ironic powers it off again when the claim is removed.
 
+A host can be claimed only when BMO reports it `available`, powered off, with no image and no `consumerRef`. Two instances can't claim the same host.
+
+### When a host fails during provisioning
+
+An instance doesn't move to another host once it has claimed one. During `provisioning`, `inspecting`, or `preparing`, the platform keeps the instance `Pending` and checks the host again. This wait has no platform provisioning timeout.
+
+A BMO operational error doesn't move the instance to `Failed`. The instance stays `Pending` with no timeout. Check the host's `status.operationalStatus`, and if it's `error`, fix the host or replace the instance. The instance fails with `HostProvisioningFailed` only if BMO reports the provisioning state itself as `error`.
+
+While the instance waits, its Machine can report a fault. The platform reports `ramdisk not booted` when Ironic has waited more than 15 minutes for the deploy ramdisk to call back. During `provisioning`, `inspecting`, or `preparing`, the platform adds that fault to the instance's condition message and keeps waiting. Fix the host or [replace the instance](../../../concepts/machine-lifecycle.mdx#when-provisioning-fails). See [Stuck in `provisioning`](./troubleshooting.mdx#stuck-in-provisioning) and [Error state](./troubleshooting.mdx#error-state) for the checks.
+
 ### Reuse and reprovisioning
 
-After an instance is released, its `BareMetalHost` returns to the `available` pool. Any instance whose node type selector matches can claim it next, even one belonging to a different project or cluster. During release, the platform removes the project and `NodeClaim` labels it added to the host. See [Prevent cross-project server access](./security.mdx#prevent-cross-project-server-access) for how that association is set in the first place.
+After an instance is released, its `BareMetalHost` returns to the `available` pool. The next instance to claim it follows the same placement rules as any other. A host assigned to a tenant serves that tenant's instances again. An unassigned host can serve any tenant whose node type uses the `OnDemand` policy, or an instance requested outside a tenant. See [Where an instance is placed](../../../concepts/machine-lifecycle.mdx#where-an-instance-is-placed).
+
+During release, the platform undoes what it wrote to the host when it claimed it. It removes the host's project association and the instance data it generated. See [Prevent cross-project server access](./security.mdx#prevent-cross-project-server-access) for how the project association is set. If the platform wrote the host's DHCP annotations, it restores the values you set before the claim. See the per-host DHCP annotations on the **DHCP Server** tab of [Infrastructure deployment](./overview.mdx#infrastructure-deployment).
+
+Tenant assignment labels stay on the host's Machine. Release doesn't return a tenant's host to the unassigned pool.
 
 During deprovisioning, BMO follows the `BareMetalHost`'s `spec.automatedCleaningMode`. The default `metadata` mode removes partition tables from all disks, while `disabled` skips automated cleaning. Neither mode performs a full-disk data erasure, and vMetal doesn't override this setting. Before allowing hosts to move between projects, define any additional sanitization controls your security policy requires. See [Automated cleaning](https://book.metal3.io/bmo/automated_cleaning.html) for the upstream behavior.
 
