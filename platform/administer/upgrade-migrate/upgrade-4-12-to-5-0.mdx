@@ -1,0 +1,253 @@
+---
+title: Upgrade from Platform 4.12 to 5.0
+sidebar_label: Upgrade 4.12 to 5.0
+sidebar_position: 2.5
+description: Prepare a vCluster Platform 4.12 installation for 5.0, upgrade it, and update the configuration that 5.0 changes.
+---
+
+Platform 5.0 adds Tenants as a boundary above projects, and moves bare metal and
+VM capacity onto a shared machine model. This page covers what changes for an
+existing 4.12 installation, what to record before you upgrade, and what to
+update afterward.
+
+Most of the required actions apply to node providers and to Tenant objects you
+created on 4.12. Use this list to see which sections apply to you:
+
+- **Tenant objects from 4.12:** [Record Tenant settings](#record-tenant-settings)
+  and [Set capabilities on Tenant objects](#set-capabilities-on-tenant-objects).
+- **Terraform node providers with an environment template:**
+  [Record Terraform environment templates](#record-terraform-environment-templates)
+  and [Move Terraform environment templates](#move-terraform-environment-templates).
+- **Metal3 node providers:** [Check Metal3 providers](#check-metal3-providers)
+  and [Update Metal3 node types](#update-metal3-node-types).
+- **KubeVirt node providers:** [Replace the KubeVirt capacity type](#replace-the-kubevirt-capacity-type).
+- **NICo node providers:** [Define NICo node types](#define-nico-node-types).
+- **Stacks that pass outputs between tasks:** [Give output-producing stacks an owner](#give-output-producing-stacks-an-owner).
+- **Go clients of the Platform API:** [Update API clients](#update-api-clients).
+
+If none of these apply, read [Before you begin](#before-you-begin), then
+[upgrade the platform](#upgrade-the-platform).
+
+## Before you begin
+
+- **Run Platform 4.12.** Upgrading to 5.0 is supported only from 4.12. If you
+  run an earlier version, upgrade one minor version at a time until you reach
+  4.12, following [Upgrade vCluster Platform](./upgrade.mdx), including
+  [Upgrade to Platform 4.12](./upgrade.mdx#upgrade-to-4-12). Then return to
+  this page.
+- **Plan for leaving LTS.** Platform 4.12 with vCluster 0.37 is a long-term
+  support (LTS) pair. Upgrading to 5.0 moves the platform to the standard
+  support lifecycle. See the [lifecycle policy](../../reference/lifecycle-policy.mdx).
+- **Back up the platform.** Take a management backup before you upgrade. It's
+  how you recover if the upgrade fails. See
+  [Back up and restore the platform](../backup-restore/backup-restore-platform.mdx).
+- **Use vCluster CLI 0.38.** Install the 0.38 CLI before you upgrade. Earlier
+  CLI versions can't run `vcluster platform destroy` against Platform 5.0.
+- **Upgrade clusters afterward.** Upgrading the platform doesn't change the
+  vCluster version of existing clusters. After the platform runs 5.0, upgrade
+  your clusters to vCluster 0.38. See
+  [Upgrade from vCluster 0.37 to 0.38](/docs/vcluster/next/operate/upgrade/upgrade-0-37-to-0-38).
+
+## Prepare before you upgrade
+
+Platform 5.0 removes some 4.12 fields without converting them, and their values
+are gone after the upgrade. Export them first, and check the node provider
+settings that change. Run the commands in this section against the control plane
+cluster where the platform is installed.
+
+### Record Tenant settings
+
+Platform 5.0 removes `spec.resourceAllowances`, `spec.resourceQuotas`, and
+`spec.hostnames` from Tenant objects. Export your Tenants so you can re-create
+these settings with the 5.0 fields.
+
+```bash title="Export Tenant objects"
+kubectl get tenants.storage.loft.sh -o yaml > tenants-4.12.yaml
+```
+
+Platform 5.0 also refuses Tenant names that contain `--`. Platform 4.12 allowed
+them. If one of your Tenants has such a name, plan to replace it with a new
+Tenant after the upgrade.
+
+### Record Terraform environment templates
+
+Platform 5.0 replaces node environments with network environments, and renames
+the Terraform field `spec.terraform.nodeEnvironmentTemplate`. The old field and
+existing NodeEnvironment objects aren't converted. Export your node providers to
+keep the template.
+
+```bash title="Export node providers"
+kubectl get nodeproviders.storage.loft.sh -o yaml > nodeproviders-4.12.yaml
+```
+
+### Check Metal3 providers
+
+Platform 5.0 deploys Metal3 chart 0.7.2 by default, where 4.12 deployed 0.4.1.
+A provider that doesn't pin a chart version moves to 0.7.2 when the platform
+upgrades. Chart 0.6.0 splits Ironic into separate workloads with a MariaDB
+database, and 0.7.0 switches to the vCluster Labs Ironic build. To stay on your
+current chart for now, set `spec.metal3.deploy.metal3.version` before you
+upgrade.
+
+Before a provider moves to 0.7.2, check its `helmValues`:
+
+- **IPA settings.** Bundled Metal3 no longer needs a LoadBalancer,
+  `ironic.ipaAdvertiseIP`, or a `proxy.apiAdvertiseUrl` on port 6388. Chart
+  0.7.2 has no `ipaAdvertiseIP`. Remove these settings if you added them for
+  IPA.
+- **Neutron.** With Neutron enabled, the chart needs
+  `neutron.networks.provisioning`. Otherwise it refuses to install.
+- **Host addresses.** With the platform DHCP server, each host needs a DHCP
+  reservation before inspection: the `metal3.vcluster.com/ip-address`
+  annotation and the boot MAC address. A claim on a host with no usable address
+  fails with `InvalidConfiguration`.
+
+For each setting, see the [Metal3 overview](../../vmetal/drivers/bare-metal/metal3/overview.mdx)
+and [Metal3 networking](../../vmetal/drivers/bare-metal/metal3/networking.mdx).
+
+## Upgrade the platform
+
+Upgrade with the vCluster CLI, Helm, or GitOps, the same way you installed the
+platform. Follow [Upgrade vCluster Platform](./upgrade.mdx), including its
+verification steps.
+
+## Update your configuration
+
+Work through the sections that apply to you. Until you finish one, the node
+provider or Tenant it covers may offer nothing to users.
+
+### Set capabilities on Tenant objects
+
+An upgraded Tenant grants no platform inventory until you set its capabilities.
+In 5.0, each capability needs `enabled: true`, and an absent capability withholds
+its whole kind. Use the settings you exported to re-create the grants, quotas,
+and hostnames with the 5.0 fields. See
+[Replace `resourceAllowances`](../../tenants/manage-tenants/move-existing-resources.mdx#replace-resourceallowances).
+
+Upgrading doesn't move anything into a Tenant. Everything you created on 4.12
+stays with the platform and keeps working. To give existing projects, users, or
+GitOps repositories to a Tenant, see
+[Move existing resources into tenants](../../tenants/manage-tenants/move-existing-resources.mdx).
+
+### Move Terraform environment templates
+
+Add the template you exported under `spec.terraform.networkEnvironmentTemplate`,
+nested in `infrastructure`. Then create a NetworkEnvironment for each network
+your nodes need, because the platform no longer creates environments per
+cluster.
+
+{/* drift-ignore */}
+```yaml title="Platform 4.12 NodeProvider"
+spec:
+  terraform:
+    nodeEnvironmentTemplate:
+      inline: |-
+        # Terraform that creates the shared infrastructure
+```
+
+```yaml title="Platform 5.0 NodeProvider"
+spec:
+  terraform:
+    networkEnvironmentTemplate:
+      infrastructure:
+        inline: |-
+          # Terraform that creates the shared infrastructure
+```
+
+Node templates keep working. The template variables `var.vcluster.requirements`
+and `var.vcluster.nodeEnvironment` are deprecated aliases. Move to
+`var.vcluster.properties` and `var.vcluster.networkEnvironment` when you next
+edit a template. See [Terraform](../../vmetal/drivers/virtual-machines/terraform.mdx).
+
+### Update Metal3 node types
+
+Metal3 node types select machines with `machines.selector`, which replaces
+`bareMetalHosts.selector`. The old field still works while `machines.selector`
+is unset, and setting both is refused. Editing a node type in the UI moves it to
+the new field.
+
+BareMetalHost labels now sync to Machines, except keys under `vcluster.com` and
+`loft.sh`. A selector on one of those reserved keys no longer matches through
+the host. Put the label on the Machine instead.
+
+### Replace the KubeVirt capacity type
+
+Platform 5.0 removes the `kubevirt.vcluster.com/capacity-type` property. A node
+type's `machineAllocationPolicy` sets the capacity instead: `Assigned` for
+reserved capacity, or `OnDemand`, the KubeVirt default. See
+[KubeVirt](../../vmetal/drivers/virtual-machines/kubevirt.mdx).
+
+### Define NICo node types
+
+NICo node types are now defined by an administrator. Platform 5.0 removes
+`instanceTypeIds` and the node types created automatically from instance types,
+so an upgraded NICo provider offers no node types until you add
+`spec.nico.nodeTypes`. Each entry selects machines with `machines.selector`. The
+NICo instance type is available as the `nico.vcluster.com/instance-type-id`
+label on each Machine.
+
+Platform 5.0 also removes these NICo settings:
+
+- `siteIPBlockCIDR`.
+- The `nico.vcluster.com/org` annotation on Tenants. A Tenant's NICo
+  organization is its name.
+- The `nico.vcluster.com/node-provider` annotation. The platform derives the
+  provider from the Tenant's node types and network environments.
+
+### Give output-producing stacks an owner
+
+Stack task outputs are read with the rights of the StackInstance's owner. A
+task that declares outputs needs an owner, and a read the owner isn't allowed
+fails with `OutputReadForbidden`. Set an owner on each StackInstance whose tasks
+declare outputs.
+
+### Update API clients
+
+The Platform API Go module moves from `github.com/loft-sh/api/v4` to
+`github.com/loft-sh/api/v5`. Update the import paths in any Go client before you
+build it against 5.0.
+
+### Move off DatabaseConnector
+
+The DatabaseConnector kind is deprecated in favor of the Connector API. It
+still works in 5.0. Plan to move database connectors to the Connector API. See
+[Database connectors](../../integrations/identity-secrets/connectors/database.mdx).
+
+## Review changes that need no action
+
+These take effect when you upgrade.
+
+- **Existing Tenants get their bootstrap objects.** The platform creates
+  `<tenant>--admin`, `<tenant>--admins`, and `<tenant>--default` for each
+  existing Tenant. If an object with one of those names exists, the platform
+  leaves it alone.
+- **Tenant node type quotas cap on-demand use only.** Placements on machines
+  assigned to the Tenant don't count against `nodeTypes.quota.byType`.
+- **NICo defaults to assigned machines.** A Tenant's claim needs a Machine
+  assigned to that Tenant unless the node type's policy is `OnDemand`.
+- **Metal3 skips OS image TLS verification by default.** To verify, set
+  `ipaImages.insecure: false` in the provider's `helmValues`.
+- **Certified stacks are applied again once.** The platform re-applies the
+  certified bundle, now from `loft-sh/vcluster-stacks`. Fields the bundle sets
+  on certified objects are reset. Nothing is deleted, and objects annotated
+  `loft.sh/skip-update: "true"` are skipped.
+- **Argo CD clusters are rewritten once.** Registered clusters gain project and
+  instance labels, so the platform updates each registration after the upgrade.
+
+## Verify
+
+After you update your configuration, check each part you use:
+
+- **Tenants.** Sign in as a user in each Tenant and confirm they see the node
+  types, templates, and other inventory you granted.
+- **Node providers.** Request a node from each node type on a test cluster and
+  confirm that the node joins.
+- **Clusters.** Confirm that existing clusters are still reachable with
+  `vcluster connect`.
+
+## Roll back
+
+Downgrading the platform from 5.0 to 4.12 isn't supported. If the upgrade fails,
+restore the management backup you took before the upgrade onto a 4.12
+installation. See
+[Restore vCluster Platform from backup](../backup-restore/backup-restore-platform.mdx#restore-vcluster-platform-from-backup).
