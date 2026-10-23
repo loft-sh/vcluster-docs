@@ -195,8 +195,8 @@ The cluster move endpoint is deprecated, and it never crosses a tenant boundary.
 ### Recreate a project for a tenant
 
 A tenant admin can create the project, or a platform admin can create it for
-them. A platform admin uses the UI or a Platform access key, because a
-kubeconfig for the control plane cluster isn't a Platform identity. See
+them. Automation can use a Kubernetes service account with RBAC permissions
+on the management API, or a Platform access key. See
 [Choose the identity](#choose-the-identity).
 
 <Flow id="recreate-project-for-tenant">
@@ -208,9 +208,9 @@ kubeconfig for the control plane cluster isn't a Platform identity. See
   <Step>
     Create the project. As the tenant admin, name it `<tenant>--<name>`, for
     example `acme--team-a`, and Platform labels it for the tenant. As a platform
-    admin, set the owner label to the tenant name. Platform doesn't
-    require the prefix then, but using it keeps every tenant's names in one
-    pattern.
+    admin or Kubernetes service account, set the owner label to the tenant
+    name. The `<tenant>--` prefix is required for every tenant-owned
+    cluster-scoped create, whoever sends it.
   </Step>
   <Step>
     Recreate the project's clusters in the new project.
@@ -246,35 +246,32 @@ the labels and names the manifests carry.
 
 ### Choose the identity
 
-Platform judges each write by who sent it. The identity your GitOps tool uses
-decides what it can manage.
+The identity your GitOps tool uses needs permission to write each resource.
+For tenant-owned resources, Platform also checks the owning tenant's limits.
 
 | Identity | Platform-owned resources | A tenant's resources |
 |----------|--------------------------|----------------------|
-| The tool's own Kubernetes service account, or any other kubeconfig for the control plane cluster | Yes | Not cluster-scoped ones, such as projects. Writes inside a tenant's project are judged as that tenant's |
-| A platform admin user's [access key](../../administer/authentication/access-keys.mdx) | Yes | Yes. Writes are held to what the tenant may do |
-| A tenant user's access key | No | Yes, within that tenant |
+| The tool's Kubernetes service account, or another control plane cluster identity | With the required RBAC permissions on the management API | With the required RBAC permissions. Validation uses the resource owner's tenant limits |
+| A platform admin user's [access key](../../administer/authentication/access-keys.mdx) | Within that user's permissions | Writes are held to what the tenant may do |
+| A tenant user's access key | No | Within that tenant and the user's permissions |
 
 The [GitOps end-to-end guide](../../integrations/gitops-cicd/gitops-end-to-end.mdx)
-uses the first identity. A Kubernetes identity isn't a Platform user, so
-Platform can't tell which tenant it acts for. It refuses that identity's writes
-to a tenant's cluster-scoped resources, even when the identity is a cluster
-admin.
+uses the first identity. A Kubernetes identity doesn't need a Platform user
+or access key to write a tenant's projects, users, or teams. Its RBAC permissions
+still apply. The owner label on a cluster-scoped create identifies the tenant.
+An update uses the stored resource's owner. Resources inside a project use
+that project's tenant.
 
-```text
-projects.management.loft.sh "acme--team-a" is forbidden: the request's identity
-has no resolved tenancy
-```
+These writes can't exceed the tenant's grants or bypass restrictions on roles
+and resource kinds. A sync identity with access to several tenants is held to
+each resource's owning tenant, rather than to one tenant selected for the sync.
 
-To manage a tenant's projects, users, or teams from Git, point the tool at the
-Platform API with an access key. A single sync identity managing several tenants
-needs a platform admin user. A sync managing one tenant can use a user in that
-tenant instead. Keep platform-owned manifests in a separate sync with a
-platform identity when you use a tenant key. Either way, create a dedicated user
-for the tool, as
+If you choose a Platform access key, create a dedicated user for the tool, as
 [Users and teams](../concepts/what-are-users-and-teams.mdx) recommends.
+A tenant user's key confines the sync to that tenant. Keep platform-owned
+manifests in a separate sync with a platform identity.
 
-Build the kubeconfig as described in
+Build the access-key kubeconfig as described in
 [Manually create kube config](../../administer/authentication/access-keys.mdx#manually-create-kube-config),
 then register it as an Argo CD cluster, or reference it from a Flux
 Kustomization as a kubeconfig Secret.
@@ -303,10 +300,14 @@ Recreate the clusters and plan the workload and data cutover as described in
 
 What the manifests carry depends on the identity.
 
-**With a platform admin's access key,** add `tenant.vcluster.com/owner` to each
+**With a Kubernetes identity or platform admin's access key,** add `tenant.vcluster.com/owner` to each
 cluster-scoped resource the tenant owns, such as its projects, users, and teams.
 Add it only to resources that don't exist yet. Resources inside a tenant's
 project take the tenant from the project, so they don't need the label.
+Name each tenant-owned cluster-scoped resource `<tenant>--<name>`, including
+when a platform admin creates it. A tenant-prefixed name without the matching
+owner is also refused. Follow [Rename without deleting](#rename-without-deleting)
+before changing names in Git.
 
 <InterpolatedCodeBlock
   language="yaml"
@@ -330,14 +331,19 @@ tenant's write. Rename each cluster-scoped resource to start with
 Platform hides these labels when the tenant reads, so the tool doesn't report
 them as drift.
 
+Kubernetes identities and platform admins can preserve an unchanged owner label
+when updating or patching an existing resource. They can't change its tenant.
+Tenant identities still can't send managed labels, even unchanged ones.
+
 ### What fails if a repository isn't updated
 
 | Symptom in the sync | Cause | Fix |
 |---------------------|-------|-----|
 | `a resource's tenant cannot be changed` | The manifest added, changed, or removed the owner label on a resource that already exists | Revert the label. Recreate the resource under the tenant instead |
-| `the request's identity has no resolved tenancy` | The tool's service account wrote a tenant's cluster-scoped resource | Apply with an access key |
-| `is maintained by the platform and cannot be set` or `the patch would modify a label the platform maintains` | A tenant identity sent a `tenant.vcluster.com/` label. A client-side apply sends a patch, so a sync usually shows the second form | Remove the label from the manifest |
-| `must start with "acme--"` | A tenant identity created a cluster-scoped resource without the prefix | Rename it with the prefix |
+| RBAC `forbidden` for the service account | The sync identity lacks permission for the resource or operation on `management.loft.sh` | Grant the required RBAC permissions to the sync identity |
+| `is maintained by the platform and cannot be set` or `the patch would modify a label the platform maintains` | A tenant identity sent a `tenant.vcluster.com/` label. The message depends on the patch type and the resulting labels | Remove the label from the manifest |
+| `must start with "acme--"` | A tenant-owned cluster-scoped create omitted the prefix, including one sent by a platform admin or Kubernetes identity | Rename it with the prefix |
+| `the object must be owned by it` | A tenant-prefixed name has no matching owner | Set the matching owner on a new resource, or use a name outside tenant name prefixes for platform-owned inventory |
 | `may not own instances of this resource` | The tenant can't create that kind. Its capability is off, the capability doesn't allow the tenant its own, or tenants never author that kind | Create the resource as the platform, or enable `allow.custom` where the capability offers it |
 
 ## Verify
@@ -357,6 +363,10 @@ Check the tenant's view and the GitOps sync.
   During cutover, Argo CD can report OutOfSync because pruning is disabled and
   the old resources are still present. Confirm the pending deletions are only
   the resources you intend to retire.
+- **The permissions.** Reapply an unchanged manifest, then sync an intended
+  update with the tool's actual identity. Confirm ownership stays unchanged.
+  In a test environment, confirm the same identity can't grant a resource the
+  tenant isn't allowed to use.
 - **The ownership.** Use a platform admin's access-key kubeconfig to confirm the
   recreated project carries `tenant.vcluster.com/owner` with the tenant name.
   Tenant users' reads hide this label, so their keys can't verify it.
