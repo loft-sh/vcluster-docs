@@ -1,0 +1,134 @@
+---
+title: Upgrade from vCluster 0.37 to 0.38
+sidebar_label: Upgrade 0.37 to 0.38
+sidebar_position: 2.2
+sidebar_class_name: host-nodes private-nodes standalone
+description: Check what changes between vCluster 0.37 and 0.38, take the required actions, and upgrade your clusters to 0.38.
+---
+
+import UpgradeVersion from '../../_partials/manage/upgrade-version.mdx'
+import InterpolatedCodeBlock from '@site/src/components/InterpolatedCodeBlock';
+
+This page covers upgrading a cluster from vCluster 0.37 to 0.38. It lists what
+changes between the two versions, which changes need action before you upgrade,
+and how to upgrade and verify the cluster.
+
+vCluster 0.38 doesn't remove or rename any `vcluster.yaml` keys, so a
+configuration that works on 0.37 works on 0.38 unchanged. Most clusters need no
+action beyond the upgrade itself.
+
+## Before you begin
+
+- **Run vCluster 0.37.** Upgrading to 0.38 is supported only from 0.37. If a
+  cluster runs an earlier version, upgrade it one minor version at a time until
+  it reaches 0.37, following [Upgrade vCluster](./upgrade-version.mdx). Then
+  return to this page.
+- **Upgrade Platform first.** If vCluster Platform manages your clusters,
+  upgrade Platform to 5.0 before you upgrade any cluster to 0.38. See
+  [Upgrade from Platform 4.12 to 5.0](/docs/platform/next/administer/upgrade-migrate/upgrade-4-12-to-5-0).
+  Upgrading Platform doesn't change the vCluster version of existing clusters.
+  Each cluster keeps the version it names until you change it.
+- **Plan for leaving LTS.** vCluster 0.37 with Platform 4.12 is a long-term
+  support (LTS) pair. Upgrading to 0.38 moves the cluster to the standard
+  support lifecycle. See the [lifecycle policy](../../reference/lifecycle-policy.mdx).
+- **Take a snapshot.** Create a snapshot of each cluster before you upgrade it,
+  so you can restore the cluster if the upgrade fails. See
+  [Back up a cluster](../backup-restore/backup.mdx).
+- **Use vCluster CLI 0.38.** Install the 0.38 CLI before you upgrade. You need it
+  for `vcluster create --upgrade`, and it's the only CLI version that can run
+  `vcluster platform destroy` against Platform 5.0.
+
+## Take the required actions
+
+Check each item in this section before you upgrade. If an item doesn't apply to
+your clusters, skip it.
+
+### Prepare for admission checks on proxied resources
+
+This applies only to clusters that run vCluster 0.37.0 or 0.37.1 and use the
+resource proxy. Version 0.37.2 added these checks, so a cluster already on
+0.37.2 or later sees no change.
+
+From 0.37.2, the resource proxy runs the client cluster's validating admission
+policies and validating webhooks on proxied create, update, and delete requests.
+After the upgrade, these behavior changes take effect together:
+
+- A write that a matching policy or webhook rejects is denied. Before you
+  upgrade, check which of your ValidatingAdmissionPolicies and validating
+  webhooks match the API groups the proxy serves.
+- Server-side apply to a proxied resource is always refused with a `400` error,
+  even when no policy matches. Switch callers to client-side `kubectl apply`,
+  `kubectl replace`, or a merge or JSON patch. Argo CD Applications that use the
+  `ServerSideApply=true` sync option against proxied resources fail until you
+  remove that option.
+- Mutating webhooks don't run on proxied writes.
+- The proxy doesn't start if its policy and webhook caches don't sync within two
+  minutes.
+
+For how the checks work, see [Resource proxy](../../overview/resource-synchronization/resource-proxy.mdx).
+
+### Move to a tested Istio version
+
+vCluster 0.38 is tested with Istio 1.29.0, 1.30.0, and 1.31.1. Istio 1.27 and
+1.28 are no longer tested. If a cluster uses the Istio integration with Istio
+1.27 or 1.28, upgrade Istio on the control plane cluster to a tested version.
+See [Istio](../../integrations/istio.mdx).
+
+## Review changes that need no action
+
+These changes take effect when you upgrade, without any configuration change.
+
+- **Kubernetes patch version.** Clusters that don't set a Kubernetes version
+  run Kubernetes 1.36.5 after the upgrade. This patch fixes CVE-2026-2270. A
+  cluster on vCluster 0.37.4 already runs 1.36.5. On 0.37.0 to 0.37.3, the
+  control plane moves from 1.36.0 to 1.36.5.
+- **Embedded etcd defragmentation on startup.** In 0.37, embedded etcd
+  defragments on every start and fails to start if that takes more than 30
+  seconds. In 0.38, it skips defragmentation when there's little space to
+  reclaim, and allows 5 minutes when it runs. To change the limit, set
+  `controlPlane.backingStore.etcd.embedded.defragTimeout`. See
+  [Embedded etcd](../../configure/control-plane/components/backing-store/etcd/embedded.mdx).
+- **Host header on proxied API requests.** The control plane now sends the
+  upstream API server's own host in the `Host` header, instead of the client's
+  `localhost:<port>` from `vcluster connect`. This fixes connections to API
+  servers that reject a mismatched host.
+
+## Upgrade the cluster
+
+These steps upgrade a cluster that you deployed with the CLI, Helm, Terraform,
+Argo CD, or Cluster API. Replace the variables in the code blocks with the name
+and namespace of your cluster and the 0.38 version to upgrade to.
+
+For a cluster that Platform manages, change the vCluster version on the cluster
+or on the template it uses instead. The version is
+`spec.template.helmRelease.chart.version` on the VirtualClusterInstance, or the
+same field on the VirtualClusterTemplate.
+
+<UpgradeVersion />
+
+## Verify the upgrade
+
+List your clusters and confirm that the upgraded cluster shows the 0.38
+version with the status `Running`.
+
+```bash title="List clusters"
+vcluster list
+```
+
+Then connect to the cluster and confirm that the API server answers.
+
+<InterpolatedCodeBlock
+  code={`vcluster connect [[VAR:VCLUSTER_NAME:my-vcluster]] -n [[VAR:VCLUSTER_NAMESPACE:vcluster]]
+kubectl get namespaces`}
+  language="bash"
+  title="Connect and list namespaces"
+/>
+
+## Roll back
+
+Downgrading a cluster from 0.38 to 0.37 isn't supported. If the upgrade fails,
+recover the cluster from the snapshot you took before the upgrade. See
+[Restore a cluster](../backup-restore/restore.mdx).
+
+If you recover onto vCluster 0.37, first remove any keys that only 0.38 knows,
+such as `defragTimeout`, from your `vcluster.yaml`. vCluster 0.37 rejects them.
