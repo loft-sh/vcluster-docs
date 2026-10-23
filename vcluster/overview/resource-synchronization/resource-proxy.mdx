@@ -13,7 +13,7 @@ import ResourceProxyMultiClientIsolation from '@site/static/media/diagrams/resou
 <ProAdmonition/>
 
 :::note vCluster Platform required
-This feature requires [vCluster Platform](/docs/platform). Both the client and target clusters must be managed as [VirtualClusterInstance](/docs/platform/api/resources/virtualclusterinstance) within the platform.
+This feature requires [the platform](/docs/platform). Both the client and target clusters must be managed as [VirtualClusterInstance](/docs/platform/api/resources/virtualclusterinstance) within the platform.
 :::
 
 The Resource Proxy feature enables <GlossaryTerm term="vcluster">vCluster</GlossaryTerm> to proxy requests for custom resources defined by CustomResourceDefinitions (CRDs) to other clusters. When enabled, the client <GlossaryTerm term="tenant-cluster">cluster</GlossaryTerm> transparently forwards resource operations to a target cluster. The objects are stored there, where controllers running on the target can manage them. This enables cross-cluster communication patterns, centralized resource management, and tenant-isolated architectures.
@@ -43,6 +43,7 @@ The proxy performs several key functions:
 3. **Owner labeling**: On create and update operations, the proxy attempts to add owner labels that identify the client responsible for each resource.
 4. **Visibility filtering**: For `owned` access, the proxy filters lists and watches and masks named GET, PUT, PATCH, and DELETE requests for objects that the client doesn't own. The `all` mode disables this filtering.
 5. **Namespace synchronization**: Before a namespaced POST, PUT, or PATCH request, the proxy verifies that the namespace exists in the client cluster and creates it in the target if needed.
+6. **Validating admission**: Before forwarding a write, the proxy runs the client cluster's ValidatingAdmissionPolicies and validating webhooks against it. See [Admission checks on proxied writes](#admission).
 
 Mutual proxying is supported. Two clusters can proxy resources from each other, each acting as the client in one direction and the target in the other. The two directions are independent, and the `target` metric label distinguishes them. See [Monitor the proxy](../../operate/resource-proxy-operations.mdx#monitoring).
 
@@ -56,6 +57,28 @@ When multiple client clusters proxy to the same target, each client only sees ob
 </figure>
 
 To set this up, see [Set up multi-client isolation](../../configure/experimental/resource-proxy-setup.mdx#multi-client).
+
+### Admission checks on proxied writes {#admission}
+
+The client cluster's API server hands requests for an aggregated API straight to the extension server, so its own admission chain never sees them. To keep the client cluster's policies in force, the proxy runs validating admission itself before it forwards a write to the target. The target's API server then applies its own admission chain as it does for any request.
+
+| Admission type | Behavior in the proxy |
+|----------------|-----------------------|
+| ValidatingAdmissionPolicy | Enforced. Policies are read from the client cluster. |
+| ValidatingWebhookConfiguration | Enforced. Webhooks are read from the client cluster, and a webhook Service is resolved to its ClusterIP in the client cluster. |
+| MutatingWebhookConfiguration | Not run. At startup, the proxy logs a message for each mutating webhook that matches a proxied API group. |
+
+Admission covers create, update, and delete requests, including dry-run requests. Policies evaluate the object after the proxy adds its ownership labels, so they see what the target stores. For updates and deletes, the proxy reads the current object from the target to supply the old object. The request is evaluated as the original caller, using the identity the client API server forwards.
+
+Admission enforcement has these consequences:
+
+- **Server-side apply isn't supported.** The proxy refuses an apply patch with 400 Bad Request, because it can't reproduce the result without field management. Use client-side `kubectl apply`, an update, a JSON patch, or a merge patch instead.
+- **A denial looks like a local one.** The caller gets the same status and message the client API server would return for that policy or webhook.
+- **The proxy fails closed.** At startup, the proxy waits up to 2 minutes for its policy and webhook caches to load. If they don't load, the proxy doesn't start. It never admits writes without policies.
+
+vCluster versions before 0.37.2 didn't enforce the client cluster's policies on proxied resources. After an upgrade from one of those versions, writes that used to succeed can fail.
+
+To diagnose a denied write, see [Proxied writes are denied by admission](../../troubleshoot/synchronization/resource-proxy.mdx#admission-denied).
 
 ### Proxy objects in the client cluster {#proxy-objects}
 
