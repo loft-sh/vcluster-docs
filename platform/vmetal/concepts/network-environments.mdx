@@ -6,9 +6,19 @@ sidebar_class_name: pro
 description: How a NetworkEnvironment describes the network a machine joins, who it belongs to, and which driver provisions it.
 ---
 
+import Flow, {Step} from '@site/src/components/Flow';
+import NavStep from '@site/src/components/NavStep';
+import Button from '@site/src/components/Button';
+import Label from '@site/src/components/Label';
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
 A `NetworkEnvironment` describes the network that machines join when a driver provisions them.
 It is cluster scoped, so it isn't tied to a single project or namespace.
+Projects, clusters, and standalone machines share environments, and each project can [narrow which ones it allows](../../tenants/projects/allowed/network-environments.mdx).
+The platform doesn't create environments automatically. A platform administrator creates each one and assigns it.
 Each environment names one driver in `spec.providerRef` and carries that driver's settings in `spec.properties`.
+The provider is required when you create an environment, and only that provider's node claims can use it.
 
 Drivers use environments differently.
 Some provision real infrastructure from one, such as a VPC and an address range.
@@ -24,7 +34,7 @@ A platform administrator creates the environment and states the assignment with 
 | --- | --- | --- |
 | `tenant.vcluster.com/exclusive-to` | a Tenant name | The operator lends this environment to that Tenant. |
 | `tenant.vcluster.com/all` | `"true"` | The operator shares this environment with every Tenant. |
-| (no label) | | The environment belongs to the platform and serves platform workloads. |
+| Neither label | | The environment belongs to the platform. |
 
 The `exclusive-to` label must name a Tenant. The API refuses an empty value, so leave the label off to keep an environment for the platform.
 
@@ -34,13 +44,7 @@ Platform admins lend environments, and a Tenant never owns one. A create from a 
 tenant "acme" may not own instances of this resource
 ```
 
-The API also requires a `providerRef` that names an existing NodeProvider:
-
-```text
-network environment must reference a node provider
-```
-
-Tenant-scoped reads hide the assignment label, so a Tenant's view of an environment never shows it.
+Tenant-scoped reads hide these labels, so an absent label in that view doesn't mean the environment belongs to the platform.
 
 ## What you can't change later
 
@@ -53,30 +57,107 @@ providerRef cannot be changed
 properties cannot be changed after creation
 ```
 
-You can still edit the display name, and add or remove the `tenant.vcluster.com/all` label.
-The assignment that's fixed is the `exclusive-to` label.
+You can still edit the display name, the owner and access settings, and metadata, such as the default annotation.
+The `tenant.vcluster.com/all` label can also be added or removed. The assignment that's fixed is the `exclusive-to` label.
 To change anything else, create a replacement environment and move its workloads across.
-Decide the assignment and the network settings before you apply the manifest.
+Decide the assignment and the network settings before you create the environment.
+
+## Create an environment
+
+Create an environment in the UI or apply a manifest through the management API.
+
+<Tabs>
+<TabItem value="ui" label="UI" default>
+
+<Flow>
+<Step>
+Go to <NavStep>Bare Metal > Networking</NavStep> and open the <NavStep>Network Environments</NavStep> tab.
+</Step>
+<Step>
+Click <Button>Create Network Environment</Button>.
+</Step>
+<Step>
+Enter a <Label>Display name</Label> and a <Label>Network Environment ID</Label>.
+The ID is the resource name. It can be up to 63 characters, can't contain dots, and can't change later.
+</Step>
+<Step>
+In <Label>Tenant</Label>, select **Platform-owned** to keep the environment for the platform, or select the Tenant to lend it to.
+You can't change this after you create the environment.
+This field appears only when the platform has Tenants. Without it, the environment belongs to the platform.
+</Step>
+<Step>
+In <Label>Infra Provider</Label>, select the provider whose machines join this network.
+</Step>
+<Step>
+Optionally, switch on <Label>Set as default</Label> to make this the provider's default environment.
+Each provider can have only one default, and this switch doesn't clear an existing one. If the list already shows a **Default** chip for this provider, turn off <Label>Set as default</Label> on that environment first.
+</Step>
+<Step>
+Under <Label>Environment Properties</Label>, set the driver's properties.
+Metal3 and KubeVirt providers offer <Label>CIDR</Label>, <Label>IP Range</Label>, and <Label>DNS Servers</Label> fields. Other providers take properties as YAML.
+</Step>
+<Step>
+Click <Button>Create Network Environment</Button>.
+</Step>
+</Flow>
+
+</TabItem>
+<TabItem value="yaml" label="YAML">
+
+This manifest creates an environment for the platform and makes it the default for its provider. It carries no assignment label:
+
+```yaml
+apiVersion: management.loft.sh/v1
+kind: NetworkEnvironment
+metadata:
+  name: platform-network
+  annotations:
+    machines.vcluster.com/is-default-environment: "true"
+spec:
+  displayName: Platform network
+  providerRef: my-provider
+  properties: {}
+```
+
+Replace `my-provider` with your NodeProvider's name and add the driver's properties.
+
+</TabItem>
+</Tabs>
+
+Every authenticated user can list environments, but the list only shows the ones they can access.
+A Tenant's users see only environments lent to that Tenant or shared with every Tenant.
 
 ## How a machine selects a network
 
-A `NodeClaim` reaches an environment in one of two ways:
+A NodeClaim reaches an environment in one of two ways:
 
 - It names one explicitly, through the network environment property or `spec.environmentRef`.
 - It names none, and the provider's default applies.
   Mark that default by setting the `machines.vcluster.com/is-default-environment` annotation on the environment to `"true"`.
-  Only environments whose `providerRef` matches the claim's provider are candidates.
-  If more than one default is visible to a claim, the claim fails, so mark only one per provider.
+  Only environments whose `providerRef` matches the claim's provider are candidates, and each provider can have only one default.
+  Marking a second default doesn't unmark the first. While two are marked, every claim that relies on the default fails with `multiple default network environments found for node provider`.
 
-A project restricts which environments its claims may use.
+The claim resolves environments within its project's scope.
+A Tenant project only finds environments lent to that Tenant or shared with every Tenant, and a platform project finds platform environments.
+When the named environment is out of scope, the claim waits rather than failing.
+
+A project can also restrict which environments its claims use.
 A claim that names an environment its project excludes fails with `network environment is not allowed in project`.
+See [allowed network environments](../../tenants/projects/allowed/network-environments.mdx).
 
-An environment serves only claims of its own provider.
-The API refuses a claim that names an environment of another provider:
+Standalone control plane nodes created through Auto Nodes copy the properties of the first `privateNodes.autoNodes` entry that uses the same provider.
+They land in the same environment as that entry's worker nodes. Without a matching entry, the provider's default applies.
+
+An environment serves only its own provider's node claims.
+A project is offered only environments whose provider one of its allowed node types names, or whose provider owns a Machine assigned to the project's Tenant.
+A claim that names another provider's environment is refused when it's created:
 
 ```text
-network environment "<name>" belongs to node provider "<a>", not "<b>"
+network environment "<name>" belongs to node provider "<provider>", not "<claim provider>"
 ```
+
+Creating an environment without a `providerRef` fails with `network environment must reference a node provider`.
+Naming a NodeProvider that doesn't exist fails with `node provider "<name>" does not exist`.
 
 ## Check that an environment is ready
 
@@ -87,6 +168,13 @@ Wait for `Ready` before you create machines against it:
 kubectl get networkenvironments.management.loft.sh <name> -o yaml
 kubectl wait networkenvironments.management.loft.sh/<name> --for=condition=Ready --timeout=10m
 ```
+
+## Delete an environment
+
+Deleting an environment waits until no node claim uses it.
+Until then it stays terminating, and its status reports the reason `NodeClaimsBound` with the names of the claims that hold it.
+The driver then removes the infrastructure it provisioned for the environment.
+Delete the clusters and instances that use an environment before you delete it.
 
 ## Next steps
 
