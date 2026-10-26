@@ -3,11 +3,11 @@ title: View snapshots
 sidebar_label: View snapshots
 sidebar_position: 1.5
 ---
-vCluster Platform allows you to configure taking snapshots of the vCluster at specific intervals. For detailed vCluster-specific auto snapshots configuration and examples, see the [vCluster auto snapshots documentation](../../configure/lifecycle/snapshots.mdx).
+vCluster Platform can take snapshots of a cluster at scheduled intervals. For configuration and examples, see [Configure auto snapshots](../../configure/lifecycle/snapshots.mdx).
 
 ## View snapshots
 
-After enabling automatic snapshots, you can view the list of snapshots for each cluster in the details of the cluster. This menu is only available for Project admins and Platform admins users.
+After enabling automatic snapshots, you can view the list of snapshots for each cluster in the details of the cluster. This menu is only available to project admins and platform admins.
 
 ### Snapshot name
 
@@ -15,16 +15,64 @@ Snapshots are identified by a generated name formatted as `<Virtual_Cluster_Name
 
 ### Snapshot schedule lifecycle
 
-Snapshots transition through different statuses as part of their execution lifecycle. A typical flow starts with the
- snapshot being in the `Scheduled` state, then moves to the `In Progress` state while it is being stored. If the snapshot and storage is successful,
-  the snapshot moves to the `Completed` state. If an error occurs, the snapshot will be moved to a `Failed` state.
+Snapshots move through statuses as they run. A snapshot starts as `Scheduled`. At its scheduled time it moves to
+`In Progress` while the cluster writes it to storage, then to `Completed` once the archive is stored. If the snapshot
+can't be taken, it moves to `Failed`. If a snapshot is removed from the storage backend but is still listed in
+vCluster Platform, it appears as `Not Found`.
 
-  If a snapshot was removed from the storage backend, but not in vCluster Platform, the snapshot appears in the `Not Found` state.
-<p></p>
 | Snapshot Status | Description |
 | ---|---|
 | `Scheduled` |  A snapshot that is scheduled to be stored in the storage backend service. Only one snapshot can have the Scheduled status at a time. |
-| `In Progress` | A snapshot that is currently being stored in the storage backend service. |
+| `In Progress` | A snapshot that the cluster is writing to the storage backend service. It also stays in this status while the platform retries after a connection error. |
 | `Completed` | A snapshot that has been successfully stored in the storage backend service. |
-| `Failed` | A snapshot that failed to be taken. |
+| `Failed` | A snapshot that failed, or whose retry window ran out. The snapshot details show the reason. |
 | `Not Found` | A snapshot that appears in the list but has been removed from the storage backend service. |
+
+If the cluster is sleeping at the scheduled time, the snapshot fails with the reason `vCluster is sleeping`.
+
+### Retries after connection errors
+
+In vCluster Platform 5.0 and later, a connection error doesn't fail a snapshot. The platform starts each snapshot by
+creating a snapshot request in the cluster, then checks that request until the cluster reports a result. The cluster
+keeps writing the snapshot even while the platform can't reach it. So an error that says nothing about the snapshot
+itself, such as a dropped network peer or a timed-out API call, leaves the snapshot `In Progress`. The platform
+retries about every 10 seconds within a retry window.
+
+| Stage | Retry window | Measured from |
+| --- | --- | --- |
+| Creating the snapshot request | 5 minutes | The scheduled time |
+| Checking an existing snapshot request | 30 minutes | When the request was created |
+
+When the window runs out, the snapshot moves to `Failed`, and its reason starts with `gave up after`, followed by the
+window and the last error. The windows limit how long the platform retries connection errors, not how long a
+snapshot can take. A snapshot that the cluster reports as still running stays `In Progress` without a time limit.
+
+If the platform created the request but lost the response, it finds that request on its next attempt and follows
+it, rather than starting a second snapshot to the same location.
+
+While the platform retries, the UI keeps showing `In Progress`. The platform log records each attempt with the message
+`could not check in-progress snapshot, retrying` and the error.
+
+These errors fail a snapshot at once, without retrying:
+
+- The cluster reports that the snapshot failed or partially failed.
+- The snapshot request is missing from the cluster, or its data can't be read.
+
+If you turn off automatic snapshots, the platform removes scheduled snapshots. It keeps checking an in-progress
+snapshot whose request exists, with the same retry windows, until the snapshot completes or fails. An in-progress
+snapshot whose request was never created is removed.
+
+### Retention
+
+`snapshots.auto.retention` sets how many days to keep snapshots (`period`) and how many to keep (`maxSnapshots`).
+The platform applies both settings to two groups of snapshots, and counts each group separately:
+
+- **Completed snapshots.** The platform prunes these only right after a new snapshot completes, so a run of
+  failures never deletes the snapshots you would restore from. Pruning a completed snapshot also deletes its archive
+  from storage.
+- **Failed and Not Found snapshots.** These share their own count and are pruned even while recent snapshots keep
+  failing. In vCluster Platform 5.0 and later, if storage holds an archive for a pruned failed snapshot, the platform
+  deletes that archive too. That happens when a snapshot partially failed, or when the cluster finished writing it
+  after the retry window ran out.
+
+`Scheduled` and `In Progress` snapshots are never pruned.
