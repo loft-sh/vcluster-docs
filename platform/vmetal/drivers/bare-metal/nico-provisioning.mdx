@@ -1,0 +1,243 @@
+---
+title: Provision instances and cluster nodes with NICo
+sidebar_label: Provision with NICo
+sidebar_position: 5
+sidebar_class_name: pro
+description: Launch a bare metal instance or supply a cluster's private nodes from an NVIDIA Infra Controller node provider.
+---
+
+import FeatureTable from '@site/src/components/FeatureTable';
+import InterpolatedCodeBlock from '@site/src/components/InterpolatedCodeBlock';
+import PageVariables from '@site/src/components/PageVariables';
+import Flow, {Step} from '@site/src/components/Flow';
+import NavStep from '@site/src/components/NavStep';
+import Button from '@site/src/components/Button';
+
+<FeatureTable names="auto-nodes-nico" />
+
+This task provisions capacity from an NVIDIA Infra Controller (NICo) node provider that a platform administrator has already connected.
+You either launch a standalone bare metal instance or have Auto Nodes supply private nodes to a cluster.
+For how the driver maps platform resources to NICo, see the [NICo driver guide](./nico.mdx#how-the-integration-works).
+
+## Before you begin
+
+A platform administrator must have completed the [NICo driver setup](./nico.mdx).
+That setup produces the four resources this task consumes:
+
+| Input | What it is | Set up in |
+| --- | --- | --- |
+| NodeProvider | The connection to the NICo site, such as `nico`. | [Create the NodeProvider](./nico.mdx#create-the-nodeprovider) |
+| NodeType | A pool of the provider's Machines. Its name combines the provider and entry names, such as `nico.gpu-h100`. | [Verify discovery](./nico.mdx#verify-discovery) |
+| NetworkEnvironment | A ready network assigned to the platform or to your Tenant. | [Create a network](./nico.mdx#create-a-network) |
+| OSImage | The operating system image to install. | [Prepare an operating system image](./nico.mdx#prepare-an-operating-system-image) |
+
+Ask your administrator for these names if you don't have them.
+
+You also need:
+
+- A project that owns the workload. Its `allowedNodeTypes` and `allowedNetworkEnvironments` must permit the NodeType and network.
+- Permission to use the OSImage.
+- For SSH access to a standalone instance, an [SSH key](../../images/ssh-keys.mdx) you're allowed to use, or permission to create one.
+- For cluster nodes, a cluster with [private nodes](/docs/vcluster/deploy/worker-nodes/private-nodes) whose project has access to the NodeType and network.
+
+The network's assignment decides which NICo tenant owns the instance.
+Use a platform-assigned network from a platform project, or your Tenant's network from a project in that Tenant.
+Tenant workloads must be provisioned from that Tenant's context.
+Tenant users work in their own Tenant. A platform administrator can click <Button>Switch to Tenant...</Button> in the sidebar header and select the Tenant.
+
+Set these values to match your environment.
+`p-default` is only an example. Use the management namespace of your project, not a cluster's workload namespace.
+
+<PageVariables
+  PLATFORM_URL="https://platform.example.com"
+  PROVIDER="nico"
+  NODE_TYPE="nico.gpu-h100"
+  NETWORK="nico-network"
+  OS_IMAGE="ubuntu-nico"
+  PROJECT_NAMESPACE="p-default"
+/>
+
+To use the API examples, connect `kubectl` to the management API:
+
+<InterpolatedCodeBlock
+  language="bash"
+  code={'vcluster platform login [[GLOBAL:PLATFORM_URL]]\n' +
+    'vcluster platform connect management'}
+/>
+
+## Provision an instance
+
+A standalone instance is a provisioned bare metal host that doesn't join a cluster.
+
+<Flow>
+<Step>
+
+### Launch the instance
+
+To provision by node type, open the project's <NavStep>Instances</NavStep> page and click <Button>Launch Instance...</Button>.
+To target a specific physical machine, go to <NavStep>Bare Metal > Machines</NavStep>, click <Button>Provision</Button> on a free machine, and select the project.
+In either form, select the OS image, network environment, and management access settings, then click <Button>Provision Instance</Button> or <Button>Launch Instance</Button>.
+
+Alternatively, save this NodeClaim as `nico-instance.yaml`:
+
+<InterpolatedCodeBlock
+  language="yaml"
+  title="nico-instance.yaml"
+  code={'apiVersion: management.loft.sh/v1\n' +
+    'kind: NodeClaim\n' +
+    'metadata:\n' +
+    '  name: nico-worker\n' +
+    '  namespace: [[GLOBAL:PROJECT_NAMESPACE]]\n' +
+    'spec:\n' +
+    '  providerRef: [[GLOBAL:PROVIDER]]\n' +
+    '  typeRef: [[GLOBAL:NODE_TYPE]]\n' +
+    '  properties:\n' +
+    '    vcluster.com/network-environment: [[GLOBAL:NETWORK]]\n' +
+    '    vcluster.com/os-image: [[GLOBAL:OS_IMAGE]]'}
+/>
+
+To grant SSH access, add the key name alongside the image and network properties, without replacing them:
+
+```yaml
+properties:
+  vcluster.com/ssh-keys: <ssh-key-name>
+```
+
+Selecting an image alone doesn't grant SSH access. Supply the access configuration your OS needs.
+
+To target one machine, replace `spec.typeRef` with `spec.machineRef`:
+
+```yaml
+machineRef: <machine-name>
+```
+
+`machineRef` and `typeRef` are mutually exclusive.
+Use the Machine resource name returned by the platform, not its hostname or NICo Core machine identifier.
+A Tenant can pin only Machines it can see, which are the ones assigned to it.
+
+Apply the manifest:
+
+```bash
+kubectl apply -f nico-instance.yaml
+```
+
+</Step>
+<Step>
+
+### Watch the claim provision
+
+<InterpolatedCodeBlock
+  language="bash"
+  code={'kubectl get nodeclaims -n [[GLOBAL:PROJECT_NAMESPACE]]\n' +
+    'kubectl get nodeclaim nico-worker -n [[GLOBAL:PROJECT_NAMESPACE]] -o yaml'}
+/>
+
+The NodeClaim's conditions report provisioning progress.
+The `Provisioned` condition becomes `True` when NICo reports the instance ready.
+Its `nico.vcluster.com/instance-id` annotation identifies the NICo instance, and `machines.vcluster.com/machine-id` names the Machine it runs on.
+Don't edit controller-managed resource ID annotations.
+
+If no matching Machine becomes available, `Provisioned` fails with the reason `InsufficientCapacity` after 30 minutes.
+Set the `machines.vcluster.com/provisioning-wait-timeout` property to change the wait.
+
+</Step>
+</Flow>
+
+### Network selection
+
+The examples select the network explicitly with `vcluster.com/network-environment`.
+If you omit it, the platform can use an accessible provider default, marked with `machines.vcluster.com/is-default-environment: "true"`.
+`Project.spec.allowedNetworkEnvironments` restricts both explicit and default selections.
+An omitted allowlist allows otherwise accessible networks. An empty list allows none.
+
+If your administrator gave you a NICo operating system ID instead of an OSImage, set `nico.vcluster.com/os-image-id` in the properties.
+That ID takes precedence over `vcluster.com/os-image`. See [Use an existing NICo operating system](./nico.mdx#use-an-existing-nico-operating-system).
+
+## Supply cluster nodes with Auto Nodes
+
+Auto Nodes creates the NodeClaims for a cluster's private nodes from the provider's NodeTypes.
+Each instance boots with the cluster's join configuration and registers as a node.
+
+<Flow>
+<Step>
+
+### Add a NICo pool to the cluster
+
+This `vcluster.yaml` requests one static worker:
+
+<InterpolatedCodeBlock
+  language="yaml"
+  title="vcluster.yaml"
+  code={'privateNodes:\n' +
+    '  enabled: true\n' +
+    '  autoNodes:\n' +
+    '    - provider: [[GLOBAL:PROVIDER]]\n' +
+    '      properties:\n' +
+    '        vcluster.com/network-environment: [[GLOBAL:NETWORK]]\n' +
+    '        vcluster.com/os-image: [[GLOBAL:OS_IMAGE]]\n' +
+    '      static:\n' +
+    '        - name: nico-workers\n' +
+    '          quantity: 1\n' +
+    '          nodeTypeSelector:\n' +
+    '            - property: vcluster.com/node-type\n' +
+    '              value: [[GLOBAL:NODE_TYPE]]'}
+/>
+
+The network and image properties are defaults for every pool in this provider entry. Pool-level properties can override them.
+For demand-based scaling, configure a dynamic pool with the same node type selector under that entry.
+See [Auto Nodes](/docs/vcluster/deploy/worker-nodes/private-nodes/auto-nodes) and the [Auto Nodes configuration reference](/docs/vcluster/configure/vcluster-yaml/private-nodes/auto-nodes) for pool limits and scheduling settings.
+
+Create the cluster with this configuration. For a cluster that already uses private nodes, add the `autoNodes` entry to its `vcluster.yaml`.
+
+</Step>
+<Step>
+
+### Check the claim and the node
+
+The platform creates a NodeClaim, waits for its network and OS, and asks NICo to provision an instance.
+NICo instance readiness and Kubernetes node readiness are separate checks, so verify both.
+
+In the management API, check the claim's conditions:
+
+<InterpolatedCodeBlock
+  language="bash"
+  code={'kubectl get nodeclaims -n [[GLOBAL:PROJECT_NAMESPACE]]'}
+/>
+
+`Provisioned` becomes `True` when NICo reports the instance ready, and `Joined` becomes `True` once the node registers with the cluster.
+Then, connected to the cluster itself, confirm the node is `Ready`:
+
+```bash
+kubectl get nodes
+```
+
+</Step>
+</Flow>
+
+The driver reports each Machine's GPUs in its hardware status, but doesn't install GPU drivers or Kubernetes device plugins.
+Include the necessary host software in your image and configure the cluster's GPU stack.
+
+## If provisioning stalls
+
+| Symptom | Checks and next action |
+| --- | --- |
+| Network missing from the instance form | Check that one of the project's allowed node types, or a Machine assigned to the project's Tenant, uses the network's provider. Then check the project's Tenant, the network's assignment, and `Project.spec.allowedNetworkEnvironments`. |
+| Claim waits with `TenantNodeTypeQuotaExceeded` | The Tenant reached its quota for the NodeType. The quota counts only on-demand placements, not claims on Machines assigned to the Tenant or pinned to a Machine. Delete an on-demand instance of that type, or ask your administrator to raise the quota. |
+| Claim fails with `InsufficientCapacity` | No matching Machine became available within the provisioning wait. Ask your administrator to check the NodeType's capacity and, for a Tenant, its assigned Machines. |
+| Instance stays pending after boot | Check that the OS image is reachable and its settings are correct. Your administrator can check the NICo phone-home path. |
+| Instance is ready but the node hasn't joined | Check bootstrap logs on the host, the [private node requirements](/docs/vcluster/deploy/worker-nodes/private-nodes/node-requirements), control plane or VPN connectivity, and DNS. |
+
+For provider, onboarding, and network failures, see [Troubleshoot provisioning](./nico.mdx#troubleshoot-provisioning) in the driver guide.
+
+## Delete instances and nodes
+
+Deleting a NodeClaim deletes its NICo instance.
+The Machine shows the `Deprovisioning` phase until NICo reports it ready again, and then another claim can use it.
+
+<InterpolatedCodeBlock
+  language="bash"
+  code={'kubectl delete nodeclaim nico-worker -n [[GLOBAL:PROJECT_NAMESPACE]]'}
+/>
+
+For Auto Nodes, remove the pool from `vcluster.yaml` or delete the cluster, so it stops maintaining its NodeClaims.
+For the order to remove networks, Tenants, and the provider, see [Cleanup and resource ownership](./nico.mdx#cleanup-and-resource-ownership).
