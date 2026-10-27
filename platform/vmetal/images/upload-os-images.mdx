@@ -16,7 +16,7 @@ import PageVariables from '@site/src/components/PageVariables';
 
 An [OS image](./os-images.mdx) that names an [OS image store](./os-image-store.mdx) holds its own file. You upload the file once, and node providers download it from the platform when they provision a machine.
 
-The file never passes through the platform. The platform splits the upload into parts, signs a URL for each part, and the client sends each part straight to the bucket. After the last part, the client asks the platform to assemble the file.
+The file never passes through the platform. Uploads use the S3 multipart upload, which AWS introduced for S3 and which is now the common way to move large files into object storage. The file is split into parts that can be sent in parallel and retried one at a time, so a failed part doesn't restart the whole upload. The platform signs a URL for each part, and the client sends each part straight to the bucket. After the last part, the client asks the platform to assemble the file.
 
 ## Prerequisites
 
@@ -235,7 +235,11 @@ Whatever downloads the image for the node provider must reach both addresses:
 - The platform's public host name.
 - The bucket endpoint that the image store connector names.
 
-The blob address needs no credentials, because a node provider holds none. The unguessable uid is the only authorization, and anyone who has the address can download the image while it exists. Treat the address as a secret.
+The blob address needs no credentials, because a node provider holds none. The random uid is the only authorization, and anyone who has the address can download the image while it exists. The uid is hard to guess, but the endpoint doesn't stop repeated attempts to guess it. Treat the address as a secret.
+
+:::tip Keep secrets out of OS images
+Don't build credentials, private keys, or other secrets into an OS image. If an address leaks or is guessed, the image holds nothing an attacker can reuse.
+:::
 
 While the image is still uploading, the address answers `409` with `Retry-After: 30`. For a `Failed` image, it answers `409` without `Retry-After`, and for an unknown uid it answers `404`.
 
@@ -273,13 +277,17 @@ A `Failed` image accepts a new upload. Run the CLI again, or start the API flow 
 
 An image that is `Ready` refuses another upload with `409 Conflict`. To use a different file, delete the image and create it again.
 
-Deleting an image removes its file from the bucket and aborts an open upload. The image stays in **Deleting** until the store confirms the file is gone. If the store can't be reached, for example because its credentials changed or its connector was deleted, the image waits until the store answers again. Delete the images in a bucket before you disconnect its connector.
+Deleting an image removes its file from the bucket and aborts an open upload. The image stays in **Deleting** until the store confirms the file is gone. Delete the images in a bucket before you disconnect its connector.
 
-If the store is gone for good, remove the `platform.vcluster.com/cleanup-os-image-blob` finalizer from the image to finish the delete. The file stays in the bucket, and the platform never removes it later.
+:::warning Limitation
+The platform can't fully remove an image while its store is unavailable, for example because its credentials changed or its connector was deleted. The image waits in **Deleting** until the store answers again. If the store won't come back, see [Finish a stuck delete](#finish-a-stuck-delete).
+:::
 
 To upload a file of a different size while a session is open, delete the image and create it again. A session only accepts the size it was opened for.
 
-## Troubleshoot uploads
+## Troubleshoot uploads and deletes
+
+### Fix upload errors
 
 | Response | Cause and fix |
 |---|---|
@@ -299,3 +307,16 @@ To upload a file of a different size while a session is open, delete the image a
 | `403 Forbidden` | You can't update the image, or the license doesn't include machine management. |
 | `403` from the store on a `PUT` | The target expired, the request added an `x-amz-*` header, or the host differs from the signed URL. Request the target again with `fromPart`. |
 | CORS error in the browser | The bucket has no CORS rule for the platform address. See [Allow browser uploads](./os-image-store.mdx#allow-browser-uploads). |
+
+### Finish a stuck delete
+
+An image stays in **Deleting** while its store can't be reached. Fix the connector's credentials or endpoint, and the delete finishes when the store answers again.
+
+If the store is gone for good, remove the `platform.vcluster.com/cleanup-os-image-blob` finalizer from the image to finish the delete. Open the image for editing and delete that entry from `metadata.finalizers`:
+
+<InterpolatedCodeBlock
+  language="bash"
+  code={'kubectl edit osimage [[GLOBAL:IMAGE_NAME]]'}
+/>
+
+The image disappears once you save. The file stays in the bucket, and the platform never removes it later.
