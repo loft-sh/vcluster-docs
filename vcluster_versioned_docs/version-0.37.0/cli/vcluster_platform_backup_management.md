@@ -31,7 +31,7 @@ vcluster platform backup management
       --filename string    The filename to write the backup to (default "backup.yaml")
   -h, --help               help for management
       --namespace string   The namespace vCluster platform was installed into
-      --skip strings       What resources the backup should skip. Valid options are: users, teams, accesskeys, sharedsecrets, clusters and clusteraccounttemplates
+      --skip strings       What resources the backup should skip. Valid options are: platformsecrets, clusterroletemplates, clusteraccesses, users, teams, sharedsecrets, accesskeys, apps, spacetemplates, virtualclustertemplates, clusters, projects, virtualclusterinstances, spaceinstances, projectsecrets
 ```
 
 

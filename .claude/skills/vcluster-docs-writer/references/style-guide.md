@@ -106,6 +106,26 @@ Use the Oxford comma (serial comma) before the last item when listing 3 or more 
 
 See Scribbr's [article](https://www.scribbr.com/commas/oxford-comma/) on the Oxford comma for a detailed explanation and examples.
 
+## Version Numbers
+
+Version numbers for vCluster Labs products carry a lowercase `v` prefix in prose. This is a company-wide convention, not a docs-only one.
+
+- **Do Not**: Upgrade to vCluster 0.38 before you install Platform 5.0.
+- **Do**: Upgrade to vCluster v0.38 before you install Platform v5.0.
+- **Do Not**: This migration requires version 0.24.2 or later.
+- **Do**: This migration requires vCluster v0.24.2 or later.
+
+The rule covers vCluster, vCluster Platform, vNode, vMetal, and the vCluster CLI, whether the version is a minor (`v0.38`) or a patch (`v0.38.1`). Prefix every number in a range, as in "v0.24.2 to v0.28.x".
+
+Leave these unchanged:
+
+- Third-party versions follow their upstream style, such as Kubernetes 1.34, etcd 3.5, Helm 3.16, and Go 1.22.
+- Code blocks, inline code, commands, flags, YAML values, URLs, file paths, and folder names. Helm's `--version 0.38.0` takes no prefix, and `vcluster_versioned_docs/version-0.38/` is a path.
+- Dynamic version tokens such as `__VCLUSTER_VERSION__` render without the prefix, because most of them sit in code. When one appears in prose, write `v__VCLUSTER_VERSION__`.
+- Versioned docs keep the format their release shipped.
+
+`Loft.version-prefix` flags a product name or "version" followed by an unprefixed number. It can't tell a bare "0.37 or later" from a third-party version, so check those by eye.
+
 ## Code Blocks
 
 Use `<>` to indicate placeholders in code blocks. For example:
