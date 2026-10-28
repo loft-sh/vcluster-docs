@@ -385,6 +385,23 @@ items in a sentence.
 See Scribbr's [article](https://www.scribbr.com/commas/oxford-comma/) on the
 Oxford comma for a detailed explanation and examples.
 
+### Version numbers
+
+Version numbers for vCluster Labs products carry a lowercase `v` prefix in
+prose. That covers vCluster, vCluster Platform, vNode, vMetal, and the vCluster
+CLI.
+
+- **Do Not**: Upgrade to vCluster 0.38 before you install Platform 5.0.
+- **Do**: Upgrade to vCluster v0.38 before you install Platform v5.0.
+
+Third-party versions, such as Kubernetes 1.34 or etcd 3.5, follow their
+upstream style. Code, commands, flags, YAML values, URLs, and paths don't
+change, so Helm's `--version 0.38.0` stays as it is. The `Loft.version-prefix`
+Vale rule flags a product name or "version" followed by an unprefixed number.
+See "Version Numbers" in the
+[style guide](.claude/skills/vcluster-docs-writer/references/style-guide.md)
+for the full rule.
+
 ### Code blocks
 
 Use `<>` to indicate placeholders in code blocks. For example:
@@ -421,8 +438,11 @@ In versioned docs, tokens resolve to that folder's version instead. A page in
 `4.11.0`, not the latest 4.11 patch.
 
 Use tokens only for "the current version". For a fixed minimum, such as
-"requires vCluster 0.34 or later", write the number. A token would render
+"requires vCluster v0.34 or later", write the number. A token would render
 the current version on every page and in every versioned copy.
+
+Tokens render without the `v` prefix, because most of them sit in code. When
+one appears in prose, write `v__VCLUSTER_VERSION__`.
 
 #### Interactive code blocks
 
