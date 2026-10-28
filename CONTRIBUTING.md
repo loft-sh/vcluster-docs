@@ -399,7 +399,7 @@ upstream style. Code, commands, flags, YAML values, URLs, and paths don't
 change, so Helm's `--version 0.38.0` stays as it is. The `Loft.version-prefix`
 Vale rule flags a product name or "version" followed by an unprefixed number.
 See "Version Numbers" in the
-[style guide](.claude/skills/vcluster-docs-writer/references/style-guide.md)
+[style guide](https://github.com/loft-sh/vcluster-docs/blob/main/.claude/skills/vcluster-docs-writer/references/style-guide.md)
 for the full rule.
 
 ### Code blocks
