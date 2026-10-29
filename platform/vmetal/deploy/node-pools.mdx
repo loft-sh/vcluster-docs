@@ -1,0 +1,268 @@
+---
+title: Node pools
+sidebar_label: Node pools
+sidebar_position: 4
+description: Give a cluster private worker nodes with a NodePool, a platform resource that holds the provider, node types, and network for a set of nodes.
+toc_max_heading_level: 3
+---
+
+import InterpolatedCodeBlock from '@site/src/components/InterpolatedCodeBlock';
+import PageVariables from '@site/src/components/PageVariables';
+import FeatureTable from '@site/src/components/FeatureTable';
+
+<FeatureTable names="private-nodes-auto-nodes" />
+
+{/* TODO(DOC-1930): Draft written from the draft node pools PRs (Platform 8938, vCluster Pro 2627) as of 2026-10-27. Re-verify every claim after merge. Open questions are tracked in DOC-1930 and marked inline below. */}
+
+A NodePool gives a cluster a set of private worker nodes. It names the node provider, the node types, the network environment, and how many nodes to run. The cluster itself only needs private nodes turned on.
+
+Keeping these choices off the cluster is what lets one cluster template serve many tenants. Each tenant may draw on different node types and network environments. A template can't express "use whatever this tenant is allowed," but a pool created for each cluster can. The template sets `privateNodes.enabled: true`, and the pools carry the infrastructure.
+
+A pool belongs to one cluster, and a cluster can have many pools. For example, a cluster might have one pool of GPU nodes and another of general compute nodes from a different provider.
+
+:::info Private nodes only
+Node pools apply to clusters that use private nodes. Clusters that run workloads on shared nodes of the <GlossaryTerm term="control-plane-cluster">control plane cluster</GlossaryTerm> don't use them and don't change.
+:::
+
+{/* TODO(DOC-1930) Q4: Say whether privateNodes.autoNodes in vcluster.yaml remains a supported alternative, is discouraged, or can't be combined with pools. Today both work and merge. */}
+
+<PageVariables
+  CLUSTER="my-cluster"
+  PROJECT_NAMESPACE="p-my-project"
+  PROVIDER="metal3-provider"
+  NODE_TYPE="compute-node"
+/>
+
+## Static and dynamic pools
+
+Every pool is either static or dynamic. You choose when you create it, and you can't switch a pool between the two later.
+
+| | Static pool | Dynamic pool |
+|---|---|---|
+| Node count | A fixed number you set with `static.replicas` | Follows demand, within limits you set |
+| Who creates and removes nodes | The platform | Karpenter, running inside the cluster |
+| vCluster version | No minimum | vCluster v0.38 or later |
+| Good fit | Reserved capacity, predictable workloads, training jobs | Bursty workloads, inference that scales with traffic |
+
+{/* TODO(DOC-1930) Q2: Confirm whether static pools on clusters older than v0.38 are supported or only tolerated. The code doesn't check the version for static pools. */}
+
+## Before you begin
+
+- A NodeProvider with at least one node type, and capacity behind it. For bare metal, see [Cluster nodes](./cluster-nodes.mdx#1-define-a-node-type-for-worker-capacity) for how to define a node type.
+- The node types, network environment, and node profile you plan to use must be allowed for the project. See [Manage allowed node types](../../tenants/projects/allowed/node-types.mdx) and [Manage allowed node profiles](../../tenants/projects/allowed/node-profiles.mdx).
+- A cluster in the project with `privateNodes.enabled: true`. The cluster can also be created at the same time as its pools. See [Create a pool before its cluster](#create-a-pool-before-its-cluster).
+- Access to create NodePools in the project.
+
+{/* TODO(DOC-1930) Q3: Name the roles that can create, edit, and view pools once access is settled. Overview says project users have no access, the test plan says view only. */}
+
+Run the `kubectl` commands on this page against the **control plane cluster** where the platform runs, in the project's namespace. New installs name it `p-<project>`, and older installs use `loft-p-<project>`.
+
+## Create a static pool
+
+A static pool keeps a fixed number of nodes. Use one when you know how much capacity the cluster needs, for example three compute nodes reserved for a team.
+
+<InterpolatedCodeBlock
+  title="static-pool.yaml"
+  code={'apiVersion: management.loft.sh/v1\n' +
+    'kind: NodePool\n' +
+    'metadata:\n' +
+    '  name: compute\n' +
+    '  namespace: [[GLOBAL:PROJECT_NAMESPACE]]\n' +
+    'spec:\n' +
+    '  # The cluster the nodes join. Must be in the same project. Can\'t be changed later.\n' +
+    '  vClusterRef: [[GLOBAL:CLUSTER]]\n' +
+    '  static:\n' +
+    '    # The platform keeps exactly this many nodes.\n' +
+    '    replicas: 3\n' +
+    '  template:\n' +
+    '    # The NodeProvider the nodes come from.\n' +
+    '    providerRef: [[GLOBAL:PROVIDER]]\n' +
+    '    # Which node types the nodes may use, matched on node type properties.\n' +
+    '    requirements:\n' +
+    '      - key: vcluster.com/node-type\n' +
+    '        operator: In\n' +
+    '        values:\n' +
+    '          - [[GLOBAL:PROVIDER]].[[GLOBAL:NODE_TYPE]]\n' +
+    '    # Labels the nodes register with.\n' +
+    '    nodeLabels:\n' +
+    '      workload.example.com/tier: compute'}
+  language="yaml"
+/>
+
+<InterpolatedCodeBlock
+  code={'kubectl apply -f static-pool.yaml'}
+  language="bash"
+/>
+
+The platform creates one instance (`NodeClaim`) for each replica, named after the pool. Each instance carries the `vcluster.com/node-pool=compute` label so you can find it later. The instance claims a machine of a matching node type and joins the cluster as a worker node.
+
+The pool reports `Ready` once every replica has joined. To watch its progress, see [Check a pool's status](#check-a-pools-status).
+
+`requirements` use the same matching as `nodeTypeSelector` in `vcluster.yaml`. The `vcluster.com/node-type` property holds each node type's fully qualified name, `<provider>.<node type>`. List the names with `kubectl get nodetypes`.
+
+## Create a dynamic pool
+
+A dynamic pool hands scaling to Karpenter inside the cluster. Karpenter adds nodes when pods can't be scheduled, removes nodes it can consolidate, and replaces nodes that drifted from the template. The cluster must run vCluster v0.38 or later.
+
+<InterpolatedCodeBlock
+  title="dynamic-pool.yaml"
+  code={'apiVersion: management.loft.sh/v1\n' +
+    'kind: NodePool\n' +
+    'metadata:\n' +
+    '  name: burst\n' +
+    '  namespace: [[GLOBAL:PROJECT_NAMESPACE]]\n' +
+    'spec:\n' +
+    '  vClusterRef: [[GLOBAL:CLUSTER]]\n' +
+    '  dynamic:\n' +
+    '    # Upper bound on the total resources of the pool\'s nodes.\n' +
+    '    limits:\n' +
+    '      cpu: "128"\n' +
+    '      memory: 512Gi\n' +
+    '    disruption:\n' +
+    '      # Only remove nodes that have no workload pods left.\n' +
+    '      consolidationPolicy: WhenEmpty\n' +
+    '      consolidateAfter: 5m\n' +
+    '      # Disrupt at most one node at a time.\n' +
+    '      budgets:\n' +
+    '        - nodes: "1"\n' +
+    '    # Replace each node after 30 days.\n' +
+    '    expireAfter: 720h\n' +
+    '  template:\n' +
+    '    providerRef: [[GLOBAL:PROVIDER]]\n' +
+    '    requirements:\n' +
+    '      - key: vcluster.com/node-type\n' +
+    '        operator: In\n' +
+    '        values:\n' +
+    '          - [[GLOBAL:PROVIDER]].[[GLOBAL:NODE_TYPE]]'}
+  language="yaml"
+/>
+
+Every field under `dynamic` is optional. When you leave them out, Karpenter consolidates nodes that are empty or underutilized, acts right away, and disrupts up to 10% of the pool's nodes at once. Nodes don't expire, and a node gets 30 seconds to drain before it's removed.
+
+The cluster picks up the pool, creates a matching Karpenter `NodePool` (`karpenter.sh`) inside the cluster, and reports progress back to the platform. The pool's `AutoscalerReady` condition turns true once Karpenter reports the pool ready.
+
+A new dynamic pool has no nodes until pods need them. Zero nodes on a ready pool is expected. Karpenter adds the first node when a pod can't be scheduled on the cluster's existing nodes.
+
+When a cluster has more than one dynamic pool, Karpenter tries pools with a higher `weight` first. Weights range from 1 to 100.
+
+:::warning Pool names must not repeat names in vcluster.yaml
+If the cluster's `vcluster.yaml` already defines an auto nodes pool with the same name, the cluster ignores the platform pool. Its `AutoscalerReady` condition stays false with the reason `NameConflict`. Rename the pool.
+:::
+
+## Create a pool before its cluster
+
+A pool doesn't need its cluster to exist yet. GitOps tools such as Argo CD often apply a cluster and its pools together, in no fixed order.
+
+Until the cluster appears, the pool reports `Failed` with the reason `VClusterNotFound`. That's expected. When the cluster is created, the pool picks it up and starts creating nodes without any change on your side.
+
+## Choose a network environment
+
+To place a pool's nodes in a specific network environment, set the `vcluster.com/network-environment` property in the template:
+
+```yaml
+template:
+  properties:
+    vcluster.com/network-environment: tenant-a-network
+```
+
+The project must allow that network environment, or the platform rejects the pool. The environment must also belong to the project's tenant. If it doesn't, or doesn't exist, the pool is accepted but reports `NetworkEnvironmentNotFound` and creates no nodes.
+
+If you don't name one, the pool uses its provider's default network environment. The pool records the environment it chose in `status.networkEnvironment` and keeps using it, even if the provider's default changes later. All of a pool's nodes stay on one network.
+
+For how network environments work, see [Networking](../networking/overview.mdx).
+
+## Change a pool
+
+Edit the pool and apply it again. What happens depends on what you change.
+
+- **Replica count of a static pool.** The platform adds or removes instances to match. When it scales down, it removes instances that haven't joined yet and instances on an older template before healthy current ones. Removing a joined node drains it first, the same as [scaling down cluster nodes](./cluster-nodes.mdx#4-change-how-many-nodes-you-have).
+- **Template of a static pool.** The platform replaces the nodes one at a time, so the pool runs one node short during the rollout and never needs a spare machine. `status.updatedReplicas` counts the nodes already on the new template.
+- **Dynamic settings or template of a dynamic pool.** The cluster updates its Karpenter `NodePool`. Karpenter replaces drifted nodes within the pool's disruption budgets.
+
+You can't change `vClusterRef`, and you can't switch a pool between static and dynamic. To move capacity to another cluster or change a pool's kind, create a new pool and delete the old one.
+
+## Delete a pool
+
+<InterpolatedCodeBlock
+  code={'kubectl delete nodepool.management.loft.sh compute -n [[GLOBAL:PROJECT_NAMESPACE]]'}
+  language="bash"
+/>
+
+The platform removes the pool's instances before it removes the pool, draining each joined node first.
+
+For a dynamic pool, the platform first gives Karpenter in the cluster up to 10 minutes to drain and remove the nodes. After that, it deletes any instances that are left.
+
+{/* TODO(DOC-1930) Q1: Describe what happens to a cluster's pools when the cluster is deleted. Today the instances are deleted but the pools remain as Failed / VClusterNotFound. A fix is expected. */}
+
+## Check a pool's status
+
+List the pools in a project:
+
+<InterpolatedCodeBlock
+  code={'kubectl get nodepools.management.loft.sh -n [[GLOBAL:PROJECT_NAMESPACE]]'}
+  language="bash"
+/>
+
+For each pool, the output shows its status, cluster, and mode (`Static` or `Dynamic`). It also shows the replica count, the ready count, and the network environment. A pool's status is `Pending` while it scales, rolls out, or waits for its cluster. It's `Ready` once it has converged, and `Failed` when it can't run.
+
+To see the reason behind a status, read the pool's conditions:
+
+<InterpolatedCodeBlock
+  code={'kubectl get nodepool.management.loft.sh compute -n [[GLOBAL:PROJECT_NAMESPACE]] \\\n' +
+    '  -o jsonpath=\'{range .status.conditions[*]}{.type}={.status} {.reason}: {.message}{"\\n"}{end}\''}
+  language="bash"
+/>
+
+| Condition | True when |
+|---|---|
+| `Supported` | The license includes auto nodes, the cluster exists, and a dynamic pool's cluster runs a vCluster version that supports it. |
+| `NetworkReady` | The network environment the pool places its nodes in is available. Absent when the pool uses no network environment. |
+| `Scaled` | A static pool has every replica built from the current template and available. |
+| `AutoscalerReady` | The cluster has applied the current version of a dynamic pool, and Karpenter reports it ready. |
+
+### Status reasons
+
+| Reason | What it means | What to do |
+|---|---|---|
+| `FeatureNotAllowed` | The license doesn't include auto nodes. Existing nodes stay, but the pool can't be changed. | Check the platform license. |
+| `VClusterNotFound` | No cluster with the `vClusterRef` name exists in the project. | Expected while the cluster is being created. Otherwise, check the name. |
+| `VClusterVersionUnknown` | A dynamic pool's cluster hasn't reported its vCluster version yet. | Wait for the cluster to come up. |
+| `VClusterVersionUnsupported` | A dynamic pool's cluster runs a vCluster version older than v0.38. | Upgrade the cluster, or use a static pool. |
+| `NodeProviderNotFound` | The NodeProvider in `providerRef` doesn't exist. | Fix `providerRef`. |
+| `NetworkEnvironmentNotAllowed` | The project no longer allows the pool's network environment. | Allow it for the project, or move the nodes to a new pool in an allowed environment. |
+| `NetworkEnvironmentNotFound` | The network environment doesn't exist, or doesn't belong to the project's tenant. | Fix the `vcluster.com/network-environment` property. |
+| `NetworkEnvironmentNotAvailable` | The network environment is still provisioning, has failed, or is being deleted. | Instances wait for it. Check the network environment's status. |
+| `NameConflict` | A dynamic pool has the same name as a pool in the cluster's `vcluster.yaml`. | Rename the pool. |
+
+When the pool itself looks healthy but a node never appears, check its instances. They carry the pool's name as a label:
+
+<InterpolatedCodeBlock
+  code={'kubectl get nodeclaims -n [[GLOBAL:PROJECT_NAMESPACE]] -l vcluster.com/node-pool=compute'}
+  language="bash"
+/>
+
+An instance that waits for capacity, quota, or a network environment shows the reason on the instance itself.
+
+## Template fields
+
+The `template` describes every node in the pool. It applies to static and dynamic pools alike.
+
+| Field | Required | Description |
+|---|---|---|
+| `providerRef` | Yes | The NodeProvider the nodes come from. |
+| `requirements` | No | Which node types the nodes may use, as Kubernetes node selector requirements keyed on node type properties. |
+| `properties` | No | Extra properties for each instance. Common ones are the `vcluster.com/network-environment` and `vcluster.com/os-image` properties. |
+| `taints` | No | Taints applied to the nodes. |
+| `nodeLabels` | No | Labels the nodes register with. Labels under `kubernetes.io`, `k8s.io`, `karpenter.sh`, and `vcluster.loft.sh` are rejected, except under `node.kubernetes.io`. |
+| `profileRef` | No | A [node profile](../../clusters/node-profiles.mdx) to apply to the nodes. The project must allow it. |
+
+The pool name becomes a label value and the prefix of each instance name, so it must be a valid DNS label of at most 63 characters.
+
+## Related tasks
+
+| If you want to | Go to |
+|---|---|
+| Define node types and attach bare metal capacity | [Cluster nodes](./cluster-nodes.mdx) |
+| Apply reusable labels and taints to nodes | [Node profiles](../../clusters/node-profiles.mdx) |
+| Configure auto nodes directly in `vcluster.yaml` | [Auto nodes](/docs/vcluster/deploy/worker-nodes/private-nodes/auto-nodes) |
+| Understand how a node joins a cluster | [Cluster attachment](../concepts/cluster-attachment.mdx) |
