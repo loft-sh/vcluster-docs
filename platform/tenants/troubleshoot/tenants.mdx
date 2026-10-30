@@ -104,10 +104,6 @@ The tenant tried to create an instance of a kind its capability doesn't let it
 author. For OS images and SSH keys, set `allow.custom.enabled: true` on the
 capability. Other kinds in the capability table can't be authored by a tenant.
 
-The same message refuses any write that would make a tenant own a network
-environment, whether a tenant or a platform admin sends it. A platform admin
-creates the network environment without an owner and assigns it to the tenant.
-
 ```text
 tenant "acme" may not write an instance it does not own
 ```
@@ -196,6 +192,23 @@ subject already in use elsewhere on the platform gets a `422` error. The detail 
 `value is unavailable`. Platform doesn't say who holds the value, because one
 tenant isn't entitled to know about another's users. Choose a different value.
 
+### A role can't be bound
+
+```text
+clusterroletemplates.management.loft.sh "loft-cluster-admin" is forbidden: role
+is not a management role template
+```
+
+Inside a tenant, a user or team can only receive a cluster role template that's
+marked as a management role. A role that isn't one, such as
+`loft-cluster-admin`, would grant rights outside the tenant boundary. The same
+refusal applies when a platform admin edits a tenant's user or team. Choose a
+management role instead. See
+[Roles inside a tenant](../concepts/what-are-users-and-teams.mdx#roles-inside-a-tenant).
+
+`role is not an existing management role template` means the named template
+doesn't exist. Check the spelling.
+
 ### A connector isn't usable
 
 A cluster that names a connector the tenant can't use is refused with this
@@ -221,6 +234,17 @@ Platform checks a cluster's connector again after the write. A cluster that
 hasn't finished setting up its database reports the `DBConnectorSynced`
 condition as `False` with the reason `ConnectorUnusable`. A cluster that already
 set up its database keeps it.
+
+### A network environment can't be created
+
+```text
+tenant "acme" may not own instances of this resource
+```
+
+A tenant can't own a network environment, so Platform refuses one created by
+the tenant, or by a platform admin with the tenant as owner. A platform admin
+creates it as a platform resource and assigns it to the tenant with
+`tenant.vcluster.com/exclusive-to` at creation.
 
 ### An assignment is refused
 
@@ -278,6 +302,22 @@ remove the duplicate claim.
 Team membership only counts inside the user's own tenant. A platform team can
 list a tenant user, and Platform accepts the write, but that user never gets the
 team's roles. Add the user to a team in their own tenant instead.
+
+## A tenant user can't reach a cluster they can see
+
+A tenant user can see a control plane cluster granted to their tenant, but a
+`kubectl` request through Platform returns `403` with
+`no cluster access: access denied`.
+
+Seeing a cluster doesn't grant access into it. The user also needs a cluster
+access that lists the cluster and names them, one of their teams, or all users.
+Tenants can't create cluster accesses, so a platform admin has to create it.
+The admin must also assign the cluster access by setting
+`tenant.vcluster.com/exclusive-to` to the tenant name. Alternatively, share it
+with every tenant by setting `tenant.vcluster.com/all` to `"true"`.
+These labels go on the `ClusterAccess` object's `metadata.labels`.
+An unlabeled platform-owned access doesn't reach tenant users, even when it names them.
+See [Cluster access and tenants](../users-permissions/permissions/cluster.mdx#cluster-access-and-tenants).
 
 ## NICo onboarding doesn't finish
 
@@ -337,9 +377,20 @@ without the Multi-Tenancy feature, so a lapsed license can't strand it. That
 exemption covers metadata-only updates. A change to the tenant's spec is still
 refused, even during deletion.
 
-As soon as deletion starts, the tenant's users lose access to everything. The
-same applies to users whose tenant no longer exists. Expect tenant users to be
-refused while a tenant is terminating.
+Once deletion starts, the platform management API refuses requests from the
+tenant's users with `403` and a message like this one. The same applies to
+users whose tenant no longer exists.
+
+```text
+user "acme--jane" is labeled for tenant "acme", which cannot be resolved:
+tenant is terminating
+```
+
+The reason reads `no such tenant` when the tenant is gone.
+
+The agent proxy caches allowed cluster access decisions for 15 seconds.
+Requests with a cached allowance can continue until it expires. See
+[Cluster access and tenants](../users-permissions/permissions/cluster.mdx#cluster-access-and-tenants).
 
 ## A tenant admin can't do something they should
 
