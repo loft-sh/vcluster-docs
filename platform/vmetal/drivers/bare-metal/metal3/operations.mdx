@@ -8,6 +8,10 @@ toc_max_heading_level: 3
 
 import InterpolatedCodeBlock from '@site/src/components/InterpolatedCodeBlock';
 import PageVariables from '@site/src/components/PageVariables';
+import Flow, {Step} from '@site/src/components/Flow';
+import NavStep from '@site/src/components/NavStep';
+import Button from '@site/src/components/Button';
+import Label from '@site/src/components/Label';
 
 Day-2 operations for the Metal3 driver center on managing `BareMetalHost` resources on the control plane cluster. This page covers adding and removing servers, checking fleet capacity, and where to find guidance for other common tasks. Commands on this page use `<control-plane-context>`, the cluster referenced by `NodeProvider.spec.metal3.clusterRef.cluster`.
 
@@ -38,10 +42,66 @@ After inspection, the BareMetalHost records the server's hardware inventory:
 
 <InterpolatedCodeBlock
   code={`kubectl --context <control-plane-context> get baremetalhost server-01 -n [[GLOBAL:NAMESPACE]] \\
-  -o jsonpath='{.status.hardwareDetails}' | jq .`}
+  -o jsonpath='{.status.hardware}' | jq .`}
 />
 
 This includes CPU count, memory, NIC information, and disk inventory. Verify it matches the expected hardware before the server is provisioned into production.
+
+## Inspect the BMC
+
+Redfish Explorer lets a platform admin inspect a server's BMC resources and run the actions its firmware exposes. Use it to investigate hardware health or BMC behavior.
+
+Before you begin:
+
+- The Metal3 UI requires a platform admin outside tenant scope, with the machine management and Metal3 features enabled. You also need permission to `create` the `metal3bmcs/redfish` subresource in `cluster.loft.sh`. The permission applies on the host's control plane cluster, in its namespace. Permission to read a Machine alone doesn't grant BMC access.
+- The host needs a Redfish-compatible BMC address and a credential Secret. An `ipmi://` address doesn't support this explorer.
+- The platform agent on the control plane cluster must be able to reach the BMC. See [BMC requirements](./requirements.mdx#bmc-requirements).
+
+:::warning BMC actions affect running workloads
+Redfish access includes actions that change hardware state. A reset or power action can interrupt workloads. Grant this access only to operators trusted to administer the physical server.
+:::
+
+<Flow>
+<Step>
+Open <NavStep>Bare Metal > Machines</NavStep> and click the <Label>Metal3</Label> tab, if shown.
+</Step>
+<Step>
+Open the server, then click the <Label>Redfish</Label> tab. The entry appears only when your permissions allow Redfish requests for that host.
+</Step>
+<Step>
+Browse the resource tree or enter a path beginning with `/redfish/`. Inspect the resource's properties and links. The BMC's firmware determines which resources appear. A successful request displays the selected resource's properties.
+</Step>
+</Flow>
+
+To run an action, click it under <Label>Actions</Label>. Supply its parameters and any required JSON body, then click <Button>Continue</Button>. Review the target and request body before clicking <Button>Run action</Button>.
+
+Read the response before retrying an action. A BMC can accept an asynchronous operation and return a task link. Follow that link to check progress. If a request times out, check the hardware state before sending the action again.
+
+### Audit BMC requests
+
+The platform agent sends requests using the credentials referenced by the BareMetalHost. Requests and responses can contain BMC account passwords and session tokens.
+
+The built-in audit policies record `create` requests to `metal3bmcs/redfish` at `Metadata` level. This preserves attribution without logging request or response bodies. With a custom policy, keep this rule before broader rules that capture bodies. See [Metadata-only for sensitive data](../../../../administer/configure/platform-configs/audit-policy.mdx#metadata-only-for-sensitive-data).
+
+## Check a server's address and power
+
+Open <NavStep>Bare Metal > Machines</NavStep>. The inventory shows `On` or `Off` beside each machine's name. On the <Label>Metal3</Label> tab, each host's name carries a power badge that also shows transitions, and the <Label>IP address</Label> column shows the host's configured DHCP address.
+
+### Interpret the IP address
+
+The Metal3 host list shows the address configured in `metal3.vcluster.com/ip-address`, without its prefix length. It doesn't fall back to an address found during hardware inspection, so the column is empty when the annotation isn't set.
+
+Machine network details in the inventory show inspected NIC addresses, with the configured address on the boot NIC. The Metal3 server details page shows inspected addresses only. Neither view reflects an address set by custom network data, and address information can lag a reset until power-off.
+
+A configured address doesn't mean the server is reachable. Test routing and access from the intended client separately. See [Set a host address](./networking.mdx#set-a-host-address) for configuration and [Unexpected or missing IP address](./troubleshooting.mdx#unexpected-or-missing-ip-address) when an address differs from what you expect.
+
+### Interpret power status
+
+The Metal3 tab's badge shows `On`, `Off`, `Powering On`, `Powering Off`, or `Rebooting`. The transitional labels show that a change is in progress, not that it finished.
+
+Power is separate from provisioning phase. An `On` server can still be inspecting, provisioning, or failing to boot. During provisioning or deprovisioning, the badge can lag the server's actual power state.
+
+Check the host's <Label>Ironic</Label> view, when your permissions expose it, to compare current and target power state. See [Unexpected power status](./troubleshooting.mdx#unexpected-power-status) if the badge disagrees with the server.
 
 ## Remove servers
 
@@ -108,4 +168,4 @@ A server in `available` is ready for a new instance request. A server in `provis
 | Update OS images across a fleet | [GPU Fleet Operations](./gpu-fleet-operations.mdx#roll-out-a-new-os-image) |
 | Update server labels | [GPU Fleet Operations](./gpu-fleet-operations.mdx#label-strategy) |
 | Expand the IP address pool | [Troubleshooting](./troubleshooting.mdx#ip-allocation-issues) |
-| Rotate BMC credentials | [Production and Security](./security.mdx#rotate-bmc-credentials) |
+| Rotate BMC credentials | [Production and security](./security.mdx#rotate-bmc-credentials) |

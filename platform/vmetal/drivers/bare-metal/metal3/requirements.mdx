@@ -21,19 +21,40 @@ Metal3 distinguishes three logical network zones:
 - **Provisioning network** - PXE boot traffic. Bare metal servers boot the Ironic Python Agent installer from this network, which fetches the OS image from Ironic or an external HTTP source.
 - **Tenant network** - the network provisioned servers use after PXE boot. For servers joining a cluster, Kubernetes node and workload traffic runs here.
 
-The provisioning and tenant networks can share a segment. When they do, apply security measures such as a DHCP relay to guard against unauthorized DHCP responses during PXE boot. Sharing the BMC network with other segments is technically possible but not recommended.
+The provisioning and tenant networks can share a segment. Restrict which DHCP servers can answer provisioning clients. A DHCP relay forwards requests but doesn't by itself block unauthorized replies. Sharing the BMC network with other segments is technically possible but not recommended.
 
 ### Connectivity requirements
 
 | Traffic | Source | Destination | Protocol |
 |---|---|---|---|
-| BMC power / boot control | Ironic | BMC endpoint | Redfish: TCP 443 or 80 |
+| BMC power / boot control | Ironic | BMC endpoint | Redfish: TCP 443 by default, or the configured port |
+| Redfish Explorer | Platform agent | BMC endpoint | HTTPS: TCP 443 by default, or the configured transport and port |
 | BMC power / boot control | Ironic | BMC endpoint | IPMI: UDP 623 |
 | PXE DHCP (broadcast) | Bare metal server | DHCP proxy | UDP 67 |
 | TFTP boot | Bare metal server | DHCP proxy | UDP 69 |
-| HTTP (IPA image, iPXE, API proxy) | Bare metal server | DHCP proxy | TCP 8080 |
+| HTTP (IPA image, iPXE, API proxy) | Bare metal server | DHCP proxy | TCP 8080 by default |
+| HTTPS virtual media, when configured | BMC | DHCP proxy's advertised HTTPS endpoint | TCP 8443 by default |
+| OS image download | Bare metal server's IPA and Ironic | OS image URL | TCP 80 or 443, or the URL's configured port |
 
 TFTP isn't required for servers that use HTTP Boot instead of TFTP-based iPXE. For the DHCP server's own deployment options (bridge, macvlan, or host network), see [DHCP Server](./overview.mdx#infrastructure-deployment).
+
+Each host needs a usable DHCP reservation before inspection when using the platform DHCP server. Configure its boot MAC and [host address](./networking.mdx#set-a-host-address). A claim's later IPAM allocation doesn't supply the initial inspection address.
+
+### Connectivity inside the control plane cluster
+
+The bundled Metal3 chart 0.7.2 separates the operator API, IPA API, and boot image service:
+
+| Traffic | Source | Destination | Default Service port |
+|---|---|---|---|
+| Operator API with mutual TLS | BMO and authorized API clients | `ironic` | TCP 6385 |
+| IPA API through the DHCP proxy | DHCP proxy | `ironic` | TCP 80, forwarding to the HTTP agent listener on 6388 |
+| IPA kernel and initramfs | DHCP proxy | `ipa-images` | TCP 6180 |
+| Active/active conductor coordination | Ironic conductors | `ironic-headless` | TCP 6189 |
+| IPA callback through the proxy | Ironic | `ipa-callback` | TCP 443 by default, or the configured callback URL |
+
+These Service addresses are internal. The default provisioning path routes servers through the DHCP proxy, so they don't need direct access to these Services. Network policies must permit the internal traffic too.
+
+For externally managed Ironic or customized Services, verify the configured API, boot image, and callback URLs from their actual callers. Don't expose the operator's mutual-TLS endpoint as an unauthenticated IPA API.
 
 The tenant network must provide access to the cluster's API endpoint and to required DNS, registry, and workload services, the same as any Kubernetes node network.
 
@@ -45,6 +66,8 @@ Common address formats:
 - **IPMI**: `ipmi://<host>[:<port>]`. The port defaults to `623`.
 
 Avoid `redfish+http://` in production. It sends BMC credentials and commands without transport encryption. For vendor-specific drivers, boot methods, firmware constraints, and address formats, see [Supported hardware](https://book.metal3.io/bmo/supported_hardware) in the Metal3 Bare Metal Operator documentation.
+
+Redfish Explorer uses the host's Redfish-compatible address and credential Secret through the platform agent. An IPMI-only address doesn't support it. The agent must have its own network path and certificate trust for that BMC. See [Control BMC proxy access](./security.mdx#control-bmc-proxy-access).
 
 ### What Metal3 does over the BMC connection
 
@@ -66,8 +89,10 @@ Share this checklist with whoever racks and cables the servers, if that isn't yo
 
 - [ ] Each server has a BMC reachable from the control plane cluster, over Redfish or IPMI.
 - [ ] Dedicated BMC service accounts have the power and boot-device permissions described above; any IPMI privilege-level override has been tested.
-- [ ] Each server's PXE NIC and its MAC address are documented.
+- [ ] Each server's PXE NIC, MAC address, and initial DHCP reservation are documented.
+- [ ] The platform agent can reach Redfish BMCs and verify their certificates when operators use Redfish Explorer.
 - [ ] The provisioning network allows DHCP, TFTP, and HTTP traffic, per [Connectivity requirements](#connectivity-requirements).
+- [ ] Internal network policies allow the operator API, IPA API, boot image service, conductor coordination, and callback paths.
 - [ ] Each server can fetch its OS image URL over HTTP or HTTPS without credentials supplied separately from the URL.
 - [ ] The tenant network can reach the cluster API endpoint and required DNS and registry services.
 - [ ] The BMC network is reachable from the control plane cluster, on its own segment or routed as required.
