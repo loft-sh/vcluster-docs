@@ -125,19 +125,24 @@ platform's.
 | `virtualclusterschemas` | Cluster schemas |
 | `nodeproviders` | Node providers |
 | `machines` | Machine inventory mirrors (physical servers) |
-| `networkenvironments` | Network environments |
+| `nodeprofiles` | Node profiles |
+| `networkpeers` | Network peers |
 | `users` | Users |
 | `teams` | Teams |
 | `sharedsecrets` | Shared secrets |
 | `oidcclients` | OIDC clients |
 | `databaseconnectors` | Database connectors |
 
-`machines` and `networkenvironments` are the resources a platform admin lends by
-hand. No capability grants them, so a tenant reaches one of the platform's only
-through an exclusive assignment or the share-with-every-tenant label. A tenant
-can't own either one. The inventory sync writes machines. A network environment
-created by a tenant, or by a platform admin with the tenant as owner, is refused
-with `tenant "acme" may not own instances of this resource`.
+`machines` and `nodeprofiles` are resources a platform admin lends by hand. No
+capability grants them, so a tenant reaches one of the platform's only through
+an exclusive assignment or the share-with-every-tenant label. The inventory sync
+writes machines, so in practice a tenant doesn't create them.
+
+A machine can only be assigned to a tenant that's allowed a node type covering
+it. At least one node type of the machine's provider must select the machine,
+and the tenant's `nodeTypes` capability must allow that node type. Otherwise the
+assignment is refused. A machine that no node type selects can't be assigned to
+any tenant. Providers that keep no machine inventory aren't checked.
 
 `users` and `teams` are the tenant's own identities. A tenant never sees the
 platform's users or teams, and a platform team can't be lent to a tenant.
@@ -151,19 +156,48 @@ On a cluster in a tenant project, the tenant can't change the inline
 `spec.template`, `spec.external`, or the `loft.sh/skip-helm-deploy` annotation.
 Those decide what Platform deploys, so only a platform admin can change them.
 
+Every cluster a tenant user creates must name a template the project allows.
+This holds for tenant admins and project admins too, and the project's
+`requireTemplate` waiver doesn't apply to tenant users. A tenant can't turn the
+waiver on either. If a platform admin already set it, the tenant's other edits
+to the project still go through.
+
+Importing a cluster deployed outside Platform into a tenant project is off by
+default. A platform admin turns it on per tenant. See
+[Allow importing externally deployed clusters](./create-and-configure-tenants.mdx#allow-importing-externally-deployed-clusters).
+
 `sharedsecrets`, `oidcclients`, and `databaseconnectors` are sensitive, which is
 a reason to hide the platform's instances rather than a reason a tenant may not
 hold its own.
+
+### Lent by a platform admin, never authored
+
+| Resource | What it is |
+|----------|-----------|
+| `networkenvironments` | Network environments |
+
+A tenant can't own a network environment, so it can't create one, and a platform
+admin can't create one on a tenant's behalf. Both writes are refused with
+`may not own instances of this resource`. A platform admin creates the network
+environment and assigns it to the tenant with the `exclusive-to` label. The
+tenant reads and references it but can't edit it.
 
 ### Shared with every Tenant
 
 | Resource | What it is | Tenant can author its own |
 |----------|-----------|---------------------------|
 | `clusterroletemplates` | Cluster role templates | No |
+| `clusterroles` | Kubernetes cluster roles | No |
+| `roles` | Kubernetes roles | No |
 
 A tenant that creates users has to assign them roles, and Platform already ships
 the roles worth assigning. Authoring stays denied, because writing a cluster
 role template is writing RBAC.
+
+Every tenant can read every cluster role and role that no tenant owns, including
+built-in ones such as `cluster-admin`. A role grants nothing without a binding,
+so reading one gives the tenant no access. A binding that names a role another
+tenant owns grants nothing.
 
 <a id="hidden-entirely" />
 
@@ -289,9 +323,15 @@ when you pick it.
 A cluster-scoped resource a tenant creates must be named `<tenant>--<name>`. For
 a tenant called `acme`, an SSH key called `build` is named `acme--build`.
 
-This applies to resources the tenant authors, not to resources a platform admin
-grants or assigns. Namespace-scoped resources are unaffected, because their
-names are already scoped by the namespace.
+This applies to every resource the tenant owns, whoever creates it. A platform
+admin who creates a tenant-owned user, team, or project is held to the same
+prefix. The rule doesn't apply to resources a platform admin grants or assigns,
+because the platform still owns those. Namespace-scoped resources are
+unaffected, because their names are already scoped by the namespace.
+
+The prefix is reserved in the other direction too. A cluster-scoped name that
+starts with an existing tenant's prefix must belong to that tenant, so a platform
+admin can't create a platform-owned or lent resource named `acme--<name>`.
 
 Omitting the prefix produces a validation error naming the prefix required.
 
