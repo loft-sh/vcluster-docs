@@ -1,0 +1,220 @@
+---
+title: Reserved and on-demand VM capacity
+sidebar_label: Reserved and on-demand capacity
+sidebar_position: 2
+sidebar_class_name: pro
+description: Run tenant VMs on shared KubeVirt capacity, or on machines reserved for one tenant and joined to the provider's KubeVirt cluster.
+---
+
+import Flow, {Step} from "@site/src/components/Flow";
+import NavStep from "@site/src/components/NavStep";
+import Button from "@site/src/components/Button";
+import Label from "@site/src/components/Label";
+import InterpolatedCodeBlock from '@site/src/components/InterpolatedCodeBlock';
+import PageVariables from '@site/src/components/PageVariables';
+
+<PageVariables
+  PROVIDER="kubevirt-vms"
+  MACHINE="metal3-provider.server-01"
+  TENANT="acme"
+  PROJECT="acme--default"
+/>
+
+A KubeVirt node provider can offer VMs from two kinds of capacity in the same KubeVirt cluster:
+
+- **On-demand** VMs run on the KubeVirt cluster's shared nodes, which every tenant's on-demand VMs share.
+- **Reserved** VMs run only on machines assigned to the tenant. A tenant admin provisions an assigned machine for VMs. The platform joins it to the provider's KubeVirt cluster as a node that only that tenant's reserved VMs use.
+
+Each node type of the provider offers one kind or the other. Project users pick the node type, and the node type decides where the VM runs.
+
+## How placement works
+
+A KubeVirt node type's `machineAllocationPolicy` sets its capacity type. The platform UI shows it as **Capacity type**.
+
+| `machineAllocationPolicy` | Capacity type | Where VMs of this type run |
+|---|---|---|
+| `OnDemand`, or unset when the provider sets no policy | **On-Demand** | Shared nodes of the KubeVirt cluster. Never a node reserved for a tenant. |
+| `Assigned` | **Reserved** | Only nodes the requesting tenant provisioned for VMs. |
+
+When neither the node type nor the provider sets a policy, KubeVirt node types are on-demand. For how the same field works on other providers, see [Capacity models](/docs/plan/capacity-models).
+
+The platform enforces placement with labels on the KubeVirt cluster's nodes, not with taints:
+
+- A node provisioned for VMs carries `tenant.vcluster.com.node-restriction.kubernetes.io/owner=<tenant>` and `kubevirt.vcluster.com.node-restriction.kubernetes.io/capacity-type=reserved`.
+- A reserved VM gets a node selector on both labels. It also requests one slot of the extended resource `node-type.kubevirt.vcluster.com/<node type>`, which only reserved nodes that allow that type advertise.
+- An on-demand VM gets a required node affinity that keeps it off any node carrying those labels. The platform overwrites any constraint on those keys in the VM template.
+
+Enable the Kubernetes NodeRestriction admission plugin to prevent kubelets from changing labels with this protected prefix.
+
+Each tenant's VMs run in their own namespace on the KubeVirt cluster, named `<tenant>--<provider namespace>`. For example, tenant `acme` on a provider whose `clusterRef.namespace` is `kubevirt` gets `acme--kubevirt`. The platform creates the namespace and labels it `kubevirt.vcluster.com/tenant=<tenant>`. VMs created outside any tenant stay in the provider's namespace. With `namespaceStrategy: VirtualCluster`, a VM that becomes a cluster's node goes to that cluster's namespace instead. See [Choose where VirtualMachines are created](./kubevirt.mdx#choose-where-virtualmachines-are-created).
+
+## Set up the provider
+
+A platform admin prepares the provider, the node types, and the machines once. Tenant admins then provision their own machines without touching infrastructure.
+
+The KubeVirt cluster must support kubeadm worker joins. The join script enables flannel's dependencies by default. It loads the `bridge`, `br_netfilter`, and `vxlan` kernel modules, but it doesn't deploy a CNI. The KubeVirt cluster's own CNI must run on the joined machines. The platform reads `kube-system/kubeadm-config`, including `ClusterConfiguration.controlPlaneEndpoint`, to prepare the join script. That endpoint must be reachable from the reserved machines. A connected cluster with KubeVirt installed doesn't meet these requirements by itself.
+
+<Flow>
+<Step>
+Create a KubeVirt node provider whose `clusterRef` names the KubeVirt cluster. See [KubeVirt](./kubevirt.mdx).
+
+The join script that adds a machine to that cluster installs containerd and the Kubernetes node components.
+</Step>
+
+<Step>
+Define the instance types tenants can launch. Mark each reserved type with `machineAllocationPolicy: Assigned`, and leave on-demand types unset or `OnDemand`:
+
+<InterpolatedCodeBlock
+  language="yaml"
+  title="kubevirt-vms.yaml (excerpt)"
+  code={'spec:\n  kubeVirt:\n    nodeTypes:\n    - name: small\n      displayName: "Small VM (on-demand)"\n      maxCapacity: 20\n    - name: reserved-large\n      displayName: "Large VM (reserved)"\n      # Runs only on machines a tenant provisioned for VMs.\n      machineAllocationPolicy: Assigned\n      resources:\n        cpu: "8"\n        memory: 32Gi'}
+/>
+
+In the platform UI, set the same choice with the **Capacity type** toggle when you create or edit an instance type: **Reserved** or **On-Demand**. A reserved machine can only host VMs of reserved types, so define at least one.
+</Step>
+
+<Step>
+Mark which machines can be provisioned for VMs on this provider. Set the `join-kubevirt-infra.vcluster.com/default-provider-ref` label on each Machine:
+
+<InterpolatedCodeBlock
+  language="bash"
+  code={'kubectl --context <management-context> label machine [[GLOBAL:MACHINE]] \\\n  join-kubevirt-infra.vcluster.com/default-provider-ref=[[GLOBAL:PROVIDER]]'}
+/>
+
+To mark many machines at once, label them by selector. You can also set the label from your own inventory automation, such as a NetBox workflow:
+
+<InterpolatedCodeBlock
+  language="bash"
+  code={'kubectl --context <management-context> label machines -l [[VAR:SELECTOR:rack=r12]] \\\n  join-kubevirt-infra.vcluster.com/default-provider-ref=[[GLOBAL:PROVIDER]]'}
+/>
+
+The platform doesn't set this label for you. The platform UI offers **Provision for VMs** only for machines that carry this label and name a KubeVirt provider. Set it on the Machine itself. Labels under `vcluster.com` domains aren't copied from a BareMetalHost to its Machine.
+</Step>
+
+<Step>
+Assign each machine to the tenant that reserves it, with **Assign to tenant** on the admin **Machines** page or the `tenant.vcluster.com/exclusive-to` label. See [Assign dedicated resources](../../../tenants/manage-tenants/create-and-configure-tenants.mdx#assign-dedicated-resources). Only a machine assigned to a tenant can be provisioned for VMs.
+</Step>
+
+<Step>
+Grant the tenant the KubeVirt node provider and the node types it may launch. See [Grant object access](../../../tenants/manage-tenants/create-and-configure-tenants.mdx#grant-object-access). Without the provider grant, provisioning fails with `NodeProviderNotAllowed`.
+
+The machine is provisioned through its own provider first, so the tenant also needs whatever that provider requires, such as an OS image and a network environment.
+</Step>
+</Flow>
+
+## Provision a machine for VMs
+
+A tenant admin turns an assigned machine into reserved VM capacity. Only tenant users with admin rights see the **Machines** page.
+
+<Flow>
+<Step>
+Open <NavStep>Bare Metal</NavStep> > <NavStep>Machines</NavStep>.
+</Step>
+
+<Step>
+On an available machine, click <Button>Provision</Button>. A platform admin on a platform with tenants finds the action in the row's overflow menu.
+</Step>
+
+<Step>
+Select **Provision for VMs**. The card is disabled when the machine's label doesn't name a KubeVirt provider your tenant was granted. When your tenant has no KubeVirt provider at all, the dialog skips this choice. Ask a platform admin to fix the label or the grant.
+</Step>
+
+<Step>
+In <Label>Project</Label>, select the project the machine's instance belongs to, then click <Button>Continue</Button>.
+</Step>
+
+<Step>
+Under **Instance Types**, choose which reserved types can run on this machine:
+
+- **All types** allows every reserved node type of the provider.
+- **Specific types** allows only the types you select. Give a type a maximum number of VMs to cap it on this machine. A type with no maximum is uncapped.
+</Step>
+
+<Step>
+Click <Button>Provision</Button>.
+</Step>
+</Flow>
+
+The platform provisions the machine through its own provider and joins it to the KubeVirt cluster as a worker node. On the **Machines** page, the **Instance** column then reads **Provisioned for VMs**.
+
+To provision with the API instead, create a `NodeClaim` in one of the tenant's projects. Pin it to the machine and name the KubeVirt provider in the `join-kubevirt-infra.vcluster.com/provider-ref` property:
+
+<InterpolatedCodeBlock
+  language="yaml"
+  title="provision-for-vms.yaml"
+  code={'apiVersion: management.loft.sh/v1\nkind: NodeClaim\nmetadata:\n  name: vm-host-1\n  namespace: loft-p-[[GLOBAL:PROJECT]]\nspec:\n  machineRef: [[GLOBAL:MACHINE]]\n  properties:\n    join-kubevirt-infra.vcluster.com/provider-ref: [[GLOBAL:PROVIDER]]\n  nestedInstances:\n    nodeTypes:\n      # Omit allow to accept every reserved node type of the provider.\n      allow:\n        byName:\n        - [[GLOBAL:PROVIDER]].reserved-large\n      # Cap VMs per node type on this machine. Omitted types are uncapped.\n      quota:\n        byType:\n          [[GLOBAL:PROVIDER]].reserved-large: "4"'}
+/>
+
+An `allow` with no names allows no types. Quota values must be non-negative integers.
+
+### Verify the join
+
+The node claim's `Joined` condition tracks the join:
+
+<InterpolatedCodeBlock
+  language="bash"
+  code={'kubectl --context <management-context> get nodeclaim vm-host-1 -n loft-p-[[GLOBAL:PROJECT]] \\\n  -o jsonpath=\'{.status.conditions[?(@.type=="Joined")]}\''}
+/>
+
+`Joined` is true once the machine has registered with the KubeVirt cluster and its node is `Ready`. While it waits, the reason is `NotJoined`. If the node doesn't become ready within 20 minutes of being provisioned, the reason becomes `JoinTimeout` and the claim stops retrying.
+
+## Launch VMs on reserved capacity
+
+Project users launch a VM like any other instance. Under **Compute resources**, open the **Instance Type** tab and select a reserved instance type. The **Reserved Machine** tab pins a whole bare metal machine instead, not reserved VM capacity. The platform places the VM on one of the tenant's reserved nodes that allows that type and still has a free slot.
+
+After creation, the instances list shows the VM's capacity as **VM (reserved capacity)** or **VM (on-demand)**.
+
+The launch list doesn't filter types by what fits a reserved machine. A VM whose type no reserved node can take stays unschedulable. After 10 minutes the platform fails its node claim with `InsufficientCapacity`, and the message says the VM has been unschedulable.
+
+## Limit what a tenant can run
+
+Two limits apply, and neither one reserves capacity:
+
+- **Per machine.** `nestedInstances.nodeTypes` on the provisioned machine's node claim allows types and caps VMs of each type on that machine, as shown earlier.
+- **Per tenant.** `Tenant.spec.nodeTypes.quota.byType` limits claims for each node type across the tenant's projects. It counts typed claims before their VMs run and while the claims are being deleted. It excludes claims pinned to a machine, including the claim that provisions a machine for VMs.
+
+Creating a typed claim over the tenant quota is refused with `quota exhausted`. The scheduler also checks quota before provisioning, serializing decisions per tenant. This catches concurrent requests that pass the creation check. An excess claim stays pending with `Scheduled=False` and reason `TenantNodeTypeQuotaExceeded`. It retries every 10 seconds and can proceed once quota is available. Stopping a VM doesn't release its claim's quota. Delete the claim to release it.
+
+There's no tenant-wide limit on the number of machines provisioned for VMs, and no usage report for reserved VM capacity on the Tenant.
+
+## Release a reserved machine
+
+Delete the reserved VMs' node claims first. Stopped VMs still hold their machines. The platform refuses to delete a machine's node claim while reserved VM claims still reference its node:
+
+```text
+reserved VMs still run on the machine, delete their node claims first: <namespace/name, ...>
+```
+
+If the machine's node claim is deleted another way, the platform cordons the node and waits for VM placement information to refresh. It holds the machine with reason `VMsRunning` while reserved VM claims still reference that node. Once they are gone, it removes the node from the KubeVirt cluster and releases the machine through its own provider.
+
+## Troubleshoot
+
+The node claim's conditions name the problem. Errors in the first table are terminal, so fix the cause and create a new claim.
+
+| Reason | Cause | Fix |
+|---|---|---|
+| `MachineNotAssigned` | The machine isn't assigned to a tenant, or it's assigned to another tenant. | Assign the machine to the claim's tenant. |
+| `TenantNotAssigned` | The claim isn't owned by a tenant. | Create the claim in one of the tenant's projects. |
+| `MachineRequired` | The claim has no `machineRef`. | Pin the claim to the machine. |
+| `ProviderRefRequired` or `NodeProviderNotKubeVirt` | The `provider-ref` property is empty, or names a provider that isn't KubeVirt. | Name the KubeVirt node provider. |
+| `NodeProviderNotAllowed` | The tenant isn't granted the KubeVirt provider. | Grant the provider to the tenant. |
+| `JoinTimeout` | The machine's node didn't become ready in the KubeVirt cluster within 20 minutes. | Check that the machine reaches the KubeVirt cluster's API server and that the cluster's CNI runs on the new node. |
+
+If provisioning reports `getting kubeadm-config configmap`, verify that the KubeVirt cluster meets the [provider setup requirements](#set-up-the-provider).
+
+An instance pending with `TenantNodeTypeQuotaExceeded` is waiting for tenant quota, rather than physical capacity. Delete unused claims or ask a platform admin to increase the tenant's node type quota. See [Limit what a tenant can run](#limit-what-a-tenant-can-run).
+
+For VMs, also terminal:
+
+| Reason | Cause |
+|---|---|
+| `TenantRequired` | A reserved VM was requested outside any tenant. Reserved capacity belongs to a tenant. |
+| `InvalidConfiguration`, "a reserved vm needs a node type" | A reserved VM was requested from an inline template. Use a reserved node type. |
+| `InsufficientCapacity` after 10 minutes | No reserved node allows the type or has a free slot. Allow the type on a machine, raise its cap, or provision another machine. |
+| `NamespaceConflict` | Applies to every tenant VM, both reserved and on-demand. The target namespace exists with a missing or different `kubevirt.vcluster.com/tenant` label. Check its contents and ownership before renaming it or choosing a different provider namespace. |
+
+## Limitations
+
+- Instance types are defined by the platform admin. Tenants can't create their own.
+- VM recovery and high availability depend on the KubeVirt cluster and its storage, not on the platform.
+- Tenants can't bring their own KubeVirt cluster. Reserved machines always join the provider's cluster.
