@@ -7,10 +7,20 @@
 
 const { test, expect } = require('@playwright/test');
 const path = require('path');
+const compatibilityData = require('../../static/api/k8s-compatibility.json');
 
 const BASE_URL = process.env.TEST_BASE_URL || 'https://www.vcluster.com';
 const MATRIX_PATH = '/docs/vcluster/next/reference/lifecycle-policy#kubernetes-compatibility-matrix';
 const SCREENSHOTS_DIR = path.join(__dirname, '..', 'screenshots');
+
+// Match the component's CSS module class, not the header wording, so a
+// terminology change in the header doesn't break the locator.
+const MATRIX_TABLE = 'table[class*="matrixTable"]';
+
+// Cells that carry a footnote reference, from the same data the component renders.
+const NOTED_CELL_COUNT = compatibilityData.matrix
+  .flatMap((row) => Object.values(row.vcluster))
+  .filter((cell) => typeof cell === 'object' && cell !== null && cell.note).length;
 
 const DESKTOP_VIEWPORT = { width: 1280, height: 800 };
 const MOBILE_VIEWPORT = { width: 375, height: 812 };
@@ -24,13 +34,12 @@ test.describe('Kubernetes Compatibility Matrix', () => {
       await page.waitForTimeout(1000);
 
       // Table exists with header rows
-      const table = page.locator('table').filter({ hasText: 'Host Cluster Kubernetes Version' });
+      const table = page.locator(MATRIX_TABLE);
       await expect(table).toBeVisible({ timeout: 10000 });
 
-      // Has data rows (at least 3 kubernetes versions)
+      // One data row per Kubernetes version in the data
       const dataRows = table.locator('tbody tr');
-      const rowCount = await dataRows.count();
-      expect(rowCount).toBeGreaterThanOrEqual(3);
+      await expect(dataRows).toHaveCount(compatibilityData.matrix.length);
 
       // Each row starts with a version label like "v1.34"
       const firstRowLabel = dataRows.first().locator('td').first();
@@ -49,17 +58,18 @@ test.describe('Kubernetes Compatibility Matrix', () => {
     });
 
     test('known-issue cells have footnote markers', async ({ page }) => {
+      test.skip(compatibilityData.notes.length === 0, 'No known issues in k8s-compatibility.json');
+
       await page.goto(`${BASE_URL}${MATRIX_PATH}`, { waitUntil: 'load', timeout: 30000 });
       await page.waitForTimeout(1000);
 
-      // At least one superscript footnote reference exists
-      const noteRefs = page.locator('table sup');
-      const refCount = await noteRefs.count();
-      expect(refCount).toBeGreaterThanOrEqual(1);
+      // Every noted cell renders a superscript footnote reference
+      await expect(page.locator(`${MATRIX_TABLE} sup`)).toHaveCount(NOTED_CELL_COUNT);
 
-      // Footnote text renders below the table
-      const footnotes = page.locator('ol').filter({ hasText: 'EndpointSlice' });
+      // Each note's text renders in the list below the table
+      const footnotes = page.locator(`${MATRIX_TABLE} ~ ol`);
       await expect(footnotes).toBeVisible({ timeout: 10000 });
+      await expect(footnotes.locator('li')).toHaveCount(compatibilityData.notes.length);
 
       await page.screenshot({
         path: path.join(SCREENSHOTS_DIR, 'k8s-matrix-desktop.png'),
@@ -75,7 +85,7 @@ test.describe('Kubernetes Compatibility Matrix', () => {
       await page.goto(`${BASE_URL}${MATRIX_PATH}`, { waitUntil: 'load', timeout: 30000 });
       await page.waitForTimeout(1000);
 
-      const table = page.locator('table').filter({ hasText: 'Host Cluster Kubernetes Version' });
+      const table = page.locator(MATRIX_TABLE);
       await expect(table).toBeVisible({ timeout: 10000 });
 
       // Legend still visible

@@ -108,9 +108,25 @@ customer buys or deploys.
 ### vCluster Platform
 The management platform and UI for managing clusters and Tenants across one or more control plane clusters.
 
-- Use when referring to the management/control plane software
-- Example: "Access the vCluster Platform UI to manage your clusters"
-- Example: "Install vCluster Platform in your Kubernetes cluster"
+Name it once, then call it "the platform":
+
+- Use the formal name **vCluster Platform** on first mention in a page, and
+  wherever precision matters: installing, licensing, support, releases, and
+  the API.
+- After that, write lowercase **the platform**.
+- Use **Platform** (capitalized, no prefix) for the docs section and its
+  navigation label, and in names like "Platform 5.0".
+- Call the interface **the platform UI** or **the vCluster UI**. Don't write
+  "vCluster Platform UI", and don't call it a console. The product uses
+  "console" for the virtual machine serial console.
+- ✅ DO: "Install vCluster Platform in your Kubernetes cluster. After the
+  platform starts, open the platform UI."
+- ❌ DON'T: "vCluster Platform connects clusters, and vCluster Platform runs
+  the agent" (repeats the formal name)
+
+The `Loft.no-vcluster-platform` Vale rule warns when a page uses
+"vCluster Platform" more than once. It's turned off for Platform install and
+licensing pages, where the formal name is correct throughout.
 
 ## CLI
 
@@ -119,6 +135,16 @@ The command line interface name is **`vcluster`** (all lowercase).
 - ✅ DO: "Run `vcluster create my-cluster`"
 - ✅ DO: "Install the `vcluster` CLI"
 - ❌ DON'T: "Run `vCluster create`" (incorrect case)
+
+## Configuration files
+
+- **`vcluster.yaml`** configures a cluster. Use it for every cluster
+  configuration option, whether the cluster is deployed with the CLI, Helm, or
+  the platform.
+- **`values.yaml`** only means the Helm values file for installing vCluster
+  Platform. Don't use it for cluster configuration.
+- ✅ DO: "Add the following to your `vcluster.yaml`"
+- ❌ DON'T: "Set this option in your `values.yaml`" (for a cluster setting)
 
 ## Kubernetes Distros
 
@@ -183,6 +209,7 @@ Deploy clusters on a control plane cluster.
 | vCluster Platform | "Install vCluster Platform" | "vCluster platform", "Loft Platform" |
 | Enterprise feature | "This Enterprise feature requires a vCluster Platform license" | "vCluster Pro", "Pro feature", "Upgrade to vCluster Pro" (not a product) |
 | vcluster (CLI) | "`vcluster create`" | "`vCluster create`" |
+| Product versions | "vCluster v0.38", "Platform v5.0", "v0.24.2 or later" | "vCluster 0.38", "Platform 5.0", "version 0.24.2" (see "Version Numbers" in style-guide.md) |
 | K8s | "Deploy to K8s" | "K8S", "k8s" |
 | K3s | "Running on K3s" | "k3s", "K3S" |
 | k0s | "Using k0s" | "K0s", "K0S" |

@@ -106,6 +106,26 @@ Use the Oxford comma (serial comma) before the last item when listing 3 or more 
 
 See Scribbr's [article](https://www.scribbr.com/commas/oxford-comma/) on the Oxford comma for a detailed explanation and examples.
 
+## Version Numbers
+
+Version numbers for vCluster Labs products carry a lowercase `v` prefix in prose. This is a company-wide convention, not a docs-only one.
+
+- **Do Not**: Upgrade to vCluster 0.38 before you install Platform 5.0.
+- **Do**: Upgrade to vCluster v0.38 before you install Platform v5.0.
+- **Do Not**: This migration requires version 0.24.2 or later.
+- **Do**: This migration requires vCluster v0.24.2 or later.
+
+The rule covers vCluster, vCluster Platform, vNode, vMetal, and the vCluster CLI, whether the version is a minor (`v0.38`) or a patch (`v0.38.1`). Prefix every number in a range, as in "v0.24.2 to v0.28.x".
+
+Leave these unchanged:
+
+- Third-party versions follow their upstream style, such as Kubernetes 1.34, etcd 3.5, Helm 3.16, and Go 1.22.
+- Code blocks, inline code, commands, flags, YAML values, URLs, file paths, and folder names. Helm's `--version 0.38.0` takes no prefix, and `vcluster_versioned_docs/version-0.38/` is a path.
+- Dynamic version tokens such as `__VCLUSTER_VERSION__` render without the prefix, because most of them sit in code. When one appears in prose, write `v__VCLUSTER_VERSION__`.
+- Versioned docs keep the format their release shipped.
+
+`Loft.version-prefix` flags a product name or "version" followed by an unprefixed number. It can't tell a bare "0.37 or later" from a third-party version, so check those by eye.
+
 ## Code Blocks
 
 Use `<>` to indicate placeholders in code blocks. For example:
@@ -206,51 +226,81 @@ EOF
 
 Use [inline comments](https://docusaurus.io/docs/markdown-features/code-blocks#highlighting-with-comments) in the code to highlight lines.
 
-## Feature Documentation Template
+## Integration Pages
 
-When writing documentation for vCluster features, follow this structure:
+A page about using vCluster or the platform with another product should stand
+on its own for a reader who doesn't know that product yet:
 
-### 1. Overview Section
-- **WHAT**: High-level description of what the feature is
-- **WHY**: Explain why users would want to use this feature and what use cases it solves
-- Include diagrams if architecture changes are involved
+- Start with a short summary of what the other product is and why someone
+  would use the two together.
+- Link to the other product's own documentation for its installation and
+  configuration, instead of repeating it.
+- Document only the vCluster or platform side in detail, plus the settings
+  that connect the two.
 
-### 2. How to Use the Feature
-- Describe attributes/properties introduced with the feature
-- **Important**: Always indicate if a feature changes default behavior using info/warning admonitions
-- Examples should progress from simple (with defaults) to complex (special properties)
+## Document the Contract, Not the Implementation
 
-### 3. YAML Examples Best Practices
-- **Always include descriptive comments** in yaml blocks explaining what each section does
-- **Add context before the yaml** explaining the use case
-- **Add "What happens" or "Effect" after the yaml** explaining the result
-- Use `title` attribute for yaml code blocks (e.g., `yaml title="example.yaml"`)
-- Structure examples by use case (e.g., "Use Case 1: Production namespace with specific naming")
+Document what a reader can observe and rely on. Leave out how the code gets
+there.
 
-### 4. Step-by-Step Examples
-- Use `<Flow>` and `<Step>` components for multi-step procedures
-- Each step should have clear description before commands
-- Include expected output where relevant
-- Group related examples under descriptive headings
+**The contract** includes API fields, defaults, allowed values, permissions,
+conditions and events, timeouts after which the state changes, limits, failure
+behavior, cleanup and deletion semantics, and upgrade and recovery behavior.
+Retry intervals usually aren't, and "retries automatically" is enough. Keep
+an interval when it changes an operational decision, such as how long to wait
+before stepping in, or how much load the retries put on an external API.
 
-### 5. Known Limitations Section
-- Clearly document any limitations at the end
-- Use subsections for different limitation categories
-- Provide workarounds or alternative approaches where possible
-- Include failing and working examples to illustrate limitations
+**The implementation** includes controller and scheduling order, retry and
+backoff mechanics, locks and bookkeeping annotations, internal storage such as
+Secret names and encryption, admission code paths, and lists of which fields
+each response strips.
 
-### 6. Admonition Usage
-- `:::info` for neutral information and default behaviors
-- `:::warning` or `:::caution` for important limitations or immutable configurations
-- `:::note` for additional helpful context
-- **Never place admonitions inside JSX components** like `<Step>`
+Keep one of these details when it's necessary to perform or verify a
+supported operation. Examples are the Secret names a restore extracts, an
+annotation the reader checks before reusing a machine, a status field a verify
+step checks, and the order in which a restore must bring components back. A
+step added only to justify the detail doesn't count.
 
-### 7. Writing Style
-- Use sentence case for headings (not Title Case)
-- Avoid future tense - use present tense
-- Avoid first-person plural
-- Be concise but complete
-- Think from the user's perspective
+Keep a passage when it helps a reader do at least one of these:
+
+- Choose a design.
+- Configure it.
+- Verify that it works.
+- Diagnose a failure they're likely to hit.
+- Upgrade, remove, or recover it safely.
+
+Being true to the source isn't enough on its own. Detail you read in the code
+while checking a claim belongs in the review, not on the page, unless it
+changes what the reader does or checks.
+
+Describe outcomes rather than code paths. For example:
+
+- **Implementation:** "The controller requeues the claim with exponential
+  backoff and takes a lock annotation before it selects a machine."
+- **Contract:** "If no machine matches, the claim stays `Pending` and retries
+  automatically. Check the claim's conditions for the reason."
+
+Some internals are part of the contract for one reader. Where the product
+stores configuration matters to someone restoring from a backup, so it
+belongs on the backup and restore page, not on the task that changes the
+setting. Put the detail on the page where it changes what the reader does.
+
+**Never cut a limitation to make a page shorter or to avoid revealing
+internals.** State its impact and what the reader can do about it. If a
+limitation hasn't been approved for publication, ask Engineering how to
+describe it. Don't drop it while the page still promises the guarantee it
+weakens.
+
+Don't link to private repositories or cite source file paths in published
+docs.
+
+## Page Templates
+
+Start a new page from the template for its type in
+[templates/](templates/README.md): feature, task, troubleshooting, and
+reference pages. The README there also maps each kind of information to the
+page type where it belongs. The templates apply this guide to those page types.
+Where a template and this guide disagree, this guide wins.
 
 ## Controlling Vale Rules
 

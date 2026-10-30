@@ -27,7 +27,7 @@ const GlossaryTerm = ({ term, children }) => {
           {termContent}
         </span>
       )}
-      <span className={styles.tooltip}>
+      <span className={styles.tooltip} data-glossary-tooltip="">
         <span className={styles.tooltipHeader}>
           {hasUrl ? (
             <a href={termData.url} className={styles.tooltipHeaderLink}>

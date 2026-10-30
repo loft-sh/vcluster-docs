@@ -57,14 +57,14 @@ Before starting:
 **CRITICAL FIRST STEP**: Platform releases require updating the Go API dependency and regenerating API documentation partials before any other changes.
 
 The generator at `hack/platform/partials/main.go` produces docs from two sources:
-- **Go types** in `github.com/loft-sh/api/v4` — platform config fields, resource references (must match the new platform version)
+- **Go types** in `github.com/loft-sh/api/vN` (N is the current platform major) — platform config fields, resource references (must match the new platform version)
 - **vCluster JSON schema** — vCluster config reference sections embedded in the platform docs
 
 **Process:**
 
-1. Bump `github.com/loft-sh/api/v4` to the version matching the new platform release:
+1. Bump `github.com/loft-sh/api/vN` to the version matching the new platform release. For the first release of a new major, follow [New major version cutover](#new-major-version-cutover) instead:
    ```bash
-   go get github.com/loft-sh/api/v4@vX.Y.Z   # e.g. v4.9.0
+   go get github.com/loft-sh/api/vN@vX.Y.Z   # e.g. api/v4@v4.9.0
    go mod tidy
    go mod vendor
    ```
@@ -101,7 +101,26 @@ The generator at `hack/platform/partials/main.go` produces docs from two sources
    ```
    If any versioned doc still imports a deleted partial, add the path to `.generator-preserve` (see API Partials Generation section below).
 
-**Why this matters**: The Go types in `api/v4` define the platform config schema. If the dependency is stale, new config fields (like `database`) will be missing from the docs and removed fields will remain as dead content.
+**Why this matters**: The Go types in `api/vN` define the platform config schema. If the dependency is stale, new config fields (like `database`) will be missing from the docs and removed fields will remain as dead content.
+
+#### New major version cutover
+
+The docs-sync receiver can't bump the api pin across a major, because the generator imports one api major by path. Until the generator moves, `hack/release/classify-version.sh` skips every release of the new major as `major-cutover` and the receiver run fails, which sends the Slack alert. The first 5.0 RC fails this way by design. To move to the new major:
+
+1. Wait for the first `loft-sh/api/v5` tag. An RC is enough.
+2. If a 4.13 already synced into current docs and isn't in `platform_versions.json`, freeze it now, before the pin moves. Otherwise 5.0 is skipped as `out-of-range` so it can't overwrite 4.13, and after the next step every 4.13.x release fails the run as `unfrozen-line`.
+3. Change the `github.com/loft-sh/api/v4/...` imports in `hack/platform/partials/main.go` to `/v5`.
+4. Bump the modules, then re-tidy and re-vendor:
+   ```bash
+   go get github.com/loft-sh/api/v5@vX.Y.Z github.com/loft-sh/agentapi/v5@vX.Y.Z
+   go mod tidy
+   go mod vendor
+   ```
+   `main.go` must import exactly one api major, and `go.mod` must not `replace` that module. Otherwise the classifier skips every platform release as `generator-unknown`.
+5. Fix any generator compile errors from moved or renamed types.
+6. After that merges to main, start a new receiver run with **Run workflow**. Re-running the failed run reuses the old commit and fails again.
+
+After the cutover, patch releases of frozen 4.x lines are skipped as `stale-line`. A 4.x minor newer than the highest frozen 4.x line fails the run as `unfrozen-line`, even after 5.0 is frozen.
 
 ### Part 2: Import Path Strategy - Same-Plugin vs Cross-Plugin
 
@@ -409,7 +428,7 @@ versions: {
 ### API Partials Generation
 
 The Go script at `hack/platform/partials/main.go`:
-- Reads Go types from `github.com/loft-sh/api/v4` (vendored) to generate platform config and resource reference docs
+- Reads Go types from `github.com/loft-sh/api/vN` (vendored) to generate platform config and resource reference docs
 - Reads the vCluster JSON schema for vCluster config reference sections embedded in platform docs
 - Generates MDX partials for API resources
 - Creates/updates `config/reference.mdx` and `config/status_reference.mdx`
@@ -439,8 +458,8 @@ If the schema path changes, check:
 
 ### Before PR:
 ```bash
-# 1. Bump api/v4 dependency to match new platform version
-go get github.com/loft-sh/api/v4@vX.Y.Z
+# 1. Bump api/vN dependency to match new platform version
+go get github.com/loft-sh/api/vN@vX.Y.Z
 go mod tidy
 go mod vendor
 

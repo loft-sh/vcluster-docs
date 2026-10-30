@@ -144,7 +144,8 @@ arrives relative to where it's needed.
   sitting inside one subsection.
 - **Hedging that hides determinism.** "May preserve the existing password" when the
   code branch always preserves it. Vague wording on deterministic behavior sends
-  readers hunting for a nondeterminism that isn't there.
+  readers hunting for a nondeterminism that isn't there. The fix is to state the
+  outcome plainly, not to describe the branch that produces it.
 - **Branches that aren't signposted.** When scenario A takes one pass and scenario B
   takes two, say so before the reader picks a path.
 
@@ -180,16 +181,22 @@ against it.
 
 Check the cheap signals before asking: the page intro, prerequisites, sidebar
 position, what links in, and whether sibling pages state an audience. This repo
-has no `audience` frontmatter, so there's no metadata to look up and no
-in-repo ground truth to fall back on.
+has no `audience` frontmatter, so there's no per-page metadata to look up.
 
-The docs team maintains persona definitions in Notion under
-[Docs > Personas](https://app.notion.com/p/3a5109408069816ca099c2dd6aef9309),
-covering the role set, the lenses layered over it, and a production-path matrix.
-Consult those rather than inventing a reader. That work is still settling, so
-read it at the source and treat it as authoritative over any summary, here or
-elsewhere. The pages are internal and access-gated, so external contributors
-should fall back to habits 1 and 2, which are the part that actually matters.
+Name the reader by role: system admin, platform admin, tenant admin, project
+admin, project user, or cluster user. The roles match the product's permission
+scopes, and "Roles and scopes" in the root docs (`docs/plan/roles-and-scopes.mdx`,
+shipping with Platform 5.0) describes them. Then add the job they're doing, such
+as building, operating, or automating, because that decides what the page needs
+first.
+
+The docs team keeps the role model, the job personas, the lenses layered over
+them, and a production-path matrix in Notion under
+[Docs > Roles and personas](https://app.notion.com/p/3a5109408069816ca099c2dd6aef9309).
+Consult those rather than inventing a reader. Read them at the source and treat
+them as authoritative over any summary, here or elsewhere. The pages are
+internal and access-gated, so external contributors should fall back to the
+roles above and habits 1 and 2, which are the part that actually matters.
 
 ### What to look for
 
@@ -211,6 +218,86 @@ should fall back to habits 1 and 2, which are the part that actually matters.
   buried in a command block.
 - **Ordering versus the sidebar.** If the intro routes most readers to the last
   section on the page, either reorder or make sure the intro links jump directly.
+
+### Depth and placement
+
+The checks above catch pages that say too little. This one catches pages that
+say too much, or say it on the wrong page. Source-grounded writing produces both,
+because detail read in the code while verifying a claim tends to end up in the
+prose.
+
+Test each substantial passage against the reader you named. Keep it if it helps
+them choose a design, configure it, verify it works, diagnose a likely failure,
+or upgrade, remove, or recover it safely. "Document the Contract, Not the
+Implementation" in the writer skill's `references/style-guide.md` has the full
+rule and examples. Each passage you question gets one of four outcomes:
+
+- **Keep** it as it is, because it passes the test for this page's reader at
+  its current length.
+- **Summarize** it, because the reader needs the outcome but not the detail
+  around it. State the necessary outcome in fewer words.
+- **Move** it, because a reader you can name needs to look the detail up, and
+  this page's reader doesn't. Name that reader, the target type (concept, task,
+  reference, or troubleshooting), and the target path. Leave a one-sentence
+  summary and link behind. If the target page doesn't exist yet, name the path
+  to create and leave the content in place until it does. The page types,
+  where reference pages go, and the signs of misplaced content are in the
+  writer skill's `references/templates/README.md`.
+- **Cut** it, because no reader needs it.
+
+Try summarizing first. Move supporting detail only when a named reader needs to
+look it up. Moving is not a way to avoid cutting: a new reference page that
+holds detail nobody looks up adds a page to maintain and a thin page to the
+sidebar, and the reader is no better off.
+
+Detail that usually fails the test: scheduling or arbitration order, retry and
+backoff mechanics, locks and bookkeeping annotations, where the product stores
+data, admission or validation code paths, and lists of the fields each response
+strips. Keep one of these details when it's necessary to perform or verify a
+supported operation, such as Secret names a restore extracts, an annotation the
+reader checks before reusing a machine, or the order a restore must follow. A
+step that exists only to justify the detail doesn't count. Replace a narrative
+of code paths with a short behavior table that has one row per situation and
+the outcome the reader sees. Keep the fields a step needs, and the caveats
+that change what the reader does, at that step. The exhaustive remainder of a
+large table can live on a reference page linked from the step.
+
+Detail that usually passes: API fields, defaults, permissions, public condition
+reasons, operational cost, cleanup and deletion semantics, and anything a
+recovery procedure depends on.
+
+Timing sits on both sides. A timeout after which the state changes is
+contract, because the reader plans around it. Retry intervals usually aren't,
+and "retries automatically" is enough. Keep an interval when it changes an
+operational decision, such as how long to wait before stepping in, or how much
+load the retries put on an external API.
+
+**Limitations are never cut.** If a limitation is described through its
+mechanism, rewrite it as impact plus mitigation. Don't remove it while the page
+still promises the guarantee it weakens. A review that trims a real limitation
+has made the page less accurate, not more concise. This holds even when the
+limitation also raises a disclosure question, or a question about whether it's
+a bug. Ask Engineering for wording and a mitigation, not for permission to
+drop it.
+
+**Repeated detail.** When sibling pages repeat the same supporting detail,
+keep it on the page whose procedure uses it, and link to it from the others.
+
+**Splitting a long page.** For a long page, decide whether to split it before
+judging passages. Split only when each resulting page has its own reader, its
+own way in (search, the sidebar, or a link from a decision), and enough
+content to finish that reader's job without going back. A section that only
+makes sense inside another page stays a heading. Report a split as one finding
+that lists each target path, its page type, and the source line ranges.
+
+**Possible disclosure.** Some passages describe internals that a competitor
+could learn from and that have no reader consequence. Flag them. Whether a
+mechanism is proprietary is Product's and Engineering's call, not the
+reviewer's, so report it as a question for them rather than a verdict. A link to
+a private repository or a path into product source is always a finding.
+
+When you change this check, re-run the regression cases in
+`evals/depth-placement.md`.
 
 ## Close out
 
@@ -253,6 +340,11 @@ placed after the procedure it invalidates. Accuracy verdicts come from
 `docs-fact-check`. Report them in their own section rather than folding them into
 a pass, so the author can see at a glance which findings are about what the page
 says versus how it says it.
+
+Report depth and placement findings as keep, summarize, move (with the reader
+who needs it, the target page type, and the path), or cut. Put possible disclosure findings, and limitations that need wording or a
+mitigation from Engineering, in their own section headed "Questions for
+Engineering", so the author can send them on as a group.
 
 Open with one line naming the reader you reviewed against and the runner-up you
 rejected. Every Pass 3 finding depends on it, and it's the cheapest thing in the

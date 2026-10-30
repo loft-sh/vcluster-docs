@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
 /**
- * Sync src/data/latest-versions.json with the latest stable patch release for
- * the currently-tracked minor version of vCluster and vCluster Platform.
+ * Sync src/data/latest-versions.json with the latest stable patch release of
+ * the minor each product's docs serve as stable.
  *
  * That file is the single source of truth for the version tokens. It is read
  * by src/components/InterpolatedCodeBlock (render time) and by
@@ -10,8 +10,13 @@
  * __VCLUSTER_VERSION__ resolve identically in plain markdown fences and in
  * interpolated code blocks.
  *
- * Patch-only: never auto-promotes a minor version (0.33.x stays on 0.33).
- * New minor versions land through the normal docs release process.
+ * The tracked minor is the `lastVersion` of each docs plugin in
+ * docusaurus.config.js. The release process moves `lastVersion` when a minor
+ * goes GA, because the stable docs root is built from it, so a new minor
+ * reaches this file on the next sync with no separate edit. versions.json is
+ * not a substitute: docs are versioned at RC time, so it lists a minor before
+ * that minor has a stable release. A minor with no stable release is refused,
+ * never written.
  *
  * Usage:
  *   node scripts/check-latest-versions.js            # check, exit 1 on drift
@@ -33,9 +38,29 @@ const TARGETS = {
 const PRERELEASE_MARKERS = ['-next', '-alpha', '-rc', '-beta'];
 
 const TARGET_FILE = path.join(__dirname, '..', 'src', 'data', 'latest-versions.json');
+const CONFIG_FILE = path.join(__dirname, '..', 'docusaurus.config.js');
 
 function getMinor(version) {
   return version.split('.').slice(0, 2).join('.');
+}
+
+// Reads the config as text: the sync workflow runs without `npm ci`, and
+// loading the config would pull in every plugin it imports. The match stays
+// inside one plugin block (it may not cross another `id:`), because other
+// plugins set their own lastVersion, for example "current".
+function parseLastVersions(configText) {
+  const out = {};
+  for (const key of Object.keys(TARGETS)) {
+    const re = new RegExp(
+      `\\bid:\\s*["']${key}["'](?:(?!\\bid:)[\\s\\S])*?\\blastVersion:\\s*["'](\\d+\\.\\d+\\.\\d+)["']`
+    );
+    const m = configText.match(re);
+    if (!m) {
+      throw new Error(`No semver lastVersion for the '${key}' docs plugin in ${CONFIG_FILE}`);
+    }
+    out[key] = m[1];
+  }
+  return out;
 }
 
 function readCurrentVersions(content) {
@@ -63,23 +88,7 @@ function applyUpdate(content, next) {
   return `${JSON.stringify(data, null, 2)}\n`;
 }
 
-async function fetchLatestPatch(repo, minor) {
-  const url = `https://api.github.com/repos/${repo}/releases?per_page=100`;
-  const headers = {
-    Accept: 'application/vnd.github+json',
-    'User-Agent': 'vcluster-docs-version-sync',
-  };
-  if (process.env.GITHUB_TOKEN) {
-    headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
-  }
-
-  const res = await fetch(url, { headers });
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`GitHub API ${res.status} for ${repo}: ${body}`);
-  }
-  const releases = await res.json();
-
+function selectLatestPatch(releases, minor) {
   const candidates = releases
     .filter((r) => r.prerelease === false && r.draft === false)
     .map((r) => r.tag_name)
@@ -98,6 +107,24 @@ async function fetchLatestPatch(repo, minor) {
   return candidates[0];
 }
 
+async function fetchReleases(repo) {
+  const url = `https://api.github.com/repos/${repo}/releases?per_page=100`;
+  const headers = {
+    Accept: 'application/vnd.github+json',
+    'User-Agent': 'vcluster-docs-version-sync',
+  };
+  if (process.env.GITHUB_TOKEN) {
+    headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
+  }
+
+  const res = await fetch(url, { headers });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`GitHub API ${res.status} for ${repo}: ${body}`);
+  }
+  return res.json();
+}
+
 function appendGithubOutput(lines) {
   if (!process.env.GITHUB_OUTPUT) return;
   fs.appendFileSync(process.env.GITHUB_OUTPUT, lines.join('\n') + '\n');
@@ -108,14 +135,16 @@ async function main() {
 
   const content = fs.readFileSync(TARGET_FILE, 'utf8');
   const current = readCurrentVersions(content);
+  const lastVersions = parseLastVersions(fs.readFileSync(CONFIG_FILE, 'utf8'));
 
   const latest = {};
   for (const [key, { repo }] of Object.entries(TARGETS)) {
-    const minor = getMinor(current[key]);
-    const v = await fetchLatestPatch(repo, minor);
+    const minor = getMinor(lastVersions[key]);
+    const v = selectLatestPatch(await fetchReleases(repo), minor);
     if (!v) {
       console.error(
-        `No stable release found for ${repo} matching minor ${minor}. ` +
+        `No stable release found for ${repo} matching minor ${minor} ` +
+          `(docs lastVersion ${lastVersions[key]}). ` +
           `Refusing to change ${key} (currently '${current[key]}').`
       );
       process.exit(2);
@@ -160,7 +189,17 @@ async function main() {
   ]);
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+module.exports = {
+  getMinor,
+  parseLastVersions,
+  readCurrentVersions,
+  applyUpdate,
+  selectLatestPatch,
+};
+
+if (require.main === module) {
+  main().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}
