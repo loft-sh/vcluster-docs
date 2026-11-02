@@ -65,9 +65,9 @@ The API validates every update in full, including credentials already required b
 
 ## Grant use to a tenant
 
-Labeling a connector is an API update. On a connector created as a Secret, it drops data keys the API doesn't model, and it fails until any missing required fields are supplied. Review [Update credentials](#update-credentials) before you label a connector that existing automation also writes.
+Labeling a connector is an API update. On a connector created as a Secret, it drops data keys the API doesn't model, and it fails until any missing required fields are supplied. Review [Update credentials](#update-credentials) before you label a connector that existing automation also writes. A [name grant](#grant-connectors-by-name) doesn't require a label and leaves the connector's Secret data untouched, so it suits those connectors.
 
-First enable connector use on the Tenant. This is required for assignments and shared connectors alike:
+First enable connector use on the Tenant. Every grant method requires it:
 
 <InterpolatedCodeBlock
   language="bash"
@@ -85,7 +85,24 @@ Assign the connector exclusively to the tenant:
   code={"kubectl label connectors.management.loft.sh [[VAR:CONNECTOR:prod-db]] tenant.vcluster.com/exclusive-to=[[VAR:TENANT:acme]] --overwrite"}
 />
 
-An assigned connector is visible only to that tenant, so other tenants' label grants don't match it.
+An assigned connector is visible only to that tenant, so other tenants' name and label grants don't match it.
+
+### Grant connectors by name
+
+Grant specific connectors to the Tenant by name:
+
+<InterpolatedCodeBlock
+  language="bash"
+  code={"kubectl patch tenants.management.loft.sh [[VAR:TENANT:acme]] --type=merge -p '{\"spec\":{\"connectors\":{\"enabled\":true,\"allow\":{\"byName\":[\"[[VAR:CONNECTOR:prod-db]]\"],\"byLabels\":null}}}}'"}
+/>
+
+Names must match exactly. Wildcards, empty names, and duplicates are refused. A merge patch replaces the whole `byName` list, so include every connector the tenant should keep.
+
+Platform applies a name grant asynchronously, so the connector can take a moment to appear in the tenant's list.
+
+You can't combine `byName` with a non-empty `byLabels` selector. Tenant admission refuses that with `byName and byLabels cannot both be set`. To grant a labeled set plus one more connector, label that connector and widen the `byLabels` selector instead.
+
+The patch clears `byLabels` because a merge patch keeps an existing selector. A leftover non-empty selector fails validation, and a leftover `byLabels: {}` grants every eligible admin-managed connector.
 
 ### Share matching connectors
 
@@ -93,12 +110,14 @@ Label a connector and grant matching connectors to the Tenant:
 
 <InterpolatedCodeBlock
   language="bash"
-  code={"kubectl label connectors.management.loft.sh [[VAR:CONNECTOR:prod-db]] tier=shared --overwrite\nkubectl patch tenants.management.loft.sh [[VAR:TENANT:acme]] --type=merge -p '{\"spec\":{\"connectors\":{\"enabled\":true,\"allow\":{\"byLabels\":{\"tier\":\"shared\"}}}}}'"}
+  code={"kubectl label connectors.management.loft.sh [[VAR:CONNECTOR:prod-db]] tier=shared --overwrite\nkubectl patch tenants.management.loft.sh [[VAR:TENANT:acme]] --type=merge -p '{\"spec\":{\"connectors\":{\"enabled\":true,\"allow\":{\"byLabels\":{\"tier\":\"shared\"},\"byName\":null}}}}'"}
 />
+
+The patch clears any existing `byName` grant, since the two selectors can't both be set.
 
 Use labels that the Connector API passes through. Tenant admission refuses a `byLabels` selector on the projected connector-type or fleet-observability labels, with `this label is not served on connectors, so it cannot select one`.
 
-An empty selector (`byLabels: {}`) grants every eligible admin-managed connector. An absent or null selector grants none by label. To replace an existing selector with an empty map through a merge patch, clear it with null first.
+An empty selector (`byLabels: {}`) grants every eligible admin-managed connector, and Platform then ignores `byName`. An absent or null selector grants none by label. To replace an existing selector with an empty map through a merge patch, clear it with null first.
 
 ### Share a connector with all tenants
 
@@ -166,7 +185,7 @@ In the admin session, remove an exclusive assignment:
   code={"kubectl label connectors.management.loft.sh [[VAR:CONNECTOR:prod-db]] tenant.vcluster.com/exclusive-to-"}
 />
 
-Also remove any matching label grant or the `tenant.vcluster.com/all` label if the tenant must lose all access. Disabling `spec.connectors.enabled` blocks all connector access for that tenant.
+If the tenant must lose all access, also remove the connector's name from `byName`, any matching label grant, and the `tenant.vcluster.com/all` label. To remove a name, patch the `byName` list without it. Disabling `spec.connectors.enabled` blocks all connector access for that tenant.
 
 Verify the revocation with the tenant kubeconfig created in [Verify the grant](#verify-the-grant):
 
@@ -183,11 +202,11 @@ Grant loss limits new use. It doesn't immediately dismantle resources already pr
 | Database, not yet provisioned | On reconciliation, `DBConnectorSynced=False` with reason `ConnectorUnusable`. No database is provisioned. |
 | Database, already provisioned | The cluster keeps its database and existing database condition. |
 | Argo CD | New use fails. An ArgoCDApplication can report `InvalidConnector`. Existing registration remains until integration removal or cluster deletion. |
-| Observability | New writer credential requests fail, and the cluster reports `ObservabilityConnectorUnresolved` with reason `ObservabilityConnectorUnusable`. A writer key issued before the grant loss keeps working. |
+| Observability | New writer credential requests fail, and the cluster reports `ObservabilityConnectorUnresolved=False` with reason `ObservabilityConnectorUnusable`. A writer key issued before the grant loss keeps working. |
 | OS image store | New upload and finalize requests refuse an unusable connector. |
 | NetBox | The NodeProvider stops syncing from NetBox and reports `ConnectorUsable=False` with reason `ConnectorUnusable`. Machines already imported are kept. |
 
-Changing a Tenant's selector doesn't immediately enqueue every dependent object. Checks run when the object next reconciles. Don't use a condition's unchanged value as proof that a revoked grant still works.
+Changing a Tenant's grants doesn't immediately enqueue every dependent object. Checks run when the object next reconciles. Don't use a condition's unchanged value as proof that a revoked grant still works.
 
 When offboarding the tenant, use the admin session to delete its clusters through their normal lifecycle:
 
@@ -220,7 +239,7 @@ No data migration or Secret deletion is needed. Existing raw-Secret consumers re
 
 ### A connector is missing or listing returns Forbidden
 
-Check the user's management role, the Tenant's enabled capability, and the connector's assignment or matching labels. Confirm that the requested connector has the expected type.
+Check the user's management role, the Tenant's enabled capability, and whether the connector is assigned, named in `byName`, or matched by labels. Confirm that the requested connector has the expected type.
 
 ### A cluster reports an unusable connector
 
