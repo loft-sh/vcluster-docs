@@ -1,0 +1,78 @@
+---
+title: Audit events
+sidebar_label: Audit events
+sidebar_position: 4
+sidebar_class_name: pro
+description: Sign-in and access key events in the platform audit log, how to verify they are recorded, and how events identify users and tenants.
+---
+
+Besides API requests, the platform audit log records sign-in attempts and the access keys they create. This page describes those events, shows how to check that they're recorded, and explains how events identify users and tenants. To turn on auditing, see [Audit logging](./audit.mdx).
+
+## Authentication events
+
+The platform records an audit event for each sign-in attempt, whether it succeeds or fails, for these sign-in methods:
+
+| Method | `authentication-method` value | Records the connector |
+|---|---|---|
+| Username and password | `password` | No |
+| SSO callback | `sso` | Yes |
+| SSO token exchange | `token-exchange` | Yes |
+| Platform OIDC provider token request | `oidc-provider` | No |
+
+A sign-in produces up to two events. They share a correlation ID annotation:
+
+- **The sign-in event.** `verb` is `create`, and `objectRef` is the `users/login` subresource in `management.loft.sh`, named after the user when the platform can resolve one. For a successful sign-in, `user` is the signed-in user. For a failed sign-in, `user` is empty, and `responseStatus.code` holds the HTTP status the platform returned.
+- **The access key event.** Successful password, SSO, and token-exchange sign-ins create an access key for the session, and so do OIDC provider sign-ins that request `offline_access`. This event records that `create` on `accesskeys` in `storage.loft.sh`, with the key's name but never its value.
+
+Both events carry these annotations:
+
+| Annotation | Value |
+|---|---|
+| `audit.platform.vcluster.com/authentication-method` | The method from the table above. |
+| `audit.platform.vcluster.com/authentication-outcome` | `success` when the request the event describes returned a status below 400, otherwise `failure`. |
+| `audit.platform.vcluster.com/authentication-connector` | The SSO connector ID. Only present for `sso` and `token-exchange`. |
+| `audit.platform.vcluster.com/authentication-correlation-id` | The same ID on both events for one sign-in attempt. |
+| `audit.platform.vcluster.com/direct-host-write` | `"true"` on the access key event only. |
+
+When a user creates an access key through the platform API or UI, the platform records an `ownedaccesskeys` request. That event carries the key's display name, truncated to 256 characters, in the `audit.platform.vcluster.com/access-key-display-name` annotation.
+
+The platform doesn't record these as authentication events:
+
+- Requests it rejects before checking any credential, such as a disabled sign-in endpoint, the wrong HTTP method, or a malformed request body.
+- Successful OIDC refresh-token requests.
+- The start of an SSO redirect, and SSO logout. Signing out through the platform deletes the session's access key, which the level's catch-all rule records as a `delete` on `ownedaccesskeys`.
+- Access keys the platform deletes itself, such as expired keys, and keys removed when a user changes their password.
+
+All sign-in events stay at `Metadata` at every level through the [authentication activity rule](./audit-policy.mdx#metadata-only-for-authentication-activity). A [custom audit policy](./audit-policy.mdx#audit-policy) decides whether they're recorded at all, so include that rule when you write one.
+
+### Verify that sign-in events are recorded
+
+With the [audit sidecar](./audit.mdx#enable-audit-sidecar) enabled, sign in to the platform, and then filter the sidecar output for sign-in events:
+
+```bash title="List recent sign-in events"
+kubectl logs -n vcluster-platform -l app=loft -c audit --tail=500 \
+  | jq -c 'select(.objectRef.subresource == "login") | {
+      time: .stageTimestamp,
+      user: .objectRef.name,
+      method: .annotations["audit.platform.vcluster.com/authentication-method"],
+      outcome: .annotations["audit.platform.vcluster.com/authentication-outcome"],
+      code: .responseStatus.code
+    }'
+```
+
+Each line shows the user, `method`, and `outcome`. A successful password sign-in shows `"method":"password","outcome":"success"`.
+
+To find failed attempts only, filter on the outcome annotation. Raise `--tail` to search further back:
+
+```bash title="List failed sign-in attempts"
+kubectl logs -n vcluster-platform -l app=loft -c audit --tail=500 \
+  | jq -c 'select(.annotations["audit.platform.vcluster.com/authentication-outcome"] == "failure")'
+```
+
+If no sign-in events appear, check that `config.audit.enabled` is `true`. If you use a custom `policy.rules` list, check that a rule matches `create` on `users/login` with a level other than `None`, and that no earlier rule matches it with `None`.
+
+## Identity in audit events
+
+Audit events don't carry a tenant field or annotation. To attribute an event to a tenant, map the `user` or `objectRef` in the event to the tenant that owns that user or object. A user's tenant is the value of the `tenant.vcluster.com/owner` label on the user. Changes to a tenant's own configuration appear as requests on the `tenants/config` subresource, with the tenant's name in `objectRef.name`.
+
+When a request uses impersonation, `user` holds the caller and `impersonatedUser` holds the impersonated identity.
