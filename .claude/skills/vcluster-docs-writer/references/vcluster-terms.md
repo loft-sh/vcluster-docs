@@ -209,6 +209,7 @@ Deploy clusters on a control plane cluster.
 | vCluster Platform | "Install vCluster Platform" | "vCluster platform", "Loft Platform" |
 | Enterprise feature | "This Enterprise feature requires a vCluster Platform license" | "vCluster Pro", "Pro feature", "Upgrade to vCluster Pro" (not a product) |
 | vcluster (CLI) | "`vcluster create`" | "`vCluster create`" |
+| Product versions | "vCluster v0.38", "Platform v5.0", "v0.24.2 or later" | "vCluster 0.38", "Platform 5.0", "version 0.24.2" (see "Version Numbers" in style-guide.md) |
 | K8s | "Deploy to K8s" | "K8S", "k8s" |
 | K3s | "Running on K3s" | "k3s", "K3S" |
 | k0s | "Using k0s" | "K0s", "K0S" |
