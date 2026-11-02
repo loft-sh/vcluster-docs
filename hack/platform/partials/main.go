@@ -13,8 +13,8 @@ import (
 
 	"github.com/loft-sh/vcluster-docs/hack/platform/util"
 
-	managementv1 "github.com/loft-sh/api/v4/pkg/apis/management/v1"
-	storagev1 "github.com/loft-sh/api/v4/pkg/apis/storage/v1"
+	managementv1 "github.com/loft-sh/api/v5/pkg/apis/management/v1"
+	storagev1 "github.com/loft-sh/api/v5/pkg/apis/storage/v1"
 	argoapplicationsv1alpha1 "github.com/loft-sh/external-types/argoproj/argo-cd/v2/pkg/apis/application/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
@@ -45,7 +45,7 @@ func main() {
 	util.GenerateSection(&managementv1.ConfigStatus{}, true, path.Join(util.BasePath, "config/status_reference.mdx"))
 	util.GenerateSection(&managementv1.AuditPolicy{}, true, path.Join(util.BasePath, "config/status/audit/policy.mdx"))
 	util.GenerateSection(&managementv1.Audit{}, true, path.Join(util.BasePath, "config/status/audit.mdx"))
-	// RancherIntegrationSpec was removed from loft-sh/api/v4 in v4.9.0 — the
+	// RancherIntegrationSpec was removed from the v4 API in v4.9.0. The
 	// legacy in-tree Rancher integration is replaced by the standalone
 	// vCluster Rancher operator (see /docs/platform/integrations/rancher and
 	// the migration guide). The previously-generated rancher.mdx is only
@@ -1269,6 +1269,158 @@ spec:
 			Status: managementv1.ClusterRoleTemplateStatus{},
 		},
 		Create: true,
+	})
+
+	// Connector
+	util.GenerateObjectOverview(&util.ObjectInformation{
+		Title:       "Connector",
+		Name:        "Connector",
+		Resource:    "connectors",
+		Description: "A connector configures a platform integration, such as a shared database, Argo CD, or observability. Connectors are cluster-scoped. Callers who can update a connector see its full spec. All other callers, including connector viewers and tenants, see a redacted view without credentials or connection details. Tenants see only the connectors assigned to them and cannot change them. Watch isn't supported.",
+		File:        path.Join(util.BaseResourcesPath, "connector.mdx"),
+		Object: &managementv1.Connector{
+			TypeMeta:   metav1.TypeMeta{Kind: "Connector", APIVersion: managementv1.SchemeGroupVersion.String()},
+			ObjectMeta: metav1.ObjectMeta{Name: "shared-postgres"},
+			Spec: managementv1.ConnectorSpec{
+				DisplayName: "Shared PostgreSQL",
+				SharedDatabase: &managementv1.ConnectorSharedDatabaseSpec{
+					Dialect:  managementv1.SharedDatabaseDialectPostgres,
+					Endpoint: "postgres.example.com",
+					Port:     "5432",
+					User:     "platform",
+					Password: "replace-with-database-password",
+				},
+			},
+		},
+		Create: true, Retrieve: true, Update: true, Delete: true,
+	})
+
+	// Machine is inventory maintained by the provider. Create and delete are refused, and
+	// spec and status are frozen, but labels and annotations can be edited (tenant assignment).
+	util.GenerateObjectOverview(&util.ObjectInformation{
+		Title:                     "Machine",
+		Name:                      "Machine",
+		Resource:                  "machines",
+		Description:               "A machine mirrors one physical machine in a bare metal provider's inventory, such as Metal3, NICo, or NetBox through Metal3. The platform inventory sync creates, updates, and deletes machines.",
+		ExtraContentBeforeExample: "Through this API you can read machines and edit their labels and annotations, for example to assign a machine to a tenant. Creating and deleting machines is refused, and spec, status, and platform-owned labels can't be changed.\n",
+		File:                      path.Join(util.BaseResourcesPath, "machine.mdx"),
+		Object: &managementv1.Machine{
+			TypeMeta:   metav1.TypeMeta{Kind: "Machine", APIVersion: managementv1.SchemeGroupVersion.String()},
+			ObjectMeta: metav1.ObjectMeta{Name: "metal3.worker-01"},
+			Spec: managementv1.MachineSpec{MachineSpec: storagev1.MachineSpec{
+				DisplayName: "worker-01",
+				ProviderRef: "metal3",
+			}},
+			Status: managementv1.MachineStatus{MachineStatus: storagev1.MachineStatus{
+				Phase:      storagev1.MachinePhaseAvailable,
+				PowerState: storagev1.MachinePowerStateOff,
+			}},
+		},
+		Retrieve: true, Update: true,
+	})
+
+	// NetworkEnvironment
+	util.GenerateObjectOverview(&util.ObjectInformation{
+		Title:       "Network Environment",
+		Name:        "NetworkEnvironment",
+		Resource:    "networkenvironments",
+		Description: "A network environment defines network settings for nodes provisioned through a NodeProvider. Platform admins create network environments and assign each one to a tenant or the platform. Tenants can't create them. The provider reference is required at creation and can't be changed.",
+		File:        path.Join(util.BaseResourcesPath, "networkenvironment.mdx"),
+		Object: &managementv1.NetworkEnvironment{
+			TypeMeta:   metav1.TypeMeta{Kind: "NetworkEnvironment", APIVersion: managementv1.SchemeGroupVersion.String()},
+			ObjectMeta: metav1.ObjectMeta{Name: "development"},
+			Spec: managementv1.NetworkEnvironmentSpec{NetworkEnvironmentSpec: storagev1.NetworkEnvironmentSpec{
+				DisplayName: "Development",
+				ProviderRef: "my-node-provider",
+			}},
+		},
+		Create: true, Retrieve: true, Update: true, Delete: true,
+	})
+
+	// Tenant
+	util.GenerateObjectOverview(&util.ObjectInformation{
+		Title:       "Tenant",
+		Name:        "Tenant",
+		Resource:    "tenants",
+		Description: "A Tenant defines which platform resources a tenant may use, such as control plane clusters, node types, templates, and connectors. Access to tenants is governed by RBAC on the tenants resource. The config subresource stores the tenant's configuration.",
+		File:        path.Join(util.BaseResourcesPath, "tenant.mdx"),
+		Object: &managementv1.Tenant{
+			TypeMeta:   metav1.TypeMeta{Kind: "Tenant", APIVersion: managementv1.SchemeGroupVersion.String()},
+			ObjectMeta: metav1.ObjectMeta{Name: "development"},
+			Spec: managementv1.TenantSpec{TenantSpec: storagev1.TenantSpec{
+				DisplayName: "Development",
+				NodeTypes: &storagev1.TenantNodeTypes{
+					Enabled: true,
+					Allow:   &storagev1.TenantNodeTypeAllow{ByName: []string{"my-provider.standard"}},
+				},
+			}},
+		},
+		Create: true, Retrieve: true, Update: true, Delete: true,
+	})
+
+	// TenantConfig uses GET and POST on tenants/{name}/config; POST replaces the config.
+	util.GenerateObjectOverview(&util.ObjectInformation{
+		Title:                 "Tenant Configuration",
+		Name:                  "TenantConfig",
+		Resource:              "tenants",
+		SubResource:           "config",
+		SubResourceParentName: "Tenant",
+		Description:           "Read or replace a tenant's configuration. A write replaces the entire configuration. Changing the hostname list also requires update permission on the tenant. Requires the Multi-Tenancy license.",
+		File:                  path.Join(util.BaseResourcesPath, "tenant/config.mdx"),
+		Object: &managementv1.TenantConfig{
+			TypeMeta:   metav1.TypeMeta{Kind: "TenantConfig", APIVersion: managementv1.SchemeGroupVersion.String()},
+			ObjectMeta: metav1.ObjectMeta{Name: "development"},
+			Spec: managementv1.TenantConfigSpec{
+				Hostnames: []storagev1.TenantHostnameBinding{{Hostname: "development.example.com"}},
+			},
+		},
+		SubResourceGet:               true,
+		SubResourceCreate:            true,
+		SubResourceGetDescription:    "Retrieve the tenant's current configuration.",
+		SubResourceCreateDescription: "Replace the tenant's entire configuration. Include all settings that should remain configured.",
+	})
+
+	// NodeType
+	util.GenerateObjectOverview(&util.ObjectInformation{
+		Title:       "Node Type",
+		Name:        "NodeType",
+		Resource:    "nodetypes",
+		Description: "A NodeType describes the resources and scheduling properties of a node offered by a NodeProvider.",
+		File:        path.Join(util.BaseResourcesPath, "nodetype.mdx"),
+		Object: &managementv1.NodeType{
+			TypeMeta:   metav1.TypeMeta{Kind: "NodeType", APIVersion: managementv1.SchemeGroupVersion.String()},
+			ObjectMeta: metav1.ObjectMeta{Name: "my-provider.standard"},
+			Spec: managementv1.NodeTypeSpec{NodeTypeSpec: storagev1.NodeTypeSpec{
+				ProviderRef: "my-provider",
+				DisplayName: "Standard",
+				Resources: corev1.ResourceList{
+					corev1.ResourceCPU:    resource.MustParse("8"),
+					corev1.ResourceMemory: resource.MustParse("32Gi"),
+				},
+				MachineAllocationPolicy: storagev1.MachineAllocationPolicyAssigned,
+			}},
+		},
+		Create: true, Retrieve: true, Update: true, Delete: true,
+	})
+
+	// OIDCClient
+	util.GenerateObjectOverview(&util.ObjectInformation{
+		Title:       "OIDC Client",
+		Name:        "OIDCClient",
+		Resource:    "oidcclients",
+		Description: "An OIDCClient configures an application that uses the platform as an OIDC provider.",
+		File:        path.Join(util.BaseResourcesPath, "oidcclient.mdx"),
+		Object: &managementv1.OIDCClient{
+			TypeMeta:   metav1.TypeMeta{Kind: "OIDCClient", APIVersion: managementv1.SchemeGroupVersion.String()},
+			ObjectMeta: metav1.ObjectMeta{Name: "build-service"},
+			Spec: managementv1.OIDCClientSpec{
+				Name:         "Build service",
+				ClientID:     "build-service",
+				ClientSecret: "replace-with-client-secret",
+				RedirectURIs: []string{"https://example.com/callback"},
+			},
+		},
+		Create: true, Retrieve: true, Update: true, Delete: true,
 	})
 
 	// NodeProvider
