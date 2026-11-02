@@ -57,7 +57,7 @@ type Report struct {
 }
 
 func main() {
-	registerPath := flag.String("register", "vendor/github.com/loft-sh/api/v4/pkg/apis/management/zz_generated.api.register.go", "path to the loft-sh/api management API registration file")
+	registerPath := flag.String("register", "vendor/github.com/loft-sh/api/v5/pkg/apis/management/zz_generated.api.register.go", "path to the loft-sh/api management API registration file")
 	generatorPath := flag.String("generator", "hack/platform/partials/main.go", "path to the platform partials generator")
 	excludePath := flag.String("exclude", "hack/platform/check-resource-coverage/exclude.txt", "path to the manifest of Kinds intentionally excluded from generation")
 	jsonOutput := flag.String("json-output", "", "path to write a JSON report")

@@ -1,0 +1,541 @@
+---
+title: Audit policy reference
+sidebar_label: Audit policy reference
+sidebar_position: 3
+sidebar_class_name: pro
+description: Audit policy syntax, payload storage, the built-in rules every audit level applies, and the full default policy for each level.
+---
+
+import Tabs from "@theme/Tabs";
+import TabItem from "@theme/TabItem";
+
+Audit levels are preconfigured audit policies. Use this reference to see exactly what each level records, which requests the built-in rules always exclude or limit to metadata, and how to write a custom policy. To turn on auditing and choose a level, see [Audit logging](./audit.mdx).
+
+## Request and response payload storage
+
+Audit levels and custom policies both determine payload storage through one of four granularity settings. `Request` stores the request payload. `RequestResponse` also stores the response payload. See [Audit policy](#audit-policy) for the full list.
+
+The platform stores payloads for resource requests only. Long-running requests, such as log streaming, never store payloads. Creates of sensitive resources, such as shared secrets and access keys, keep metadata-only events on every level. See [Default policy exclusions](#default-policy-exclusions) for the full list of affected resources and why.
+
+The platform always stores payloads as JSON:
+
+- Payloads that arrive as plain JSON are stored unchanged.
+- Gzip-compressed request and response bodies are stored in their decompressed form.
+- Payloads sent in the Kubernetes Protobuf format are converted to their JSON equivalent for known Kubernetes API types. The stored payload matches what a JSON client would have sent.
+
+### Payload size limit
+
+The platform captures at most 2 MiB per request or response payload. It doesn't store payloads above this limit.
+
+### Omitted payloads
+
+When the platform can't store a payload, it keeps the audit event with all of its metadata but leaves out the payload. The event then carries an annotation that names the omission reason:
+
+- `audit.platform.vcluster.com/request-object-omitted` for the request payload
+- `audit.platform.vcluster.com/response-object-omitted` for the response payload
+
+The following reasons can appear as annotation values:
+
+| Reason | Description |
+|--------|-------------|
+| `truncated` | The payload exceeded the capture limit, so the platform captured only a partial copy. |
+| `too-large` | The payload exceeded the capture limit after decompression or conversion to JSON. |
+| `decode-failed` | The platform couldn't decompress or decode the payload. |
+| `unsupported-encoding` | The payload used a content encoding or media type that the platform can't convert to JSON. |
+| `invalid-json` | The payload wasn't valid JSON and not in any recognized format. |
+
+## Audit policy
+
+Audit policy is a more complex alternative to audit levels, letting you define exact rules about what events should be recorded and what data they should include. When an event is processed, it's compared against the list of rules in order. The first matching rule sets the audit granularity of the event. The defined audit granularity options are:
+
+- `None`: Don't log events that match this rule.
+- `Metadata`: Log request metadata (requesting user, timestamp, resource, verb, and so on) but not request or response body.
+- `Request`: Log event metadata and request body but not response body. This doesn't apply for non-resource requests.
+- `RequestResponse`: Log event metadata, and request and response bodies. This doesn't apply for non-resource requests.
+
+:::warning Custom rules replace the defaults entirely
+Setting a non-empty `policy.rules` list under `config.audit` replaces the resolved default policy outright, and the platform then ignores the `level` field. None of the [default policy exclusions](#default-policy-exclusions) apply automatically. Authentication events and connector requests then follow your rules too, so a policy without the built-in rules can drop sign-in events or record connector request bodies. Start from the [default rules for a level](#default-policy-rules-by-level) and add to them, rather than writing a custom policy from scratch. An empty `rules: []` list doesn't count as a custom policy. The platform still resolves and applies the configured level's defaults.
+:::
+
+An example policy that catches all requests:
+
+```yaml title="Example audit policy in values.yaml"
+config:
+  audit:
+    enabled: true
+    policy:
+      rules:
+        - level: Metadata
+          omitStages:
+            - RequestReceived
+```
+
+See the [complete policy reference](../../../api/resources/config.mdx#status-audit-policy).
+
+## Default policy exclusions
+
+Before a request reaches an audit level's own rules, six built-in rules run first, in this order. Because the platform uses the first matching rule, these built-ins take priority over anything the level would otherwise log. They apply to all four audit levels.
+
+1. [Never logged](#never-logged)
+1. [Authentication activity](#metadata-only-for-authentication-activity)
+1. [Tenant configuration and connectors](#metadata-only-for-tenant-configuration-and-connectors), as two separate rules
+1. [Sensitive data](#metadata-only-for-sensitive-data)
+1. [Long-running requests](#metadata-only-for-long-running-requests)
+
+### Never logged
+
+The platform never logs these requests, at any level, including level 4:
+
+| Resource | API group | Why |
+|---|---|---|
+| `selfsubjectaccessreviews`, `subjectaccessreviews` | any | Permission checks the UI and CLI issue continuously to decide what to show. They aren't an action on a resource, and logging them would flood the audit log. |
+| `agentauditevents` | `management.loft.sh` | The endpoint agents use to send their own audit events back to the platform (see [Audit logging for Regional Cluster Endpoints](./audit.mdx#audit-logging-for-regional-cluster-endpoints)). Logging it would create an audit event about receiving an audit event. |
+| `licensetokens`, `directclusterendpointtokens`, `ingressauthtokens` | `management.loft.sh` | Internal tokens validated on nearly every request. |
+| `selves` | `management.loft.sh` | The endpoint the UI and CLI call to resolve the current user, requested on nearly every page load. |
+| `virtualclusterinstances/kubeconfig` | `management.loft.sh` | Retrieving the kubeconfig for a cluster. |
+
+:::info No audit record of kubeconfig retrieval
+Because `virtualclusterinstances/kubeconfig` is on the never-logged list, there's no audit record of who retrieved a cluster's kubeconfig, or when, at any level. To get a `Metadata` record of these requests instead (who, when, which cluster, without the returned credentials), remove `virtualclusterinstances/kubeconfig` from the never-logged resources in a [custom policy built from the defaults](#default-policy-rules-by-level). The [sensitive data rule](#metadata-only-for-sensitive-data) then takes over and audits it at `Metadata`, since it already lists this resource.
+:::
+
+### Metadata-only for authentication activity
+
+For `create` requests only, the platform logs sign-in events, and the access keys a sign-in creates, at `Metadata` regardless of the configured level. Both carry credentials in their bodies. See [Authentication events](./audit-events.mdx#authentication-events) for what these events contain.
+
+| Resource | API group | Why |
+|---|---|---|
+| `users/login` | `management.loft.sh` | The sign-in request carries a password or an SSO token. |
+| `accesskeys` | `storage.loft.sh` | The access key a successful sign-in creates. The key value is never recorded. |
+
+### Metadata-only for tenant configuration and connectors
+
+These are two separate rules, one for each resource. For every verb, including reads, the platform logs these resources at `Metadata`. Reads are recorded too, even at level 1, which otherwise drops reads.
+
+| Resource | API group | Why |
+|---|---|---|
+| `tenants/config` | `management.loft.sh` | The request and response carry decrypted per-tenant SSO client secrets. Changes to a tenant's sign-in configuration still leave a record of who made them. |
+| `connectors` | `management.loft.sh` | Connector requests and responses can carry credentials for the external systems they connect to. |
+
+### Metadata-only for sensitive data
+
+For `create` requests only, the platform always logs these resources at `Metadata`, never `Request` or `RequestResponse`, regardless of the configured level:
+
+| Resource | API group | Why |
+|---|---|---|
+| `ownedaccesskeys`, `resetaccesskeys` | `management.loft.sh` | The response contains the access key value. |
+| `sharedsecrets` | `management.loft.sh` | The request can contain the secret data. |
+| `clusters` | `management.loft.sh` | Cluster registration includes a kubeconfig or connection token in the request. |
+| `users/profile` | `management.loft.sh` | The request can contain a new password. |
+| `virtualclusterinstances/kubeconfig` | `management.loft.sh` | The response contains a working kubeconfig. This rule only applies if you remove the resource from the never-logged list above, since that rule matches first. |
+| `virtualclusterinstances/snapshotcredentials` | `management.loft.sh` | The response contains sensitive storage credentials. |
+| `virtualclusterinstances/observabilityconnector` | `management.loft.sh` | The response contains the metrics-writer token a cluster uses to reach the [Fleet Observability](../../../fleet-operations/observability/overview.mdx) write gateway. |
+| `osimages/upload` | `management.loft.sh` | The response contains upload targets, each of which grants write access to the image until it expires. |
+| `metal3bmcs/redfish` | `cluster.loft.sh` | Proxied BMC requests and responses carry BMC account passwords and session tokens. |
+
+This keeps the event auditable (who did it, when, on which object) without writing the credential itself into the audit log, which is typically retained longer and read more widely than the underlying secret store.
+
+### Metadata-only for long-running requests
+
+| Resource | API group | Why |
+|---|---|---|
+| `pods/log`, `pods/exec`, `pods/portforward` | core (`""`) | Streaming requests inside a cluster or connected cluster. There's no discrete response body to capture, and exec or port-forward would mean logging the interactive session traffic. |
+| `virtualclusterinstances/log`, `appinstances/log` | `management.loft.sh` | Same reasoning, for log streaming through the platform API. |
+| `metal3bmcs/console` | `cluster.loft.sh` | Interactive serial console sessions to a bare metal server's BMC. |
+
+## Default policy rules by level
+
+Each audit level resolves to a fixed list of policy rules, evaluated in order, where the first match sets an event's granularity. Copy the rules for a level below as a starting point for a custom policy, then add, remove, or reorder rules to fit your needs. All four levels start with the same six rules, covered in [Default policy exclusions](#default-policy-exclusions), followed by level-specific rules for everything else.
+
+<Tabs
+  defaultValue="1"
+  values={[
+    { label: "Level 1", value: "1" },
+    { label: "Level 2", value: "2" },
+    { label: "Level 3", value: "3" },
+    { label: "Level 4", value: "4" },
+  ]}
+>
+  <TabItem value="1">
+
+```yaml title="Level 1 default policy"
+config:
+  audit:
+    policy:
+      rules:
+        - level: None
+          resources:
+            - group: "*"
+              resources:
+                - selfsubjectaccessreviews
+                - subjectaccessreviews
+            - group: management.loft.sh
+              resources:
+                - agentauditevents
+                - licensetokens
+                - directclusterendpointtokens
+                - ingressauthtokens
+                - selves
+                - virtualclusterinstances/kubeconfig
+        - level: Metadata
+          omitStages:
+            - RequestReceived
+          verbs:
+            - create
+          resources:
+            - group: management.loft.sh
+              resources:
+                - users/login
+            - group: storage.loft.sh
+              resources:
+                - accesskeys
+        - level: Metadata
+          omitStages:
+            - RequestReceived
+          resources:
+            - group: management.loft.sh
+              resources:
+                - tenants/config
+        - level: Metadata
+          omitStages:
+            - RequestReceived
+          resources:
+            - group: management.loft.sh
+              resources:
+                - connectors
+        - level: Metadata
+          omitStages:
+            - RequestReceived
+          verbs:
+            - create
+          resources:
+            - group: management.loft.sh
+              resources:
+                - ownedaccesskeys
+                - resetaccesskeys
+                - sharedsecrets
+                - clusters
+                - users/profile
+                - virtualclusterinstances/kubeconfig
+                - virtualclusterinstances/snapshotcredentials
+                - virtualclusterinstances/observabilityconnector
+                - osimages/upload
+            - group: cluster.loft.sh
+              resources:
+                - metal3bmcs/redfish
+        - level: Metadata
+          omitStages:
+            - RequestReceived
+          resources:
+            - group: ""
+              resources:
+                - pods/log
+                - pods/exec
+                - pods/portforward
+            - group: management.loft.sh
+              resources:
+                - virtualclusterinstances/log
+                - appinstances/log
+            - group: cluster.loft.sh
+              resources:
+                - metal3bmcs/console
+        - level: None
+          verbs:
+            - get
+            - list
+            - watch
+        - level: Request
+          omitStages:
+            - RequestReceived
+          verbs:
+            - create
+        - level: Metadata
+          omitStages:
+            - RequestReceived
+```
+
+  </TabItem>
+  <TabItem value="2">
+
+```yaml title="Level 2 default policy"
+config:
+  audit:
+    policy:
+      rules:
+        - level: None
+          resources:
+            - group: "*"
+              resources:
+                - selfsubjectaccessreviews
+                - subjectaccessreviews
+            - group: management.loft.sh
+              resources:
+                - agentauditevents
+                - licensetokens
+                - directclusterendpointtokens
+                - ingressauthtokens
+                - selves
+                - virtualclusterinstances/kubeconfig
+        - level: Metadata
+          omitStages:
+            - RequestReceived
+          verbs:
+            - create
+          resources:
+            - group: management.loft.sh
+              resources:
+                - users/login
+            - group: storage.loft.sh
+              resources:
+                - accesskeys
+        - level: Metadata
+          omitStages:
+            - RequestReceived
+          resources:
+            - group: management.loft.sh
+              resources:
+                - tenants/config
+        - level: Metadata
+          omitStages:
+            - RequestReceived
+          resources:
+            - group: management.loft.sh
+              resources:
+                - connectors
+        - level: Metadata
+          omitStages:
+            - RequestReceived
+          verbs:
+            - create
+          resources:
+            - group: management.loft.sh
+              resources:
+                - ownedaccesskeys
+                - resetaccesskeys
+                - sharedsecrets
+                - clusters
+                - users/profile
+                - virtualclusterinstances/kubeconfig
+                - virtualclusterinstances/snapshotcredentials
+                - virtualclusterinstances/observabilityconnector
+                - osimages/upload
+            - group: cluster.loft.sh
+              resources:
+                - metal3bmcs/redfish
+        - level: Metadata
+          omitStages:
+            - RequestReceived
+          resources:
+            - group: ""
+              resources:
+                - pods/log
+                - pods/exec
+                - pods/portforward
+            - group: management.loft.sh
+              resources:
+                - virtualclusterinstances/log
+                - appinstances/log
+            - group: cluster.loft.sh
+              resources:
+                - metal3bmcs/console
+        - level: Request
+          omitStages:
+            - RequestReceived
+          verbs:
+            - create
+        - level: Metadata
+          omitStages:
+            - RequestReceived
+          resources:
+            - group: "*"
+              resources:
+                - "*"
+```
+
+  </TabItem>
+  <TabItem value="3">
+
+```yaml title="Level 3 default policy"
+config:
+  audit:
+    policy:
+      rules:
+        - level: None
+          resources:
+            - group: "*"
+              resources:
+                - selfsubjectaccessreviews
+                - subjectaccessreviews
+            - group: management.loft.sh
+              resources:
+                - agentauditevents
+                - licensetokens
+                - directclusterendpointtokens
+                - ingressauthtokens
+                - selves
+                - virtualclusterinstances/kubeconfig
+        - level: Metadata
+          omitStages:
+            - RequestReceived
+          verbs:
+            - create
+          resources:
+            - group: management.loft.sh
+              resources:
+                - users/login
+            - group: storage.loft.sh
+              resources:
+                - accesskeys
+        - level: Metadata
+          omitStages:
+            - RequestReceived
+          resources:
+            - group: management.loft.sh
+              resources:
+                - tenants/config
+        - level: Metadata
+          omitStages:
+            - RequestReceived
+          resources:
+            - group: management.loft.sh
+              resources:
+                - connectors
+        - level: Metadata
+          omitStages:
+            - RequestReceived
+          verbs:
+            - create
+          resources:
+            - group: management.loft.sh
+              resources:
+                - ownedaccesskeys
+                - resetaccesskeys
+                - sharedsecrets
+                - clusters
+                - users/profile
+                - virtualclusterinstances/kubeconfig
+                - virtualclusterinstances/snapshotcredentials
+                - virtualclusterinstances/observabilityconnector
+                - osimages/upload
+            - group: cluster.loft.sh
+              resources:
+                - metal3bmcs/redfish
+        - level: Metadata
+          omitStages:
+            - RequestReceived
+          resources:
+            - group: ""
+              resources:
+                - pods/log
+                - pods/exec
+                - pods/portforward
+            - group: management.loft.sh
+              resources:
+                - virtualclusterinstances/log
+                - appinstances/log
+            - group: cluster.loft.sh
+              resources:
+                - metal3bmcs/console
+        - level: Request
+          omitStages:
+            - RequestReceived
+          resources:
+            - group: "*"
+              resources:
+                - "*"
+```
+
+  </TabItem>
+  <TabItem value="4">
+
+```yaml title="Level 4 default policy"
+config:
+  audit:
+    policy:
+      rules:
+        - level: None
+          resources:
+            - group: "*"
+              resources:
+                - selfsubjectaccessreviews
+                - subjectaccessreviews
+            - group: management.loft.sh
+              resources:
+                - agentauditevents
+                - licensetokens
+                - directclusterendpointtokens
+                - ingressauthtokens
+                - selves
+                - virtualclusterinstances/kubeconfig
+        - level: Metadata
+          omitStages:
+            - RequestReceived
+          verbs:
+            - create
+          resources:
+            - group: management.loft.sh
+              resources:
+                - users/login
+            - group: storage.loft.sh
+              resources:
+                - accesskeys
+        - level: Metadata
+          omitStages:
+            - RequestReceived
+          resources:
+            - group: management.loft.sh
+              resources:
+                - tenants/config
+        - level: Metadata
+          omitStages:
+            - RequestReceived
+          resources:
+            - group: management.loft.sh
+              resources:
+                - connectors
+        - level: Metadata
+          omitStages:
+            - RequestReceived
+          verbs:
+            - create
+          resources:
+            - group: management.loft.sh
+              resources:
+                - ownedaccesskeys
+                - resetaccesskeys
+                - sharedsecrets
+                - clusters
+                - users/profile
+                - virtualclusterinstances/kubeconfig
+                - virtualclusterinstances/snapshotcredentials
+                - virtualclusterinstances/observabilityconnector
+                - osimages/upload
+            - group: cluster.loft.sh
+              resources:
+                - metal3bmcs/redfish
+        - level: Metadata
+          omitStages:
+            - RequestReceived
+          resources:
+            - group: ""
+              resources:
+                - pods/log
+                - pods/exec
+                - pods/portforward
+            - group: management.loft.sh
+              resources:
+                - virtualclusterinstances/log
+                - appinstances/log
+            - group: cluster.loft.sh
+              resources:
+                - metal3bmcs/console
+        - level: RequestResponse
+          omitStages:
+            - RequestReceived
+          resources:
+            - group: "*"
+              resources:
+                - "*"
+```
+
+  </TabItem>
+</Tabs>
