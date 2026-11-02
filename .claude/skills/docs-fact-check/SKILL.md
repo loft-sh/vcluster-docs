@@ -215,6 +215,28 @@ express "requires X or later" for something that hasn't shipped. Don't substitut
 one in. If the version isn't knowable yet, leave a visible placeholder with a
 `{/* TODO before merge */}` comment rather than a plausible-looking guess.
 
+## Verified isn't the same as publishable
+
+This pass reads the implementation closely, so it's where internal detail gets
+into the docs. Keep the evidence and the page apart.
+
+- **Evidence goes in the report.** File paths, function names, branch logic, and
+  test names settle a verdict. They don't belong in the page, and a fix you
+  suggest shouldn't add them.
+- **Fix a wrong claim with the outcome.** When a claim is wrong, the correction is
+  the behavior the reader sees, not an account of the code path that produces it.
+- **Correct doesn't mean promised.** Behavior in the source isn't automatically a
+  supported contract. A race, a fallback, or an edge case the code tolerates may
+  be a bug Engineering plans to fix. When a page documents behavior like that,
+  mark it correct, say it may not be an intended contract, and ask the author to
+  confirm with Engineering before publishing. If it limits what the page
+  promises, the question for Engineering is how to word it and what readers
+  should do, not whether to leave it out.
+- **Hand depth questions to `docs-review`.** A claim can be correct and still be
+  implementation detail the reader doesn't need. Note it in your report and leave
+  the keep, summarize, move, or cut decision to the depth and placement check in
+  `docs-review`.
+
 ## Reporting
 
 Report per claim, not per file. For each one, give the claim as the page states

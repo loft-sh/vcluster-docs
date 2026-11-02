@@ -18,7 +18,7 @@ import PageVariables from '@site/src/components/PageVariables';
 vind requires outbound HTTPS access during cluster creation. Use a forward proxy and an internal registry to run vind in a restricted network.
 
 :::warning Fully disconnected environments aren't supported
-vind can't create a cluster from an empty local cache without outbound access. The CLI downloads artifacts from GitHub and `ghcr.io` through hardcoded URLs.
+vind can't create a cluster from an empty local cache without outbound access. The CLI downloads artifacts from `ghcr.io` through hardcoded URLs, and downloads `install-standalone.sh` from GitHub unless you provide a local copy.
 
 A custom vm-container image doesn't bypass these downloads. Use a forward proxy that can reach the public endpoints listed on this page.
 :::
@@ -31,7 +31,7 @@ A custom vm-container image doesn't bypass these downloads. Use a forward proxy 
 | CLI artifact staging | `ghcr.io/loft-sh/vcluster-pro:<version>` | Configure the forward proxy on the host |
 | CLI artifact staging | `ghcr.io/loft-sh/kubernetes:<version>-full` | Configure the forward proxy on the host |
 | vm-container creation | `ghcr.io/loft-sh/vm-container` | Mirror the image and set `experimental.docker.image` |
-| Inside the vm-container at bootstrap | `install-standalone.sh` on GitHub | Configure the forward proxy inside the vm-container |
+| CLI script download | `install-standalone.sh` on GitHub | Configure the forward proxy on the host, or set `VCLUSTER_INSTALL_STANDALONE_SCRIPT` |
 | Cluster startup | Internal vCluster images | Set `controlPlane.advanced.defaultImageRegistry` |
 | Workload startup | Images referenced by workloads | Pre-load images into the host Docker store |
 | StatefulSet pod startup | The rewriteHosts init container image | Set `sync.toHost.pods.rewriteHosts.initContainer.image` |
@@ -80,14 +80,14 @@ vind's registry proxy is enabled by default. It serves this image from the host 
 
 ## Step 3: Configure the vm-container and bootstrap proxy
 
-Mirror `ghcr.io/loft-sh/vm-container` to your internal registry. Then configure vind to use the mirrored image and pass the proxy settings into the container:
+Mirror `ghcr.io/loft-sh/vm-container` to your internal registry. Then configure vind to use the mirrored image and pass the proxy settings into the container. The vm-container still pulls images through the proxy, even though the CLI downloads the binaries and `install-standalone.sh` on the host:
 
 <InterpolatedCodeBlock
   code={"experimental:\n" +
     "  docker:\n" +
     "    # Pull the vm-container image from the internal registry.\n" +
     "    image: [[GLOBAL:REGISTRY]]/loft-sh/vm-container:latest\n" +
-    "    # Route the bootstrap script download through the forward proxy.\n" +
+    "    # Pass the proxy settings into the vm-container for image pulls.\n" +
     "    env:\n" +
     "      - HTTP_PROXY=[[GLOBAL:PROXY_URL]]\n" +
     "      - HTTPS_PROXY=[[GLOBAL:PROXY_URL]]\n" +
@@ -95,7 +95,14 @@ Mirror `ghcr.io/loft-sh/vm-container` to your internal registry. Then configure 
   language="yaml"
 />
 
-After the vm-container starts, the CLI downloads `install-standalone.sh` from GitHub. The URL is hardcoded, so the proxy must allow access to `github.com`.
+The CLI downloads `install-standalone.sh` from GitHub on the host, through the host proxy from step 1, and caches it under `~/.vcluster/docker/install-standalone/`. To skip the download, save the script for your vCluster version from its [GitHub release](https://github.com/loft-sh/vcluster/releases) and point the CLI at the local copy:
+
+<InterpolatedCodeBlock
+  code={`export VCLUSTER_INSTALL_STANDALONE_SCRIPT=[[VAR:SCRIPT_PATH:/opt/vcluster/install-standalone.sh]]`}
+  language="bash"
+/>
+
+The file must start with a shebang (`#!`), or the CLI rejects it.
 
 If the proxy runs on the Docker host, bind it to an interface reachable from the Docker network. Don't bind it only to loopback (`127.0.0.1`).
 
@@ -176,13 +183,15 @@ For next steps, see the [Docker (vind) quick start](../../../get-started/docker.
 
 ## Troubleshoot
 
-### Bootstrap fails with exit status 6
+### Install script download fails
 
 ```text
-fatal failed to start vCluster standalone: exit status 6
+failed to get install-standalone script: download https://github.com/loft-sh/vcluster/releases/download/v<version>/install-standalone.sh (set VCLUSTER_INSTALL_STANDALONE_SCRIPT to a local copy of the script if this environment can't reach github): ...
 ```
 
-This error indicates that the vm-container couldn't reach GitHub. Confirm that `experimental.docker.env` contains the proxy variables and that the proxy is reachable from the Docker network.
+The CLI couldn't reach GitHub from the host. Confirm that `HTTPS_PROXY` is set in the shell where you run `vcluster create`, or set `VCLUSTER_INSTALL_STANDALONE_SCRIPT` to a local copy of the script.
+
+If the error says the downloaded script `is not a valid install script`, the proxy probably returned an error page instead of the file.
 
 The proxy must support HTTPS connections through the HTTP `CONNECT` method. A static file server returns `501 Unsupported method ('CONNECT')` and can't serve this request.
 
@@ -248,7 +257,7 @@ The following example combines the configurable layers:
     "  docker:\n" +
     "    # Pull the vm-container image from the internal registry.\n" +
     "    image: [[GLOBAL:REGISTRY]]/loft-sh/vm-container:latest\n" +
-    "    # Route the bootstrap script download through the forward proxy.\n" +
+    "    # Pass the proxy settings into the vm-container for image pulls.\n" +
     "    env:\n" +
     "      - HTTP_PROXY=[[GLOBAL:PROXY_URL]]\n" +
     "      - HTTPS_PROXY=[[GLOBAL:PROXY_URL]]\n" +
@@ -271,5 +280,4 @@ The following example combines the configurable layers:
 
 - vind doesn't support cluster creation from an empty cache without outbound access.
 - The CLI doesn't provide registry overrides for the vCluster and Kubernetes artifacts that it stages on the host.
-- The CLI doesn't provide a local path or URL override for `install-standalone.sh`.
-- Baking `install-standalone.sh` into a custom vm-container image doesn't prevent the CLI from downloading the script from GitHub.
+- Baking `install-standalone.sh` into a custom vm-container image doesn't prevent the CLI from downloading it. Set `VCLUSTER_INSTALL_STANDALONE_SCRIPT` instead.
