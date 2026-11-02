@@ -299,7 +299,7 @@ const config = {
             badge: true,
           },
           "0.36.0": {
-            label: "v0.36",
+            label: "v0.36 (EOS)",
             banner: "none",
             badge: true,
           },
@@ -346,7 +346,7 @@ const config = {
             badge: true,
           },
           "4.9.0": {
-            label: "v4.9",
+            label: "v4.9 (EOS)",
             banner: "none",
             badge: true,
           },

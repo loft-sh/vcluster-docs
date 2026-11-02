@@ -21,6 +21,35 @@ setup() {
     done
 }
 
+@test "out-of-range release candidates warn and pass for every event" {
+    for event in vcluster-released vcluster-cli-released platform-released; do
+        for version in v4.9.7-rc.2 v4.10.9-rc.2 v4.11.4-rc.2 v2.0.0-rc1; do
+            EVENT=$event VERSION=$version CHANNEL=out-of-range run "$SCRIPT"
+            [ "$status" -eq 0 ]
+            [[ "$output" == "::warning::"*"channel=out-of-range"* ]]
+            [[ "$output" == *"no docs target"* ]]
+            [[ "$output" != *"freeze"* ]]
+            [[ "$output" != *"run alerts"* ]]
+        done
+    done
+}
+
+@test "out-of-range stable releases still fail for config and platform" {
+    for event in vcluster-released platform-released; do
+        EVENT=$event VERSION=v4.9.7 CHANNEL=out-of-range run "$SCRIPT"
+        [ "$status" -eq 1 ]
+        [[ "$output" == "::error::"* ]]
+    done
+}
+
+@test "release candidates still fail for other actionable skip reasons" {
+    for channel in unfrozen-line major-cutover generator-unknown history-unknown; do
+        EVENT=platform-released VERSION=v5.0.0-rc.1 CHANNEL=$channel run "$SCRIPT"
+        [ "$status" -eq 1 ]
+        [[ "$output" == "::error::"* ]]
+    done
+}
+
 @test "an unlisted channel fails, so a new skip channel can't pass silently" {
     CHANNEL=some-new-skip run "$SCRIPT"
     [ "$status" -eq 1 ]
