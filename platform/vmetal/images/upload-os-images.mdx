@@ -16,14 +16,15 @@ import PageVariables from '@site/src/components/PageVariables';
 
 An [OS image](./os-images.mdx) that names an [OS image store](./os-image-store.mdx) holds its own file. You upload the file once, and node providers download it from the platform when they provision a machine.
 
-The file never passes through the platform. The platform splits the upload into parts, signs a URL for each part, and the client sends each part straight to the bucket. After the last part, the client asks the platform to assemble the file.
+The file never passes through the platform. Uploads use the S3 multipart upload, which AWS introduced for S3 and which is now the common way to move large files into object storage. The file is split into parts that can be sent in parallel and retried one at a time, so a failed part doesn't restart the whole upload. The platform signs a URL for each part, and the client sends each part straight to the bucket. After the last part, the client asks the platform to assemble the file.
 
 ## Prerequisites
 
 - An [OS image store connector](./os-image-store.mdx) whose `StoreAccessible` condition is `True`.
 - A license that includes machine management. Creating an image that names an image store, uploading, and finalizing require it.
 - Permission to update the `OSImage`. Uploading counts as an update, so `spec.owner` and `spec.access` decide who may upload.
-- For users who aren't admins, a role that allows `create` on the `osimages/upload` and `osimages/finalize` subresources. Tenant users also need a tenant whose OS images capability allows custom images, and a grant for the image store connector.
+- For users who aren't admins, a role that allows `create` on the `osimages/upload` and `osimages/finalize` subresources.
+- For tenant users, an image the tenant owns. A tenant can't upload to an image a platform admin owns, even one granted to the tenant. To create its own images, the tenant's `osImages` capability must allow custom images, and the tenant must be granted the image store connector through its `connectors` capability. Images a tenant creates are named `<tenant>--<name>`. The platform UI adds the prefix for you.
 - A file in `qcow2` format. Images can be up to 1,250 GiB.
 
 ## Create an OSImage
@@ -65,9 +66,21 @@ The platform UI creates the image and uploads the file in one step. Browser uplo
 5. Drop the `qcow2` file into the upload field.
 6. Click **Create OS Image**. Keep the page open until the upload finishes.
 
-The image's status in the list moves from **Uploading** through **Verifying** to **Ready**.
+The image's status in the list moves from **Uploading** through **Verifying** to **Ready**. Tenant users see **Image Pending** until the image is **Ready** or **Failed**.
 
-To upload a file to an image that already exists, open the image, drop the file, and click **Upload**. If the upload fails, click **Retry upload**.
+If no image store is available, the **Bucket** field and the upload field are disabled. A platform admin sees **No image store connected** with a **Connect Image Store** button. A tenant user sees **File upload is not available** and needs a platform admin to grant the tenant an image store connector.
+
+To upload a file to an image that already exists, open the image, drop the file, and click **Upload**.
+
+### Resume a browser upload
+
+The browser sends four parts at a time and retries parts that fail on a temporary error. If the upload still fails, the status shows **Upload failed** with the reason. Click **Retry upload** to continue. Parts that already landed aren't sent again, as long as the panel stays open with the same file selected.
+
+Keep the page open while the upload runs. To stop the browser upload, close the panel and click **Cancel upload**. Click **Keep uploading** to leave it running. Reloading the page also stops the browser upload.
+
+Stopping the browser upload preserves the image. Its upload session stays valid until the image's deadline. To continue, open the image and select the same file. The panel shows the size and deadline of the unfinished upload. The browser remembers landed parts only while the panel stays open, so reopening it sends every part again. A file of a different size is refused while the session is open.
+
+If an upload fails after creating a new image, closing the panel asks whether to keep or delete the image. Click **Keep image** to upload the file later, or **Delete image** to remove it.
 
 ## Upload with the CLI
 
@@ -213,6 +226,23 @@ Calling `finalize` again with the same checksum is safe and returns the original
 
 Node providers can use the image once the phase is `Ready`. A machine that references an image that isn't `Ready` yet waits for it. A machine that references a `Failed` image fails to provision.
 
+## Network access for provisioning
+
+A node provider downloads an uploaded image from `https://<platform-host>/osimages/blob/<uid>`, where `<uid>` is the image's `metadata.uid`. The platform answers with a redirect to a download URL signed for one hour, so the file comes straight from the bucket.
+
+Whatever downloads the image for the node provider must reach both addresses:
+
+- The platform's public host name.
+- The bucket endpoint that the image store connector names.
+
+The blob address needs no credentials, because a node provider holds none. The random uid is the only authorization, and anyone who has the address can download the image while it exists. The uid is hard to guess, but the endpoint doesn't stop repeated attempts to guess it. Treat the address as a secret.
+
+:::tip Keep secrets out of OS images
+Don't build credentials, private keys, or other secrets into an OS image. If an address leaks or is guessed, the image holds nothing an attacker can reuse.
+:::
+
+While the image is still uploading, the address answers `409` with `Retry-After: 30`. For a `Failed` image, it answers `409` without `Retry-After`, and for an unknown uid it answers `404`.
+
 ## Image status
 
 | Phase | Meaning |
@@ -230,7 +260,7 @@ The status carries these fields:
 | `status.store.location` | Object key of the file in the bucket. |
 | `status.store.sizeBytes` | Size of the file as the store reports it. |
 | `status.store.checksum` | sha256 checksum sent with `finalize`. |
-| `status.conditions` | The `Uploaded` condition, with the reason for a `Failed` phase. While the store fails an upload call, also the `StoreAccessible` condition with the store's error. |
+| `status.conditions` | The `Uploaded` condition, with the reason for a `Failed` phase. While the store refuses an `upload` or `finalize` call, also the `StoreAccessible` condition. Its reason and message name the setting to fix, using the same reasons as the [connector check](./os-image-store.mdx#check-the-connection). The condition is removed when a later call succeeds or the image becomes `Ready` or `Failed`. |
 
 The `Uploaded` condition reports one of these reasons when the upload fails:
 
@@ -245,24 +275,48 @@ The `Uploaded` condition reports one of these reasons when the upload fails:
 
 A `Failed` image accepts a new upload. Run the CLI again, or start the API flow again from the first `upload` call. The image keeps its name, owner, and access rules, and node providers that already reference it keep working.
 
-An image that is `Ready` refuses another upload with `409 Conflict`. To use a different file, delete the image and create it again. Deleting an image removes its file from the bucket and aborts an open upload.
+An image that is `Ready` refuses another upload with `409 Conflict`. To use a different file, delete the image and create it again.
+
+Deleting an image removes its file from the bucket and aborts an open upload. The image stays in **Deleting** until the store confirms the file is gone. Delete the images in a bucket before you disconnect its connector.
+
+:::warning Limitation
+The platform can't fully remove an image while its store is unavailable, for example because its credentials changed or its connector was deleted. The image waits in **Deleting** until the store answers again. If the store won't come back, see [Finish a stuck delete](#finish-a-stuck-delete).
+:::
 
 To upload a file of a different size while a session is open, delete the image and create it again. A session only accepts the size it was opened for.
 
-## Troubleshoot uploads
+## Troubleshoot uploads and deletes
+
+### Fix upload errors
 
 | Response | Cause and fix |
 |---|---|
-| `409 Conflict` on the first `upload` call right after creating the image | The platform was still updating the new image. Call `upload` again. Retrying is safe, because `upload` opens one session only. |
 | `409` with `the upload is already complete` | The image already holds a file. Delete the image and create it again to upload a different file. |
 | `409` with `upload session was opened for <n> bytes` | `sizeBytes` doesn't match the size of the open session. Send the original size, or delete and recreate the image. |
 | `409` with `<n> of <m> parts have been uploaded` | `finalize` found missing parts. Upload them and call `finalize` again. |
 | `409` with `the upload was completed with checksum` | `finalize` was called again with a different checksum than the first call. |
 | `409` with `no open upload session to finalize` | No upload was started, or the session failed. Start again with `upload`. |
+| `409` with `the upload session is gone and no object was assembled` | The store no longer holds the session or a finished file. Delete the image and create it again. |
 | `422` on `spec.connectorRef` | The image names no image store, or the connector can't be used. Check the connector name and its `StoreAccessible` condition. |
 | `422` on `spec.format` | The image format isn't `qcow2`. |
 | `422` on `spec.sizeBytes` or `spec.fromPart` | The size is 0 or larger than 1,250 GiB, or `fromPart` is outside 1 to `totalParts`. |
+| `422` on `spec.checksum` | The checksum is missing, isn't 64 characters, or isn't lowercase hex. Send the sha256 of the file as lowercase hex. |
 | `400` naming the image store connector | The store refused the request. The message names the setting to fix. See [Check the connection](./os-image-store.mdx#check-the-connection). |
+| `400` with `dry-run is not supported` | `upload` and `finalize` change the bucket, so they don't accept a dry run. Send the request without `--dry-run` or `dryRun`. |
+| `500 Internal Server Error` and a `StoreAccessible` reason of `Unreachable` | The store didn't answer. Check the connector's endpoint and that the store is running. |
 | `403 Forbidden` | You can't update the image, or the license doesn't include machine management. |
 | `403` from the store on a `PUT` | The target expired, the request added an `x-amz-*` header, or the host differs from the signed URL. Request the target again with `fromPart`. |
 | CORS error in the browser | The bucket has no CORS rule for the platform address. See [Allow browser uploads](./os-image-store.mdx#allow-browser-uploads). |
+
+### Finish a stuck delete
+
+An image stays in **Deleting** while its store can't be reached. Fix the connector's credentials or endpoint, and the delete finishes when the store answers again.
+
+If the store is gone for good, remove the `platform.vcluster.com/cleanup-os-image-blob` finalizer from the image to finish the delete. Open the image for editing and delete that entry from `metadata.finalizers`:
+
+<InterpolatedCodeBlock
+  language="bash"
+  code={'kubectl edit osimage [[GLOBAL:IMAGE_NAME]]'}
+/>
+
+The image disappears once you save. The file stays in the bucket, and the platform never removes it later.
