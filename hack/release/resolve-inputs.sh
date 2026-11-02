@@ -20,6 +20,7 @@
 #   MANUAL_EVENT       workflow_dispatch input event_type
 #   MANUAL_VERSION     workflow_dispatch input version
 #   PLATFORM_V5_DOCS_BRANCH  main (default) or next before the 5.0 docs cutover
+#   VCLUSTER_038_DOCS_BRANCH main (default) or next before the 0.38 docs cutover
 #
 # Outputs (key=value on stdout, also appended to $GITHUB_OUTPUT when set):
 #   event, version, base_sha, target_branch on success.
@@ -75,9 +76,19 @@ case "$platform_v5_branch" in
     main|next) ;;
     *) echo '::error::PLATFORM_V5_DOCS_BRANCH must be main or next' >&2; exit 1 ;;
 esac
+# 0.38 reference syncs (RC and GA) go to next too, so the new config keys and
+# CLI flags stay off the public /docs/vcluster/next/ pages until the combined
+# release publishes. Remove this flag together with PLATFORM_V5_DOCS_BRANCH.
+vcluster_038_branch="${VCLUSTER_038_DOCS_BRANCH:-main}"
+case "$vcluster_038_branch" in
+    main|next) ;;
+    *) echo '::error::VCLUSTER_038_DOCS_BRANCH must be main or next' >&2; exit 1 ;;
+esac
 target_branch=main
 if [[ "$event" == platform-released && "$version" == v5.* ]]; then
     target_branch="$platform_v5_branch"
+elif [[ ("$event" == vcluster-released || "$event" == vcluster-cli-released) && "$version" == v0.38.* ]]; then
+    target_branch="$vcluster_038_branch"
 fi
 base_sha="$(git rev-parse --verify "refs/remotes/origin/$target_branch")"
 emit target_branch "$target_branch"
