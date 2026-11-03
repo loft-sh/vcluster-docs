@@ -295,6 +295,68 @@ data:
 
 **CIDR or range too small.** If the number of instances regularly exceeds the available address space, expand the range using the `metal3.vcluster.com/network-cidr` or `metal3.vcluster.com/network-ip-range` property. See [Network configuration](./networking.mdx#ipam).
 
+## Host operations
+
+### Redfish tab is missing
+
+The Metal3 UI requires a platform admin outside tenant scope, with the machine management and Metal3 features enabled. The Redfish entry additionally requires `create` permission on `metal3bmcs/redfish` in `cluster.loft.sh` for the host's cluster and namespace.
+
+Check those permissions before changing the BMC. Reading a Machine or its BareMetalHost doesn't grant permission to send BMC requests. See [Inspect the BMC](./operations.mdx#inspect-the-bmc).
+
+### Redfish request fails
+
+First distinguish a platform API error from an HTTP response returned by the BMC:
+
+| Symptom | Check |
+|---|---|
+| Permission denied before a BMC response | The caller's `create` permission on the Redfish subresource. |
+| Host or credential configuration error | The BareMetalHost's `spec.bmc.address`, `credentialsName`, and Secret in the same namespace. |
+| BMC type doesn't speak Redfish | Use a Redfish-compatible BMC scheme. An `ipmi://` address can't serve Redfish resources. |
+| Certificate or connection error | Connectivity and certificate trust from the platform agent to the BMC. Ironic's CA mount doesn't configure the agent. |
+| BMC returns HTTP 401 or 403 | The referenced credentials and the vendor permissions needed for the requested resource or action. |
+| BMC returns HTTP 404 | Whether that path exists on this firmware. Browse from `/redfish/v1` instead of assuming another vendor's resource IDs. |
+| Redirect response | The proxy returns redirects without following them. Check the BMC address and use the intended Redfish endpoint. |
+
+A successful platform API request can contain an unsuccessful BMC HTTP status. Read that status and the BMC's error message before retrying. Requests have a 30-second timeout. If an action times out, inspect the hardware state before sending it again.
+
+Don't copy raw responses containing passwords or session tokens into support tickets. Keep audit capture at [Metadata level](./operations.mdx#audit-bmc-requests).
+
+### Host has no usable DHCP address
+
+The platform DHCP server needs the host's `metal3.vcluster.com/ip-address` annotation as an IPv4 address with a prefix. A claim with no allocated address fails with `InvalidConfiguration` when the provider-managed DHCP server is enabled and the host's annotations aren't usable.
+
+Inspect the host on the control plane cluster:
+
+<InterpolatedCodeBlock
+  language="bash"
+  code={'kubectl --context <control-plane-context> get baremetalhost [[GLOBAL:BMH_NAME]] -n [[GLOBAL:NAMESPACE]] -o yaml'}
+/>
+
+Check the boot MAC, address prefix, gateway, and comma-separated DNS addresses. Gateway and DNS entries must be IPv4 addresses. Configure a [host address](./networking.mdx#set-a-host-address) before initial inspection. For claim-allocated addresses, check the node type's `metal3.vcluster.com/network-cidr` property and [IPAM configuration](./networking.mdx#ipam).
+
+After fixing a claim's terminal `InvalidConfiguration` failure, release the failed instance and create a new one. Follow [When provisioning fails](../../../concepts/machine-lifecycle.mdx#when-provisioning-fails) for recovery.
+
+During provisioning, if Ironic has waited more than 15 minutes for the deploy ramdisk's callback without the agent starting, the Machine reports `ramdisk not booted`. Check DHCP replies, boot files, and the IPA API path. This is separate from the instance's capacity-wait timeout. A host that never boots the ramdisk during initial inspection doesn't get this reason. It stays in `inspecting` instead. See [Stuck in `inspecting`](#stuck-in-inspecting).
+
+### Unexpected or missing IP address
+
+Compare the host's `metal3.vcluster.com/ip-address` annotation with the Metal3 list and the Machine's network details.
+
+- **Empty IP column:** the Metal3 list uses the configured annotation. It doesn't substitute an address from hardware inspection.
+- **Inspection address in Machine details:** check the NIC inventory, annotation, and `spec.bootMACAddress`. The configured address replaces inspected addresses only on the matching boot NIC.
+- **Different address in the running OS:** inspect any custom network data. The Machine address overlay doesn't parse a custom document to discover its configured address.
+- **Address changes during claim or release:** a claim can temporarily replace the host reservation. Release restores the operator's original DHCP annotations. See [Reuse and reprovisioning](./server-lifecycle.mdx#reuse-and-reprovisioning).
+
+Test routing and access from the intended client separately. A displayed IP isn't a connectivity check.
+
+### Unexpected power status
+
+Compare Ironic's current and target power states with the BareMetalHost's `spec.online` and `status.poweredOn`. The Metal3 badge prefers Ironic's power reading, but falls back to the host's status when no usable Ironic reading is available.
+
+During inspection, provisioning, or deprovisioning, BMO's own power reading can be stale. `Powering On`, `Powering Off`, and `Rebooting` indicate a transition, rather than proof that it completed.
+
+Check BMC connectivity and Ironic logs if a transition doesn't finish. Don't change `spec.online` or send repeated resets to fix an instance allocation problem. An `On` server can still have a provisioning or bootstrap failure. See [Common failures](#common-failures).
+
 ## Webhook readiness
 
 The Metal3 `ValidatingWebhook` validates every `BareMetalHost` create and update. It runs in the `bare-metal-operator` container on port 9443, reached through the `bare-metal-operator-webhook` Service, and defaults to `failurePolicy: Fail`. If the webhook endpoint is unreachable when you create a BareMetalHost, the API server rejects the request and the BareMetalHost is never created.
