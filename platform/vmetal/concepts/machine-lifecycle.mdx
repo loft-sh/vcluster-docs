@@ -40,8 +40,6 @@ Every instance, regardless of driver, passes through the same milestones:
 5. **Ready** - the platform's required milestones are satisfied. For a worker, that includes joining the cluster. For an independent or control plane instance, `Joined` is satisfied without a worker join, so verify SSH access or cluster API health separately.
 6. **Destroyed** - the cluster or administrator no longer needs the instance, and the platform deletes its `NodeClaim`.
 
-Servers provisioned as KubeVirt infrastructure must register with the KubeVirt cluster to satisfy `Joined`, even without a `vClusterRef`. They fail with `JoinTimeout` if registration doesn't complete within 20 minutes of provisioning.
-
 Teardown is driver-specific. Metal3 cleans the claimed physical server and returns it to the available inventory. KubeVirt deletes the `VirtualMachine`, and Terraform runs its destroy workflow. For the Metal3 driver's `BareMetalHost` states, see [Bare metal server lifecycle](../drivers/bare-metal/metal3/server-lifecycle.mdx#server-lifecycle).
 
 ## How an instance reaches a cluster
@@ -77,7 +75,7 @@ Drivers that draw from a machine inventory, such as Metal3 and NICo, place an in
 
 A machine with neither label is unassigned. Under the `Assigned` allocation policy, a tenant's instances use only the tenant's own machines. Under `OnDemand`, they use the tenant's machines first, then unassigned ones. An instance never lands on another tenant's machine. See [Machine allocation](./machine-types-and-nodetypes.mdx#machine-allocation) for defaults, configuration, and placement outside a tenant.
 
-KubeVirt reads the same policy but places VMs differently. Under `Assigned`, VMs run only on the tenant's reserved nodes, and a request outside any tenant fails with the reason `TenantRequired`. Under `OnDemand`, VMs run only on nodes that aren't reserved for a tenant.
+KubeVirt ignores the allocation policy and runs every VM on the KubeVirt cluster's own nodes.
 
 To place an instance on one specific machine, pin it with `machineRef`. See [Claim a specific machine](./machine-inventory.mdx#claim-a-specific-machine).
 
@@ -90,10 +88,10 @@ Two quotas limit how many instances can exist. A request has to fit both.
 
 The **tenant node type quota**, `spec.nodeTypes.quota.byType` on the Tenant, caps how many instances of each node type a tenant holds across all its projects. It caps on-demand capacity only, so what counts depends on where an instance lands:
 
-- A Metal3, NICo, or KubeVirt node type with the `Assigned` policy isn't limited, because it only draws on capacity assigned to the tenant. Metal3 and NICo node types use `Assigned` unless you set otherwise.
+- A Metal3 or NICo node type with the `Assigned` policy isn't limited, because it only draws on capacity assigned to the tenant. Metal3 and NICo node types use `Assigned` unless you set otherwise.
 - Under `OnDemand`, an instance on a machine the tenant owns or is exclusively assigned doesn't count. Only instances on unassigned machines count.
 - An instance pinned with `machineRef` never counts.
-- A node type from a provider without a machine inventory, such as Terraform, counts every instance.
+- A node type from a provider without a machine inventory, such as KubeVirt or Terraform, counts every instance.
 
 One exception applies under `OnDemand`. The platform checks the quota before it picks a machine, even when a machine assigned to the tenant is free. An over-quota request is refused at creation or waits during scheduling, as described below. To use the assigned machine, pin the instance to it with `machineRef`.
 
@@ -130,10 +128,8 @@ The most common reasons are in the following table. The condition message names 
 | `Provisioned` | `InsufficientCapacity` | `Pending`, then `Failed` | No eligible machine is free. Waits 30 minutes by default. See [When provisioning fails](#when-provisioning-fails). |
 | `Provisioned` | `Provisioning` | `Pending` | The driver is still working. No time limit. |
 | `Provisioned` | `ProvisioningError` | `Pending` | The driver returned an error. Retries automatically. |
-| `Provisioned` | `InvalidConfiguration`, `MachineNotFound`, `NetworkEnvironmentNotAllowed`, or `TenantRequired` | `Failed` | Not retried. Fix the cause and replace the instance. |
+| `Provisioned` | `InvalidConfiguration`, `MachineNotFound`, or `NetworkEnvironmentNotAllowed` | `Failed` | Not retried. Fix the cause and replace the instance. |
 | `Joined` | `NotJoined` | `Pending` | The server hasn't registered as a node in its cluster yet. |
-| `Joined` | `JoinFailed` | `Pending` | A KubeVirt infrastructure registration attempt returned an error. Retries until registration succeeds or the 20-minute timeout expires. |
-| `Joined` | `JoinTimeout` | `Failed` | A server provisioned for KubeVirt infrastructure hasn't registered within 20 minutes of provisioning. Fix the cause and replace the instance. |
 
 A node type is chosen once. After the `Scheduled` condition is met, the claim keeps that node type for the rest of its life, even while it waits for capacity.
 
@@ -150,7 +146,7 @@ To clear the warning, restore the machine's labels, or release the instance. The
 
 ## When provisioning fails
 
-Most waits have no platform time limit. A claim waiting for its network environment, for the driver to finish, or for a worker to join keeps waiting. It reports progress in its conditions. Servers provisioned for KubeVirt infrastructure have a separate 20-minute registration timeout.
+Most waits have no platform time limit. A claim waiting for its network environment, for the driver to finish, or for a worker to join keeps waiting. It reports progress in its conditions.
 
 Waiting for a free machine also has a limit. When no eligible machine is free, the `Provisioned` condition reports `InsufficientCapacity` and the claim keeps checking. If no machine frees up within 30 minutes of scheduling, the claim moves to `Failed`, and its message starts with `no machine became available within 30m0s`. Time spent waiting for quota doesn't count toward the limit.
 
