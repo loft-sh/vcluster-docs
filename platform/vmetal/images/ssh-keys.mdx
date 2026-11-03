@@ -66,9 +66,17 @@ Metadata such as labels and annotations stays editable. Changing `spec.publicKey
 
 You can't change a key's public key in place. To rotate a key, or to give it a different owner or access list:
 
-1. Create a new `SSHKey` with the new public key.
-2. Update every node provider and node type that references the old key so it names the new one. An instance's properties can't change after creation, so an instance that names the old key keeps it.
-3. Delete the old key.
+1. Create a new `SSHKey` with the intended public key, owner, and access list.
+2. If you're replacing a platform key shared with tenants, apply the same sharing label to the new key. See [Share SSH keys with tenants](#share-ssh-keys-with-tenants).
+3. If you shared the key in step 2, confirm the new key carries the label before switching references:
+
+   ```bash
+   kubectl --context <management-context> get sshkey <new-key-name> --show-labels
+   ```
+
+4. Update every node provider and node type that references the old key so it names the new one. An instance's properties can't change after creation, so an instance that names the old key keeps it.
+5. Wait for instances that name the old key directly to finish provisioning before deleting it. Alternatively, recreate those instances with the new key. Recreating an instance releases its server and restarts provisioning.
+6. Delete the old key.
 
 SSH keys are injected at provision time. A server that's already provisioned keeps the old public key until you release and reprovision it.
 
@@ -83,13 +91,15 @@ properties:
 
 All referenced keys are added to the provisioned server's `authorized_keys`.
 
-An instance can only use keys its tenant can see. See [Share SSH keys with tenants](#share-ssh-keys-with-tenants). When you create a `NodeClaim`, the platform checks the keys set on the claim, its node type, and its node provider. If any key isn't visible to the claim's tenant, the platform refuses the claim:
+An instance can only use keys its tenant can see. See [Share SSH keys with tenants](#share-ssh-keys-with-tenants). A key list set on a claim overrides the node type's list. A node type's list overrides the node provider's list.
+
+The platform checks key visibility at claim creation and again during provisioning. If a key set on the claim or its node type doesn't exist or isn't visible to the claim's tenant, the platform refuses the claim:
 
 ```text
 ssh key "<name>" not found
 ```
 
-The platform gives the same answer for a key that doesn't exist, so the error doesn't reveal whether another tenant's key exists.
+The platform gives the same answer for a key that doesn't exist, so the error doesn't reveal whether another tenant's key exists. Keys inherited from a node provider the tenant can't see are checked only during provisioning.
 
 ## Share SSH keys with tenants
 
@@ -98,9 +108,11 @@ Each tenant sees its own SSH keys. Keys that a platform admin creates outside an
 | Instance owner | Keys the instance can use |
 |---|---|
 | A tenant | The tenant's own keys, platform keys shared with that tenant, and platform keys shared with all tenants |
-| The platform | Platform keys only. Keys a tenant owns aren't available. |
+| The platform | Platform keys without an `exclusive-to` label, including keys shared with all tenants. Keys a tenant owns aren't available. |
 
-To share a platform key with one tenant, label it with `tenant.vcluster.com/exclusive-to`:
+To assign a platform key exclusively to one tenant, label it with `tenant.vcluster.com/exclusive-to`. This makes the key unavailable to platform-owned instances. New requests that reference it fail, and pending provisioning can fail. Use a separate key if platform-owned instances still need the existing key.
+
+Assign the key with:
 
 <InterpolatedCodeBlock
   code={'kubectl --context <management-context> label sshkey [[GLOBAL:SSH_KEY]] \\\n  tenant.vcluster.com/exclusive-to=[[GLOBAL:TENANT]]'}
@@ -116,7 +128,7 @@ To share a platform key with every tenant, label it with `tenant.vcluster.com/al
 
 A tenant sees SSH keys only when the SSH keys capability is turned on for it. The platform refuses to share a key with a tenant that has the capability turned off. The same capability controls whether tenant users may register keys of their own. See [What a platform admin grants a tenant](/docs/plan/roles-and-scopes#what-a-platform-admin-grants-a-tenant).
 
-To stop sharing a key, remove the label. For example, `tenant.vcluster.com/exclusive-to-` removes the single-tenant label. After that, the platform refuses new claims that name the key. A claim that already exists but isn't provisioned yet doesn't get the key, and reports an error that starts with `failed to get ssh key <name>`. Servers that are already provisioned keep the key until they're reprovisioned.
+To stop sharing a key, remove the label. For example, `tenant.vcluster.com/exclusive-to-` removes the single-tenant label. The key becomes unavailable to affected tenants' new requests. A pending instance that still needs to resolve the key fails provisioning with an error containing `failed to get ssh key <name>`. Removing the label doesn't remove the key from provisioning data already prepared for an instance. Servers that are already provisioned keep the key until they're reprovisioned.
 
 ## Access control
 
