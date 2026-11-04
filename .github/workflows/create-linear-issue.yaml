@@ -1,48 +1,49 @@
 name: Create follow up linear issue
 
 on:
-  pull_request_target:
-    types:
-      - labeled
+  workflow_run: # zizmor: ignore[dangerous-triggers] -- read-only relay or validated metadata; no contributor code executes
+    workflows: ['Pull request events']
+    types: [completed]
+
+permissions: {}
+
 jobs:
   create-linear-issue-on-pull-request:
-    if: ${{ github.event.label.name == 'follow-up' }}
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'pull_request_target'
     runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: write
+    concurrency:
+      group: create-linear-issue-${{ github.event.workflow_run.id }}
+      cancel-in-progress: false
     steps:
-      - name: Clean PR description
-        id: clean_description
-        env:
-          PR_BODY: ${{ github.event.pull_request.body }}
-        run: |
-          # Get PR body and temporarily replace newlines for processing
-          CLEAN_BODY=$(echo "$PR_BODY" | tr '\n' '\r')
-
-          # Remove all markdown comments (anything between <!-- and -->)
-          CLEAN_BODY=$(echo "$CLEAN_BODY" | perl -pe 's/<!--.*?-->//g')
-
-          # Restore newlines and escape for GitHub Actions
-          CLEAN_BODY=$(echo "$CLEAN_BODY" | tr '\r' '\n')
-
-          # Set the output variable with cleaned description
-          echo "description<<EOF" >> $GITHUB_OUTPUT
-          echo "$CLEAN_BODY" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+      - name: Resolve pull request event
+        id: event
+        uses: loft-sh/github-actions/.github/actions/resolve-pr-event@resolve-pr-event/v1 # zizmor: ignore[unpinned-uses] -- internal rolling action tag
+        with:
+          source-workflow: .github/workflows/pull-request-events.yaml
+          github-token: ${{ github.token }}
 
       - name: Create the Linear Issue
         id: createIssue
+        if: steps.event.outputs.eligible == 'true' && steps.event.outputs.action == 'labeled' && steps.event.outputs.label == 'follow-up'
         uses: ctriolo/action-create-linear-issue@699c7c2f0639181e0eaf5622d2987c6584f48a5a # v0.7
         with:
-          linear-api-key: ${{secrets.LINEAR_API_KEY}}
+          linear-api-key: ${{ secrets.LINEAR_API_KEY }}
           linear-team-key: "DOC"
-          linear-issue-title: "follow-up: ${{github.event.pull_request.title}}"
-          linear-issue-description: ${{ steps.clean_description.outputs.description }}
-          linear-attachment-url: ${{github.event.pull_request.html_url}}
-          linear-attachment-title: ${{github.event.pull_request.title}}
-          linear-issue-label-ids: '918eb5e1-2297-44f0-b618-ca1659cbceb7' # This is label id for follow-up label
+          linear-issue-title: "follow-up: ${{ fromJSON(steps.event.outputs.event-json).pull_request.title }}"
+          linear-issue-description: ${{ steps.event.outputs.body-without-comments }}
+          linear-attachment-url: ${{ fromJSON(steps.event.outputs.event-json).pull_request.html_url }}
+          linear-attachment-title: ${{ fromJSON(steps.event.outputs.event-json).pull_request.title }}
+          linear-issue-label-ids: '918eb5e1-2297-44f0-b618-ca1659cbceb7'
 
       - name: Create comment in PR with Linear Issue link
+        if: steps.createIssue.outcome == 'success'
         uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5
         with:
-          issue-number: ${{ github.event.pull_request.number }}
+          issue-number: ${{ steps.event.outputs.pr-number }}
           body: |
             ${{ steps.createIssue.outputs.linear-issue-url }}

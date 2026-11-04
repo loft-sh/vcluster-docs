@@ -1,26 +1,38 @@
 name: Linear PR Comments
 
 on:
-  pull_request_target:
-    types: [opened, edited]
-    branches:
-      - main
+  workflow_run: # zizmor: ignore[dangerous-triggers] -- read-only relay or validated metadata; no contributor code executes
+    workflows: ['Pull request events']
+    types: [completed]
 
-permissions:
-  pull-requests: write
-  contents: read
+permissions: {}
 
 jobs:
   add-linear-links:
     name: Add Linear Issue Links
-    if: github.actor != 'dependabot[bot]'
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'pull_request_target' && github.event.workflow_run.actor.login != 'dependabot[bot]'
     runs-on: ubuntu-latest
-
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: write
+    concurrency:
+      group: linear-pr-comments-${{ github.event.workflow_run.id }}
+      cancel-in-progress: false
     steps:
-      - name: Linear PR Commenter
-        uses: loft-sh/github-actions/.github/actions/linear-pr-commenter@linear-pr-commenter/v1
+      - name: Resolve pull request event
+        id: event
+        uses: loft-sh/github-actions/.github/actions/resolve-pr-event@resolve-pr-event/v1 # zizmor: ignore[unpinned-uses] -- internal rolling action tag
         with:
-          pr-number: ${{ github.event.pull_request.number }}
+          source-workflow: .github/workflows/pull-request-events.yaml
+          github-token: ${{ github.token }}
+
+      - name: Linear PR Commenter
+        if: steps.event.outputs.eligible == 'true' && (steps.event.outputs.action == 'opened' || steps.event.outputs.action == 'edited') && fromJSON(steps.event.outputs.event-json || '{}').pull_request.base.ref == 'main'
+        uses: loft-sh/github-actions/.github/actions/linear-pr-commenter@linear-pr-commenter/v1 # zizmor: ignore[unpinned-uses] -- internal rolling action tag
+        with:
+          pr-number: ${{ steps.event.outputs.pr-number }}
           repo-owner: ${{ github.repository_owner }}
           repo-name: ${{ github.event.repository.name }}
           github-token: ${{ secrets.GITHUB_TOKEN }}

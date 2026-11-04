@@ -1,40 +1,49 @@
 name: Backport Documentation
 
 on:
-  pull_request_target:
-    types: ["labeled", "closed"]
-    paths:
-      - 'vcluster/**'
-      - 'platform/**'
+  workflow_run: # zizmor: ignore[dangerous-triggers] -- read-only relay or validated metadata; no contributor code executes
+    workflows: ['Pull request events']
+    types: [completed]
+
+permissions: {}
 
 jobs:
   backport:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'pull_request_target'
     runs-on: ubuntu-latest
-    if: github.event.pull_request.merged == true ||
-        (github.event.action == 'labeled' && startsWith(github.event.label.name, 'backport-v'))
+    timeout-minutes: 15
+    permissions:
+      actions: read
+      contents: read
+    concurrency:
+      group: backport-docs-${{ github.event.workflow_run.id }}
+      cancel-in-progress: false
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Resolve pull request event
+        id: event
+        uses: loft-sh/github-actions/.github/actions/resolve-pr-event@resolve-pr-event/v1 # zizmor: ignore[unpinned-uses] -- internal rolling action tag
         with:
-          fetch-depth: 0
+          source-workflow: .github/workflows/pull-request-events.yaml
+          github-token: ${{ github.token }}
 
       - name: Backport Docusaurus Changes
         id: backport
-        uses: loft-sh/docs-backport-action@v1
+        if: steps.event.outputs.eligible == 'true' && fromJSON(steps.event.outputs.event-json || '{}').pull_request.merged == true && (steps.event.outputs.action == 'closed' || (steps.event.outputs.action == 'labeled' && startsWith(steps.event.outputs.label, 'backport-v')))
+        uses: loft-sh/docs-backport-action@v1 # zizmor: ignore[unpinned-uses] -- internal rolling action tag
+        env:
+          NODE_OPTIONS: ${{ steps.event.outputs.node-options }}
+          RESOLVED_PR_EVENT_PATH: ${{ steps.event.outputs.event-path }}
         with:
           github_token: ${{ secrets.GH_ACCESS_TOKEN }}
 
-      # A conflict leaves files unchanged and the run green, and its only
-      # other trace is a comment on the already-merged source PR. Alert on
-      # conflicts and failures. Clean and skipped backports send nothing,
-      # and ci-test-notify sends nothing while the webhook secret is unset.
       - name: Notify Slack on backport conflicts or failure
-        if: failure() || steps.backport.outputs.conflicts != ''
-        uses: loft-sh/github-actions/.github/actions/ci-test-notify@ci-test-notify/v1
+        if: steps.event.outputs.eligible == 'true' && ((failure() && steps.backport.outcome == 'failure') || steps.backport.outputs.conflicts != '')
+        uses: loft-sh/github-actions/.github/actions/ci-test-notify@ci-test-notify/v1 # zizmor: ignore[unpinned-uses] -- internal rolling action tag
         with:
-          test-name: "${{ job.status == 'failure' && 'Docs backport' || 'Docs backport conflicts' }} for #${{ github.event.pull_request.number }}"
+          test-name: "${{ job.status == 'failure' && 'Docs backport' || 'Docs backport conflicts' }} for #${{ steps.event.outputs.pr-number }}"
           status: ${{ job.status == 'failure' && 'failure' || 'warning' }}
           details: |
-            Source PR: ${{ github.event.pull_request.html_url }}
+            Source PR: ${{ fromJSON(steps.event.outputs.event-json).pull_request.html_url }}
             ${{ steps.backport.outputs.summary || 'See the workflow run for the error.' }}
           run-link-position: bottom
           webhook-url: ${{ secrets.DOCS_BACKPORT_SLACK_WEBHOOK_URL }}
