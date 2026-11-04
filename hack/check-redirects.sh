@@ -94,6 +94,26 @@ get_stable_version() {
 }
 
 # --------------------------------------------------------------------------
+# Routes served by root docs pages in the working tree. Root pages often set a
+# flat `slug:` (docs/services/foo.mdx serves /docs/foo), so a route can't be
+# derived from its URL alone. Built once, on first use.
+# --------------------------------------------------------------------------
+ROOT_ROUTES=""
+ROOT_ROUTES_BUILT=0
+root_route_exists() {
+    local url="$1"
+    if [[ "$ROOT_ROUTES_BUILT" -eq 0 ]]; then
+        local f
+        while IFS= read -r f; do
+            [[ -z "$f" || "$f" == */_* ]] && continue
+            ROOT_ROUTES="${ROOT_ROUTES}$(file_to_url "$f")"$'\n'
+        done < <(cd "$REPO_ROOT" && find docs \( -name '*.mdx' -o -name '*.md' \) -type f 2>/dev/null)
+        ROOT_ROUTES_BUILT=1
+    fi
+    grep -qxF "$url" <<<"$ROOT_ROUTES"
+}
+
+# --------------------------------------------------------------------------
 # Check if a URL path resolves to an actual file
 # --------------------------------------------------------------------------
 url_resolves() {
@@ -106,6 +126,7 @@ url_resolves() {
     url="${url%/}"
 
     local rel="${url#/docs/}"
+    [[ "$url" == "/docs" ]] && rel=""
 
     # /next/ = current source
     local is_current=0
@@ -145,10 +166,14 @@ url_resolves() {
     local paths_to_check=("$rel")
     [[ -n "$versioned_rel" ]] && paths_to_check=("$versioned_rel")
 
-    # Root docs component (routeBasePath "/"): /docs/<route> -> docs/<route>
+    # Root docs component (routeBasePath "/"): /docs/<route> -> docs/<route>,
+    # or any root page whose `slug:` serves the route.
     case "$rel" in
         vcluster/*|platform/*) ;;
-        *) paths_to_check+=("docs/${rel}") ;;
+        *)
+            root_route_exists "$url" && return 0
+            paths_to_check+=("docs/${rel}")
+            ;;
     esac
 
     for base in "${paths_to_check[@]}"; do
@@ -267,9 +292,20 @@ file_to_url() {
             local product="${url%%/*}"
             echo "/docs/${product}/next/${url#*/}"
             ;;
+        docs) echo "/docs" ;;
+        # Root docs plugin (routeBasePath "/"): docs/<path> -> /docs/<path>
+        docs/*) echo "/docs/${url#docs/}" ;;
         *) echo "/docs/${url}" ;;
     esac
 }
+
+# Page sources for every docs plugin. Without glob magic, `*` in a git
+# pathspec also matches `/`, so these cover top-level and nested pages.
+DOC_PATHSPECS=(
+    'vcluster/*.mdx' 'vcluster/*.md'
+    'platform/*.mdx' 'platform/*.md'
+    'docs/*.mdx' 'docs/*.md'
+)
 
 get_base_ref() {
     local base_ref="${GITHUB_BASE_REF:-main}"
@@ -294,8 +330,7 @@ detect_changes() {
     fi
 
     DELETED_FILES="$(git diff --name-status --diff-filter=D "${base_ref}"...HEAD -- \
-        'vcluster/**/*.mdx' 'vcluster/**/*.md' \
-        'platform/**/*.mdx' 'platform/**/*.md' 2>/dev/null | \
+        "${DOC_PATHSPECS[@]}" 2>/dev/null | \
         awk '{print $2}' | \
         grep -v '/_' || true)"
 
@@ -303,8 +338,7 @@ detect_changes() {
     RENAMED_NEW=""
     local rename_lines
     rename_lines="$(git diff --name-status -M50 --diff-filter=R "${base_ref}"...HEAD -- \
-        'vcluster/**/*.mdx' 'vcluster/**/*.md' \
-        'platform/**/*.mdx' 'platform/**/*.md' 2>/dev/null || true)"
+        "${DOC_PATHSPECS[@]}" 2>/dev/null || true)"
 
     while IFS=$'\t' read -r status old_path new_path; do
         [[ -z "$status" ]] && continue
@@ -315,8 +349,7 @@ detect_changes() {
     done <<<"$rename_lines"
 
     ADDED_FILES="$(git diff --name-status --diff-filter=A "${base_ref}"...HEAD -- \
-        'vcluster/**/*.mdx' 'vcluster/**/*.md' \
-        'platform/**/*.mdx' 'platform/**/*.md' 2>/dev/null | \
+        "${DOC_PATHSPECS[@]}" 2>/dev/null | \
         awk '{print $2}' | \
         grep -v '/_' || true)"
 
@@ -374,11 +407,7 @@ append_redirect() {
 guess_destination() {
     local filepath="$1"
     local base_ref="$2"
-    local url
-    url="$(file_to_url "$filepath")"
     local dir="${filepath%/*}"
-    local parent_url="${url%/*}"
-    local parent_path="${parent_url#/docs/}"
 
     # Match by sidebar_position: find the added file in the same dir with the same position
     local pos
@@ -402,17 +431,22 @@ guess_destination() {
         return
     fi
 
-    if [[ -f "${REPO_ROOT}/${parent_path}/index.mdx" ]] || \
-       [[ -f "${REPO_ROOT}/${parent_path}/_category_.json" ]] || \
-       [[ -d "${REPO_ROOT}/${parent_path}" ]]; then
-        echo "${parent_url}"
-        return
-    fi
+    # The section's own landing page, when the folder has one. A folder alone
+    # isn't served: a _category_.json without a `link` has no URL. file_to_url
+    # gives the page's real route, so an overview without a slug maps to
+    # .../overview rather than the folder URL.
+    local index
+    for index in index.mdx index.md README.mdx README.md overview.mdx overview.md; do
+        if [[ -f "${REPO_ROOT}/${dir}/${index}" ]]; then
+            file_to_url "${dir}/${index}"
+            return
+        fi
+    done
 
     case "$filepath" in
         vcluster/*) echo "/docs/vcluster/next" ;;
         platform/*) echo "/docs/platform/next" ;;
-        *) echo "/docs/vcluster/next" ;;
+        *) echo "/docs" ;;
     esac
 }
 
@@ -718,7 +752,9 @@ fix_redirects() {
         old_url="$(file_to_url "$old_path")"
         new_url="$(file_to_url "$new_path")"
 
-        if has_redirect_coverage "$old_url"; then
+        if [[ "$old_url" == "$new_url" ]]; then
+            ok "URL unchanged for renamed: $old_path -> $new_path"
+        elif has_redirect_coverage "$old_url"; then
             ok "Already covered: $old_path"
         else
             append_redirect "$old_url" "$new_url" "Renamed: $old_path -> $new_path"
@@ -734,6 +770,8 @@ fix_redirects() {
 
         if has_redirect_coverage "$url"; then
             ok "Already covered: $filepath"
+        elif url_still_served "$filepath" "$url"; then
+            ok "URL still served after delete: $filepath"
         else
             local dest base_ref
             base_ref="$(get_base_ref)"
