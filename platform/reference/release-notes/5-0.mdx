@@ -49,6 +49,7 @@ upgrade an existing installation.
 - The default Metal3 chart moves from 0.4.1 to 0.7.3. Bundled Metal3 no longer
   uses `ironic.ipaAdvertiseIP` or a LoadBalancer for IPA, and Neutron needs
   `neutron.networks.provisioning`.
+  {/* TODO before merge: confirm with Control Plane. The rc.1 e2e setup still sets ironic.ipaAdvertiseIP and a LoadBalancer service on the default chart, and its comment says hosts hang in inspecting without them. */}
 - Metal3 no longer filters hosts by inspected CPU or memory against the node
   type's `resources`. Node types that relied on that filter can now select
   smaller hosts. Use labels and selectors to express hardware size requirements.
@@ -58,6 +59,17 @@ upgrade an existing installation.
 - Stack templates use `parameters`. A template written for a 4.12 pre-release
   that still uses `inputs` is refused with an unknown field error. Platform
   4.12.0 and later already use `parameters`.
+- Node claims can't set the properties their node provider controls. Metal3
+  claims can't set the network CIDR, IP range, or DNS server properties. BCM
+  claims can't set its network or Netris properties, NICo claims can't set
+  the OS image ID, and KubeVirt claims accept only an allowed set. The API
+  refuses such a claim, and an Auto Nodes claim fails with
+  `PropertiesNotAllowed`. A claim's `ccm-enabled` property is ignored, and the
+  node provider's setting applies.
+  {/* TODO before merge: ask Control Plane where these values go instead, and link it. */}
+- Only the platform writes the status of a VirtualClusterInstance or
+  SpaceInstance. Status updates from anyone else, platform admins included,
+  are refused with `only the platform writes it`.
 
 ### Deprecations
 
@@ -87,8 +99,9 @@ upgrade an existing installation.
   [Cluster access](../../tenants/users-permissions/permissions/cluster.mdx).
 - **Per-tenant branding.** Each Tenant can have its own logo and colors in the
   platform UI. See [Brand a tenant](../../tenants/manage-tenants/brand-a-tenant.mdx).
-- **Grants by name.** Tenants can be granted OS images, control plane clusters,
-  and connectors by name with `allow.byName`, as well as by label.
+- **Grants by name.** Tenants can be granted node types, OS images, control
+  plane clusters, and connectors by name with `allow.byName`, as well as by
+  label.
 - **External cluster imports per tenant.** A platform admin decides per Tenant
   whether its users can import clusters deployed outside the platform, with
   `spec.externalClusters.enabled`. See
@@ -98,6 +111,12 @@ upgrade an existing installation.
 
 #### Machines and bare metal
 
+- **Node pools.** A NodePool defines the nodes for a cluster with private nodes
+  in the platform instead of in `vcluster.yaml`. Cluster creation, templates,
+  and the cluster's **Node Pools** tab manage them. Node pools need the Auto
+  Nodes license feature, plus Machine Management when the node provider draws
+  from the machine inventory. Dynamic pools need vCluster 0.38 in the cluster.
+  {/* Link after #3043 merges: ../../vmetal/deploy/node-pools.mdx */}
 - **Machine allocation policy.** Metal3 and NICo node types choose between
   `Assigned` machines reserved for a Tenant and `OnDemand` placement.
   See [Machine types and node types](../../vmetal/concepts/machine-types-and-nodetypes.mdx).
@@ -122,6 +141,7 @@ upgrade an existing installation.
   ramdisk. See [Machine lifecycle](../../vmetal/concepts/machine-lifecycle.mdx).
 - **Host devices and GPU passthrough** for KubeVirt VMs through the vCluster
   Device Operator.
+  {/* TODO before merge: confirm with PM. loft-enterprise #9105 says VM use cases left 5.0 (ENGCP-1865). */}
   {/* Link after #2996 merges. */}
 
 #### Stacks
@@ -155,8 +175,9 @@ upgrade an existing installation.
 - **Administrator recovery.** Recover access when no platform admin can sign in.
   See [Reset the admin password](../../administer/authentication/reset-admin-password.mdx).
 - **Argo CD cluster labels.** Clusters registered in Argo CD carry project and
-  instance labels, and you can add your own with `spec.argoCD.cluster.metadata`.
-  This makes ApplicationSet cluster generators usable. See
+  instance labels. Add your own with `spec.argoCD.cluster.metadata` on a control
+  plane cluster, or with `integrations.argoCD.cluster.metadata` in a cluster's
+  `vcluster.yaml`. This makes ApplicationSet cluster generators usable. See
   [Connect Argo CD](../../integrations/gitops-cicd/argocd/connect-argocd.mdx).
 
 ### Changes
@@ -172,10 +193,11 @@ upgrade an existing installation.
 - A Tenant sees only the space templates it owns. The templates capability
   doesn't grant the platform's space templates, and a Tenant's default project
   is created without one.
-- Projects, clusters, namespaces, project secrets, shared secrets, users, and
-  teams can't carry the `tenant.vcluster.com/exclusive-to` or
-  `tenant.vcluster.com/all` label. Lend the use of a credential through a
-  connector instead. See
+- Projects, clusters, namespaces, project secrets, shared secrets, users,
+  teams, node pools, and access keys can't carry the
+  `tenant.vcluster.com/exclusive-to` or `tenant.vcluster.com/all` label, and a
+  Tenant can't carry the `tenant.vcluster.com/all` label. Lend the use of a
+  credential through a connector instead. See
   [Ownership labels](../../tenants/manage-tenants/tenant-boundary-reference.mdx#ownership-labels).
 - A `*` user or team entry in a resource's access rules applies within the
   resource's own tenant scope. It doesn't grant cross-scope use, bind, or write
@@ -184,10 +206,13 @@ upgrade an existing installation.
 - Metal3 and NICo placements on machines assigned to the Tenant don't count
   toward its node type quota. KubeVirt placements count regardless of allocation
   policy.
-- NICo node types default to the `Assigned` policy.
+- Metal3 and NICo node types default to the `Assigned` policy, and KubeVirt
+  node types default to `OnDemand`. A node type's own policy wins, then the
+  node provider's `spec.machineAllocationPolicy`.
 - Metal3 skips OS image TLS verification by default. Set
   `ipaImages.insecure: false` to verify.
 - A Tenant's KubeVirt VMs run in a namespace named `<tenant>--<namespace>`.
+  {/* TODO before merge: confirm with PM (VM use cases, ENGCP-1865). Holds for the default namespace strategy only. */}
 - Users who can't update node providers and node types see a reduced,
   read-only view of them.
 - Connector references are checked again at reconcile time, so a Tenant that
@@ -203,6 +228,22 @@ upgrade an existing installation.
   Retention also deletes the archive of a pruned failed snapshot from storage.
   See [View snapshots](/docs/vcluster/next/operate/backup-restore/view-snapshots).
   {/* Link to #retries-after-connection-errors after #2993 merges. */}
+- Inside a Tenant, apps, stacks, and Argo CD applications can't deploy onto a
+  control plane cluster or with target `host`. The request fails with
+  `deploying to cluster "<name>" is not allowed` or
+  `deploying with target "host" is not allowed`. A cluster in a Tenant's
+  project whose Argo CD applications use target `host` reports
+  `ArgoCDIntegrationSyncError`.
+- A cluster or namespace is scheduled only onto a control plane cluster its
+  owner's Tenant may use.
+- A Tenant can name only the users and teams it can see in access rules,
+  owners, and team members.
+- An ArgoCDApplication's `spec.owner` can't change once set.
+- Deleting a cluster or namespace deletes the namespace on the control plane
+  cluster only when that instance manages it. A `clusterRef` that names a
+  namespace another instance holds is refused.
+- Node claims report `Destroying` and `FailedToDestroy` conditions while their
+  machine is torn down.
 
 ### Fixes
 
