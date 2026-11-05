@@ -1,8 +1,5 @@
 import pathlib
-import json
-import os
-import subprocess
-import tempfile
+import re
 import unittest
 
 import yaml
@@ -17,38 +14,19 @@ def load(name):
 
 
 class PullRequestEventContract(unittest.TestCase):
-    def test_relay_extracts_only_event_metadata(self):
-        command = load(RELAY)['jobs']['relay']['steps'][0]['run']
-        for action, label, expected_label in [('labeled', {'name': 'follow-up'}, 'follow-up'), ('closed', None, '')]:
-            with self.subTest(action=action), tempfile.TemporaryDirectory() as directory:
-                event = {'number': 42, 'action': action, 'label': label,
-                         'pull_request': {'body': 'untrusted', 'head': {'repo': {'fork': True}}}}
-                event_path = pathlib.Path(directory) / 'input.json'
-                event_path.write_text(json.dumps(event))
-                env = dict(os.environ, GITHUB_EVENT_PATH=str(event_path), RUNNER_TEMP=directory)
-                subprocess.run(command, shell=True, check=True, env=env)
-                result = json.loads((pathlib.Path(directory) / 'event.json').read_text())
-                self.assertEqual(result, {'number': 42, 'action': action, 'label': expected_label})
-
-    def test_relay_is_read_only_and_contains_minimal_event(self):
+    def test_relay_is_an_unprivileged_signal(self):
         workflow = load(RELAY)
         self.assertEqual(workflow['name'], 'Pull request events')
-        self.assertEqual(workflow['on']['pull_request_target']['types'], ['opened', 'edited', 'labeled', 'closed'])
+        self.assertTrue({'opened', 'edited', 'labeled', 'closed'} <= set(workflow['on']['pull_request']['types']))
+        self.assertEqual(set(workflow['on']), {'pull_request'})
         self.assertEqual(workflow['permissions'], {})
         job = workflow['jobs']['relay']
-        self.assertEqual(job['permissions'], {'contents': 'read'})
-        self.assertEqual(job['timeout-minutes'], '5')
-        self.assertEqual(len(job['steps']), 2)
-        self.assertIn("{number,action,label: (if .action == \"labeled\" then .label.name else \"\" end)}", job['steps'][0]['run'])
-        upload = job['steps'][1]
-        self.assertEqual(upload['uses'], 'actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9')
-        self.assertEqual(upload['with']['name'], 'pull-request-event-${{ github.run_attempt }}')
-        self.assertEqual(upload['with']['retention-days'], '1')
-        self.assertEqual(upload['with']['if-no-files-found'], 'error')
+        self.assertNotIn('permissions', job)
+        self.assertEqual(len(job['steps']), 1)
+        self.assertEqual(job['steps'][0]['run'], ':')
         text = (ROOT / RELAY).read_text()
-        self.assertNotIn('secrets.', text)
-        self.assertNotIn('checkout', text)
-        self.assertNotIn('write', text)
+        for forbidden in ('secrets.', 'checkout', 'upload-artifact', 'write'):
+            self.assertNotIn(forbidden, text)
 
     def test_consumers_resolve_trusted_event_and_limit_permissions(self):
         for name in CONSUMERS:
@@ -58,36 +36,82 @@ class PullRequestEventContract(unittest.TestCase):
                 self.assertEqual(workflow['permissions'], {})
                 job = next(iter(workflow['jobs'].values()))
                 self.assertIn("workflow_run.conclusion == 'success'", job['if'])
-                self.assertIn("workflow_run.event == 'pull_request_target'", job['if'])
-                self.assertEqual(job['permissions']['actions'], 'read')
-                self.assertEqual(job['permissions']['contents'], 'read')
+                self.assertIn("workflow_run.event == 'pull_request'", job['if'])
+                permissions = {'actions': 'read', 'contents': 'read', 'pull-requests': 'read'}
+                if name in CONSUMERS[2:]:
+                    permissions['pull-requests'] = 'write'
+                self.assertEqual(job['permissions'], permissions)
                 self.assertEqual(job['concurrency']['cancel-in-progress'], 'false')
-                resolve = job['steps'][0]
-                self.assertEqual(resolve['id'], 'event')
-                self.assertEqual(resolve['uses'], 'loft-sh/github-actions/.github/actions/resolve-pr-event@resolve-pr-event/v1')
-                self.assertEqual(resolve['with'], {'source-workflow': '.github/workflows/pull-request-events.yaml', 'github-token': '${{ github.token }}'})
+                checkouts = [step for step in job['steps'] if step.get('uses', '').startswith('actions/checkout@')]
+                self.assertEqual(len(checkouts), 1)
+                checkout = checkouts[0]
+                self.assertRegex(checkout['uses'], r'^actions/checkout@[0-9a-f]{40}$')
+                self.assertEqual(checkout['with']['ref'], '${{ github.sha }}')
+                self.assertEqual(checkout['with']['persist-credentials'], 'false')
+                self.assertEqual(checkout['with']['sparse-checkout'].strip(), '.github/actions/resolve-docs-pr-event')
+                resolve = next(step for step in job['steps'] if step.get('id') == 'event')
+                self.assertEqual(resolve['uses'], './.github/actions/resolve-docs-pr-event')
+                self.assertLess(job['steps'].index(checkout), job['steps'].index(resolve))
                 text = (ROOT / name).read_text()
                 self.assertNotIn('github.event.pull_request', text)
-                self.assertIn("steps.event.outputs.eligible == 'true'", text)
-                self.assertNotIn('actions/checkout', text)
-                if name in CONSUMERS[:2]:
-                    step = job['steps'][1]
-                    self.assertEqual(step['env']['NODE_OPTIONS'], '${{ steps.event.outputs.node-options }}')
-                    self.assertEqual(step['env']['RESOLVED_PR_EVENT_PATH'], '${{ steps.event.outputs.event-path }}')
-                    self.assertIn('pull_request.merged == true', step['if'])
-                    self.assertNotIn('pull-requests', job['permissions'])
-                else:
-                    self.assertEqual(job['permissions']['pull-requests'], 'write')
-                    self.assertIn('steps.event.outputs.pr-number', text)
+                self.assertNotIn('steps.event.outputs.action', text)
+                self.assertNotRegex(text, r'steps\.event\.outputs\.label(?![\w-])')
 
-    def test_event_specific_filters(self):
-        self.assertIn("startsWith(steps.event.outputs.label, 'backport-v')", (ROOT / CONSUMERS[0]).read_text())
-        self.assertIn("steps.event.outputs.label == 'forwardport-main'", (ROOT / CONSUMERS[1]).read_text())
+    def test_no_pull_request_target_in_github_configuration(self):
+        for path in ROOT.parent.rglob('*'):
+            if path.is_file() and path.suffix in {'.yml', '.yaml'}:
+                with self.subTest(path=path):
+                    self.assertNotIn('pull_request_target', path.read_text())
+
+    def test_backport_notifies_when_resolver_fails(self):
+        job = load(CONSUMERS[0])['jobs']['backport']
+        notify = next(step for step in job['steps'] if step.get('name', '').startswith('Notify Slack'))
+        condition = notify['if']
+        # Exercise the failure and conflict combinations instead of matching the
+        # condition's formatting. Refuse unknown expressions before evaluating.
+        for failed, resolver, backport, eligible, conflicts, expected in [
+            (True, 'failure', 'skipped', False, '', True),
+            (True, 'success', 'failure', True, '', True),
+            (False, 'success', 'success', True, 'conflict', True),
+            (False, 'success', 'success', False, 'conflict', False),
+            (False, 'success', 'success', True, '', False),
+        ]:
+            with self.subTest(resolver=resolver, backport=backport, eligible=eligible, conflicts=conflicts):
+                expression = condition
+                values = {
+                    'failure()': failed,
+                    "steps.event.outcome == 'failure'": resolver == 'failure',
+                    "steps.backport.outcome == 'failure'": backport == 'failure',
+                    "steps.event.outputs.eligible == 'true'": eligible,
+                    "steps.backport.outputs.conflicts != ''": bool(conflicts),
+                }
+                for term, value in values.items():
+                    expression = expression.replace(term, str(value))
+                expression = expression.replace('&&', ' and ').replace('||', ' or ')
+                self.assertIsNone(re.search(r'[^()\s]', re.sub(r'True|False|and|or', '', expression)))
+                self.assertEqual(eval(expression, {'__builtins__': {}}, {}), expected)
+        self.assertIn("event-json || '{}'", notify['with']['details'])
+
+    def test_current_pr_state_controls_consumer_actions(self):
+        for name in CONSUMERS[:2]:
+            with self.subTest(name=name):
+                job = next(iter(load(name)['jobs'].values()))
+                step = next(step for step in job['steps'] if step.get('uses', '').startswith('loft-sh/docs-'))
+                self.assertIn("steps.event.outputs.eligible == 'true'", step['if'])
+                self.assertIn('pull_request.merged == true', step['if'])
+                self.assertEqual(step['env']['NODE_OPTIONS'], '${{ steps.event.outputs.node-options }}')
+                self.assertEqual(step['env']['RESOLVED_PR_EVENT_PATH'], '${{ steps.event.outputs.event-path }}')
+        forwardport = (ROOT / CONSUMERS[1]).read_text()
+        self.assertIn('pull_request.labels.*.name', forwardport)
+        self.assertIn("'forwardport-main'", forwardport)
         linear = (ROOT / CONSUMERS[2]).read_text()
         self.assertIn("github.event.workflow_run.actor.login != 'dependabot[bot]'", linear)
         self.assertIn("pull_request.base.ref == 'main'", linear)
         followup = (ROOT / CONSUMERS[3]).read_text()
-        self.assertIn("steps.event.outputs.label == 'follow-up'", followup)
+        self.assertIn('pull_request.labels.*.name', followup)
+        self.assertIn("'follow-up'", followup)
+        self.assertIn("steps.event.outputs.follow-up-created != 'true'", followup)
+        self.assertIn('<!-- docs-follow-up -->', followup)
         self.assertIn('steps.event.outputs.body-without-comments', followup)
         self.assertNotIn('description<<EOF', followup)
 

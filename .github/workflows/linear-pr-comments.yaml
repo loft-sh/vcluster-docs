@@ -1,7 +1,7 @@
 name: Linear PR Comments
 
 on:
-  workflow_run: # zizmor: ignore[dangerous-triggers] -- read-only relay or validated metadata; no contributor code executes
+  workflow_run: # zizmor: ignore[dangerous-triggers] -- default-branch checkout and API-validated PR identity; no contributor code executes
     workflows: ['Pull request events']
     types: [completed]
 
@@ -10,7 +10,7 @@ permissions: {}
 jobs:
   add-linear-links:
     name: Add Linear Issue Links
-    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'pull_request_target' && github.event.workflow_run.actor.login != 'dependabot[bot]'
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.actor.login != 'dependabot[bot]'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -18,18 +18,26 @@ jobs:
       contents: read
       pull-requests: write
     concurrency:
-      group: linear-pr-comments-${{ github.event.workflow_run.id }}
+      group: linear-pr-comments-${{ github.event.workflow_run.head_repository.full_name }}-${{ github.event.workflow_run.head_branch }}
       cancel-in-progress: false
     steps:
+      - name: Check out trusted resolver
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          sparse-checkout: .github/actions/resolve-docs-pr-event
+
       - name: Resolve pull request event
         id: event
-        uses: loft-sh/github-actions/.github/actions/resolve-pr-event@resolve-pr-event/v1 # zizmor: ignore[unpinned-uses] -- internal rolling action tag
+        uses: ./.github/actions/resolve-docs-pr-event # zizmor: ignore[self-repository] -- resolver comes from the explicit default-branch checkout above
         with:
           source-workflow: .github/workflows/pull-request-events.yaml
           github-token: ${{ github.token }}
+          expected-base: main
 
       - name: Linear PR Commenter
-        if: steps.event.outputs.eligible == 'true' && (steps.event.outputs.action == 'opened' || steps.event.outputs.action == 'edited') && fromJSON(steps.event.outputs.event-json || '{}').pull_request.base.ref == 'main'
+        if: steps.event.outputs.eligible == 'true' && fromJSON(steps.event.outputs.event-json || '{}').pull_request.base.ref == 'main'
         uses: loft-sh/github-actions/.github/actions/linear-pr-commenter@linear-pr-commenter/v1 # zizmor: ignore[unpinned-uses] -- internal rolling action tag
         with:
           pr-number: ${{ steps.event.outputs.pr-number }}

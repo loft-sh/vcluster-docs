@@ -1,7 +1,7 @@
 name: Backport Documentation
 
 on:
-  workflow_run: # zizmor: ignore[dangerous-triggers] -- read-only relay or validated metadata; no contributor code executes
+  workflow_run: # zizmor: ignore[dangerous-triggers] -- default-branch checkout and API-validated PR identity; no contributor code executes
     workflows: ['Pull request events']
     types: [completed]
 
@@ -9,26 +9,34 @@ permissions: {}
 
 jobs:
   backport:
-    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'pull_request_target'
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
       actions: read
       contents: read
+      pull-requests: read
     concurrency:
-      group: backport-docs-${{ github.event.workflow_run.id }}
+      group: backport-docs-${{ github.event.workflow_run.head_repository.full_name }}-${{ github.event.workflow_run.head_branch }}
       cancel-in-progress: false
     steps:
+      - name: Check out trusted resolver
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          sparse-checkout: .github/actions/resolve-docs-pr-event
+
       - name: Resolve pull request event
         id: event
-        uses: loft-sh/github-actions/.github/actions/resolve-pr-event@resolve-pr-event/v1 # zizmor: ignore[unpinned-uses] -- internal rolling action tag
+        uses: ./.github/actions/resolve-docs-pr-event # zizmor: ignore[self-repository] -- resolver comes from the explicit default-branch checkout above
         with:
           source-workflow: .github/workflows/pull-request-events.yaml
           github-token: ${{ github.token }}
 
       - name: Backport Docusaurus Changes
         id: backport
-        if: steps.event.outputs.eligible == 'true' && fromJSON(steps.event.outputs.event-json || '{}').pull_request.merged == true && (steps.event.outputs.action == 'closed' || (steps.event.outputs.action == 'labeled' && startsWith(steps.event.outputs.label, 'backport-v')))
+        if: steps.event.outputs.eligible == 'true' && fromJSON(steps.event.outputs.event-json || '{}').pull_request.merged == true
         uses: loft-sh/docs-backport-action@v1 # zizmor: ignore[unpinned-uses] -- internal rolling action tag
         env:
           NODE_OPTIONS: ${{ steps.event.outputs.node-options }}
@@ -37,13 +45,13 @@ jobs:
           github_token: ${{ secrets.GH_ACCESS_TOKEN }}
 
       - name: Notify Slack on backport conflicts or failure
-        if: steps.event.outputs.eligible == 'true' && ((failure() && steps.backport.outcome == 'failure') || steps.backport.outputs.conflicts != '')
+        if: (failure() && (steps.event.outcome == 'failure' || steps.backport.outcome == 'failure')) || (steps.event.outputs.eligible == 'true' && steps.backport.outputs.conflicts != '')
         uses: loft-sh/github-actions/.github/actions/ci-test-notify@ci-test-notify/v1 # zizmor: ignore[unpinned-uses] -- internal rolling action tag
         with:
-          test-name: "${{ job.status == 'failure' && 'Docs backport' || 'Docs backport conflicts' }} for #${{ steps.event.outputs.pr-number }}"
+          test-name: "${{ job.status == 'failure' && 'Docs backport' || 'Docs backport conflicts' }} for #${{ steps.event.outputs.pr-number || 'unresolved' }}"
           status: ${{ job.status == 'failure' && 'failure' || 'warning' }}
           details: |
-            Source PR: ${{ fromJSON(steps.event.outputs.event-json).pull_request.html_url }}
+            Source PR: ${{ fromJSON(steps.event.outputs.event-json || '{}').pull_request.html_url || 'Unavailable: event resolution failed.' }}
             ${{ steps.backport.outputs.summary || 'See the workflow run for the error.' }}
           run-link-position: bottom
           webhook-url: ${{ secrets.DOCS_BACKPORT_SLACK_WEBHOOK_URL }}
