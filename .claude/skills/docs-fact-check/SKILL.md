@@ -231,6 +231,43 @@ Three verdicts, and keep them distinct:
 Distinguishing wrong from unverified matters more than it looks. Collapsing them
 sends an author rewriting prose that was right all along.
 
+### Summary for the engineer reviewer
+
+When the check is for a PR that will go to an engineer for review, draft a
+summary comment for that PR as well. Engineers are asked to read it before they
+review, and to spend their time on the unverified claims instead of redoing the
+check. Their side of the review is in the "How to review a docs PR" page under
+Docs in Notion.
+
+Keep it short and in this shape:
+
+```markdown
+**Fact check summary** (verified at `<repo>@<ref>`)
+
+**Needs your eyes**
+- <claim, as the page states it>. <why it's unverified: unmerged, behavior is
+  ambiguous, or may not be an intended contract>
+
+**Fixed in this PR**
+- <claim that was wrong>. Now says <corrected behavior>.
+
+**Verified:** <count> claims, covering <short list of areas, such as defaults,
+flags, and UI paths>.
+```
+
+Rules for the comment:
+
+- **Unverified claims come first.** They're the reason the comment exists. Leave
+  the section out only when there are none, and say so.
+- **No private evidence.** `loft-sh/vcluster-docs` is public. Leave out file
+  paths and line numbers from private repos, customer names, and anything else
+  on the "Public GitHub, private Linear" list in "How to contribute to docs".
+  Put the full per-claim report in the Linear issue instead.
+- **One comment per PR.** On a rerun, edit the existing summary comment rather
+  than adding another one.
+- **Ask before posting.** Show the draft and post it only after the user
+  confirms. Posting is a public action.
+
 ## Delegating
 
 If you fan this out to subagents, give each one the ref to verify against, in the
