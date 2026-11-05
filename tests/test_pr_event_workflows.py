@@ -70,6 +70,7 @@ class PullRequestEventContract(unittest.TestCase):
         # Exercise the failure and conflict combinations instead of matching the
         # condition's formatting. Refuse unknown expressions before evaluating.
         for failed, resolver, backport, eligible, conflicts, expected in [
+            (True, 'skipped', 'skipped', False, '', True),
             (True, 'failure', 'skipped', False, '', True),
             (True, 'success', 'failure', True, '', True),
             (False, 'success', 'success', True, 'conflict', True),

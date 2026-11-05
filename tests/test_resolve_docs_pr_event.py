@@ -143,8 +143,9 @@ def test_output_body_and_bridge(tmp_path, monkeypatch):
     assert 'before\nafter\nghadelimiter_injection\n::error::x' in text
     assert '<!-- secret' not in text.split('body-without-comments<<', 1)[1]
     path = next(tmp_path.glob('docs-pr-event-*'))
-    env = dict(os.environ, RESOLVED_PR_EVENT_PATH=str(path))
-    result = subprocess.run(['node', '--require', str(SRC / 'event-bootstrap.cjs'), '-e',
+    node_options = text.split('node-options<<', 1)[1].split('\n', 2)[1]
+    env = dict(os.environ, RESOLVED_PR_EVENT_PATH=str(path), NODE_OPTIONS=node_options)
+    result = subprocess.run(['node', '-e',
                              "console.log(JSON.stringify([process.env.GITHUB_EVENT_NAME, JSON.parse(require('fs').readFileSync(process.env.GITHUB_EVENT_PATH)).number]))"],
                             env=env, text=True, capture_output=True, check=True)
     assert json.loads(result.stdout) == ['pull_request', 1]
