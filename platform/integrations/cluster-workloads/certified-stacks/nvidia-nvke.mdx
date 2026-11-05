@@ -1,0 +1,234 @@
+---
+title: Install the NVIDIA NVKE management plane
+sidebar_label: NVIDIA NVKE management plane
+sidebar_position: 3
+description: Evaluate the NVKE management-plane Stack with a signed NVKR release in an existing cluster on private nodes.
+---
+
+import Flow, { Step } from '@site/src/components/Flow';
+import InterpolatedCodeBlock from '@site/src/components/InterpolatedCodeBlock';
+import InternalPreview from '../../../_fragments/dsx-internal-preview.mdx';
+
+[NVIDIA Kubernetes Engine (NVKE)](https://github.com/dsx-ai-factory/nvke) provides management services for creating and operating Kubernetes clusters.
+vCluster Platform can install those services into a cluster from artifacts built with NVIDIA Kubernetes Recipes (NVKR).
+For the deployment choices, see [NVIDIA DSX OS](../../nvidia-dsx-os.mdx).
+
+<InternalPreview />
+
+## Before you begin
+
+Use an evaluation environment with:
+
+- Platform v5.0+ and an existing vCluster v0.38+ cluster with private `linux/amd64` nodes.
+- Platform administrator access to register the source Apps and StackTemplate, and project access to create a StackInstance.
+- A default StorageClass, or a named class for the `storageClass` parameter.
+  PostgreSQL requests 40Gi and SPIRE requests 1Gi. The services request approximately 1 CPU and 2.5GiB of memory in total.
+  Allow additional capacity for Kubernetes, storage, and other workloads.
+- A signed NVKR release containing the eight outputs listed below, with read access to its registry.
+- Outbound HTTPS to the release registry, GitHub for cosign, public Sigstore services, cert-manager's chart repository, and component image registries.
+
+Install the Stack once per destination cluster. It creates cluster-scoped resources, including custom resource definitions (CRDs).
+Use a fresh cluster to avoid conflicts with existing cert-manager, SPIRE, telemetry, or NVKE installations.
+
+:::note Release availability
+The Stack source is available, but Platform v5.0.0-rc.1 doesn't bundle it.
+The recorded installation tests used Platform v5.0.0-alpha.9 and vCluster v0.37.2.
+This procedure targets v0.38+ and still needs a complete run on that version.
+:::
+
+The Stack installs the management services. It doesn't install NICo, Cluster API, or downstream provisioning prerequisites.
+Follow [NVKE's deployment documentation](https://github.com/dsx-ai-factory/nvke/blob/v0.22.0/deploy/README.md)
+for the additional infrastructure work. Don't use Stack readiness as a downstream provisioning test.
+
+## Prepare release artifacts
+
+NVKR builds and publishes artifacts. The operator supplies its Definition, registry, and signing environment.
+Use the Stack's [NVKR Definition and environment example](https://github.com/loft-sh/vcluster-stacks/tree/1427cdced99bc8051b72b9e442d6dfd5dc98b01a/certified-stacks/nvidia-nvke-mgmt/nvkr)
+and the upstream [release workflow](https://github.com/dsx-ai-factory/nvkr/blob/main/docs/release-quickstart.md).
+
+The Stack expects these outputs for `linux/amd64`:
+
+| Output | Purpose |
+| --- | --- |
+| `controller-chart` | NVKE controller chart |
+| `cwe` | Controller image |
+| `profiles` | Controller profiles image |
+| `nktp` | NVKE telemetry chart |
+| `postgresql` | Database chart |
+| `spire-crds` | SPIRE API definitions |
+| `spire` | Identity services chart |
+| `temporal` | Workflow services chart |
+
+Record the digest-pinned release root, publication prefix, signer identity, and OpenID Connect (OIDC) issuer from the publishing workflow.
+The chart outputs must retain the version and version-plus-digest tags that NVKR publishes.
+The Stack's current Helm values follow NVKE v0.22.0. Use that version for the first evaluation.
+
+Keep `verifyMode: root`. This mode checks signatures and provenance on the release root and every output.
+Mode `off` skips those checks and is only an evaluation option for locally produced, dry-run-signed artifacts.
+A run with mode `off` doesn't demonstrate verified release installation.
+
+## Install into an existing cluster
+
+The commands use two Kubernetes contexts:
+
+- **Platform management context:** registers templates and creates the StackInstance.
+- **Destination cluster context:** inspects the installed NVKE services.
+
+Use [Connect to the management API](../../../reference/platform-cli.mdx) for Platform CLI access.
+Create or select your private-node cluster before proceeding. The upstream cluster templates pin vCluster v0.37.2;
+using an existing v0.38+ cluster avoids silently evaluating the older version.
+
+<Flow>
+<Step>
+Connect `kubectl` to the Platform management API.
+
+```bash
+vcluster platform connect management
+```
+
+Confirm that this context can list the target project namespace and its cluster resources.
+</Step>
+<Step>
+Check whether the NVKE StackTemplate is already registered.
+
+```bash
+kubectl get stacktemplate nvidia-nvke-mgmt
+```
+
+If it exists, record which Platform release supplied it and inspect its parameters before creating the StackInstance.
+If it returns `NotFound`, register the source manifests using the evaluation procedure below.
+</Step>
+<Step>
+Create a StackInstance in the project namespace that owns the destination cluster.
+Use the example in [Configure the StackInstance](#configure-the-stackinstance), save it as `nvke-management.yaml`, and apply it.
+
+<InterpolatedCodeBlock language="bash" code={'kubectl apply -n [[VAR:PROJECT_NAMESPACE:p-default]] -f nvke-management.yaml'} />
+
+The first task verifies the release. Installation starts only after verification succeeds.
+</Step>
+</Flow>
+
+### Register source manifests for an unbundled RC
+
+Use this path only when the template is absent. Registering these resources changes the Platform catalog.
+Don't overwrite an existing bundled template with a source copy.
+
+Pin the source checkout so other engineers can reproduce the evaluation:
+
+```bash
+git clone https://github.com/loft-sh/vcluster-stacks.git
+cd vcluster-stacks
+git checkout 1427cdced99bc8051b72b9e442d6dfd5dc98b01a
+kubectl apply -f certified-stacks/nvidia-nvke-mgmt/apps/ \
+  -f certified-stacks/nvidia-nvke-mgmt/stacktemplate.yaml
+```
+
+This registers two Apps and the StackTemplate. It doesn't install NVKE into a destination yet.
+The source manifests carry a certified marker. Applying them manually doesn't mean your RC bundles or validates them.
+
+### Configure the StackInstance
+
+Edit every environment-specific value before applying this example. Supply a new database password and a registry token with read access, if required.
+The file contains credentials. Keep it outside source control and remove the local copy after use.
+For an anonymously readable registry, leave the registry username and password empty.
+
+<InterpolatedCodeBlock
+  language="yaml"
+  title="nvke-management.yaml"
+  code={'apiVersion: management.loft.sh/v1\n' +
+    'kind: StackInstance\n' +
+    'metadata:\n' +
+    '  name: nvke-mgmt\n' +
+    'spec:\n' +
+    '  displayName: NVIDIA NVKE Management Plane\n' +
+    '  owner:\n' +
+    '    user: [[VAR:OWNER:admin]]\n' +
+    '  destination:\n' +
+    '    virtualCluster:\n' +
+    '      name: [[VAR:CLUSTER_NAME:my-cluster]]\n' +
+    '  templateRef:\n' +
+    '    name: nvidia-nvke-mgmt\n' +
+    '  parameters:\n' +
+    '    # Copy the actual root digest and prefix from your NVKR publication.\n' +
+    '    releaseRoot: "[[VAR:RELEASE_ROOT:ghcr.io/my-org/nvkr/releases@sha256:REPLACE_WITH_RELEASE_DIGEST]]"\n' +
+    '    registryPrefix: "[[VAR:REGISTRY_PREFIX:ghcr.io/my-org/nvkr]]"\n' +
+    '    # Enter the certificate identity regexp from your signing workflow.\n' +
+    "    signerIdentity: '[[VAR:SIGNER_IDENTITY:REPLACE_WITH_SIGNER_IDENTITY_REGEXP]]'\n" +
+    '    oidcIssuer: https://token.actions.githubusercontent.com\n' +
+    '    verifyMode: root\n' +
+    '    registryUsername: "[[VAR:REGISTRY_USERNAME:]]"\n' +
+    '    registryPassword: "[[VAR:REGISTRY_PASSWORD:]]"\n' +
+    '    dbPassword: "[[VAR:DATABASE_PASSWORD:REPLACE_WITH_NEW_PASSWORD]]"\n' +
+    '    # Preserve identity services and node telemetry on private nodes.\n' +
+    '    sharedNodes: "false"\n' +
+    '    storageClass: "[[VAR:STORAGE_CLASS:]]"\n' +
+    '    clusterName: nvke\n' +
+    '    certManagerVersion: v1.21.3\n' +
+    '  prunePolicy: Prune'}
+/>
+
+The release digest and signer fields intentionally have invalid replacement text. Obtain real values from your release before applying the manifest.
+The release selects the six chart packages and the controller and profiles image digests. cert-manager is selected separately.
+
+## Verify the installation
+
+In the Platform management context, inspect the aggregate phase and task results:
+
+<InterpolatedCodeBlock language="bash" code={'kubectl get stackinstance nvke-mgmt -n [[VAR:PROJECT_NAMESPACE:p-default]] -o yaml'} />
+
+Expect `status.phase: Healthy` and nine healthy tasks.
+The `verify` task gates cert-manager, base configuration, NKTP, PostgreSQL, SPIRE CRDs, Temporal, SPIRE, and the controller.
+A healthy result establishes installation of those services in this cluster.
+
+Switch to the destination cluster context before inspecting its workloads:
+
+<InterpolatedCodeBlock language="bash" code={'kubectl --context [[VAR:DESTINATION_CONTEXT:my-cluster]] get pods -n nke-controller\n' +
+  'kubectl --context [[VAR:DESTINATION_CONTEXT:my-cluster]] get configmap -n nvke-verify nvke-release-verification -o yaml'} />
+
+Check that the controller is ready and that the verification record names your release root, signer, chart versions, and image digests.
+On private nodes, also inspect the SPIRE workloads in `spire-server` and `spire-system`.
+
+For an internal demonstration, record the Platform, vCluster, NVKE, Stack source, release root, and node architecture alongside the results.
+Record failures as failures rather than replacing them with the earlier test record.
+
+## Diagnose a failed installation
+
+| Symptom | Check |
+| --- | --- |
+| `verify` fails and later tasks remain `Waiting` | Inspect the verification Job's logs in `nvke-verify`. Check registry access, signer identity, issuer, root digest, required outputs, and chart tags. |
+| Pods remain `Pending` | Check node readiness, available resources, PVCs, and the configured StorageClass. |
+| Image pulls fail after verification | Check runtime-image registry access as well as the release registry credentials. |
+| Controller lacks a SPIFFE identity | Confirm private nodes and `sharedNodes: "false"`. The shared-node variant intentionally omits this identity. |
+| Stack is healthy but no downstream nodes appear | The Stack doesn't configure NICo or Cluster API. Check the separate NVKE provisioning setup. |
+
+Use a separate failed-verification evaluation to demonstrate that a wrong signer or invalid release digest blocks a fresh installation.
+The earlier recorded test changed the root digest and left the eight installation tasks waiting.
+A wrong-signer test on the requested RC pair is still pending.
+
+## Remove the evaluation
+
+Deleting the StackInstance removes its managed applications. This can remove NVKE namespaces and database PVCs.
+Back up any required data before deletion. Don't use this procedure on an NVKE management plane with active downstream clusters.
+
+<InterpolatedCodeBlock language="bash" code={'kubectl delete stackinstance nvke-mgmt -n [[VAR:PROJECT_NAMESPACE:p-default]]'} />
+
+The recorded source test left chart-installed CRDs and the empty `cert-manager`, `nvke-base`, and `nvke-verify` namespaces.
+Inspect retained volumes and resources before reusing the cluster. Don't remove shared CRDs from a cluster that still uses them.
+
+If you manually registered the source catalog objects, remove them only after every evaluation StackInstance using them is gone.
+Keep bundled catalog objects in place.
+
+## Known limits
+
+- Only `linux/amd64` is covered by this Stack's Definition and verification tool download.
+- Private nodes retain the Stack's full identity configuration. Shared nodes omit SPIRE agents, the CSI driver, OIDC discovery, and node telemetry.
+- The SPIRE trust domain is currently fixed to `example.org`.
+- Verification covers the release's chart packages and two NVKE-built images. Other runtime images come from upstream registries at the chart-selected references.
+- Helm pulls verified charts by tag. Limit registry write access because a tag can change after verification.
+- Updating `releaseRoot` reconciles applications, but this draft doesn't establish a supported NVKE management-plane upgrade or backup procedure.
+
+## Next steps
+
+- [Manage connected NVKE clusters](../manage-nvke-clusters.mdx) for the separate existing-cluster workflow.
+- [Use a Stack](../../../use-platform/apps/use-stacks.mdx) for general lifecycle and permissions.
+- [Upstream Stack requirements and test record](https://github.com/loft-sh/vcluster-stacks/tree/1427cdced99bc8051b72b9e442d6dfd5dc98b01a/certified-stacks/nvidia-nvke-mgmt) for the pinned evaluation inputs.
