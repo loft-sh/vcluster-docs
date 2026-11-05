@@ -17,6 +17,8 @@ class PullRequestEventContract(unittest.TestCase):
     def test_relay_is_an_unprivileged_signal(self):
         workflow = load(RELAY)
         self.assertEqual(workflow['name'], 'Pull request events')
+        self.assertIn('toJSON(github.event.action)', workflow['run-name'])
+        self.assertIn('toJSON(github.event.label.name || \'\')', workflow['run-name'])
         self.assertTrue({'opened', 'edited', 'labeled', 'closed'} <= set(workflow['on']['pull_request']['types']))
         self.assertEqual(set(workflow['on']), {'pull_request'})
         self.assertEqual(workflow['permissions'], {})
@@ -54,7 +56,6 @@ class PullRequestEventContract(unittest.TestCase):
                 self.assertLess(job['steps'].index(checkout), job['steps'].index(resolve))
                 text = (ROOT / name).read_text()
                 self.assertNotIn('github.event.pull_request', text)
-                self.assertNotIn('steps.event.outputs.action', text)
                 self.assertNotRegex(text, r'steps\.event\.outputs\.label(?![\w-])')
 
     def test_no_pull_request_target_in_github_configuration(self):
@@ -100,6 +101,8 @@ class PullRequestEventContract(unittest.TestCase):
                 step = next(step for step in job['steps'] if step.get('uses', '').startswith('loft-sh/docs-'))
                 self.assertIn("steps.event.outputs.eligible == 'true'", step['if'])
                 self.assertIn('pull_request.merged == true', step['if'])
+                self.assertIn(".action == 'closed'", step['if'])
+                self.assertIn(".action == 'labeled'", step['if'])
                 self.assertEqual(step['env']['NODE_OPTIONS'], '${{ steps.event.outputs.node-options }}')
                 self.assertEqual(step['env']['RESOLVED_PR_EVENT_PATH'], '${{ steps.event.outputs.event-path }}')
         forwardport = (ROOT / CONSUMERS[1]).read_text()

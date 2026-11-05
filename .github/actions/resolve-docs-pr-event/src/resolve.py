@@ -129,6 +129,15 @@ def resolve(api, payload, source, expected_base=''):
         not isinstance(head_repo, str) or not head_repo or not isinstance(branch, str) or not branch or
         not valid_sha(head) or signal.get('head_sha') != head):
         raise Invalid('invalid signal run')
+    # `display_title` is derived from the relay's run-name. It is untrusted
+    # because the PR controls the relay event, so it may only narrow the
+    # already API-validated current PR state below.
+    match = re.fullmatch(r'docs-pr-event:("(?:opened|edited|labeled|closed|reopened|synchronize)"):("(?:[^"\\]|\\.)*")', run.get('display_title', ''))
+    if not match:
+        raise Invalid('invalid signal hint')
+    signal_action, signal_label = (json.loads(value) for value in match.groups())
+    if signal_action != 'labeled' and signal_label:
+        raise Invalid('unexpected signal label')
     if 'head_repository' in signal and not same(mapping(signal['head_repository']).get('full_name'), head_repo):
         raise Invalid('signal head repository mismatch')
     numbers = {}
@@ -160,6 +169,8 @@ def resolve(api, payload, source, expected_base=''):
     labels = pr.get('labels')
     if not isinstance(labels, list) or any(not isinstance(label, dict) or not isinstance(label.get('name'), str) for label in labels):
         raise Invalid('invalid pull request labels')
+    if signal_action == 'labeled' and not any(label['name'] == signal_label for label in labels):
+        return None
     if pr.get('body') is not None and not isinstance(pr['body'], str):
         raise Invalid('invalid pull request body')
     found = False
@@ -172,8 +183,10 @@ def resolve(api, payload, source, expected_base=''):
                 raise Invalid('invalid comment')
             if author in ('github-actions[bot]', 'loft-bot') and ('<!-- docs-follow-up -->' in body or LEGACY.fullmatch(body.strip())):
                 found = True
-    return {'action': 'closed' if pr.get('merged') is True else 'edited',
-            'number': pr['number'], 'pull_request': pr, 'repository': repo}, found
+    event = {'action': signal_action, 'number': pr['number'], 'pull_request': pr, 'repository': repo}
+    if signal_action == 'labeled':
+        event['label'] = {'name': signal_label}
+    return event, found
 
 
 def write_values(values):

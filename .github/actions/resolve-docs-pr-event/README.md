@@ -29,9 +29,11 @@ reading the PR comments used to detect an existing follow-up.
 | `body-without-comments` | Current PR body with HTML comments removed. |
 | `follow-up-created` | Whether a trusted bot posted the follow-up marker or a legacy plain Linear issue URL. |
 
-The synthetic action is `closed` for a merged PR and `edited` otherwise. The
-event does not preserve the original signal action or label. Consumers must use
-current PR state. A signal can be missed if GitHub cannot associate its head
+The relay places the action and label in its run name. These are untrusted hints:
+they can narrow a consumer's work, but do not authorize it. The resolver checks
+the current PR state and rejects a labeled hint if the label is no longer present.
+A forged or replayed hint can still repeat work, so port actions need independent
+idempotence for retries and untrusted signals. A signal can be missed if GitHub cannot associate its head
 commit with the PR, the head has changed, or the run fails. API calls are capped
 at 30, candidate PRs at 10, and comment pages at three. Exhausted limits and API
 errors fail the job. No match skips the event.
@@ -42,8 +44,8 @@ errors fail the job. No match skips the event.
 | --- | --- | --- | --- |
 | Signal | PR opened, edited, labeled, closed, reopened, or synchronized | No-op with no permissions or secrets | GitHub may require fork approval. Conflicted PRs cannot signal until GitHub can run the workflow. |
 | Resolution | Completed signal; repository, run attempt, workflow, commit associations, and current PR from the API | Validated PR identity and current state | Stale or ambiguous identity skips. API errors and exhausted limits fail the job. |
-| Ports | Validated merged PR and current labels | Existing backport and forwardport actions create target PRs | Existing actions filter eligible paths, targets, and duplicate ports. Resolver or backport failure reaches the existing backport alert. |
-| Linear links | Validated PR targeting main | Existing commenter updates Linear context | Dependabot is excluded. Repeated signals use the commenter's existing update behavior. |
+| Ports | Validated merged PR and current labels | Existing backport and forwardport actions create target PRs | Close signals process current labels; label signals process only the matching current label. Replayed or forged signals can still repeat work. A checkout, resolver, or backport failure reaches the existing backport alert. |
+| Linear links | Validated PR targeting main | The trusted commenter adds missing Linear links | Dependabot is excluded. All comment pages are checked before any link is added. |
 | Follow-up | Current follow-up label and PR comments | Existing Linear action creates an issue, then posts its link with a marker | A trusted bot marker or legacy plain Linear URL skips creation. Runs for the same head serialize. |
 
 This resolver mirrors the identity checks in `loft-sh/github-actions` PR #349.

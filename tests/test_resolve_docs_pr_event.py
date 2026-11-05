@@ -22,7 +22,7 @@ class FakeAPI:
         self.run = {'id': 10, 'run_attempt': 1, 'event': 'pull_request', 'status': 'completed',
                     'conclusion': 'success', 'path': SOURCE, 'workflow_id': 11, 'repository': REPO,
                     'head_repository': {'full_name': 'fork/docs' if fork else 'org/docs'},
-                    'head_branch': 'feature', 'head_sha': A}
+                    'head_branch': 'feature', 'head_sha': A, 'display_title': 'docs-pr-event:"edited":""'}
         self.pr = {'number': 1, 'head': {'ref': 'feature', 'sha': A, 'repo': self.run['head_repository'].copy()},
                    'base': {'ref': 'main', 'repo': {'full_name': 'org/docs'}},
                    'merged': False, 'merge_commit_sha': None, 'body': 'before\n<!-- secret\ntext -->after',
@@ -97,8 +97,38 @@ def test_expected_base_and_merged_sha():
     api = FakeAPI(); api.pr['base']['ref'] = 'next'; api.candidates[0]['base']['ref'] = 'next'
     assert r.resolve(api, payload(), SOURCE, 'main') is None
     api.pr.update(merged=True, merge_commit_sha=A); api.pr['head']['sha'] = B
+    api.run['display_title'] = 'docs-pr-event:"closed":""'
     event, _ = r.resolve(api, payload(), SOURCE, 'next')
     assert event['action'] == 'closed'
+
+
+@pytest.mark.parametrize('action,label,labels,expected', [
+    ('closed', '', ['backport-v0.38', 'forwardport-main'], 'closed'),
+    ('labeled', 'backport-v0.38', ['backport-v0.38', 'backport-v5.0'], 'labeled'),
+    ('labeled', 'forwardport-main', ['forwardport-main'], 'labeled'),
+])
+def test_port_signal_action_and_label_are_preserved(action, label, labels, expected):
+    api = FakeAPI()
+    api.pr.update(merged=True, merge_commit_sha=A, labels=[{'name': name} for name in labels])
+    api.run['display_title'] = 'docs-pr-event:%s:%s' % (json.dumps(action), json.dumps(label))
+    event, _ = r.resolve(api, payload(), SOURCE)
+    assert event['action'] == expected
+    if action == 'labeled':
+        assert event['label'] == {'name': label}
+
+
+def test_unrelated_or_removed_label_signal_is_ineligible():
+    api = FakeAPI()
+    api.pr.update(merged=True, merge_commit_sha=A, labels=[{'name': 'backport-v0.38'}])
+    api.run['display_title'] = 'docs-pr-event:"labeled":"follow-up"'
+    assert r.resolve(api, payload(), SOURCE) is None
+
+
+@pytest.mark.parametrize('title', ['', 'docs-pr-event:"made-up":""', 'docs-pr-event:"closed":"oops"'])
+def test_rejects_invalid_signal_hints(title):
+    api = FakeAPI(); api.run['display_title'] = title
+    with pytest.raises(r.Invalid, match='signal hint|unexpected signal label'):
+        r.resolve(api, payload(), SOURCE)
 
 
 def test_ambiguous_and_candidate_cap():
