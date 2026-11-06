@@ -14,7 +14,7 @@ Use the Connector management API to configure integrations and grant tenants acc
 - A kubeconfig pointing to the Platform management API.
 - Platform admin permissions for the grant examples.
 - The license feature for the connector type you create or update.
-- An existing Tenant named `acme` for the examples. Replace example names with your resource names.
+- A Tenant for the grant examples.
 
 Tenants can use granted connectors, but can't create, update, patch, or delete connectors in this release. They also need a role granting get and list, such as `loft-connectors-viewer`.
 
@@ -41,7 +41,7 @@ The table shows names, types, display names, and ages. Inspect conditions as a c
 
 ## Update credentials
 
-Use a connector-admin session and update the full configuration. A reduced viewer object isn't a configuration backup.
+Update connectors as a connector admin, and include the complete configuration in the update. Users with only view access see a reduced copy that leaves out some fields. Don't save that copy as a backup or send it back as an update.
 
 Any API update, including a patch or a label change, rewrites the backing Secret from the fields the API models. Unmodeled Secret data keys and withheld annotations, such as the last-applied annotation, are dropped. This matters most for connectors created as Secrets by hand or by other automation.
 
@@ -54,7 +54,7 @@ Any API update, including a patch or a label change, rewrites the backing Secret
 | OS image store | Keeps `s3.secretKey`. An empty `s3.sessionToken` removes that token. |
 | Observability | References TLS Secrets instead of embedding these credentials. Manage the referenced Secrets separately. |
 
-Non-credential fields don't generally use empty-means-keep behavior. To change just one field, use a merge patch rather than constructing a replacement from a reduced response:
+An empty credential keeps the stored value, as the table shows. Other fields generally don't, so an empty value replaces the stored one. To change one field, send only that field in a merge patch. Don't edit the reduced copy a viewer sees and send it back as an update:
 
 <InterpolatedCodeBlock
   language="bash"
@@ -63,9 +63,19 @@ Non-credential fields don't generally use empty-means-keep behavior. To change j
 
 The API validates every update in full, including credentials already required by the selected authentication method. An incomplete legacy Secret, such as an Argo CD Secret with no usable credential or a MySQL Secret with no port, refuses any update until you supply the missing fields.
 
+## Use the API from automation
+
+The API supports create, get, list, update, patch, and delete. It doesn't support watch or collection deletion, so poll lists instead.
+
+Create and update validate the payload and the license features it needs. A patch is validated as the object that results from it. Status is read-only, so a write that includes status doesn't change it. A delete can return successfully while a finalizer still holds the backing Secret for cleanup.
+
+Use server-side apply, imperative commands, or read-modify-write replacement. Client-side apply can't reliably track its previous configuration because the API withholds the last-applied annotation.
+
+`spec.displayName` and `spec.description` map to the backing Secret's Platform annotations, and the payload section sets its `loft.sh/connector-type` label. To manage backing Secrets directly, use a kubeconfig for the control plane cluster instead of the management API.
+
 ## Grant use to a tenant
 
-Labeling a connector is an API update. On a connector created as a Secret, it drops data keys the API doesn't model, and it fails until any missing required fields are supplied. Review [Update credentials](#update-credentials) before you label a connector that existing automation also writes. A [name grant](#grant-connectors-by-name) doesn't require a label and leaves the connector's Secret data untouched, so it suits those connectors.
+Adding a label to a connector updates it through the API, the same as any other change. For a connector created directly as a Secret, the label change removes Secret data keys the API doesn't model, and it fails until any missing required fields are supplied. Review [Update credentials](#update-credentials) before you label a connector that existing automation also writes. A [name grant](#grant-connectors-by-name) doesn't require a label and leaves the connector's Secret data untouched, so it suits those connectors.
 
 First enable connector use on the Tenant. Every grant method requires it:
 
@@ -119,15 +129,6 @@ Use labels that the Connector API passes through. Tenant admission refuses a `by
 
 An empty selector (`byLabels: {}`) grants every eligible admin-managed connector, and Platform then ignores `byName`. An absent or null selector grants none by label. To replace an existing selector with an empty map through a merge patch, clear it with null first.
 
-### Share a connector with all tenants
-
-Set the `tenant.vcluster.com/all` label to `"true"` to share a connector with every tenant that has connector use enabled. A connector can't carry both that label and the `tenant.vcluster.com/exclusive-to` label at once.
-
-<InterpolatedCodeBlock
-  language="bash"
-  code={"kubectl label connectors.management.loft.sh [[VAR:CONNECTOR:prod-db]] tenant.vcluster.com/all=true --overwrite"}
-/>
-
 ### Verify the grant
 
 Create an [access key](../../../administer/authentication/access-keys.mdx#create-an-access-key) for a user in the tenant with the `loft-connectors-viewer` role. Use a separate CLI configuration and kubeconfig for tenant checks. Keep the existing admin session for grant changes.
@@ -160,17 +161,11 @@ controlPlane:
 
 Create a cluster from that template as the tenant. Without the connector grant, the literal reference is rejected. Restore the grant in the admin session, then retry the cluster creation as the tenant.
 
-Checks run at different points, so some edits succeed after a grant is lost.
+Checks run at different points, so some edits succeed after a grant is lost. A connector name supplied through a template parameter is checked when the cluster reconciles, and the cluster's connector condition reports a failure. See [A cluster reports an unusable connector](#a-cluster-reports-an-unusable-connector). An edit that keeps or removes a reference already in effect isn't checked again, so it succeeds even after the grant is revoked.
 
-| Situation | When it's checked | What you see |
-| --- | --- | --- |
-| A write adds a literal connector reference | On that write | The write fails with `does not name a usable connector`. |
-| A template parameter supplies the connector name | When the cluster reconciles | The cluster's connector condition reports the unusable connector. See [A cluster reports an unusable connector](#a-cluster-reports-an-unusable-connector). |
-| An edit keeps or removes a reference already in effect | Not checked again | The edit succeeds, even after the grant is revoked. |
-| The cluster uses a versioned template | On every write | If the template version names a connector the tenant can't use, writes fail until the grant returns or the template changes. |
-| A cluster requests an observability writer credential | When Platform issues the credential | The request fails. See [Retrieve cluster writer credentials](./observability.mdx#retrieve-cluster-writer-credentials). |
-| An OSImage is created, uploaded, or finalized | On each of those requests | The request fails if the tenant can't use the `spec.connectorRef` image store. |
-| A grant is revoked | When each dependent object next reconciles | New use fails. See [Revoke a grant and clean up](#revoke-a-grant-and-clean-up). |
+A cluster that uses a versioned template is checked on every write. If its template version names a connector the tenant can't use, writes fail until the grant returns or the template changes.
+
+OSImage create, upload, and finalize requests fail if the tenant can't use the `spec.connectorRef` image store.
 
 NodeProvider creation checks `spec.metal3.netBox.secretRef`, and so does an update that changes it. The reference must name a NetBox connector in the Platform namespace that the owning tenant can use. The NetBox sync also checks the grant again before it calls NetBox. See [Reference it from a node provider](./netbox.mdx#reference-it-from-a-node-provider).
 
@@ -185,7 +180,7 @@ In the admin session, remove an exclusive assignment:
   code={"kubectl label connectors.management.loft.sh [[VAR:CONNECTOR:prod-db]] tenant.vcluster.com/exclusive-to-"}
 />
 
-If the tenant must lose all access, also remove the connector's name from `byName`, any matching label grant, and the `tenant.vcluster.com/all` label. To remove a name, patch the `byName` list without it. Disabling `spec.connectors.enabled` blocks all connector access for that tenant.
+If the tenant must lose all access, also remove the connector's name from `byName` and any matching label grant. To remove a name, patch the `byName` list without it. Disabling `spec.connectors.enabled` blocks all connector access for that tenant.
 
 Verify the revocation with the tenant kubeconfig created in [Verify the grant](#verify-the-grant):
 
@@ -195,7 +190,7 @@ kubectl --kubeconfig tenant-kubeconfig.yaml get connectors.management.loft.sh
 
 The connector no longer appears.
 
-Grant loss limits new use. It doesn't immediately dismantle resources already provisioned through the connector.
+Losing a grant blocks new use of the connector. Resources already provisioned through it aren't removed right away.
 
 | Consumer | Behavior after grant loss |
 | --- | --- |
