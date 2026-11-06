@@ -1,0 +1,359 @@
+---
+title: Tenant boundary reference
+sidebar_label: Boundary Reference
+sidebar_position: 3
+description: How each Platform resource behaves inside a tenant boundary, plus the ownership labels and naming rules that enforce it.
+---
+
+This page is a lookup table. It covers what a tenant can see and author for
+each Platform resource, and the labels and naming rules behind that.
+
+For the workflow, see
+[Create and configure a tenant](./create-and-configure-tenants.mdx). For
+symptoms and error messages, see
+[Troubleshoot tenants](../troubleshoot/tenants.mdx).
+
+## How a resource gets its answer
+
+Every Platform resource resolves to two facts for a given tenant.
+
+- **Can the tenant author its own instances?** This gates creating, not reading.
+  A tenant sees what it owns even where it can't add to it, unless a disabled
+  capability withholds the whole resource.
+- **What happens to the platform's own instances?** Either `hidden`, meaning the
+  tenant sees only what a grant singles out, or `shared`, meaning the tenant sees
+  all of them.
+
+Those two facts come from one of three places, in order.
+
+1. **A capability governs the resource.** The tenant's capability decides. An
+   absent or disabled capability withholds the resource outright. The tenant
+   sees none of the platform's instances, none lent to it, and none of its own.
+2. **A shipped default covers it.** The table below applies.
+3. **Neither.** The resource withholds the platform's instances and lets the
+   tenant keep its own. A resource reaches this case by being new and not yet
+   considered, so the symptom is something missing rather than something
+   disclosed.
+
+## Read the resolved boundary
+
+Platform recomputes the boundary and writes it to the tenant's status, one entry
+per resource.
+
+```bash
+kubectl get tenant acme -o jsonpath='{.status.boundary}' | jq
+```
+
+| Field | Meaning |
+|-------|---------|
+| `resource` | The Platform resource name, lowercase plural |
+| `enabled` | The governing capability's switch. Absent where no capability governs the resource. `false` means the tenant reaches nothing of this resource |
+| `own` | Whether the tenant can author its own instances |
+| `baseline` | `hidden` or `shared`, for instances no selector matches |
+| `byLabels` | The label selector the capability grants with |
+| `byName` | Instances granted by exact name |
+| `derived` | Instances reached by following a reference from something already granted |
+
+`status.hostnames` sits alongside `status.boundary` and lists the DNS names that
+resolve to the tenant. The tenant controller projects it from the tenant's
+configuration. Don't edit it directly. The controller overwrites manual changes
+during its next reconciliation.
+
+The status is mostly a report. Platform works the spec-derived rules out again
+on every request, so selector changes don't wait for the report to update.
+
+`derived` is the exception. Granting a node type also makes its node provider
+reachable, since the grant would otherwise be unusable. The tenant controller
+resolves that relationship into `derived`, and the request path reads those
+names back from status. Don't edit this field. The controller overwrites manual
+changes during its next reconciliation.
+
+## Capability-governed resources
+
+These deny by default. Nothing is visible until the matching capability is
+enabled and a selector matches.
+
+| Resource | Capability | Tenant can author its own |
+|----------|-----------|---------------------------|
+| `clusters` | `controlPlaneClusters` | No |
+| `nodetypes` | `nodeTypes` | No |
+| `osimages` | `osImages` | Yes, with `allow.custom` |
+| `sshkeys` | `sshKeys` | Yes, with `allow.custom` |
+| `virtualclustertemplates` | `templates` | No |
+| `apps` | `templates` | No |
+| `stacktemplates` | `templates` | No |
+| `spacetemplates` | `templates` | No |
+| `machineconfigtemplates` | `templates` | No |
+| `argocdapplicationtemplates` | `templates` | No |
+| `connectors` | `connectors` | No |
+
+A capability that's absent or disabled withholds the resource outright. The
+tenant can't read the platform's instances, instances lent to it, or instances it
+owns, and it can't create new ones. Instances it created before the capability
+was switched off stay in place, but the tenant can't see them until the
+capability is enabled again.
+
+Space templates are the exception to grants. With `templates` enabled, a tenant
+reads only the space templates it already owns. A grant, an exclusive assignment,
+or the `tenant.vcluster.com/all` label doesn't reach the platform's space
+templates, and the tenant can't create new ones. A tenant's default project is
+created without a space template in its allowed templates.
+
+A tenant reading a connector sees its configuration but not its credentials.
+Platform redacts them for any caller who can't update the connector, and a tenant
+can't update one it doesn't own.
+
+## Shipped defaults
+
+These resources have no capability. The table is their whole answer.
+
+### The Tenant keeps its own, the platform's stay hidden
+
+This is the common case. A tenant sees the instances it created and none of the
+platform's.
+
+| Resource | What it is |
+|----------|-----------|
+| `projects` | Projects |
+| `virtualclusterinstances` | Clusters |
+| `spaceinstances` | Namespaces |
+| `projectsecrets` | Project secrets |
+| `nodeclaims` | Instances (`NodeClaim`) |
+| `argocdapplications` | Argo CD applications |
+| `appinstances` | App instances |
+| `stackinstances` | Stack instances |
+| `virtualclusterschemas` | Cluster schemas |
+| `nodeproviders` | Node providers |
+| `machines` | Machine inventory mirrors (physical servers) |
+| `nodeprofiles` | Node profiles |
+| `networkpeers` | Network peers |
+| `users` | Users |
+| `teams` | Teams |
+| `sharedsecrets` | Shared secrets |
+| `oidcclients` | OIDC clients |
+| `databaseconnectors` | Database connectors |
+
+`machines` and `nodeprofiles` are resources a platform admin lends by hand. No
+capability grants them, so a tenant reaches one of the platform's only through
+an exclusive assignment or the share-with-every-tenant label. The inventory sync
+writes machines, so in practice a tenant doesn't create them.
+
+A machine can only be assigned to a tenant that's allowed a node type covering
+it. At least one node type of the machine's provider must select the machine,
+and the tenant's `nodeTypes` capability must allow that node type. Otherwise the
+assignment is refused. A machine that no node type selects can't be assigned to
+any tenant. Providers that keep no machine inventory aren't checked.
+
+`users` and `teams` are the tenant's own identities. A tenant never sees the
+platform's users or teams, and a platform team can't be lent to a tenant.
+
+`spaceinstances` covers only the namespaces a tenant already owns. The tenant
+can still read and manage them, but no one can create, import, or migrate a
+namespace into a tenant project, a platform admin included. Each attempt is
+refused with `tenant "acme" may not use this endpoint`.
+
+On a cluster in a tenant project, the tenant can't change the inline
+`spec.template`, `spec.external`, or the `loft.sh/skip-helm-deploy` annotation.
+Those decide what Platform deploys, so only a platform admin can change them.
+
+Every cluster a tenant user creates must name a template the project allows.
+This holds for tenant admins and project admins too, and the project's
+`requireTemplate` waiver doesn't apply to tenant users. A tenant can't turn the
+waiver on either. If a platform admin already set it, the tenant's other edits
+to the project still go through.
+
+Importing a cluster deployed outside Platform into a tenant project is off by
+default. A platform admin turns it on per tenant. See
+[Allow importing externally deployed clusters](./create-and-configure-tenants.mdx#allow-importing-externally-deployed-clusters).
+
+`sharedsecrets`, `oidcclients`, and `databaseconnectors` are sensitive, which is
+a reason to hide the platform's instances rather than a reason a tenant may not
+hold its own.
+
+### Lent by a platform admin, never authored
+
+| Resource | What it is |
+|----------|-----------|
+| `networkenvironments` | Network environments |
+
+A tenant can't own a network environment, so it can't create one, and a platform
+admin can't create one on a tenant's behalf. Both writes are refused with
+`may not own instances of this resource`. A platform admin creates the network
+environment and assigns it to the tenant with the `exclusive-to` label. The
+tenant reads and references it but can't edit it.
+
+### Shared with every Tenant
+
+| Resource | What it is | Tenant can author its own |
+|----------|-----------|---------------------------|
+| `clusterroletemplates` | Cluster role templates | No |
+| `clusterroles` | Kubernetes cluster roles | No |
+| `roles` | Kubernetes roles | No |
+
+A tenant that creates users has to assign them roles, and Platform already ships
+the roles worth assigning. Authoring stays denied, because writing a cluster
+role template is writing RBAC.
+
+Every tenant can read every cluster role and role that no tenant owns, including
+built-in ones such as `cluster-admin`. A role grants nothing without a binding,
+so reading one gives the tenant no access. A binding that names a role another
+tenant owns grants nothing.
+
+### Hidden entirely
+
+| Resource | What it is | Tenant can author its own |
+|----------|-----------|---------------------------|
+| `tenants` | Tenants | No |
+| `clusteraccesses` | Cluster accesses | No |
+
+Managing tenants belongs to a platform admin session. Cluster accesses stay with
+the platform admin too, because a cluster access becomes RBAC inside the control
+plane cluster it names.
+
+## Ownership labels
+
+Three labels record a tenant's relationship to a resource. They answer different
+questions, and no resource can carry more than one of them. Platform refuses a
+write that combines them.
+
+### `tenant.vcluster.com/owner`
+
+The tenant created this resource, and it counts against that tenant. Platform
+applies the label at creation, keeps it on update, and refuses any change that
+would alter it. A tenant can neither see nor set it.
+
+An absent label means the resource belongs to the platform.
+
+### `tenant.vcluster.com/exclusive-to`
+
+A platform admin assigned this resource to one tenant. Nothing derives it,
+because no field in the Tenant spec expresses exclusivity. A platform admin
+applies and removes it by hand.
+
+```yaml
+metadata:
+  labels:
+    tenant.vcluster.com/exclusive-to: acme
+```
+
+The value is the tenant name. An empty value reserves the resource for the
+platform, which is a claim rather than the absence of one. Removing the label
+returns the resource to the pool, except on a network environment, where the
+assignment can't be changed or removed once set.
+
+The holding tenant reads and references the resource. Every write, including
+deletion, stays with the platform admin.
+
+Any resource can carry the label except projects, clusters, space instances,
+project secrets, shared secrets, users, and teams. Platform refuses it on these
+kinds. Resources in a project take their tenant from the project, so a loan
+can't say who owns them. Assigning a user or team would hand over authority
+rather than lend capacity. Assigning a shared secret would hand over the
+credential itself. To lend the use of a credential, use a connector instead.
+
+If a capability governs the resource, the tenant must have that capability
+enabled before you assign to it. Otherwise the assignment is refused, because the
+tenant would never be served it.
+
+```text
+tenant "acme" has this resource switched off, so it would never be served the
+assignment; enable the capability first
+```
+
+### `tenant.vcluster.com/all`
+
+A platform admin shared this resource with every tenant. Only the value `"true"`
+shares, so any other value withholds.
+
+```yaml
+metadata:
+  labels:
+    tenant.vcluster.com/all: "true"
+```
+
+Every tenant can read and reference the resource, and none can write to it. The
+label can't go on tenants, or on any kind that refuses the `exclusive-to` label. It also can't be combined with the
+`tenant.vcluster.com/owner` label or the `tenant.vcluster.com/exclusive-to` label.
+
+A disabled capability still wins. A tenant with the governing capability
+switched off doesn't see a shared resource of that kind.
+
+## Name rules
+
+### Tenant names
+
+A tenant name must be a valid DNS label. The platform checks it when it accepts
+the tenant, whether you use the UI or apply YAML.
+
+| Rule | Reason |
+|------|--------|
+| Lowercase alphanumeric and hyphens | Derived names have to be valid DNS labels too |
+| Starts and ends alphanumeric | Same reason. A `metadata.generateName` prefix is the exception and can end in a hyphen |
+| No dots | A project's namespace is derived from the name |
+| No `--` sequence | `--` separates the tenant name from the resource name |
+| `metadata.name` is 32 characters or fewer | Everything the tenant owns is named after it, and `<tenant>--default` still has to fit the project name budget |
+| `metadata.generateName` is 27 characters or fewer | Kubernetes appends a five-character suffix, and the final name must fit the 32-character limit |
+
+This is stricter than Platform's other resources. Users and teams permit dots.
+Tenants don't, because a tenant name has to survive being embedded in every
+name derived from it.
+
+A tenant can be created with `metadata.generateName` instead of
+`metadata.name`, and one of the two is required. The prefix can end in a hyphen,
+which Kubernetes places immediately before the generated characters.
+
+The name is immutable after creation, so a rename means creating a new tenant.
+Everything the tenant owns is derived from it, so treat the name as permanent
+when you pick it.
+
+### Resource names
+
+A cluster-scoped resource a tenant creates must be named `<tenant>--<name>`. For
+a tenant called `acme`, an SSH key called `build` is named `acme--build`.
+
+This applies to every resource the tenant owns, whoever creates it. A platform
+admin who creates a tenant-owned user, team, or project is held to the same
+prefix. The rule doesn't apply to resources a platform admin grants or assigns,
+because the platform still owns those. Namespace-scoped resources are
+unaffected, because their names are already scoped by the namespace.
+
+The prefix is reserved in the other direction too. A cluster-scoped name that
+starts with an existing tenant's prefix must belong to that tenant, so a platform
+admin can't create a platform-owned or lent resource named `acme--<name>`.
+
+Omitting the prefix produces a validation error naming the prefix required.
+
+```text
+SSHKey.management.loft.sh "build" is invalid: metadata.name: Invalid value:
+"build": must start with "acme--": this kind is cluster-scoped, so its name is
+shared with every tenant on the platform
+```
+
+### Names created with a Tenant
+
+| Object | Name |
+|--------|------|
+| Tenant admin user | `<tenant>--admin` |
+| Tenant admin team | `<tenant>--admins` |
+| Default project | `<tenant>--default` |
+
+## Selector semantics
+
+| Written | Means |
+|---------|-------|
+| Capability absent | Withheld. The tenant sees none of the platform's instances, none lent to it, and none of its own, and can't author new ones |
+| `enabled: false` | Same as absent |
+| `enabled: true`, no `allow` | Enabled, no admin-owned instance selected. The tenant still sees instances it owns or that are assigned to it |
+| `allow.byLabels: {}` | Every admin-owned instance of that resource |
+| `allow.byLabels` absent or null | No admin-owned instances |
+| `allow.byName: [a, b]` | Exactly those admin-owned instances. A name that doesn't exist yet takes effect when the instance is created |
+
+Label selectors match all specified pairs. With a non-empty selector, an
+instance has to carry every pair. An empty selector matches every admin-owned
+instance, including those without labels.
+
+`controlPlaneClusters`, `nodeTypes`, `osImages`, and `connectors` offer both
+`byName` and `byLabels`, and accept only one of them at a time. Setting `byName`
+with a non-empty `byLabels` is refused. To grant a named set plus an extra, label
+the extra one and widen the label selector. An empty `byLabels: {}` alongside
+`byName` is accepted and grants every admin-owned instance.
