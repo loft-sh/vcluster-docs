@@ -1,173 +1,149 @@
 ---
 title: Restore license
 sidebar_label: Restore license
-sidebar_position: 2
-description: Learn how to preserve your platform license instance ID during cluster reinstalls or disaster recovery events.
+sidebar_position: 3
+description: Preserve the platform license instance ID during disaster recovery or migration.
 ---
 
-When performing disaster recovery or migrating the platform between clusters, it's critical to preserve your license instance ID. The platform generates a unique instance ID tied to a TLS certificate stored in the `loft-cert` Kubernetes secret. If this secret is lost during cluster reinstallation, the platform generates a new instance ID, which can invalidate your existing license.
+import InterpolatedCodeBlock from '@site/src/components/InterpolatedCodeBlock';
+import PageVariables from '@site/src/components/PageVariables';
+
+<PageVariables NAMESPACE="vcluster-platform" DEPLOYMENT="loft" />
+
+As a system admin, preserve the vCluster Platform license instance ID when recovering or migrating an installation.
+The instance ID derives from the certificate in the `loft-cert` Kubernetes Secret.
+Restoring this Secret preserves that identity. Restore it before the platform's first start, or restart the platform after applying it.
 
 ## Understand the license instance ID {#understand-license-instance-id}
 
-The platform's license system uses a unique instance ID that:
-- Ties to the TLS certificate stored in the `loft-cert` secret
-- Validates your platform license features
-- Persists across platform upgrades and restarts
-- Must remain consistent to maintain license validity
+The instance ID identifies an installation to the license service. Platform upgrades and restarts retain it while the certificate stays the same.
+If `loft-cert` is missing, the platform generates a certificate and gets a different instance ID.
+See [How licensing works](../../reference/licensing.mdx) for license retrieval and caching behavior.
 
 ## Preservation strategies {#preservation-strategies}
 
-You have two main approaches to preserve the license instance ID:
+### CLI management backup
 
-### Kubernetes backup solutions (recommended) {#kubernetes-backup-solutions}
+The vCluster 0.38 CLI includes `loft-cert`, `loft-network-control-key`, and `loft-license-cache` in management backups when those Secrets exist.
+Use the [management backup](./backup-platform.mdx) and [restore procedure](./restore-platform.mdx) to preserve identity and instance registration together.
+`--skip platformsecrets` excludes these Secrets.
 
-If you use a Kubernetes backup and restore solution like [Velero](https://velero.io/), [Kasten K10](https://www.kasten.io/), or similar tools, the `loft-cert` secret is automatically included in regular cluster backups. When you restore your cluster from these backups, the license instance ID is preserved automatically.
+UI backups omit these three Secrets. UI restore ignores them even if they appear in an uploaded CLI backup.
+Preserve them separately for a UI-based recovery plan.
 
-This approach is recommended for:
-- Standard disaster recovery scenarios
-- Regular backup and restore workflows
-- Environments with existing backup infrastructure
+<!-- vale Google.Headings = NO -->
+{/* Preserve the existing inbound anchor independently of the heading text. */}
+### Kubernetes backups {#kubernetes-backup-solutions}
+<!-- vale Google.Headings = YES -->
 
-:::info Automatic backup with Kubernetes tools
-If you use a Kubernetes backup and restore mechanism, you don't need to manually back up the `loft-cert` secret separately. Your regular backup process handles this automatically. The manual approach documented below is primarily relevant for migrations from one control plane cluster to another, rather than standard backup/restore or disaster recovery scenarios.
-:::
+A Kubernetes backup solution can preserve `loft-cert` if its backup scope includes the platform namespace and that Secret.
+Confirm the Secret is present in a tested backup. Namespace filters, Secret exclusions, and retention settings can leave it out.
 
 ### Manual backup and restore {#manual-backup-restore}
 
-For cluster-to-cluster migrations or when not using a full Kubernetes backup solution, manually back up and restore the `loft-cert` secret.
+Use the manual procedure when the management backup doesn't include the certificate, or when recovering the license identity separately.
+Preserving only `loft-cert` doesn't preserve tunnel identity, the cached license, or management resources.
 
 ## Manual backup procedure {#manual-backup-procedure}
 
-Before uninstalling the platform or wiping your cluster, back up the certificate secret:
+This procedure requires kubectl and jq. Before removing the source installation, save the Secret from its Kubernetes context:
 
-```bash title="Back up the loft-cert secret"
-kubectl get secret loft-cert -n vcluster-platform -o yaml > loft-cert-backup.yaml
-```
+<InterpolatedCodeBlock
+  language="bash"
+  code={'umask 077\n' +
+    'kubectl get secret loft-cert --namespace [[GLOBAL:NAMESPACE]] -o json | jq \'del(.metadata.uid, .metadata.resourceVersion, .metadata.creationTimestamp, .metadata.managedFields, .metadata.ownerReferences)\' > loft-cert-backup.json\n' +
+    'chmod 600 loft-cert-backup.json'}
+/>
 
-This command saves the `loft-cert` secret to a local file. Store this file securely as it contains sensitive certificate data.
-
-:::tip Store backups securely
-The backup file contains sensitive TLS certificate data. Store it in a secure location with appropriate access controls, such as:
-- Encrypted storage systems
-- Secret management tools
-- Version control systems with encryption at rest
-:::
+Confirm the command succeeds and the file contains a Secret named `loft-cert` with `tls.crt` and `tls.key` data keys.
+Store the file in encrypted storage with restricted access. Don't commit it or share the private key in logs or support messages.
+Record the source instance ID for comparison after recovery.
 
 ## Manual restore procedure {#manual-restore-procedure}
 
-After reinstalling the platform, restore the certificate before the platform starts.
+Use the same namespace as the source. If the destination namespace differs, review the manifest before applying it.
+Stop the source during migration cutover so only the intended installation uses the restored identity.
 
-:::tip Understand platform backup first
-Before performing a restore, familiarize yourself with the overall [platform backup and restore process](./backup-restore-platform.mdx) to understand how license preservation fits into the complete disaster recovery workflow.
-:::
+### Prepare the target installation {#install-without-starting}
 
-### Step 1: Install the platform without starting it {#install-without-starting}
+Follow [Restore onto a fresh cluster](./restore-platform.mdx#restore-onto-a-fresh-cluster) to install the chart with zero replicas.
+This installs prerequisites without generating a new certificate.
+For a running installation, plan a restart after replacing the Secret.
 
-Install the platform using Helm with replica count set to 0:
+### Restore the certificate {#restore-certificate}
 
-```bash title="Install platform without starting"
-helm upgrade --install vcluster-platform vcluster-platform \
-  --repo https://charts.loft.sh \
-  --namespace vcluster-platform \
-  --create-namespace \
-  --set replicaCount=0 \
-  --version <YOUR_VERSION>
-```
-:::warning
-vCluster Platform exclusively supports the default `secret` backend for storing Helm releases. Alternative `HELM_DRIVER` configurations (such as `configmap` or `sql`) are not supported.
-:::
+Select the destination Kubernetes context, then apply the saved certificate:
 
-### Step 2: Restore the certificate {#restore-certificate}
-
-Apply the backed-up certificate secret:
-
-```bash title="Restore the loft-cert secret"
-kubectl apply -f loft-cert-backup.yaml
+```bash
+kubectl apply -f loft-cert-backup.json
 ```
 
-### Step 3: Start the platform {#start-platform}
+### Start the platform {#start-platform}
 
-Scale the platform deployment to start it with the restored certificate:
+For a fresh installation, start it with the intended replica count as described in the management restore procedure.
+For an already-running installation, restart the Deployment to load the restored certificate:
 
-```bash title="Start the platform"
-helm upgrade vcluster-platform vcluster-platform \
-  --repo https://charts.loft.sh \
-  --namespace vcluster-platform \
-  --reuse-values \
-  --set replicaCount=1
-```
-
-The platform now starts with your original instance ID, preserving your license validity.
+<InterpolatedCodeBlock
+  language="bash"
+  code={'kubectl --namespace [[GLOBAL:NAMESPACE]] rollout restart deployment/[[GLOBAL:DEPLOYMENT]]\n' +
+    'kubectl --namespace [[GLOBAL:NAMESPACE]] rollout status deployment/[[GLOBAL:DEPLOYMENT]]'}
+/>
 
 ## Verification {#verification}
 
-After restoration, verify that your license is valid:
-
-1. Access the platform UI
-2. Navigate to **Admin > Platform Config > License and Billing**
-3. Check the license status to ensure it shows as valid
-4. Verify that your licensed features are available
+1. Confirm the platform is ready and you can log in.
+2. Compare the instance ID with the source and check license validity.
+3. Confirm the licensed features you use are available.
+4. Complete the [management restore checks](./restore-platform.mdx#verify-the-restore) if you restored more than the certificate.
 
 ## Important notes {#important-notes}
 
-### Secrets not required for license preservation {#secrets-not-required}
+### Secrets not required for license identity {#secrets-not-required}
 
-The following secrets are **not** required for license preservation:
-- `loft-license-cache`
-- `loft-apiservice-agent-cert`
-- `loft-webhook-*` certificates
-- Agent certificates
-- User access keys
+Only `loft-cert` determines the license instance ID. These Secrets serve other purposes:
 
-These secrets are regenerated automatically and don't affect your license.
+- `loft-license-cache` stores the last retrieved license for temporary license-server outages.
+- `loft-network-control-key` preserves the tunnel coordinator identity used by connected clusters.
+- Agent and webhook certificates serve their respective connections.
+- User access keys authenticate users and automation.
 
-The `loft-license-cache` secret is worth calling out because its name suggests otherwise. It holds a cached copy of the last license the platform retrieved, so the platform can keep running while the license server is unreachable. It carries no identity. The platform rebuilds it on the next successful retrieval. Only `loft-cert` determines the instance ID. See [How licensing works](../../reference/licensing.mdx) for the full retrieval and caching model.
+Preserve the cached license and tunnel key as part of management recovery even though they don't determine the license instance ID.
+A successful license retrieval can recreate the cache, but an outage during recovery can prevent that retrieval.
 
-### Consider timing {#consider-timing}
+### Restore before startup or restart afterwards {#consider-timing}
 
-- Always restore the `loft-cert` secret **before** the platform starts
-- If the platform starts without the secret, it generates a new instance ID
-- Once a new instance ID is generated, you need to contact support to update your license
+The platform loads its identity at startup. Applying the original Secret to a running installation requires a restart.
+If the original `loft-cert` is lost, contact support to resolve licensing for the new instance ID.
 
 ### Multiple clusters {#multiple-clusters}
 
-:::warning One instance per license
-Each platform license is valid for a single instance ID. Running multiple platform instances with the same `loft-cert` secret violates license terms and can cause synchronization issues.
-:::
+Keep only the intended platform installation active with the restored identity.
+Don't use a copied certificate to create a second independent licensed installation.
 
 ## Troubleshoot issues {#troubleshoot-issues}
 
 ### License shows as invalid after restoration {#license-invalid}
 
-If your license shows as invalid after restoration:
+1. Confirm `loft-cert` exists in the destination platform namespace.
+2. Check that it contains the expected key names without printing their values:
 
-1. Verify the `loft-cert` secret was restored correctly:
-   ```bash
-   kubectl get secret loft-cert -n vcluster-platform
-   ```
+   <InterpolatedCodeBlock
+     language="bash"
+     code={'kubectl get secret loft-cert --namespace [[GLOBAL:NAMESPACE]] -o json | jq \'.data | keys\''}
+   />
 
-2. Check the secret contains the expected data:
-   ```bash
-   kubectl get secret loft-cert -n vcluster-platform -o jsonpath='{.data}' | jq 'keys'
-   ```
-   
-   Expected output should include `tls.crt` and `tls.key`.
+   The output includes `tls.crt` and `tls.key`.
 
-3. Ensure the platform pods are using the restored certificate:
-   ```bash
-   kubectl delete pods -n vcluster-platform -l app=loft
-   ```
+3. Restart the platform if you applied the Secret after startup.
+4. Check license-server connectivity and the cached license. Contact support if the instance ID matches but licensing remains invalid.
 
 ### New instance ID generated {#new-instance-id}
 
-If the platform generated a new instance ID:
-
-1. Check if the `loft-cert` secret was present before the platform started
-2. Review the platform logs for certificate generation messages
-3. If needed, request a license update for the new instance ID
+Restore the original certificate and restart the platform if a backup is available.
+If it isn't, contact support with the old and new instance IDs. Don't share the certificate's private key.
 
 ## Next steps {#next-steps}
 
-- Learn about [backing up the entire platform](./backup-restore-platform.mdx)
-- Configure high availability for improved disaster recovery
-- Set up regular [Kubernetes backups](https://velero.io/) for comprehensive protection
+- [Back up management resources](./backup-platform.mdx)
+- [Restore management resources](./restore-platform.mdx)
+- [Recover administrator access](../authentication/reset-admin-password.mdx)
