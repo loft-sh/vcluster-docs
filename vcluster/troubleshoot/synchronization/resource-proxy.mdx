@@ -11,7 +11,7 @@ import ProAdmonition from '../../_partials/admonitions/pro-admonition.mdx'
 <ProAdmonition/>
 
 :::note vCluster Platform required
-This feature requires [vCluster Platform](/docs/platform). Both the client and target clusters must be managed as [VirtualClusterInstance](/docs/platform/api/resources/virtualclusterinstance) within the platform.
+This feature requires [the platform](/docs/platform). Both the client and target clusters must be managed as [VirtualClusterInstance](/docs/platform/api/resources/virtualclusterinstance) within the platform.
 :::
 
 The resource proxy lets a client <GlossaryTerm term="tenant-cluster">cluster</GlossaryTerm> transparently forward custom resource requests to a target cluster, which stores the objects and can run controllers against them. When the target, the platform network, or the proxy itself degrades, callers see symptoms like 503s, stale discovery, or unexpected 404s instead of a clear cause.
@@ -223,6 +223,40 @@ kubectl get --raw /metrics/syncer | grep vcluster_proxy_discovery_fallbacks_tota
 
 Full, accurate discovery returns automatically once the target is reachable. Treat fallback-shaped discovery as a symptom, and triage it with the [503 playbook](#target-unavailable).
 
+## Proxied writes are denied by admission {#admission-denied}
+
+### Symptoms
+
+A create, update, or delete request for a proxied custom resource fails, while reads of the same resource succeed. The error is one of these:
+
+- A denial message from a ValidatingAdmissionPolicy or a validating webhook in the client cluster.
+- `server-side apply is not supported for proxied custom resources while admission enforcement is enabled: use update (PUT) or a merge patch instead`.
+
+On the client, `vcluster_proxy_admission_rejections_total` increases and `vcluster_proxy_request_total` records the request with reason `admission_denied`.
+
+### Cause
+
+The proxy runs the client cluster's validating admission on every proxied write. See [Admission checks on proxied writes](../../overview/resource-synchronization/resource-proxy.mdx#admission). A write that the client cluster's policies reject is denied before it reaches the target, and the proxy refuses server-side apply outright.
+
+Clusters upgraded from a vCluster version before 0.37.2 didn't enforce these policies on proxied resources. Writes that used to succeed can fail after the upgrade.
+
+### Resolution
+
+1. Read the denial message. It names the policy or webhook that rejected the write.
+2. List the client cluster's validating admission objects. Run this against the client cluster:
+
+   ```bash title="List validating admission in the client cluster"
+   kubectl get validatingadmissionpolicies,validatingadmissionpolicybindings,validatingwebhookconfigurations
+   ```
+
+   To find the ones that match the proxied API group, inspect `spec.matchConstraints` on each policy and `webhooks[].rules` on each webhook configuration with `-o yaml`.
+
+3. Fix the object so it satisfies the policy, or change the policy or its binding if the rejection isn't intended.
+4. For the server-side apply error, switch the caller to client-side `kubectl apply`, `kubectl replace`, or a merge or JSON patch. GitOps tools that use server-side apply, such as an Argo CD Application with the `ServerSideApply=true` sync option, need that option turned off for proxied resources.
+5. Retry the write. It succeeds, and `vcluster_proxy_admission_rejections_total` stops increasing.
+
+If the write fails with 503 and reason `admission_check_failed` instead, the policies didn't run. The proxy couldn't read the current object from the target to build the admission request. Treat it like any other [503 from the target](#target-unavailable).
+
 ## Connection upgrades return 501 {#connection-upgrades}
 
 ### Symptoms
@@ -250,10 +284,11 @@ Check the client's vCluster control plane pod logs from startup:
 - **License**: The feature requires vCluster Enterprise with an online platform connection. Look for a feature or license error right at startup. The error text names a "vCluster pro feature", which reads like a paywall but is usually an image or license wiring problem. See [Resolve Pro feature license errors](../control-plane/pro-feature-license-error.mdx).
 - **Configuration rejected**: Invalid `experimental.proxy.customResources` entries fail validation at startup. The key format is `<resource>.<group>/<version>` or `*.<group>/<version>`, a group is required, `targetVirtualCluster.name` is required, and all entries for the same group and version must agree on target and access mode.
 - **Nothing enabled**: Entries with `enabled: false` don't produce proxy routes. They must still pass per-entry validation, including specifying `targetVirtualCluster.name`. If every entry is disabled, the proxy doesn't start.
+- **Admission caches didn't load**: The proxy waits up to 2 minutes for the client cluster's admission policies and webhooks to load, and fails closed if they don't. Look for `start admission chain for <group>/<version>` followed by `did not sync within 2m0s`. Check the client cluster's API server health.
 
 ### Resolution
 
-Correct the license, platform connection, validation error, or disabled configuration identified in the logs, then apply the updated configuration. For each group and version, healthy startup logs show `Starting proxy server`, then `Starting target transport`, and at verbose log level `Connected to target` once the first probe succeeds.
+Correct the license, platform connection, validation error, disabled configuration, or API server problem identified in the logs, then apply the updated configuration. For each group and version, healthy startup logs show `Starting proxy server`, then `Starting target transport`, and at verbose log level `Connected to target` once the first probe succeeds.
 
 ## Deletion of the proxy APIService or Service is denied {#deletion-denied}
 
@@ -311,6 +346,8 @@ All messages appear in the client's vCluster control plane pod (<GlossaryTerm te
 | `all peer hosts for the proxy target are quarantined` | Resource requests to that target now fail fast with 503; discovery requests use the synthetic fallback. | Incident-grade. Triage with the [verdict table](#quick-triage). |
 | `peer watch subscription is down and no fresh netmap is available` | The platform peer feed dropped and the cached list expired. The entry includes a `lastNetmapAge` field. | Client-to-platform problem. Check platform reachability. |
 | `creating namespace on target cluster` | First namespaced POST, PUT, or PATCH after the namespace is present on the client but absent from the target. The proxy mirrored the namespace to the target. | None. |
+| `Mutating webhook matches a proxied custom resource group but is NOT enforced` | A mutating webhook in the client cluster matches a proxied API group. The proxy runs validating admission only, so this webhook never sees proxied writes. The entry includes `webhookConfiguration`, `webhook`, and `groupVersion` fields. | If the webhook sets required fields, set them in the object itself or apply the mutation in the target cluster. |
+| `failed to read the current object for admission` | The proxy couldn't read the current object from the target for an update or delete, so admission didn't run and the request failed with 503. | Check target health. See [Target cluster returns 503 unavailable](#target-unavailable). |
 | `inject source labels failed` | A write body could not be parsed for ownership labeling (the ownership labels are called "source labels" internally), and the write proceeded without ownership labels. | Rare. In `owned` mode the created object is invisible to its creator. Inspect the caller's request encoding, and label the object manually to adopt it. |
 
 A note on hostnames like `kube.<name>.<project>.vcluster.invalid`. The `.invalid` address is an internal placeholder that is rewritten to a concrete peer endpoint on every request. Seeing it in error messages is normal and doesn't indicate a DNS misconfiguration. The error text around it, such as a dial timeout or no healthy peer, carries the real signal.
