@@ -757,6 +757,208 @@ test_delete_plus_add() {
 }; test_delete_plus_add
 
 # =========================================================================
+echo -e "\n${BOLD}--- Root docs (routeBasePath \"/\") ---${NC}"
+# =========================================================================
+
+# Root pages as the root plugin lays them out: a landing page with `slug: /`,
+# a path-derived page, and a service page with a flattened `slug:`.
+seed_root_docs() {
+    mkdir -p docs/operator-patterns docs/services docs/_partials
+    printf -- '---\ntitle: Home\nslug: /\n---\n# H\n' > docs/index.mdx
+    echo "# O" > docs/operator-patterns/overview.mdx
+    printf -- '---\ntitle: Internal\nslug: /internal-platforms-and-dev-clusters\n---\n# I\n' \
+        > docs/services/internal-platforms-and-dev-clusters.mdx
+}
+
+test_root_resolves_path_route() {
+    local dir; dir="$(setup_test_repo)"; cd "$dir"
+    seed_root_docs; create_netlify_toml
+    add_redirect "/docs/old" "/docs/operator-patterns/overview"
+    commit_all
+    local out; out=$(run_script --audit)
+    assert_not_contains "$out" "FILE NOT FOUND" "resolves path-derived root route"
+    cleanup "$dir"
+}; test_root_resolves_path_route
+
+test_root_resolves_slug_route() {
+    local dir; dir="$(setup_test_repo)"; cd "$dir"
+    seed_root_docs; create_netlify_toml
+    add_redirect "/docs/old" "/docs/internal-platforms-and-dev-clusters"
+    add_redirect "/docs/older" "/docs"
+    commit_all
+    local out; out=$(run_script --audit)
+    assert_not_contains "$out" "FILE NOT FOUND" "resolves flattened slug root route and /docs"
+    cleanup "$dir"
+}; test_root_resolves_slug_route
+
+test_root_missing_route_reported() {
+    local dir; dir="$(setup_test_repo)"; cd "$dir"
+    seed_root_docs; create_netlify_toml
+    add_redirect "/docs/old" "/docs/no-such-page"
+    commit_all
+    local out; out=$(run_script --audit)
+    assert_contains "$out" "/docs/no-such-page  (FILE NOT FOUND)" "missing root route still reported"
+    cleanup "$dir"
+}; test_root_missing_route_reported
+
+test_root_pr_deleted() {
+    local dir; dir="$(setup_test_repo)"; cd "$dir"
+    seed_root_docs; echo "# C" > docs/operator-patterns/cicd-platform.mdx
+    create_netlify_toml; seal_initial_state
+    git rm -q docs/operator-patterns/cicd-platform.mdx; commit_all "del"
+    local out; out=$(run_script_rc pr); local ec=$?
+    assert_exit 1 "$ec" "deleted root page without redirect -> exit 1"
+    assert_contains "$out" "No redirect for deleted file: docs/operator-patterns/cicd-platform.mdx" "names deleted root file"
+    assert_contains "$out" "URL that will 404: /docs/operator-patterns/cicd-platform" "root URL drops the docs/ source prefix"
+    cleanup "$dir"
+}; test_root_pr_deleted
+
+test_root_pr_deleted_with_redirect() {
+    local dir; dir="$(setup_test_repo)"; cd "$dir"
+    seed_root_docs; echo "# C" > docs/operator-patterns/cicd-platform.mdx
+    create_netlify_toml; seal_initial_state
+    git rm -q docs/operator-patterns/cicd-platform.mdx
+    add_redirect "/docs/operator-patterns/cicd-platform" "/docs/internal-platforms-and-dev-clusters"
+    commit_all "del with redirect"
+    local out; out=$(run_script_rc pr); local ec=$?
+    assert_exit 0 "$ec" "deleted root page with redirect -> exit 0"
+    assert_contains "$out" "Redirect exists for deleted: docs/operator-patterns/cicd-platform.mdx" "reports root coverage"
+    cleanup "$dir"
+}; test_root_pr_deleted_with_redirect
+
+test_root_pr_deleted_slug_page() {
+    local dir; dir="$(setup_test_repo)"; cd "$dir"
+    seed_root_docs; create_netlify_toml; seal_initial_state
+    git rm -q docs/services/internal-platforms-and-dev-clusters.mdx; commit_all "del"
+    local out; out=$(run_script_rc pr); local ec=$?
+    assert_exit 1 "$ec" "deleted slugged root page -> exit 1"
+    assert_contains "$out" "URL that will 404: /docs/internal-platforms-and-dev-clusters" "uses the slug URL"
+    cleanup "$dir"
+}; test_root_pr_deleted_slug_page
+
+test_root_pr_renamed() {
+    local dir; dir="$(setup_test_repo)"; cd "$dir"
+    seed_root_docs; echo "# S" > docs/operator-patterns/single-tenant.mdx
+    create_netlify_toml; seal_initial_state
+    mkdir -p docs/plan
+    git mv docs/operator-patterns/single-tenant.mdx docs/plan/single-tenant.mdx; commit_all "rename"
+    local out; out=$(run_script_rc pr); local ec=$?
+    assert_exit 1 "$ec" "renamed root page without redirect -> exit 1"
+    assert_contains "$out" "No redirect for renamed file: docs/operator-patterns/single-tenant.mdx" "reports renamed root file"
+    cleanup "$dir"
+}; test_root_pr_renamed
+
+test_root_pr_slug_kept_on_move() {
+    local dir; dir="$(setup_test_repo)"; cd "$dir"
+    seed_root_docs; create_netlify_toml; seal_initial_state
+    mkdir -p docs/plan
+    git mv docs/services/internal-platforms-and-dev-clusters.mdx docs/plan/internal-platforms-and-dev-clusters.mdx
+    commit_all "move, keep slug"
+    local out; out=$(run_script_rc pr); local ec=$?
+    assert_exit 0 "$ec" "root move that keeps its slug -> exit 0"
+    assert_contains "$out" "URL unchanged for renamed" "reports unchanged root URL"
+    out=$(run_script_rc --fix); ec=$?
+    assert_exit 0 "$ec" "fix accepts root move that keeps its slug"
+    assert_contains "$out" "URL unchanged for renamed" "fix reports unchanged root URL"
+    assert_exit 0 "$(git diff --exit-code -- netlify.toml >/dev/null; echo $?)" "fix leaves redirects unchanged for preserved root slug"
+    cleanup "$dir"
+}; test_root_pr_slug_kept_on_move
+
+test_root_slug_kept_on_rewrite() {
+    local dir; dir="$(setup_test_repo)"; cd "$dir"
+    seed_root_docs; create_netlify_toml; seal_initial_state
+    git rm -q docs/services/internal-platforms-and-dev-clusters.mdx
+    mkdir -p docs/plan
+    printf -- '---\ntitle: Rewritten service\nslug: /internal-platforms-and-dev-clusters\n---\n# A new guide with different content\n' \
+        > docs/plan/internal-platforms-and-dev-clusters.mdx
+    commit_all "move and rewrite, keep slug"
+    local out; out=$(run_script_rc pr); local ec=$?
+    assert_exit 0 "$ec" "rewritten root page keeps its URL in PR mode"
+    assert_contains "$out" "URL still served after delete" "rewritten root move is detected as a deletion"
+    out=$(run_script_rc --fix); ec=$?
+    assert_exit 0 "$ec" "fix accepts rewritten root move that keeps its slug"
+    assert_contains "$out" "URL still served after delete" "fix reports root URL still served"
+    assert_exit 0 "$(git diff --exit-code -- netlify.toml >/dev/null; echo $?)" "fix leaves redirects unchanged for rewritten root page"
+    cleanup "$dir"
+}; test_root_slug_kept_on_rewrite
+
+test_root_pr_ignores_partials() {
+    local dir; dir="$(setup_test_repo)"; cd "$dir"
+    seed_root_docs; echo "# P" > docs/_partials/shared.mdx
+    create_netlify_toml; seal_initial_state
+    git rm -q docs/_partials/shared.mdx; commit_all "del"
+    local out; out=$(run_script_rc pr); local ec=$?
+    assert_exit 0 "$ec" "ignores docs/_partials -> exit 0"
+    cleanup "$dir"
+}; test_root_pr_ignores_partials
+
+test_root_fix_rename() {
+    local dir; dir="$(setup_test_repo)"; cd "$dir"
+    seed_root_docs; echo "# S" > docs/operator-patterns/single-tenant.mdx
+    create_netlify_toml; seal_initial_state
+    mkdir -p docs/plan
+    git mv docs/operator-patterns/single-tenant.mdx docs/plan/single-tenant.mdx; commit_all "rename"
+    run_script --fix >/dev/null
+    local toml; toml="$(cat netlify.toml)"
+    assert_contains "$toml" 'from = "/docs/operator-patterns/single-tenant"' "root rename from-url"
+    assert_contains "$toml" 'to = "/docs/plan/single-tenant"' "root rename to-url"
+    cleanup "$dir"
+}; test_root_fix_rename
+
+test_root_fix_delete_falls_back_to_landing() {
+    local dir; dir="$(setup_test_repo)"; cd "$dir"
+    seed_root_docs; mkdir -p docs/plan
+    echo "# R" > docs/plan/roles-and-scopes.mdx
+    echo "# C" > docs/plan/capacity-models.mdx
+    printf '{"label": "Plan"}\n' > docs/plan/_category_.json
+    create_netlify_toml; seal_initial_state
+    git rm -q docs/plan/roles-and-scopes.mdx; commit_all "del"
+    run_script --fix >/dev/null
+    local toml; toml="$(cat netlify.toml)"
+    # No index, README, or overview page, so the folder URL isn't served.
+    assert_not_contains "$toml" 'to = "/docs/plan"' "skips unserved folder URL"
+    assert_contains "$toml" 'to = "/docs"' "falls back to the root landing page"
+    cleanup "$dir"
+}; test_root_fix_delete_falls_back_to_landing
+
+test_fix_delete_uses_section_index() {
+    local dir; dir="$(setup_test_repo)"; cd "$dir"
+    mkdir -p vcluster/configure/networking
+    echo "# N" > vcluster/configure/networking/README.mdx
+    echo "# D" > vcluster/configure/networking/dns.mdx
+    create_netlify_toml; seal_initial_state
+    git rm -q vcluster/configure/networking/dns.mdx; commit_all "del"
+    run_script --fix >/dev/null
+    local toml; toml="$(cat netlify.toml)"
+    assert_contains "$toml" 'to = "/docs/vcluster/next/configure/networking"' "redirects to the section landing page"
+    cleanup "$dir"
+}; test_fix_delete_uses_section_index
+
+test_fix_delete_uses_section_overview() {
+    local dir; dir="$(setup_test_repo)"; cd "$dir"
+    seed_root_docs; echo "# C" > docs/operator-patterns/cicd-platform.mdx
+    create_netlify_toml; seal_initial_state
+    git rm -q docs/operator-patterns/cicd-platform.mdx; commit_all "del"
+    run_script --fix >/dev/null
+    local toml; toml="$(cat netlify.toml)"
+    assert_contains "$toml" 'to = "/docs/operator-patterns/overview"' "redirects to the section overview page"
+    cleanup "$dir"
+}; test_fix_delete_uses_section_overview
+
+test_fix_delete_uses_overview_slug() {
+    local dir; dir="$(setup_test_repo)"; cd "$dir"
+    mkdir -p platform/administer/users
+    printf -- '---\ntitle: Users\nslug: /administer/users\n---\n# U\n' > platform/administer/users/overview.mdx
+    echo "# T" > platform/administer/users/teams.mdx
+    create_netlify_toml; seal_initial_state
+    git rm -q platform/administer/users/teams.mdx; commit_all "del"
+    run_script --fix >/dev/null
+    local toml; toml="$(cat netlify.toml)"
+    assert_contains "$toml" 'to = "/docs/platform/next/administer/users"' "uses the overview page's slug URL"
+    cleanup "$dir"
+}; test_fix_delete_uses_overview_slug
+
+# =========================================================================
 echo -e "\n${BOLD}=== Results ===${NC}"
 echo "Total: $TESTS_RUN  Pass: $PASS  Fail: $FAIL"
 if [[ $FAIL -gt 0 ]]; then
