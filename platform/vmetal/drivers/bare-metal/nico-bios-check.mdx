@@ -40,11 +40,10 @@ It assumes the NodeProvider is already connected, as described in [NVIDIA Infra 
    It records a result per profile and per setting under the Machine's `status.hostValidation.outOfBand`.
 4. A node type places a claim only on a machine that matched every profile it selects.
 
-A machine is read while nobody outside the platform uses it.
-That includes a machine that waits in a validation cluster, since the BMC answers while the operating system runs.
-The platform doesn't read a machine that a claim holds or has reserved, unless that claim is the machine's own validation claim.
-A machine that no claim holds is read only while it's `Available`.
+A machine is read while nobody outside the platform uses it, including while it waits in a validation cluster.
+The BMC answers while the operating system runs.
 A machine assigned to a Tenant is still read.
+A machine that runs an instance, or that's being handed to one, waits until it's free.
 
 A `Matched` or `Mismatched` result stays until something asks for a new check.
 A `RebootRequired` or `ReadFailed` result is read again after five minutes.
@@ -52,12 +51,16 @@ A machine is checked again after it's released from an instance and after it's t
 Whoever had root on the host could have changed its BIOS settings.
 
 A node type advertises capacity only for machines that matched its profiles.
-A claim waits without a node type until at least one machine matches, rather than being bound to a node type that can't serve it.
+If none match, the node type's `HasCapacity` condition is `False`, and claims for it wait.
+A claim that names the node type directly fails with `InsufficientCapacity` once its provisioning wait runs out.
+The platform never changes a BIOS setting or reboots a machine, so a machine that doesn't match stays out until someone fixes it.
+See [Fix a machine that doesn't match](#fix-a-machine-that-doesnt-match).
 
 ## Prerequisites
 
 - A NICo installation that runs `nico-bmc-proxy`, reachable from the control plane cluster that runs vCluster Platform.
 - A DNS name for the proxy. Its serving certificate carries DNS names only, so the platform can't reach it by IP address.
+- Platform administrator access to the management API, to create `HostValidationProfile` resources and edit the NodeProvider.
 - Access to change the NICo Helm values and to restart the proxy.
 
 Set these values to match your installation.
@@ -76,6 +79,11 @@ Set these values to match your installation.
 
 A profile names the settings a kind of host must have, grouped by where they live.
 For a Redfish `Bios` group, `attribute` is the name from the BMC's attribute registry.
+
+Attribute names and values are specific to the hardware vendor and BIOS version.
+They're the keys and values under `Attributes` in the system's Redfish `Bios` resource, the same resource the platform reads.
+Read that resource with your BMC tooling to find them, or run a first check against a draft profile.
+Each setting's result records the value the BMC reports, as described in [Fix a machine that doesn't match](#fix-a-machine-that-doesnt-match).
 
 <InterpolatedCodeBlock
   language="yaml"
@@ -300,8 +308,10 @@ If Stakater Reloader runs in NICo's cluster, the proxy restarts on its own when 
 
 ## Verify the check
 
-Pick a machine that a node type with profiles selects, and that the platform can read now, as described in [How the check works](#how-the-check-works).
+Pick a machine that a node type with profiles selects, and that the platform can read now.
 The platform drops a request for a new check on a machine that no such node type selects.
+It reads a machine that no claim holds only while the machine is `Available`.
+It doesn't read a machine that a claim holds or has reserved, unless that claim is the machine's own validation claim.
 List the machines of the node type's instance type, and set `MACHINE` to one of them:
 
 <InterpolatedCodeBlock
@@ -327,7 +337,7 @@ The platform removes the annotation only after it records the new results, so wa
   language="bash"
 />
 
-If the loop doesn't end, the platform can't read the machine now, as described in [How the check works](#how-the-check-works).
+If the loop doesn't end, the platform can't read the machine now, for one of the reasons above.
 
 Then read the result per profile:
 
@@ -346,10 +356,33 @@ Then read the result per profile:
 | `Unsupported` | The NodeProvider isn't a NICo provider, or has no `bmcProxy` endpoint. |
 | `Reading` | A check is running. |
 
-The Machine's `HostValidated` condition reports the worst of the profiles its node types require now.
-It also reflects the machine's in-band validation attempt, and a request for a new check that hasn't run yet.
+## Fix a machine that doesn't match
+
+The platform reports a mismatch but never changes a BIOS setting or reboots a machine.
+To see each setting's required, current, and pending values, read the per-setting results:
+
+<InterpolatedCodeBlock
+  code={'kubectl get machine [[GLOBAL:MACHINE]] \\\n' +
+    '  -o jsonpath=\'{range .status.hostValidation.outOfBand.profiles[*].groups[*].settings[*]}{.name}{": "}{.result}{" expected="}{.expected}{" current="}{.current}{" staged="}{.staged}{"\\n"}{end}\''}
+  language="bash"
+/>
+
+A setting reads `Missing` when the BMC doesn't report its attribute at all.
+That usually means the profile describes another class of hardware, or the attribute name is wrong.
+
+To bring a machine into line:
+
+1. Change the setting through NICo or the hardware vendor's tooling.
+2. If the new value is only pending, reboot the machine through NICo or the BMC.
+   Until then the result is `RebootRequired`, and the platform reads it again every five minutes.
+3. Ask for a new check, as described in [Verify the check](#verify-the-check).
+
+When every profile matches, the node type counts the machine as capacity again.
 
 ## Troubleshoot
+
+The Machine's `HostValidated` condition reports the worst of the profiles its node types require now.
+It also reflects the machine's in-band validation attempt, and a request for a new check that hasn't run yet.
 
 A profile's message names what went wrong.
 In the messages below, a value in angle brackets stands for one from your site, and `...` marks text left out.
