@@ -52,11 +52,6 @@ type TenantManagementAccess interface {
 	UncachedClient() TenantClient
 	CachedClient() TenantClient
 
-	// Register serves kind through this stack from now on, called as each REST is built.
-	// Declared here rather than asserted for, so a factory that cannot route a kind fails to
-	// compile instead of panicking at wiring.
-	Register(kind Kind)
-
 	// ControllerClient is the cached client acting as the platform, for a reconcile with no
 	// request to resolve an actor from.
 	ControllerClient() TenantClient
@@ -64,10 +59,6 @@ type TenantManagementAccess interface {
 	// UncachedControllerClient is ControllerClient reading through to the store, for a reconcile
 	// that cannot trust the cache to hold a write it has not yet observed.
 	UncachedControllerClient() TenantClient
-
-	// WaitForKinds blocks until every management kind is routed, for a caller that must not read
-	// through a router still being filled. Returns the context's error if it never completes.
-	WaitForKinds(ctx context.Context) error
 }
 
 // Kind translates one management kind to and from the object that stores it. Declared here rather
