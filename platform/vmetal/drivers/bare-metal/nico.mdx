@@ -265,7 +265,9 @@ See [Give the Tenant machines](#give-the-tenant-machines).
 ## Choose the workload owner
 
 Choose one of the following paths before creating a network.
-The NetworkEnvironment's assignment determines which NICo tenant owns its VPC and instances, even when a platform administrator launches them.
+A NetworkEnvironment's assignment determines which NICo tenant owns its VPC.
+An instance belongs to the NICo tenant of its project's Tenant, even when a platform administrator launches it. Platform projects use the NodeProvider's own organization.
+Networks don't belong to a project. You manage them and lend each one to Tenants, either exclusively or shared. Tenants can't create or manage their own networks.
 
 ### Platform-owned workloads
 
@@ -576,13 +578,18 @@ kubectl apply -f nico-os-image.yaml
 | --- | --- |
 | `machines.vcluster.com/os-image-type` | Set to `nico` for image filtering in the UI. |
 | `nico.vcluster.com/os-image-url` | Download URL for an image-based NICo operating system. Required unless the image was [uploaded to the platform](../../images/os-images.mdx), which supplies the URL and checksum itself. |
-| `nico.vcluster.com/os-image-sha` | Image checksum. The driver passes it to NICo unchanged, so use the format the NICo operating system API expects. |
+| `nico.vcluster.com/os-image-sha` | Image checksum, as a hexadecimal digest with no prefix or separators. Required unless the image was uploaded to the platform. The driver passes it to NICo unchanged. |
 | `nico.vcluster.com/os-image-disk` | Whole-disk target for installation. If omitted, NICo selects the disk. |
 | `nico.vcluster.com/os-image-rootfs-id` | Root filesystem UUID. Use an identifier that matches the image. |
 | `nico.vcluster.com/os-image-rootfs-label` | Root filesystem label, as an alternative to its UUID. |
 | `nico.vcluster.com/os-image-id` | Reference an existing NICo operating system instead of creating one from an image URL. |
 
 NICo image-based operating systems require exactly one of the root filesystem UUID and label.
+The platform checks these settings when a claim that boots from the OSImage is created or changes its image.
+It rejects the claim if the image URL is missing, the checksum isn't hexadecimal, or the root filesystem UUID and label aren't set exactly once.
+An uploaded image supplies its own URL and checksum, so it needs only the root filesystem setting.
+Don't set `os-image-url`, `os-image-sha`, or `os-image-id` on an uploaded image. The platform rejects an uploaded OSImage that carries them.
+The check is skipped when `nico.vcluster.com/os-image-id` is set on the image or the claim.
 Refer to the [NICo operating system API](https://docs.nvidia.com/infra-controller/rest-api-reference/api-reference/operating-system/create-operating-system) for image field requirements.
 
 For an image-based definition, the driver creates or finds `vcluster-<OSImage name>` in the consuming NICo tenant at first use.
@@ -622,15 +629,16 @@ Tenant users also need permission to use the key or create their own SSH keys.
 
 ## Provision an instance
 
-Use the project that should own the workload.
-Choose a ready network assigned to the platform for a platform project, or to that Tenant for a tenant project.
-The project's `allowedNodeTypes` and `allowedNetworkEnvironments` must permit your selections, and the user must have access to the OSImage.
-Tenant workloads must be provisioned from that Tenant's context. The setup commands above use the platform administrator context.
+The project's Tenant decides which NICo tenant owns the instance, so provision from a project in that Tenant.
+Choose a ready network lent to that Tenant, or a platform network for a platform project.
+The project's `allowedNodeTypes` must permit the NodeType, and its `allowedNetworkEnvironments` allowlist must not exclude the network. The user must have access to the OSImage.
+The setup commands above use the platform administrator context.
 Tenant users work in their own Tenant. A platform administrator can click <Button>Switch to Tenant...</Button> in the sidebar header and select the Tenant.
 
-To provision by node type, open the project's <NavStep>Instances</NavStep> page and click <Button>Launch Instance...</Button>.
-To target a specific physical machine, go to <NavStep>Bare Metal > Machines</NavStep>, click <Button>Provision</Button> on a free machine, and select the project.
-In either form, select the OS image, network environment, and management access settings, then click <Button>Provision Instance</Button> or <Button>Launch Instance</Button>.
+Open the <NavStep>Instances</NavStep> page of the project you want the instance in, and click <Button>Launch Instance...</Button>.
+The instance belongs to that project.
+Under **Compute Resources**, select a node type, or select a specific Machine to provision on it.
+Select the OS image, network environment, and management access settings, then click <Button>Provision Instance</Button>.
 
 For the API example, set the project's management namespace, not the cluster's workload namespace.
 `p-default` is only an example. Use the namespace of your chosen platform or Tenant project.
@@ -784,7 +792,8 @@ Correlate controller messages with NICo REST and site logs using the recorded in
 | Network stays pending | Check its assignment and conditions, Tenant onboarding, site access, and NICo VPC status. A Tenant network waits with the reason `WaitingForTenantOnboarding` until the Tenant is onboarded. For FNN, also check its IP block and prefix. |
 | FLAT network can't provision | Configure a valid `siteIPBlockID` with space for the site access allocation. FLAT still needs a VPC and allocation-based site access. |
 | Visible network missing from instance selector | Check that one of the project's allowed node types, or a Machine assigned to the project's Tenant, uses the network's provider. Then check the project's Tenant, assignment, and `Project.spec.allowedNetworkEnvironments`. Network readiness is checked during provisioning, not used to filter this selector. |
-| Instance remains pending after boot | Check OS readiness, image reachability, filesystem settings, user data override permission, and the NICo phone-home path. |
+| Claim rejected with `os image "<name>" must set ...` | The OSImage is missing a setting NICo needs to boot it. Set the property the message names on the OSImage. See [Prepare an operating system image](#prepare-an-operating-system-image). |
+| Instance remains pending after boot | Check OS readiness, image reachability, that the root filesystem UUID or label matches the image, user data override permission, and the NICo phone-home path. |
 | Existing OS rejects user data | Verify `allowOverride: true`. This is especially important when selecting a NICo operating system ID directly. |
 | NICo instance is ready but the node has not joined | Check bootstrap logs on the host, private node prerequisites, control plane or VPN connectivity, DNS, and the cluster's node status. |
 | Launch fails at NICo | Verify that the tenant account has the targeted-instance-creation capability. For a pinned claim, also verify the Machine name and provider, and that it's available and unclaimed. A Machine in the `Deprovisioning` phase becomes available once NICo finishes cleaning it. |
