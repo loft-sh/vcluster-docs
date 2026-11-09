@@ -485,7 +485,7 @@ const config = {
       },
       prism: {
         theme: vClusterTheme,
-        additionalLanguages: ["bash", "hcl"],
+        additionalLanguages: ["bash", "hcl", "toml"],
       },
       // Disabled for the 0.37 / 4.12 release (DOC-1602, DOC-1696): no marketing
       // changelog is being published alongside this release. Restore with the
