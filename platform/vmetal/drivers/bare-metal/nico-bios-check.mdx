@@ -42,7 +42,8 @@ It assumes the NodeProvider is already connected, as described in [NVIDIA Infra 
 
 A machine is read while nobody outside the platform uses it.
 That includes a machine that waits in a validation cluster, since the BMC answers while the operating system runs.
-The platform doesn't read a machine that an instance holds, that's reserved for a claim, or that isn't `Available`.
+The platform doesn't read a machine that a claim holds or has reserved, unless that claim is the machine's own validation claim.
+A machine that no claim holds is read only while it's `Available`.
 A machine assigned to a Tenant is still read.
 
 A `Matched` or `Mismatched` result stays until something asks for a new check.
@@ -68,6 +69,7 @@ Set these values to match your installation.
   INSTANCE_TYPE_ID="33333333-3333-4333-8333-333333333333"
   HARDWARE_CLASS="dgx-b200"
   PROXY_HOST="nico-bmc-proxy.example.com"
+  PROXY_PORT="1079"
 />
 
 ## Describe the required settings
@@ -135,7 +137,8 @@ A selector that matches no profile requires none.
 ## Point the NodeProvider at the proxy
 
 Set `spec.nico.endpoints.bmcProxy` on the NodeProvider.
-`url` is an absolute HTTPS URL that carries the port, `1079` unless the site changed it.
+`url` is an absolute HTTPS URL that carries the port.
+The port is `1079` unless the site changed it, or the node port if the proxy is exposed through a `NodePort` Service, as described in [Configure nico-bmc-proxy](#configure-nico-bmc-proxy).
 `caBundle` is the base64 encoding of the PEM of the CA that issued the proxy's serving certificate.
 Save that CA's PEM as `proxy-ca.pem` and encode it on one line:
 
@@ -153,7 +156,7 @@ Paste the output as `caBundle`:
     '  nico:\n' +
     '    endpoints:\n' +
     '      bmcProxy:\n' +
-    '        url: https://[[GLOBAL:PROXY_HOST]]:1079\n' +
+    '        url: https://[[GLOBAL:PROXY_HOST]]:[[GLOBAL:PROXY_PORT]]\n' +
     '        caBundle: [[VAR:CA_BUNDLE:LS0tLS1CRUdJTi...]]'}
 />
 
@@ -255,6 +258,8 @@ The proxy's Service is a ClusterIP on port 1079.
 Set `externalService.enabled` to `true`, and add the proxy's DNS name to `certificate.extraDnsNames`.
 By default, `externalService` creates a Service of type `LoadBalancer`, which exposes the proxy outside the cluster.
 If your site doesn't use load balancers, set `externalService.type` to `NodePort`.
+Kubernetes then assigns the Service a node port in place of 1079.
+The chart also sets `externalTrafficPolicy` to `Local`, so the DNS name has to resolve to a node that runs a proxy pod.
 `extraDnsNames` is used only while `certificate.dnsNames` is empty, so add the name to `dnsNames` if it's set.
 
 <InterpolatedCodeBlock
@@ -268,7 +273,18 @@ If your site doesn't use load balancers, set `externalService.type` to `NodePort
     '    - [[GLOBAL:PROXY_HOST]]'}
 />
 
+With a `NodePort` Service, read the assigned port after the upgrade:
+
+<InterpolatedCodeBlock
+  code={'kubectl get service --all-namespaces --field-selector metadata.name=nico-bmc-proxy-external \\\n' +
+    '  -o jsonpath=\'{.items[0].spec.ports[?(@.name=="proxy")].nodePort}\''}
+  language="bash"
+/>
+
+Set `PROXY_PORT` at the top of the page to that port, and update `spec.nico.endpoints.bmcProxy.url` on the NodeProvider to match.
+
 The DNS record, the route, and any firewall rule are separate from the chart.
+Open the firewall for the port in `url`.
 
 </Step>
 <Step>
@@ -302,6 +318,17 @@ A `Matched` or `Mismatched` result isn't read again on its own, so ask for a new
   language="bash"
 />
 
+The check runs asynchronously, so results you read right away can still be the previous ones.
+The platform removes the annotation only after it records the new results, so wait until the annotation is gone:
+
+<InterpolatedCodeBlock
+  code={'while kubectl get machine [[GLOBAL:MACHINE]] -o jsonpath=\'{.metadata.annotations}\' \\\n' +
+    '  | grep -q rerun-host-validation-out-of-band; do sleep 5; done'}
+  language="bash"
+/>
+
+If the loop doesn't end, the platform can't read the machine now, as described in [How the check works](#how-the-check-works).
+
 Then read the result per profile:
 
 <InterpolatedCodeBlock
@@ -329,7 +356,7 @@ In the messages below, a value in angle brackets stands for one from your site, 
 
 | The message reads | Check |
 | --- | --- |
-| `the BMC proxy did not answer for "<serial>": ...` | That the DNS name resolves, the port is 1079, routing and firewall allow it, `caBundle` is the right CA, and then the mounted CA file. |
+| `the BMC proxy did not answer for "<serial>": ...` | That the DNS name resolves, the port in `url` is 1079 or the node port, routing and firewall allow it, `caBundle` is the right CA, and then the mounted CA file. |
 | `GET <path> for "<serial>" was refused: ...` | The ACL and `allowed_principals` first. If they're right, the BMC rejected the credential the proxy holds, which is on the NICo side. |
 | `the BMC proxy knows no BMC for serial "<serial>": ...` | The Machine's `status.hardware.serial`, and NICo's inventory. |
 | `the BMC proxy reached neither the BMC of "<serial>" nor its credential: ...` | NICo's credential for the BMC, or the proxy's route to the BMC. |
