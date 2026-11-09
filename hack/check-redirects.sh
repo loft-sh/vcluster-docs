@@ -166,13 +166,15 @@ url_resolves() {
     local paths_to_check=("$rel")
     [[ -n "$versioned_rel" ]] && paths_to_check=("$versioned_rel")
 
-    # Root docs component (routeBasePath "/"): /docs/<route> -> docs/<route>,
-    # or any root page whose `slug:` serves the route.
+    # Root docs component (routeBasePath "/"): ROOT_ROUTES lists every route
+    # it serves, slugs included, so trust it rather than the folder checks
+    # below. A folder without a landing page isn't served.
     case "$rel" in
-        vcluster/*|platform/*) ;;
+        vcluster|platform|vcluster/*|platform/*) ;;
         *)
             root_route_exists "$url" && return 0
-            paths_to_check+=("docs/${rel}")
+            [[ "$rel" == category/* || -f "${REPO_ROOT}/static/${rel}" ]] && return 0
+            return 1
             ;;
     esac
 
@@ -287,6 +289,8 @@ file_to_url() {
     url="${url%.md}"
     url="${url%/index}"
     url="${url%/README}"
+    # Docusaurus also serves <folder>/<folder>.mdx at the folder URL.
+    [[ "${url%/*}" == */"${url##*/}" ]] && url="${url%/*}"
     case "$url" in
         vcluster/*|platform/*)
             local product="${url%%/*}"
@@ -431,12 +435,13 @@ guess_destination() {
         return
     fi
 
-    # The section's own landing page, when the folder has one. A folder alone
+    # The section's own landing page (index, README, or <folder>.mdx, which
+    # Docusaurus serves at the folder URL), when the folder has one. A folder alone
     # isn't served: a _category_.json without a `link` has no URL. file_to_url
     # gives the page's real route, so an overview without a slug maps to
     # .../overview rather than the folder URL.
     local index
-    for index in index.mdx index.md README.mdx README.md overview.mdx overview.md; do
+    for index in index.mdx index.md README.mdx README.md "${dir##*/}.mdx" "${dir##*/}.md" overview.mdx overview.md; do
         if [[ -f "${REPO_ROOT}/${dir}/${index}" ]]; then
             file_to_url "${dir}/${index}"
             return

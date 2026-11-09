@@ -958,6 +958,50 @@ test_fix_delete_uses_overview_slug() {
     cleanup "$dir"
 }; test_fix_delete_uses_overview_slug
 
+test_root_unserved_targets_reported() {
+    local dir; dir="$(setup_test_repo)"; cd "$dir"
+    seed_root_docs; mkdir -p docs/plan
+    echo "# C" > docs/plan/capacity-models.mdx
+    printf '{"label": "Plan"}\n' > docs/plan/_category_.json
+    create_netlify_toml
+    add_redirect "/docs/a" "/docs/plan"
+    add_redirect "/docs/b" "/docs/services/internal-platforms-and-dev-clusters"
+    commit_all
+    local out; out=$(run_script --audit)
+    # A folder without a landing page isn't served, and a slugged page isn't
+    # served at its folder-based path.
+    assert_contains "$out" "/docs/plan  (FILE NOT FOUND)" "root folder without landing page reported"
+    assert_contains "$out" "/docs/services/internal-platforms-and-dev-clusters  (FILE NOT FOUND)" "slugged root page's folder path reported"
+    cleanup "$dir"
+}; test_root_unserved_targets_reported
+
+test_fix_delete_uses_folder_named_landing() {
+    local dir; dir="$(setup_test_repo)"; cd "$dir"
+    mkdir -p platform/administer/external-database
+    echo "# E" > platform/administer/external-database/external-database.mdx
+    echo "# D" > platform/administer/external-database/deploy.mdx
+    create_netlify_toml; seal_initial_state
+    git rm -q platform/administer/external-database/deploy.mdx; commit_all "del"
+    run_script --fix >/dev/null
+    local toml; toml="$(cat netlify.toml)"
+    assert_contains "$toml" 'to = "/docs/platform/next/administer/external-database"' "redirects to the <folder>/<folder>.mdx landing page"
+    cleanup "$dir"
+}; test_fix_delete_uses_folder_named_landing
+
+test_pr_deleted_folder_named_landing_url() {
+    local dir; dir="$(setup_test_repo)"; cd "$dir"
+    mkdir -p platform/administer/external-database
+    echo "# E" > platform/administer/external-database/external-database.mdx
+    echo "# D" > platform/administer/external-database/deploy.mdx
+    create_netlify_toml; seal_initial_state
+    git rm -q platform/administer/external-database/external-database.mdx; commit_all "del"
+    local out ec; out=$(run_script_rc); ec=$?
+    assert_exit 1 "$ec" "deleted folder-named landing page without redirect -> exit 1"
+    assert_contains "$out" "URL that will 404: /docs/platform/next/administer/external-database" "reports the folder URL the landing page served"
+    assert_not_contains "$out" "404: /docs/platform/next/administer/external-database/external-database" "never reports the unserved doubled path"
+    cleanup "$dir"
+}; test_pr_deleted_folder_named_landing_url
+
 # =========================================================================
 echo -e "\n${BOLD}=== Results ===${NC}"
 echo "Total: $TESTS_RUN  Pass: $PASS  Fail: $FAIL"
