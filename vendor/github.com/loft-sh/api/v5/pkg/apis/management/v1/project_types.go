@@ -10,8 +10,6 @@ import (
 // +genclient:method=ListMembers,verb=get,subresource=members,result=github.com/loft-sh/api/v5/pkg/apis/management/v1.ProjectMembers
 // +genclient:method=ListTemplates,verb=get,subresource=templates,result=github.com/loft-sh/api/v5/pkg/apis/management/v1.ProjectTemplates
 // +genclient:method=ListClusters,verb=get,subresource=clusters,result=github.com/loft-sh/api/v5/pkg/apis/management/v1.ProjectClusters
-// Deprecated: MigrateVirtualClusterInstance is deprecated and will be removed in a future release.
-// +genclient:method=MigrateVirtualClusterInstance,verb=create,subresource=migratevirtualclusterinstance,input=github.com/loft-sh/api/v5/pkg/apis/management/v1.ProjectMigrateVirtualClusterInstance,result=github.com/loft-sh/api/v5/pkg/apis/management/v1.ProjectMigrateVirtualClusterInstance
 // +genclient:method=ImportSpace,verb=create,subresource=importspace,input=github.com/loft-sh/api/v5/pkg/apis/management/v1.ProjectImportSpace,result=github.com/loft-sh/api/v5/pkg/apis/management/v1.ProjectImportSpace
 // +genclient:method=MigrateSpaceInstance,verb=create,subresource=migratespaceinstance,input=github.com/loft-sh/api/v5/pkg/apis/management/v1.ProjectMigrateSpaceInstance,result=github.com/loft-sh/api/v5/pkg/apis/management/v1.ProjectMigrateSpaceInstance
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
@@ -23,7 +21,6 @@ import (
 // +subresource:request=ProjectMembers,path=members,kind=ProjectMembers,rest=ProjectMembersREST
 // +subresource:request=ProjectClusters,path=clusters,kind=ProjectClusters,rest=ProjectClustersREST
 // +subresource:request=ProjectChartInfo,path=chartinfo,kind=ProjectChartInfo,rest=ProjectChartInfoREST
-// +subresource:request=ProjectMigrateVirtualClusterInstance,path=migratevirtualclusterinstance,kind=ProjectMigrateVirtualClusterInstance,rest=ProjectMigrateVirtualClusterInstanceREST
 // +subresource:request=ProjectImportSpace,path=importspace,kind=ProjectImportSpace,rest=ProjectImportSpaceREST
 // +subresource:request=ProjectMigrateSpaceInstance,path=migratespaceinstance,kind=ProjectMigrateSpaceInstance,rest=ProjectMigrateSpaceInstanceREST
 // +subresource:request=ProjectNodeTypes,path=nodetypes,kind=ProjectNodeTypes,rest=ProjectNodeTypesREST
