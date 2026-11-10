@@ -15,6 +15,7 @@ import featuresData from '@site/src/data/features.yaml';
  * visible while scrolling a long table, e.g. the full names="all" listing.
  *
  * @param {string} names - Comma-separated list of feature IDs to display, or "all" for all features
+ * @param {string} exclude - Comma-separated feature IDs to omit, including features retained for older docs
  * @param {string} tenancy - Filter features by tenancy model (e.g., "private", "shared", "standalone")
  * @param {boolean} showEnterpriseHeader - Show "Enterprise" header spanning Dev/Prod/Scale columns (default: true)
  *
@@ -34,7 +35,7 @@ import featuresData from '@site/src/data/features.yaml';
  * // Hide Enterprise header
  * <FeatureTable names="all" showEnterpriseHeader={false} />
  */
-const FeatureTable = ({ names, tenancy, showEnterpriseHeader = true }) => {
+const FeatureTable = ({ names, exclude = '', tenancy, showEnterpriseHeader = true }) => {
   // Check if we should show all features
   const showAll = !names || names.trim() === '' || names.trim().toLowerCase() === 'all';
 
@@ -63,6 +64,9 @@ const FeatureTable = ({ names, tenancy, showEnterpriseHeader = true }) => {
       };
     }).filter(f => f !== null);
   }
+
+  const excludedIds = new Set(exclude.split(',').map(id => id.trim()).filter(Boolean));
+  features = features.filter(feature => !excludedIds.has(feature.id));
 
   // If no valid features found, show nothing
   if (features.length === 0) {

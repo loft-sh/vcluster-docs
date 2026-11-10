@@ -64,6 +64,14 @@ jest.mock('@site/src/data/products.yaml', () => ({
 }));
 
 describe('FeatureTable Component', () => {
+  test('omits excluded legacy features while keeping other current features', () => {
+    render(<FeatureTable names="all" exclude=" test-feature-dev, test-feature-scale " />);
+
+    expect(screen.getByText('Test Free Feature')).toBeInTheDocument();
+    expect(screen.queryByText('Test Dev Feature')).not.toBeInTheDocument();
+    expect(screen.queryByText('Test Scale Feature')).not.toBeInTheDocument();
+  });
+
   // Suppress console warnings for cleaner test output
   const originalWarn = console.warn;
   beforeAll(() => {
