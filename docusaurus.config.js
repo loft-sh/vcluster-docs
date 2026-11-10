@@ -374,6 +374,9 @@ const config = {
     /** @type {import('@docusaurus/preset-classic').ThemeConfig} */
 
     {
+      // Default Open Graph and Twitter share image for every page. Not shown
+      // on the page itself. A page can override it with `image:` frontmatter.
+      image: 'media/social-card.png',
       imageZoom: {
         selector: '.markdown img, .intro-card img',
         options: {
