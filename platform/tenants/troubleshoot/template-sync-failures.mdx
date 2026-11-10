@@ -2,20 +2,20 @@
 sidebar_position: 3
 title: Troubleshoot template and app sync failures
 sidebar_label: Template & App sync failures
-description: Diagnose why a cluster, namespace, or app instance isn't picking up its template configuration, and resolve the underlying cause.
+description: Diagnose why a cluster or app instance isn't picking up its template configuration, and resolve the underlying cause.
 ---
 
 import InterpolatedCodeBlock from "@site/src/components/InterpolatedCodeBlock";
 
-This runbook covers three separate sync mechanisms, each with its own status conditions and its own section below. Use it when a <GlossaryTerm term="tenant-cluster">cluster</GlossaryTerm>, namespace, or app instance created from a template fails to come up, shows an outdated configuration, or doesn't pick up a template edit the way you expected.
+This runbook covers three separate sync mechanisms, each with its own status conditions and its own section below. Use it when a <GlossaryTerm term="tenant-cluster">cluster</GlossaryTerm> or app instance created from a template fails to come up, shows an outdated configuration, or doesn't pick up a template edit the way you expected.
 
-1. **VirtualClusterInstance and SpaceInstance template sync**, reported through `TemplateResolved`/`TemplateSynced` conditions. Covered in [Template sync failures](#template-sync-failures).
+1. **VirtualClusterInstance template sync**, reported through `TemplateResolved`/`TemplateSynced` conditions. Covered in [Template sync failures](#template-sync-failures).
 
-   "Template sync" means the process that resolves a [template](../templates/overview.mdx), and for versioned templates a specific version, into the configuration applied to a cluster or namespace. It also covers keeping that configuration up to date as the template changes.
+   "Template sync" means the process that resolves a [template](../templates/overview.mdx), and for versioned templates a specific version, into the configuration applied to a cluster. It also covers keeping that configuration up to date as the template changes.
 2. **[Apps](../templates/what-are-apps.mdx)** (AppInstance), which report `Synced`/`Deployed` conditions with reasons like `AppNotFound` and `DeployFailed`. Covered in [App sync failures](#app-sync-failures).
 3. **Argo CD-deployed applications** (ArgoCDApplication/ArgoCDApplicationTemplate, declared through `deploy.argoCD.applications` in `vcluster.yaml`), which report their own `Synced` condition. A cluster's `Ready` condition doesn't reflect this condition's health. Covered in [Argo CD ApplicationTemplate sync failures](#argo-cd-applicationtemplate-sync-failures).
 
-A healthy cluster or namespace doesn't mean every app or Argo CD deployment it hosts is healthy too. Each mechanism's conditions are independent, and a failure in one doesn't necessarily surface in another. Every table below follows the same layout: **Signal** is what you observe, **Cause** is why it happens, **Resolution** is what to do about it.
+A healthy cluster doesn't mean every app or Argo CD deployment it hosts is healthy too. Each mechanism's conditions are independent, and a failure in one doesn't necessarily surface in another. Every table below follows the same layout: **Signal** is what you observe, **Cause** is why it happens, **Resolution** is what to do about it.
 
 
 :::note
@@ -24,7 +24,7 @@ This is a different mechanism from the <GlossaryTerm term="vcluster">vCluster</G
 
 ## Template sync failures
 
-VirtualClusterInstance and SpaceInstance report template sync state through `TemplateResolved` and `TemplateSynced` conditions. A failure shows up in three different places, depending on when it occurs.
+VirtualClusterInstance reports template sync state through `TemplateResolved` and `TemplateSynced` conditions. A failure shows up in three different places, depending on when it occurs.
 
 ### Where the failure happens
 
@@ -38,8 +38,7 @@ For case 2, check the instance's status conditions first to confirm which reason
 
 <InterpolatedCodeBlock
   code={
-'kubectl -n [[VAR:PROJECT_NAMESPACE:loft-p-my-project]] get virtualclusterinstance [[VAR:VCLUSTER_INSTANCE_NAME:my-vcluster]] -o yaml\n' +
-'kubectl -n [[VAR:PROJECT_NAMESPACE:loft-p-my-project]] get spaceinstance [[VAR:SPACE_INSTANCE_NAME:my-space]] -o yaml'
+'kubectl -n [[VAR:PROJECT_NAMESPACE:loft-p-my-project]] get virtualclusterinstance [[VAR:VCLUSTER_INSTANCE_NAME:my-vcluster]] -o yaml'
   }
   language="bash"
 />
@@ -63,13 +62,11 @@ These are rejected before any object is created or changed, so there's no instan
 
 Once an instance exists, template sync state lives in two status conditions: `TemplateResolved` and `TemplateSynced`. `TemplateSynced` never controls readiness. Use its reason and severity to judge whether it needs action, rather than treating `False` as a failure on its own.
 
-`TemplateResolved` is the hard gate, but its effect on readiness differs by resource type. A namespace (SpaceInstance) always needs `TemplateResolved=True` to report `Ready`. A cluster (VirtualClusterInstance) only needs it while the cluster hasn't finished its initial deployment. Once deployed, a template failure (for example, the template being deleted afterward) no longer flips an already-`Ready` cluster to not-ready. It keeps running its last-applied configuration.
+`TemplateResolved` gates readiness only until a cluster (VirtualClusterInstance) finishes its initial deployment. Once deployed, a template failure (for example, the template being deleted afterward) no longer flips an already-`Ready` cluster to not-ready. It keeps running its last-applied configuration.
 
 <InterpolatedCodeBlock
   code={
 'kubectl -n [[VAR:PROJECT_NAMESPACE:loft-p-my-project]] get virtualclusterinstance [[VAR:VCLUSTER_INSTANCE_NAME:my-vcluster]] \\\n' +
-'  -o jsonpath=\'{range .status.conditions[?(@.type=="TemplateResolved")]}{.type}{" "}{.status}{" "}{.reason}{" "}{.severity}{" "}{.message}{"\\n"}{end}{range .status.conditions[?(@.type=="TemplateSynced")]}{.type}{" "}{.status}{" "}{.reason}{" "}{.severity}{" "}{.message}{"\\n"}{end}\'\n' +
-'kubectl -n [[VAR:PROJECT_NAMESPACE:loft-p-my-project]] get spaceinstance [[VAR:SPACE_INSTANCE_NAME:my-space]] \\\n' +
 '  -o jsonpath=\'{range .status.conditions[?(@.type=="TemplateResolved")]}{.type}{" "}{.status}{" "}{.reason}{" "}{.severity}{" "}{.message}{"\\n"}{end}{range .status.conditions[?(@.type=="TemplateSynced")]}{.type}{" "}{.status}{" "}{.reason}{" "}{.severity}{" "}{.message}{"\\n"}{end}\''
   }
   language="bash"
@@ -86,13 +83,13 @@ Several resolutions below mean editing the template or its version. For a versio
 | `TemplateNotFound` | Neither `spec.template` nor `spec.templateRef` is set, or `spec.templateRef.name` doesn't resolve to an existing template. Usually the template was renamed or deleted. Deleting a template doesn't check for instances still referencing it, so this is a common way to end up here. | Recreate the template under the same name, or update `spec.templateRef.name` on the instance to point at an existing template. |
 | `VersionError` | `spec.templateRef.version` doesn't have exactly three dot-separated components (`MAJOR.MINOR.PATCH`). This only checks the component count, not that each component is numeric or `X`/`x`. | Fix the version string on the instance so it has three dot-separated components, each numeric or `X`/`x`. |
 | `VersionNotFound` | The version string has three components, but no version on the template matches it. This also covers a component that isn't numeric or `X`/`x` (for example, `1.foo.3`), an exact pin to a version that was never created, or a major-version pattern with no matching major version. | Use a numeric or `X`/`x` component in the version pattern, add the missing version to the template, or point the instance at a version that exists. See [Template versioning](../templates/versioning.mdx#template-version-strings). |
-| `ErrorSyncingParameters` (clusters only) | A parameter value failed validation against the template's declared parameters: a missing required value, a regular expression mismatch, an out-of-range number, or the wrong type. Also covers malformed `spec.parameters` YAML and failures applying updated parameter defaults to the instance. SpaceInstance doesn't emit this reason; rendering errors in its supplied parameter data surface as `ErrorRenderingTemplate` instead. | Check the condition message for the specific parameter, then fix the instance's `spec.parameters` or the template's parameter definition. See [Template parameters](../templates/parameters.mdx#parameter-validation-and-error-handling). |
+| `ErrorSyncingParameters` | A parameter value failed validation against the template's declared parameters: a missing required value, a regular expression mismatch, an out-of-range number, or the wrong type. Also covers malformed `spec.parameters` YAML and failures applying updated parameter defaults to the instance. | Check the condition message for the specific parameter, then fix the instance's `spec.parameters` or the template's parameter definition. See [Template parameters](../templates/parameters.mdx#parameter-validation-and-error-handling). |
 | `ErrorRenderingTemplate` | The Go/Helm template failed to execute, for example a syntax error, an explicit `fail` call in the template, or the rendered output couldn't be decoded. | Check the condition message for the templating error, then fix the template. |
 | `ErrorModifyingTemplate` | The rendered configuration's platform-managed settings failed validation, for example an invalid sleep schedule or timezone, an incomplete snapshot storage configuration, a malformed auto-deletion duration, or an inconsistent Argo CD deploy configuration. | Check the condition message for which setting failed, then fix it in the template or the instance's parameter overrides. |
 
 #### `TemplateSynced` reasons
 
-The first two reasons cover template-change notifications every cluster and namespace can report. The rest are scoped to narrower cases, noted alongside each one.
+The first two reasons cover template-change notifications every cluster can report. The rest are scoped to narrower cases, noted alongside each one.
 
 | Signal | Cause | Resolution |
 | --- | --- | --- |
@@ -148,7 +145,7 @@ To confirm a fix worked, re-run the pod command above and check that the control
 
 ## App sync failures
 
-[Apps](../templates/what-are-apps.mdx), a Helm chart, Kubernetes manifest, or bash script packaged for reuse, deploy into a cluster, namespace, or cluster through an AppInstance. AppInstance uses a separate reconciler from VirtualClusterInstance and SpaceInstance, with its own conditions, `Synced` and `Deployed`. `status.phase` (`Pending`, `Failed`, or `Ready`) and `status.reason` summarize the same state more directly than the conditions do, and the table below is organized around them.
+[Apps](../templates/what-are-apps.mdx), a Helm chart, Kubernetes manifest, or bash script packaged for reuse, deploy into a cluster or a control plane cluster through an AppInstance. AppInstance uses a separate reconciler from VirtualClusterInstance, with its own conditions, `Synced` and `Deployed`. `status.phase` (`Pending`, `Failed`, or `Ready`) and `status.reason` summarize the same state more directly than the conditions do, and the table below is organized around them.
 
 Check `status.phase`/`status.reason` first, then the conditions for a reason like `UnresolvableVersion` that only appears on `Deployed`:
 
@@ -176,7 +173,7 @@ Or get the full object, including `status.app` and `status.releaseName`:
 | `status.phase: Failed`, reason `MissingOwner` | The instance has no owner, so the platform has no identity to mint the access key a deploy runs under. This normally only happens to an instance created outside the platform UI, for example applied directly with `kubectl`. | Set an owner on the instance, or recreate it through a path that assigns one automatically. |
 | `status.phase: Pending`, reason `AppNotFound` | `spec.templateRef.name` doesn't resolve to an existing App yet. This is expected, and resolves on its own, when the App and the instance were applied together (for example `kubectl apply -f` on a directory) and the App simply hasn't landed yet. | Confirm the referenced App exists. If both were just applied together, wait for the App to appear. |
 | `Deployed` condition `False`, reason `UnresolvableVersion` | The instance's `spec.templateRef.version` no longer matches any version on the referenced App, usually because that version was removed from the App after the instance started using it. The instance keeps running its last successful release. | Point the instance at a version that still exists on the App, or re-add the missing version to the App. |
-| `status.phase: Pending`, reason `DestinationNotFound` | The instance's destination, the cluster, namespace, or cluster it deploys into, doesn't exist. | Create the destination, or fix the destination reference on the instance. |
+| `status.phase: Pending`, reason `DestinationNotFound` | The instance's destination, the cluster or control plane cluster it deploys into, doesn't exist. | Create the destination, or fix the destination reference on the instance. |
 | `status.phase: Pending`, reason `DestinationNotReady` | The destination exists but can't take a deploy yet, for example it's still coming up or being deleted. | Wait for the destination to become ready. This resolves on its own once it does. |
 | `status.phase: Failed`, reason `DeployFailed` | The Helm install/upgrade, manifest apply, or bash script itself failed. The condition message carries the underlying error. | Check the condition message for the specific error. See [Secret and credential resolution failures](#secret-and-credential-resolution-failures) if it mentions a project secret. |
 
