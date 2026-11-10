@@ -40,6 +40,10 @@ func TestGenerateV5ResourceReferences(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(partials, "machines", "update.mdx")); err != nil {
 		t.Errorf("machine inventory is missing its update operation: %v", err)
 	}
+	if _, err := os.Stat(filepath.Join(partials, "projects", "migratevirtualclusterinstance")); !os.IsNotExist(err) {
+		t.Errorf("removed project migration resource is documented: %v", err)
+	}
+
 	if _, err := os.Stat(filepath.Join(partials, "networkpeers")); !os.IsNotExist(err) {
 		t.Errorf("internal networkpeers resource is documented: %v", err)
 	}
