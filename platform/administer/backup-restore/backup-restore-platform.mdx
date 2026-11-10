@@ -1,97 +1,117 @@
 ---
-title: Backup and restore vCluster Platform
-sidebar_label: Backup and restore
+title: Back up and restore vCluster Platform
+sidebar_label: Back up and restore
 sidebar_position: 1
 ---
 
-This guide describes how to backup and restore the vCluster Platform management plane. To back up the connected clusters, reuse a regular Kubernetes backup solution such as [Velero](https://velero.io/).
+This guide describes how to back up and restore the vCluster Platform management plane. It doesn't cover the clusters that the platform manages. Back those up with [vCluster snapshots](/docs/vcluster/next/operate/backup-restore/backup) or a Kubernetes backup solution such as [Velero](https://velero.io/).
 
-:::important Preserve your license
-When performing disaster recovery or cluster migrations, ensure you preserve your platform license. See [Preserve license during disaster recovery](./preserve-license.mdx) for detailed instructions.
-:::
+The platform saves its state as Kubernetes custom resource (CR) objects. You can back up this state in two ways:
+
+- **`vcluster platform backup management`**, which saves the platform's resources to a single manifest file that you restore with `kubectl apply`. The rest of this page covers this method.
+- **A Kubernetes backup solution such as Velero**, or an etcd snapshot of the control plane cluster. See [Restore with Velero or an etcd snapshot](#restore-with-velero-or-an-etcd-snapshot) for what these restores don't roll back.
 
 See the [Platform CLI hub](../../reference/platform-cli.mdx) for UI-to-CLI equivalents across common Platform tasks, including backup and destroy commands.
 
-The vCluster Platform saves its state as Kubernetes custom resource (CR) objects. You can back up this state using [Velero](https://velero.io) or the vCluster CLI command we created for convenience. This command saves all relevant Kubernetes resources to a single file.
-
-You can run the vCluster CLI to back up these components at any time. The backup includes the following resources:
-
-<!-- vale off -->
-- `ClusterRoleTemplates`
-- `ClusterAccesses`
-- `SpaceConstraints`
-- `Users`
-- `Teams`
-- `SharedSecrets`
-- `AccessKeys`
-- `Apps`
-- `SpaceTemplates`
-- `VirtualClusterTemplates`
-- `Clusters` and associated Kubernetes Secret objects
-- `Projects`
-- `VirtualClusterInstances`
-- `SpaceInstances`
-- `ProjectSecrets`
-<!-- vale on -->
-
-The platform backup includes the custom resources listed previously and their associated Kubernetes Secret objects. It does not include other resources used by the platform deployment or connected clusters, such as persistent volumes that store cost data. Use a Kubernetes backup solution such as [Velero](https://velero.io) to back up these resources separately.
-
-:::warning Back up persistent volumes separately
-The `vcluster platform backup` command backs up the custom resources and associated Secrets listed previously. You must separately back up the following PersistentVolumeClaims (PVCs):
-
-- `platform-db` - stores platform state and configuration
-- `storage-volume-global-prometheus-server-0` - stores cost metrics data
-
-Use [Velero](https://velero.io) or your preferred Kubernetes backup solution to include these PVCs in your backup strategy.
+:::important Preserve your license
+The platform's license instance ID is tied to the `loft-cert` Secret. If you lose it during disaster recovery or a migration, your license can stop working. See [Preserve license during disaster recovery](./preserve-license.mdx).
 :::
 
-To create a backup using the default settings, run the following command. It saves the manifests for all of the components listed previously to a file named `backup.yaml` in the current directory:
+## Back up the platform
+
+### What the backup includes
+
+The backup includes the following resources. To leave a resource out, pass its skip value to `--skip`.
+
+<!-- vale off -->
+| Resource | Skip value |
+|----------|------------|
+| Platform identity Secrets: `loft-cert`, `loft-network-control-key`, and `loft-license-cache` | `platformsecrets` |
+| `ClusterRoleTemplates` | `clusterroletemplates` |
+| `ClusterAccesses` | `clusteraccesses` |
+| `Users` | `users` |
+| `Teams` | `teams` |
+| `SharedSecrets` | `sharedsecrets` |
+| `AccessKeys` | `accesskeys` |
+| `Apps` | `apps` |
+| `SpaceTemplates` | `spacetemplates` |
+| `VirtualClusterTemplates` | `virtualclustertemplates` |
+| `Clusters` and their associated Secrets | `clusters` |
+| `Projects` | `projects` |
+| `VirtualClusterInstances` | `virtualclusterinstances` |
+| `SpaceInstances` | `spaceinstances` |
+| `ProjectSecrets` | `projectsecrets` |
+<!-- vale on -->
+
+The backup doesn't include other resources that the platform deployment or the connected clusters use. For example, it doesn't include `NodeClaim` objects, node provider objects, or persistent volumes.
+
+:::warning Back up persistent volumes separately
+You must back up the following PersistentVolumeClaims (PVCs) with [Velero](https://velero.io) or another Kubernetes backup solution:
+
+- `platform-db`, which stores platform state and configuration.
+- `storage-volume-global-prometheus-server-0`, which stores cost metrics data.
+:::
+
+### Create a backup
+
+To create a backup with the default settings, run the following command. It saves the manifests for all the resources listed previously to a file named `backup.yaml` in the current directory:
 
 ```bash
 vcluster platform backup management
 ```
 
-Alternatively, you cab specify the name for the backup file by running the command as:
+To name the backup file yourself, use `--filename`:
 
 ```bash
 vcluster platform backup management --filename vcluster-platform-backup.yaml
 ```
 
-In some cases, the vCluster Platform might have been installed in a different namespace instead of the default `vcluster-platform`. If so, you can specify the correct namespace as shown in the following command:
+If you installed the platform into a namespace other than the default `vcluster-platform`, use `--namespace`:
 
 ```bash
 vcluster platform backup management --namespace my-namespace
 ```
 
-You can also exclude specific components from the backup by passing their names as a comma-separated list. The following example excludes `users` and `teams` from the backup:
+To leave resources out of the backup, pass their skip values as a comma-separated list. The following example leaves out users and teams:
 
 ```bash
 vcluster platform backup management --skip users,teams
 ```
 
-### Restore vCluster Platform from backup
+The backup file contains the platform's identity Secrets unless you skip `platformsecrets`. Store it as securely as you would store those Secrets.
 
-The backup file contains the resource manifests for the vCluster Platform management plane. You can apply it like any standard Kubernetes manifest.
+## Restore the platform from a backup
 
-To restore, apply the backup to your cluster using the following command:
+The backup file contains the resource manifests for the platform management plane. You apply it like any other Kubernetes manifest.
 
-:::note
-The backup contains vCluster Platform custom resources and associated Secrets, not the Custom Resource Definitions (CRDs) that define them. Install vCluster Platform on the target cluster before restoring. Its Helm chart installs the required CRDs automatically. Restoring onto a cluster without vCluster Platform already installed fails, because the CRDs for those resources don't exist yet.
+The backup doesn't contain the Custom Resource Definitions (CRDs) for the platform's resources. Install the platform on the target cluster before restoring, because its Helm chart installs the required CRDs. Applying the backup to a cluster without the platform installed fails.
+
+:::warning Install the platform only once per cluster
+Don't install the platform or its agents into a cluster where the platform is already running. Running more than one platform instance in the same cluster causes reconciliation conflicts.
 :::
 
-```bash
-kubectl apply -f <backup-filename>.yaml
-```
+1. Apply the backup to the cluster:
 
-You might see warning messages similar to the following:
+   ```bash
+   kubectl apply -f <backup-filename>.yaml
+   ```
 
-```
-Warning: resource apps/argocd is missing the kubectl.kubernetes.io/last-applied-configuration annotation which is required by kubectl apply. kubectl apply should only be used on resources created declaratively by either kubectl create --save-config or kubectl apply. The missing annotation is patched automatically.
-```
+   You might see warnings similar to the following. They don't affect the restore.
 
-These are just warnings and should not affect the restoration task.
+   ```text
+   Warning: resource apps/argocd is missing the kubectl.kubernetes.io/last-applied-configuration annotation which is required by kubectl apply. kubectl apply should only be used on resources created declaratively by either kubectl create --save-config or kubectl apply. The missing annotation is patched automatically.
+   ```
 
-:::warning Multiple Kubernetes clusters with the same vCluster Platform config
-Do not install vCluster Platform (or its agents) into a cluster where it is already running. Running multiple vCluster Platform instances in the same cluster can cause reconciliation conflicts and lead to unexpected issues.
-:::
+2. If the backup includes the platform identity Secrets and you restored into a different cluster, restart the platform so it loads them:
 
+   ```bash
+   kubectl rollout restart deployment/loft -n vcluster-platform
+   ```
+
+   Replace `vcluster-platform` if you installed the platform into a different namespace.
+
+This restore doesn't affect node provider state, because the backup doesn't include `NodeClaim` objects or provider objects.
+
+## Restore with Velero or an etcd snapshot
+
+A Velero or etcd snapshot restore of the control plane cluster rolls back `NodeClaim` objects, but not the external state behind them. That external state includes Metal3 and Ironic, NICo, and cloud provider resources. After the restore, you must find and clean up the orphaned provider resources. See [Clean up node provider resources after an etcd restore](/docs/vcluster/next/operate/backup-restore/restore#clean-up-node-provider-resources-after-an-etcd-restore).
