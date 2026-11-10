@@ -12,7 +12,11 @@
  *
  * It runs in postBuild, after the static build has released most of its
  * memory, so it doesn't raise the build's peak memory (measured for DOC-1965).
- * Set OG_TITLE_CARDS=false to skip it, for example in a quick local build.
+ *
+ * It only runs for Netlify production deploys (CONTEXT=production), the same
+ * gate docusaurus.config.js uses for GTM. Local builds, deploy previews, and
+ * branch deploys skip it and keep the default card. To force it either way,
+ * set OG_TITLE_CARDS=true or OG_TITLE_CARDS=false.
  */
 const fs = require('node:fs/promises');
 const path = require('node:path');
@@ -104,6 +108,12 @@ async function* htmlFiles(dir) {
   }
 }
 
+function isEnabled(env = process.env) {
+  if (env.OG_TITLE_CARDS === 'true') return true;
+  if (env.OG_TITLE_CARDS === 'false') return false;
+  return env.CONTEXT === 'production';
+}
+
 module.exports = function ogTitleCards(context, options = {}) {
   const { siteConfig } = context;
   const concurrency = options.concurrency ?? 4;
@@ -113,7 +123,10 @@ module.exports = function ogTitleCards(context, options = {}) {
     name: 'og-title-cards',
 
     async postBuild({ outDir }) {
-      if (process.env.OG_TITLE_CARDS === 'false') return;
+      if (!isEnabled()) {
+        console.log('[og-title-cards] skipped: not a Netlify production build (set OG_TITLE_CARDS=true to force)');
+        return;
+      }
       const defaultImage = siteConfig.themeConfig.image;
       if (!defaultImage) return;
       const defaultUrl = new URL(siteConfig.baseUrl + defaultImage, siteConfig.url).href;
