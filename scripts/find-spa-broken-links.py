@@ -48,6 +48,35 @@ KNOWN_EXCEPTIONS = {
     ("hardening-guide/private-nodes/self-assessment.mdx", "./policies"),
 }
 
+# Exceptions that hold for one docs tree only, as (tree, file, link). The tree
+# is relative to the repository root, and the file is relative to the tree, so
+# the same broken link anywhere else still fails the check.
+REPO_ROOT = CONFIG_PATH.parent
+SCOPED_EXCEPTIONS = {
+    # Fixed in the live tree in 9757b1360, but still present in the vcluster
+    # 0.37.0 snapshot, which the newest-snapshot check enforces. Drop once
+    # 0.37.0 is no longer the newest snapshot.
+    (
+        "vcluster_versioned_docs/version-0.37.0",
+        "deploy/control-plane/binary/basics.mdx",
+        "../../../cli/vcluster_platform_connect_vcluster",
+    ),
+    (
+        "vcluster_versioned_docs/version-0.37.0",
+        "deploy/control-plane/binary/high-availability.mdx",
+        "../../../cli/vcluster_platform_connect_vcluster",
+    ),
+}
+
+
+def tree_key(root: Path) -> str:
+    """Return a scanned root as a repository-relative path for scoping."""
+    resolved = root.resolve()
+    try:
+        return resolved.relative_to(REPO_ROOT).as_posix()
+    except ValueError:
+        return resolved.as_posix()
+
 
 @cache
 def last_versions() -> dict[str, str]:
@@ -123,10 +152,11 @@ def resolve_build(path: Path, link_path: str, root: Path, url_prefix: str) -> st
 
 def scan(
     root: Path,
-    used_exceptions: set[tuple[str, str]],
+    used_exceptions: set[tuple[str, ...]],
     enforce_reusable: bool = False,
 ) -> tuple[int, int, int]:
     product, url_prefix, is_live = root_details(root)
+    tree = tree_key(root)
     reusable = []
     broken = []
     coincidental = []
@@ -155,6 +185,10 @@ def scan(
                     exception
                     for exception in KNOWN_EXCEPTIONS
                     if relative_file.endswith(exception[0]) and link == exception[1]
+                } | {
+                    exception
+                    for exception in SCOPED_EXCEPTIONS
+                    if (tree, relative_file, link) == exception
                 }
                 if matched:
                     used_exceptions |= matched
@@ -217,7 +251,7 @@ def main() -> int:
         print(f"Missing docs root(s): {', '.join(missing)}", file=sys.stderr)
         return 2
 
-    used_exceptions: set[tuple[str, str]] = set()
+    used_exceptions: set[tuple[str, ...]] = set()
     totals = [scan(root, used_exceptions, enforce_reusable) for root in roots]
     blockers = sum(item[0] for item in totals)
     reusable = sum(item[1] for item in totals)
@@ -233,6 +267,21 @@ def main() -> int:
         )
         for exception_file, exception_link in unused:
             print(f"  {exception_file}: {exception_link}")
+
+    # A scoped exception can only be judged when its own tree was scanned.
+    scanned = {tree_key(root) for root in roots}
+    unused_scoped = sorted(
+        exception
+        for exception in SCOPED_EXCEPTIONS - used_exceptions
+        if exception[0] in scanned
+    )
+    if unused_scoped:
+        print(
+            f"\nNOTE: {len(unused_scoped)} SCOPED_EXCEPTIONS entries matched nothing in "
+            "their scanned tree. Drop any that no longer apply:"
+        )
+        for exception_tree, exception_file, exception_link in unused_scoped:
+            print(f"  {exception_tree}/{exception_file}: {exception_link}")
 
     print(
         f"\nTotal: {blockers} blocking, {reusable} reusable, "
