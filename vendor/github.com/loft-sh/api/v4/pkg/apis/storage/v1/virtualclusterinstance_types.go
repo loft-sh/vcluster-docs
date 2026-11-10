@@ -20,6 +20,10 @@ const (
 	InstanceExternalResourcesCleanedUp        agentstoragev1.ConditionType = "ExternalResourcesCleanedUp"
 	InstanceVirtualClusterAutoDeletionBlocked agentstoragev1.ConditionType = "VirtualClusterAutoDeletionBlocked"
 
+	// InstanceReasonNamespaceExists is set on SpaceSynced or VirtualClusterSynced when the agent
+	// refuses to sync into an existing namespace the instance does not manage.
+	InstanceReasonNamespaceExists = "NamespaceExists"
+
 	InstanceVirtualClusterAppsAndObjectsSynced     agentstoragev1.ConditionType = "VirtualClusterAppsAndObjectsSynced"
 	InstanceVirtualClusterDBConnectorSynced        agentstoragev1.ConditionType = "DBConnectorSynced"
 	InstanceVirtualClusterDBIdentityProviderSynced agentstoragev1.ConditionType = "DBIdentityProviderSynced"
