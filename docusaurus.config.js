@@ -202,6 +202,9 @@ const config = {
   plugins: [
     "docusaurus-plugin-sass",
     "plugin-image-zoom",
+    // Generates a title share card (og:image) for every page that doesn't set
+    // its own `image:` frontmatter. Runs in postBuild. See the plugin header.
+    "./plugins/og-title-cards",
     [
       "@signalwire/docusaurus-plugin-llms-txt",
       {
