@@ -32,7 +32,8 @@ stay on Platform v4.12.
   removed with the `sharedsecrets` API. Project secrets can no longer sync from a
   shared secret. A project secret that synced from one keeps its last data and
   becomes an ordinary project secret. The `imagePullSecrets` field on users and
-  teams is removed too. Use project secrets instead.
+  teams is removed too. Use project secrets instead, optionally synced from
+  [HashiCorp Vault](../../integrations/identity-secrets/hashicorp-vault.mdx).
 - **Cost control.** Cost control and its ROI dashboard are removed. Upgrading
   uninstalls the Prometheus and OpenCost releases the platform installed for
   cost control and keeps their persistent volume claims. A `costControl` key
@@ -51,17 +52,14 @@ stay on Platform v4.12.
   apps. Upgraded installations keep their copies, which no longer receive
   updates, until you delete them. The example apps stay.
 - **Moving clusters between projects.** The `migratevirtualclusterinstance`
-  subresource on projects, deprecated in 4.11, is removed. Requests to it return
-  `404`.
+  subresource on projects, deprecated in 4.11, is removed.
 
 ### Deprecations
 
-- The Istio integration and sleep mode for Istio ingress are deprecated.
-  Nothing is removed in 5.0.
-  {/* TODO before merge: confirm with Apps (ENGAPPS-1186) whether vCluster integrations.istio is also deprecated in 0.38, and link the Istio page. */}
+- The [Istio integration](/docs/vcluster/next/integrations/istio) and sleep
+  mode for Istio ingress are deprecated. Nothing is removed in 5.0.
 - Metal3 `bareMetalHosts.selector` is deprecated in favor of
   `machines.selector`. Setting both is refused.
-- The DatabaseConnector kind is deprecated in favor of the Connector API.
 - The Terraform template variables `var.vcluster.requirements` and
   `var.vcluster.nodeEnvironment` are deprecated. Use `var.vcluster.properties`
   and `var.vcluster.networkEnvironment`.
@@ -118,9 +116,6 @@ Each item below needs action when you upgrade.
   `PropertiesNotAllowed`. A claim's `ccm-enabled` property is ignored, and the
   node provider's setting applies.
   {/* TODO before merge: ask Control Plane where these values go instead, and link it. */}
-- Only the platform writes the status of a VirtualClusterInstance. Status
-  updates from anyone else, platform admins included, are refused with
-  `only the platform writes it`.
 
 ### New features
 
@@ -177,10 +172,8 @@ Each item below needs action when you upgrade.
   {/* Link after #2846 merges: ../../vmetal/concepts/network-environments.mdx */}
 - **Node claim timeout.** A node claim waiting for a machine fails after 30
   minutes. Set `machines.vcluster.com/provisioning-wait-timeout` to change it.
-- **Node claim diagnostics.** Node claims report `ProvisioningError`, NICo
-  machines that are still being cleaned report `Deprovisioning`, and Metal3
-  machines report `ramdisk not booted` after 15 minutes without the deploy
-  ramdisk. See [Machine lifecycle](../../vmetal/concepts/machine-lifecycle.mdx).
+- **Node claim diagnostics.** Node claims report why provisioning is stuck or
+  failing. See [Machine lifecycle](../../vmetal/concepts/machine-lifecycle.mdx).
 - **Host devices and GPU passthrough** for KubeVirt VMs through the vCluster
   Device Operator.
   {/* TODO before merge: confirm with PM. loft-enterprise #9105 says VM use cases left 5.0 (ENGCP-1865). */}
@@ -196,23 +189,19 @@ Each item below needs action when you upgrade.
   Enterprise.
   {/* Link after #3018 merges. */}
 
-#### Connectors, observability, and audit
+#### Connectors and observability
 
-- **Connector API.** Manage NetBox, observability, and database connectors
-  through the API, and grant them to Tenants.
+- **Connector API.** Connectors are now managed through a new Connector API,
+  and platform admins can grant connectors to Tenants.
   {/* Link after #2988 merges: ../../integrations/identity-secrets/connectors/overview.mdx */}
 - **Telemetry destinations.** The observability gateway forwards telemetry to
   additional destinations, and edge collectors can collect pod logs. See
   [Install the observability gateway](../../fleet-operations/observability/install-observability-gateway.mdx).
-- **Sign-in audit events.** Audit logs record sign-ins, and new built-in rules
-  cover tenant configuration and connectors. See
-  [Audit](../../administer/configure/platform-configs/audit.mdx).
 
 #### Operations
 
-- **Management backup keeps identities.** A management backup includes the
-  platform's identity Secrets and each cluster's service UID, so a restored
-  platform keeps its identity.
+- **Management backup keeps identities.** A platform restored from a
+  management backup keeps its identity.
   {/* Link after #2993 merges: ../../administer/backup-restore/backup-platform.mdx */}
 - **Administrator recovery.** Recover access when no platform admin can sign in.
   See [Reset the admin password](../../administer/authentication/reset-admin-password.mdx).
@@ -227,16 +216,9 @@ Each item below needs action when you upgrade.
 - Upgrading doesn't move anything into a Tenant. Resources created before 5.0
   stay with the platform.
 - New Tenant names can't contain `--`.
-- Projects, clusters, project secrets, users, teams,
-  node pools, and access keys can't carry the
-  `tenant.vcluster.com/exclusive-to` or `tenant.vcluster.com/all` label, and a
-  Tenant can't carry the `tenant.vcluster.com/all` label. Lend the use of a
-  credential through a connector instead. See
-  [Ownership labels](../../tenants/manage-tenants/tenant-boundary-reference.mdx#ownership-labels).
-- A `*` user or team entry in a resource's access rules applies within the
-  resource's own tenant scope. It doesn't grant cross-scope use, bind, or write
-  access. Reading resources shared with the tenant is unchanged. Installations
-  without tenants are unaffected.
+- Tenant boundaries are enforced more strictly across access rules, ownership
+  labels, connectors, stacks, and cluster scheduling. See
+  [Tenant boundary reference](../../tenants/manage-tenants/tenant-boundary-reference.mdx).
 - Metal3 and NICo placements on machines assigned to the Tenant don't count
   toward its node type quota. KubeVirt placements count regardless of allocation
   policy.
@@ -249,43 +231,18 @@ Each item below needs action when you upgrade.
   {/* TODO before merge: confirm with PM (VM use cases, ENGCP-1865). Holds for the default namespace strategy only. */}
 - Users who can't update node providers and node types see a reduced,
   read-only view of them.
-- Connector references are checked again at reconcile time, so a Tenant that
-  loses a connector grant stops using it.
-- Stack task outputs are read with the StackInstance owner's rights. A read the
-  owner isn't allowed fails with `OutputReadForbidden`.
 - Upgrading re-applies the certified stack bundle once. Fields the bundle sets
   on certified objects are reset.
-- The platform rewrites every Argo CD cluster registration once after the
-  upgrade, and waits for a cluster to be ready before registering it.
-- Automatic snapshots stay in progress through connection errors, for up to 5
-  minutes while the snapshot request is created and 30 minutes after that.
+- Automatic snapshots retry through connection errors instead of failing.
   Retention also deletes the archive of a pruned failed snapshot from storage.
   See [View snapshots](/docs/vcluster/next/operate/backup-restore/view-snapshots).
   {/* Link to #retries-after-connection-errors after #2993 merges. */}
 - Inside a Tenant, apps, stacks, and Argo CD applications can't deploy onto a
-  control plane cluster or with target `host`. The request fails with
-  `deploying to cluster "<name>" is not allowed` or
-  `deploying with target "host" is not allowed`. A cluster in a Tenant's
-  project whose Argo CD applications use target `host` reports
-  `ArgoCDIntegrationSyncError`.
-- A cluster is scheduled only onto a control plane cluster its owner's Tenant
-  may use.
-- A Tenant can name only the users and teams it can see in access rules,
-  owners, and team members.
-- An ArgoCDApplication's `spec.owner` can't change once set.
-- Deleting a cluster deletes its namespace on the control plane cluster only
-  when that cluster manages the namespace. A `clusterRef` that names a
-  namespace another cluster holds is refused.
-- Node claims report `Destroying` and `FailedToDestroy` conditions while their
-  machine is torn down.
+  control plane cluster or with target `host`.
 
 ### Fixes
 
 - Deleted clusters no longer count toward per-user quotas.
-- Writes to a ProjectSecret keep the backing Secret's type and immutability.
-- A template reference with no name reports `TemplateNotDefined`.
-- Password parameters are redacted from App deploy, wait, and error messages.
-- A released Metal3 host gets back the DHCP annotations the operator set.
 
 ### Known issues
 
@@ -298,7 +255,5 @@ Each item below needs action when you upgrade.
 - An OS image upload in the browser can't resume after the page reloads, and an
   upload can't be canceled.
 - Deleting an OS image waits while its store is unreachable.
-- A secret output passed from one Stack task to another can be read through the
-  generated child object.
 - The observability gateway keeps queued telemetry in memory, so a restart
   loses it.
