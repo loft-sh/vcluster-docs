@@ -1,8 +1,12 @@
 ---
-title: SSH Keys
+title: SSH keys
 sidebar_label: SSH keys
 sidebar_position: 4
+description: Register SSH keys, reference them from node types and instances, and share them with tenants.
 ---
+
+import InterpolatedCodeBlock from '@site/src/components/InterpolatedCodeBlock';
+import PageVariables from '@site/src/components/PageVariables';
 
 SSH keys are stored as `SSHKey` resources and referenced by name in node type or `NodeClaim` properties. During provisioning, the public keys are included in the user data (for example, cloud-init) so they are configured on the instance.
 
@@ -15,30 +19,73 @@ decides whether the tenant may register keys of its own, and those names carry t
 
 SSH keys may be used with any provider that supports user data during provisioning, including [Metal3](../drivers/bare-metal/metal3/overview.mdx), [KubeVirt](../drivers/virtual-machines/kubevirt.mdx), and [Terraform](../drivers/virtual-machines/terraform.mdx).
 
+<PageVariables
+  SSH_KEY="my-ssh-key-x7k2p"
+  TENANT="acme"
+/>
+
 ## Create an SSHKey
 
-SSH keys can be managed through the platform UI under your **Profile > SSH Keys**, or by creating the resource directly:
+The platform generates every SSH key's name. You choose a prefix, and the platform appends a random suffix. A key created with the prefix `my-ssh-key-` gets a name such as `my-ssh-key-x7k2p`.
 
-```yaml
+To create a key in the platform UI, navigate to your **Profile > SSH Keys**. To create one directly, set `metadata.generateName` instead of `metadata.name`:
+
+```yaml title="my-ssh-key.yaml"
 apiVersion: management.loft.sh/v1
 kind: SSHKey
 metadata:
-  name: my-ssh-key
+  generateName: my-ssh-key-
 spec:
   displayName: "My SSH Key"
   description: "Development access key"
   publicKey: "ssh-ed25519 AAAA... user@host"
 ```
 
+Create it with `kubectl create`, and print the name the platform generated:
+
+```bash
+kubectl --context <management-context> create -f my-ssh-key.yaml -o name
+```
+
+The output names the new key, for example `sshkey.management.loft.sh/my-ssh-key-x7k2p`. Node types and instances reference the key by that generated name.
+
+:::warning Fixed names are refused
+The platform refuses a request that sets `metadata.name`, including requests from platform admins. This means `kubectl apply` and GitOps tools that apply a manifest with a fixed name can't create SSH keys. Create them with `generateName`, then reference the generated name.
+:::
+
+A tenant user's prefix must start with the tenant name followed by `--`, for example `acme--deploy-`. SSH keys are cluster-scoped, so all tenants draw from one set of key names, and the prefix keeps them apart. The platform UI adds the prefix for you.
+
+If you leave `spec.displayName` empty, the platform fills it in from the prefix. It drops the trailing `-`, and for a tenant user it also drops the tenant prefix. The prefix `acme--deploy-` gives the display name `deploy`.
+
 ### Fields
 
-| Field | Description |
-|---|---|
-| `spec.displayName` | Human-readable name shown in the UI. |
-| `spec.description` | Optional description. |
-| `spec.publicKey` | The SSH public key content. |
-| `spec.owner` | Optional user or team that owns this resource. |
-| `spec.access` | Optional access control list. |
+| Field | Description | Editable after creation |
+|---|---|---|
+| `spec.displayName` | Human-readable name shown in the UI. Defaults to the name prefix. | Yes |
+| `spec.description` | Optional description. | Yes |
+| `spec.publicKey` | The SSH public key content. | No |
+| `spec.owner` | Optional user or team that owns this resource. | No |
+| `spec.access` | Optional access control list. | No |
+
+Metadata such as labels and annotations stays editable. Changing `spec.publicKey`, `spec.owner`, or `spec.access` on an existing key is refused.
+
+## Replace a key
+
+You can't change a key's public key in place. To rotate a key, or to give it a different owner or access list:
+
+1. Create a new `SSHKey` with the intended public key, owner, and access list.
+2. If you're replacing a platform key shared with tenants, apply the same sharing label to the new key. See [Share SSH keys with tenants](#share-ssh-keys-with-tenants).
+3. If you shared the key in step 2, confirm the new key carries the label before switching references:
+
+   ```bash
+   kubectl --context <management-context> get sshkey <new-key-name> --show-labels
+   ```
+
+4. Update every node provider and node type that references the old key so it names the new one. An instance's properties can't change after creation, so an instance that names the old key keeps it.
+5. Wait for instances that name the old key directly to finish provisioning before deleting it. Alternatively, recreate those instances with the new key. Recreating an instance releases its server and restarts provisioning.
+6. Delete the old key.
+
+SSH keys are injected at provision time. A server that's already provisioned keeps the old public key until you release and reprovision it.
 
 ## Use SSH keys
 
@@ -46,20 +93,59 @@ Reference SSH keys by name in node type properties or `NodeClaim` properties. Mu
 
 ```yaml
 properties:
-  vcluster.com/ssh-keys: my-ssh-key,team-shared-key
+  vcluster.com/ssh-keys: my-ssh-key-x7k2p,team-key-m4q9z
 ```
 
 All referenced keys are added to the provisioned server's `authorized_keys`.
 
+An instance can only use keys its tenant can see. See [Share SSH keys with tenants](#share-ssh-keys-with-tenants). A key list set on a claim overrides the node type's list. A node type's list overrides the node provider's list.
+
+The platform checks key visibility at claim creation and again during provisioning. If a key set on the claim or its node type doesn't exist or isn't visible to the claim's tenant, the platform refuses the claim:
+
+```text
+ssh key "<name>" not found
+```
+
+The platform gives the same answer for a key that doesn't exist, so the error doesn't reveal whether another tenant's key exists. Keys inherited from a node provider the tenant can't see are checked only during provisioning.
+
+## Share SSH keys with tenants
+
+Each tenant sees its own SSH keys. Keys that a platform admin creates outside any tenant belong to the platform and stay hidden from tenants until the admin shares them. Which keys an instance can use depends on who owns its project:
+
+| Instance owner | Keys the instance can use |
+|---|---|
+| A tenant | The tenant's own keys, platform keys shared with that tenant, and platform keys shared with all tenants |
+| The platform | Platform keys without an `exclusive-to` label, including keys shared with all tenants. Keys a tenant owns aren't available. |
+
+To assign a platform key exclusively to one tenant, label it with `tenant.vcluster.com/exclusive-to`. This makes the key unavailable to platform-owned instances. New requests that reference it fail, and pending provisioning can fail. Use a separate key if platform-owned instances still need the existing key.
+
+Assign the key with:
+
+<InterpolatedCodeBlock
+  code={'kubectl --context <management-context> label sshkey [[GLOBAL:SSH_KEY]] \\\n  tenant.vcluster.com/exclusive-to=[[GLOBAL:TENANT]]'}
+  language="bash"
+/>
+
+To share a platform key with every tenant, label it with `tenant.vcluster.com/all`:
+
+<InterpolatedCodeBlock
+  code={'kubectl --context <management-context> label sshkey [[GLOBAL:SSH_KEY]] \\\n  tenant.vcluster.com/all=true'}
+  language="bash"
+/>
+
+A tenant sees SSH keys only when the SSH keys capability is turned on for it. The platform refuses to share a key with a tenant that has the capability turned off. The same capability controls whether tenant users may register keys of their own. See [What a platform admin grants a tenant](/docs/plan/roles-and-scopes#what-a-platform-admin-grants-a-tenant).
+
+To stop sharing a key, remove the label. For example, `tenant.vcluster.com/exclusive-to-` removes the single-tenant label. The key becomes unavailable to affected tenants' new requests. A pending instance that still needs to resolve the key fails provisioning with an error containing `failed to get ssh key <name>`. Removing the label doesn't remove the key from provisioning data already prepared for an instance. Servers that are already provisioned keep the key until they're reprovisioned.
+
 ## Access control
 
-SSHKey resources are cluster-scoped. Use the `spec.owner` and `spec.access` fields to control who can use or modify them:
+SSHKey resources are cluster-scoped. Use the `spec.owner` and `spec.access` fields to control who can use or modify them. Set both when you create the key, because neither can change afterwards.
 
 ```yaml
 apiVersion: management.loft.sh/v1
 kind: SSHKey
 metadata:
-  name: team-key
+  generateName: team-key-
 spec:
   displayName: "Team Shared Key"
   publicKey: "ssh-ed25519 AAAA... team@org"
