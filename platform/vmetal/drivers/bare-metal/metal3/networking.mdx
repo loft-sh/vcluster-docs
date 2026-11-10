@@ -1,5 +1,5 @@
 ---
-title: Network Configuration
+title: Network configuration
 sidebar_label: Network configuration
 sidebar_position: 5
 description: How the provisioning network, Multus CNI bridge, and built-in IPAM fit together for the Metal3 driver.
@@ -7,6 +7,12 @@ description: How the provisioning network, Multus CNI bridge, and built-in IPAM 
 
 import NetworkTopology from '@site/static/media/diagrams/vmetal-network-topology.svg';
 import MultusBridge from '@site/static/media/diagrams/vmetal-multus-bridge.svg';
+import InterpolatedCodeBlock from '@site/src/components/InterpolatedCodeBlock';
+import PageVariables from '@site/src/components/PageVariables';
+import Flow, {Step} from '@site/src/components/Flow';
+import NavStep from '@site/src/components/NavStep';
+import Button from '@site/src/components/Button';
+import Label from '@site/src/components/Label';
 
 The Metal3 driver uses two distinct L2 segments. The Kubernetes cluster network carries pod-to-pod traffic inside the control plane cluster. The bare metal provisioning network is a separate segment where bare metal servers PXE boot. These aren't the same network, and bare metal servers have no direct access to cluster-internal services.
 
@@ -28,9 +34,78 @@ Use the DHCP server and Multus CNI when the bare metal servers and Ironic are on
 
 When Ironic powers on a server, it broadcasts a DHCP discover on the provisioning network. The DHCP server responds with an IP address and the location of the iPXE bootloader. The server downloads the bootloader, then contacts Ironic over HTTP to fetch the Ironic Python Agent ramdisk, which registers with Ironic and performs hardware inspection or OS installation.
 
+## Set a host address
+
+A host address reserves an IPv4 address for the boot NIC through the platform DHCP server. Configure it before registration so the server can boot the inspection ramdisk. These settings control DHCP replies. They don't generate static network data for the installed OS. See [Host addresses and installed-OS networking](#host-addresses-and-installed-os-networking) before choosing an address source.
+
+This procedure covers the default mode without Neutron. For Neutron-managed port addresses, use [Network integration](./network-integration.mdx#neutron-flat-network).
+
+The UI requires a platform admin outside tenant scope, with the machine management and Metal3 features enabled. You also need a Metal3 provider whose cluster reference you can read. Adding a server creates a BareMetalHost on that cluster. When you supply the BMC address, username, and password, it also creates the host's BMC credential Secret. Your access must permit those creates. With kubectl, you need permission to read and patch BareMetalHosts on the control plane cluster.
+
+Choose an address outside platform IPAM pools and other DHCP allocation ranges. The platform doesn't reserve a manually configured host address in its IPAM database.
+
+### Configure the address in the UI
+
+<Flow>
+<Step>
+Open <NavStep>Bare Metal > Machines</NavStep> and click the <Label>Metal3</Label> tab, if shown. Click <Button>Add Server</Button>.
+</Step>
+<Step>
+Enter the server name, provider, BMC credentials, and boot MAC as described in [Add servers](./server-lifecycle.mdx#add-servers).
+</Step>
+<Step>
+In <Label>Hardware & Network</Label>, enter <Label>IP</Label> with a prefix length, such as `192.168.100.20/24`. Set <Label>Gateway</Label> and <Label>DNS Servers</Label> for that network. Separate multiple DNS addresses with commas.
+</Step>
+<Step>
+Click <Button>Add Server</Button>. Check that the host's IP address appears in the Metal3 list and that registration proceeds to inspection.
+</Step>
+</Flow>
+
+### Configure an existing host with kubectl
+
+<PageVariables HOST="server-01" NAMESPACE="metal3-system" />
+
+Set the equivalent annotations on an unclaimed BareMetalHost. Commands use `<control-plane-context>`, the cluster referenced by `NodeProvider.spec.metal3.clusterRef.cluster`.
+
+<InterpolatedCodeBlock
+  language="bash"
+  code={'kubectl --context <control-plane-context> annotate baremetalhost [[GLOBAL:HOST]] -n [[GLOBAL:NAMESPACE]] \\' + '\n' +
+    '  metal3.vcluster.com/ip-address=[[VAR:IP:192.168.100.20/24]] \\' + '\n' +
+    '  metal3.vcluster.com/gateway=[[VAR:GATEWAY:192.168.100.1]] \\' + '\n' +
+    '  metal3.vcluster.com/dns-servers=[[VAR:DNS:192.168.100.53,192.168.100.54]] --overwrite'}
+/>
+
+The address must be IPv4 with a prefix length. Gateway and DNS values, when supplied, must also be IPv4 addresses. Check [DHCP annotations](./overview.mdx#infrastructure-deployment) for optional settings.
+
+To verify the configuration, inspect the host's annotations and provisioning state:
+
+<InterpolatedCodeBlock
+  language="bash"
+  code={'kubectl --context <control-plane-context> get baremetalhost [[GLOBAL:HOST]] -n [[GLOBAL:NAMESPACE]] -o yaml'}
+/>
+
+A displayed address confirms the saved configuration. Successful inspection confirms that the server booted and contacted Ironic. See [Host has no usable DHCP address](./troubleshooting.mdx#host-has-no-usable-dhcp-address) if provisioning fails.
+
+To remove a manual reservation, first ensure another address source is configured before the host's next network boot. Then remove these annotations from the unclaimed host:
+
+<InterpolatedCodeBlock
+  language="bash"
+  code={'kubectl --context <control-plane-context> annotate baremetalhost [[GLOBAL:HOST]] -n [[GLOBAL:NAMESPACE]] metal3.vcluster.com/ip-address- metal3.vcluster.com/gateway- metal3.vcluster.com/dns-servers-'}
+/>
+
+Don't change a claimed host's managed annotations to change a running OS's address.
+
+### Host addresses and installed-OS networking
+
+The DHCP reservation and the installed OS's network configuration are separate. When a claim allocates an address, the platform generates network data for the boot NIC. Without an allocated address, the default generator doesn't create network data from host annotations alone.
+
+For installed-OS networking, configure an IPAM pool or provide explicit network data through `metal3.vcluster.com/network-data` or a [MachineConfigTemplate](../../../images/machine-config-templates.mdx). The OS image must consume the supplied configuration.
+
+When a claim allocates a different address, the platform temporarily replaces the host's DHCP annotations. A node type's `metal3.vcluster.com/dns-servers` property replaces the host's DNS annotation the same way, even without an allocated address. The platform restores the operator's original values after release. See [Reuse and reprovisioning](./server-lifecycle.mdx#reuse-and-reprovisioning).
+
 ## IPAM
 
-The platform assigns one static IP to each provisioned server, from a pool configured on the node type:
+For claim-allocated addresses, configure a pool on the node type:
 
 - [`metal3.vcluster.com/network-cidr`](./overview.mdx#metal3vclustercomnetwork-cidr) is required, and supplies the gateway and prefix. On its own, the platform derives the network address from the prefix length and skips the network address, gateway, and broadcast address, then allocates IPs sequentially from the remaining pool.
 - [`metal3.vcluster.com/network-ip-range`](./overview.mdx#metal3vclustercomnetwork-ip-range) is optional, and restricts allocation to one or more explicit `<start>-<end>` ranges within that subnet. Range mode allocates every IP in the range exactly. The platform doesn't skip network or broadcast addresses within it.
