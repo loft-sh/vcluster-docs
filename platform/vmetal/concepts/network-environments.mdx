@@ -1,0 +1,93 @@
+---
+title: Network environments
+sidebar_label: Network environments
+sidebar_position: 1.5
+sidebar_class_name: pro
+description: How a NetworkEnvironment describes the network a machine joins, who it belongs to, and which driver provisions it.
+---
+
+A `NetworkEnvironment` describes the network that machines join when a driver provisions them.
+It is cluster scoped, so it isn't tied to a single project or namespace.
+Each environment names one driver in `spec.providerRef` and carries that driver's settings in `spec.properties`.
+
+Drivers use environments differently.
+Some provision real infrastructure from one, such as a VPC and an address range.
+Others don't require one and provision nothing from it, though they can still read its properties.
+See the [NICo driver guide](../drivers/bare-metal/nico.mdx#create-a-network) for a driver that requires one.
+
+## Decide who a network belongs to
+
+Every environment records who it's for.
+A platform administrator creates the environment and states the assignment with a label:
+
+| Label | Value | Meaning |
+| --- | --- | --- |
+| `tenant.vcluster.com/exclusive-to` | a Tenant name | The operator lends this environment to that Tenant. |
+| `tenant.vcluster.com/all` | `"true"` | The operator shares this environment with every Tenant. |
+| (no label) | | The environment belongs to the platform and serves platform workloads. |
+
+The `exclusive-to` label must name a Tenant. The API refuses an empty value, so leave the label off to keep an environment for the platform.
+
+Platform admins lend environments, and a Tenant never owns one. A create from a Tenant session is refused, and so is a create by a platform admin that sets the `tenant.vcluster.com/owner` label:
+
+```text
+tenant "acme" may not own instances of this resource
+```
+
+The API also requires a `providerRef` that names an existing NodeProvider:
+
+```text
+network environment must reference a node provider
+```
+
+Tenant-scoped reads hide the assignment label, so a Tenant's view of an environment never shows it.
+
+## What you can't change later
+
+After you create an environment, its assignment, `providerRef`, and driver properties can't change.
+The API refuses the update with errors like these:
+
+```text
+tenant assignment cannot be changed after creation; delete and recreate the network environment to assign it differently
+providerRef cannot be changed
+properties cannot be changed after creation
+```
+
+You can still edit the display name, and add or remove the `tenant.vcluster.com/all` label.
+The assignment that's fixed is the `exclusive-to` label.
+To change anything else, create a replacement environment and move its workloads across.
+Decide the assignment and the network settings before you apply the manifest.
+
+## How a machine selects a network
+
+A `NodeClaim` reaches an environment in one of two ways:
+
+- It names one explicitly, through the network environment property or `spec.environmentRef`.
+- It names none, and the provider's default applies.
+  Mark that default by setting the `machines.vcluster.com/is-default-environment` annotation on the environment to `"true"`.
+  Only environments whose `providerRef` matches the claim's provider are candidates.
+  If more than one default is visible to a claim, the claim fails, so mark only one per provider.
+
+A project restricts which environments its claims may use.
+A claim that names an environment its project excludes fails with `network environment is not allowed in project`.
+
+An environment serves only claims of its own provider.
+The API refuses a claim that names an environment of another provider:
+
+```text
+network environment "<name>" belongs to node provider "<a>", not "<b>"
+```
+
+## Check that an environment is ready
+
+Every environment reports a `Ready` condition, summarizing whether its driver has provisioned and synced the infrastructure.
+Wait for `Ready` before you create machines against it:
+
+```bash
+kubectl get networkenvironments.management.loft.sh <name> -o yaml
+kubectl wait networkenvironments.management.loft.sh/<name> --for=condition=Ready --timeout=10m
+```
+
+## Next steps
+
+- [Connect the NICo driver](../drivers/bare-metal/nico.mdx) and create a network for platform or Tenant workloads.
