@@ -25,34 +25,35 @@ const crypto = require('node:crypto');
 const WIDTH = 1200;
 const HEIGHT = 630;
 
+// Bump when the card layout changes. It's part of each card's file name, so
+// a new layout gets new URLs and LinkedIn and other sites don't keep serving
+// their cached copies of the old cards.
+const TEMPLATE_VERSION = 2;
+
 async function loadAssets() {
   const fontDir = path.dirname(require.resolve('@fontsource/inter/package.json'));
-  const [bold, logo, pattern] = await Promise.all([
+  const [bold, logo] = await Promise.all([
     fs.readFile(path.join(fontDir, 'files/inter-latin-700-normal.woff')),
     fs.readFile(path.join(__dirname, 'logo.svg')),
-    fs.readFile(path.join(__dirname, 'pattern.svg')),
   ]);
   const dataUri = (buf) => `data:image/svg+xml;base64,${buf.toString('base64')}`;
   return {
     fonts: [{ name: 'Inter', data: bold, weight: 700, style: 'normal' }],
     logo: dataUri(logo),
-    pattern: dataUri(pattern),
   };
 }
 
 const el = (type, style, children, props = {}) => ({ type, props: { style, children, ...props } });
 
 // Layout follows Open Graph vCluster B (dark): Black-100 background, the
-// vCluster logo, a #373C50 rule, and the line pattern in the bottom right.
-// The page title replaces the static subtitle, with the product as an
-// orange eyebrow above it.
+// vCluster logo, and a #373C50 rule. The page title replaces the static
+// subtitle, with the product as an orange eyebrow above it. The component's
+// line pattern is left out at Design's request (2026-11-10).
 function card({ eyebrow, title }, assets) {
   return el('div', {
     width: WIDTH, height: HEIGHT, display: 'flex', position: 'relative',
     backgroundColor: '#050B24', fontFamily: 'Inter',
   }, [
-    el('img', { position: 'absolute', left: 665, top: 317, width: 583, height: 391 }, undefined,
-      { src: assets.pattern, width: 583, height: 391 }),
     el('div', {
       position: 'absolute', left: 96, top: 72, width: 880,
       display: 'flex', flexDirection: 'column',
@@ -145,7 +146,7 @@ module.exports = function ogTitleCards(context, options = {}) {
       const started = Date.now();
 
       async function render(info) {
-        const key = crypto.createHash('sha1').update(`${info.eyebrow}|${info.title}`).digest('hex').slice(0, 16);
+        const key = crypto.createHash('sha1').update(`v${TEMPLATE_VERSION}|${info.eyebrow}|${info.title}`).digest('hex').slice(0, 16);
         if (!rendered.has(key)) {
           rendered.set(key, (async () => {
             const svg = await satori(card(info, assets), { width: WIDTH, height: HEIGHT, fonts: assets.fonts });
