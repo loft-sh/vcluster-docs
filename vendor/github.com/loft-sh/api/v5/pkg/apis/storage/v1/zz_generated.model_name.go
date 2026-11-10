@@ -351,11 +351,6 @@ func (in AuthenticationSAML) OpenAPIModelName() string {
 }
 
 // OpenAPIModelName returns the OpenAPI model name for this type.
-func (in BCMNodeTypeSpec) OpenAPIModelName() string {
-	return "com.github.loft-sh.api.v5.pkg.apis.storage.v1.BCMNodeTypeSpec"
-}
-
-// OpenAPIModelName returns the OpenAPI model name for this type.
 func (in Bash) OpenAPIModelName() string {
 	return "com.github.loft-sh.api.v5.pkg.apis.storage.v1.Bash"
 }
@@ -871,11 +866,6 @@ func (in NodeProvider) OpenAPIModelName() string {
 }
 
 // OpenAPIModelName returns the OpenAPI model name for this type.
-func (in NodeProviderBCM) OpenAPIModelName() string {
-	return "com.github.loft-sh.api.v5.pkg.apis.storage.v1.NodeProviderBCM"
-}
-
-// OpenAPIModelName returns the OpenAPI model name for this type.
 func (in NodeProviderClusterAPI) OpenAPIModelName() string {
 	return "com.github.loft-sh.api.v5.pkg.apis.storage.v1.NodeProviderClusterAPI"
 }
@@ -903,6 +893,11 @@ func (in NodeProviderList) OpenAPIModelName() string {
 // OpenAPIModelName returns the OpenAPI model name for this type.
 func (in NodeProviderMetal3) OpenAPIModelName() string {
 	return "com.github.loft-sh.api.v5.pkg.apis.storage.v1.NodeProviderMetal3"
+}
+
+// OpenAPIModelName returns the OpenAPI model name for this type.
+func (in NodeProviderMetal3Aviz) OpenAPIModelName() string {
+	return "com.github.loft-sh.api.v5.pkg.apis.storage.v1.NodeProviderMetal3Aviz"
 }
 
 // OpenAPIModelName returns the OpenAPI model name for this type.

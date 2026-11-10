@@ -96,6 +96,8 @@ const (
 
 	Netris FeatureName = "netris" // Netris
 
+	Aviz FeatureName = "aviz" // Aviz
+
 	KubeVip FeatureName = "kube-vip" // Kube-vip Integration
 
 	Metal3 FeatureName = "metal3" // Metal3 Integration
@@ -210,6 +212,7 @@ func GetFeatures() []FeatureName {
 		VirtualClusterProDistroFips,
 		VNodeRuntime,
 		Netris,
+		Aviz,
 		KubeVip,
 		Metal3,
 		VmManagement,
@@ -475,6 +478,11 @@ func GetAllFeatures() []*Feature {
 		{
 			DisplayName: "Netris",
 			Name:        "netris",
+			Module:      "bare-metal",
+		},
+		{
+			DisplayName: "Aviz",
+			Name:        "aviz",
 			Module:      "bare-metal",
 		},
 		{

@@ -46,9 +46,9 @@ require (
 	github.com/josharian/intern v1.0.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/kylelemons/godebug v1.1.0 // indirect
-	github.com/loft-sh/admin-apis v0.0.0-20260928151145-c0a92a2b2cf8 // indirect
-	github.com/loft-sh/agentapi/v5 v5.0.0-rc.1 // indirect
-	github.com/loft-sh/api/v5 v5.0.0-rc.1
+	github.com/loft-sh/admin-apis v0.0.0-20261106170514-fc575efe6301 // indirect
+	github.com/loft-sh/agentapi/v5 v5.0.0-rc.3 // indirect
+	github.com/loft-sh/api/v5 v5.0.0-rc.3
 	github.com/loft-sh/apiserver v0.0.0-20260707184419-aef558a5ae8d // indirect
 	github.com/mailru/easyjson v0.7.7 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect

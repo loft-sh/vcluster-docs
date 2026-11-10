@@ -1181,16 +1181,8 @@ var (
 	NewProjectMigrateSpaceInstanceREST = func(getter generic.RESTOptionsGetter) rest.Storage {
 		return NewProjectMigrateSpaceInstanceRESTFunc(Factory)
 	}
-	NewProjectMigrateSpaceInstanceRESTFunc           NewRESTFunc
-	InternalProjectMigrateVirtualClusterInstanceREST = builders.NewInternalSubresource(
-		"projects", "ProjectMigrateVirtualClusterInstance", "migratevirtualclusterinstance",
-		func() runtime.Object { return &ProjectMigrateVirtualClusterInstance{} },
-	)
-	NewProjectMigrateVirtualClusterInstanceREST = func(getter generic.RESTOptionsGetter) rest.Storage {
-		return NewProjectMigrateVirtualClusterInstanceRESTFunc(Factory)
-	}
-	NewProjectMigrateVirtualClusterInstanceRESTFunc NewRESTFunc
-	InternalProjectNodeTypesREST                    = builders.NewInternalSubresource(
+	NewProjectMigrateSpaceInstanceRESTFunc NewRESTFunc
+	InternalProjectNodeTypesREST           = builders.NewInternalSubresource(
 		"projects", "ProjectNodeTypes", "nodetypes",
 		func() runtime.Object { return &ProjectNodeTypes{} },
 	)
@@ -1759,7 +1751,6 @@ var (
 		InternalProjectImportSpaceREST,
 		InternalProjectMembersREST,
 		InternalProjectMigrateSpaceInstanceREST,
-		InternalProjectMigrateVirtualClusterInstanceREST,
 		InternalProjectNodeTypesREST,
 		InternalProjectTemplatesREST,
 		InternalProjectSecret,
@@ -2585,9 +2576,6 @@ type KioskSpec struct {
 	AccessKey                           storagev1.AccessKey                 `json:"accessKey,omitempty"`
 	UISettings                          uiv1.UISettings                     `json:"UISettings,omitempty"`
 	License                             License                             `json:"license,omitempty"`
-	NodeProviderBCMNodeWithResources    NodeProviderBCMNodeWithResources    `json:"nodeProviderBCMNodeWithResources,omitempty"`
-	NodeProviderBCMGetResourcesResult   NodeProviderBCMGetResourcesResult   `json:"nodeProviderBCMGetResourcesResult,omitempty"`
-	NodeProviderBCMTestConnectionResult NodeProviderBCMTestConnectionResult `json:"nodeProviderBCMTestConnectionResult,omitempty"`
 	NodeProviderCalculateCostResult     NodeProviderCalculateCostResult     `json:"nodeProviderCalculateCostResult,omitempty"`
 	NodeProviderTerraformValidateResult NodeProviderTerraformValidateResult `json:"nodeProviderTerraformValidateResult,omitempty"`
 	NodeProviderExecResult              NodeProviderExecResult              `json:"nodeProviderExecResult,omitempty"`
@@ -2828,26 +2816,6 @@ type NodeProvider struct {
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 	Spec              NodeProviderSpec   `json:"spec,omitempty"`
 	Status            NodeProviderStatus `json:"status,omitempty"`
-}
-
-type NodeProviderBCMGetResourcesResult struct {
-	Nodes      []NodeProviderBCMNodeWithResources `json:"nodes"`
-	NodeGroups []NodeProviderBCMNodeGroup         `json:"nodeGroups"`
-}
-
-type NodeProviderBCMNodeGroup struct {
-	Name  string   `json:"name"`
-	Nodes []string `json:"nodes"`
-}
-
-type NodeProviderBCMNodeWithResources struct {
-	Name      string               `json:"name"`
-	Resources *corev1.ResourceList `json:"resources,omitempty"`
-}
-
-type NodeProviderBCMTestConnectionResult struct {
-	Success bool   `json:"success"`
-	Message string `json:"message"`
 }
 
 type NodeProviderCalculateCostResult struct {
@@ -3121,19 +3089,6 @@ type ProjectMigrateSpaceInstance struct {
 }
 
 type ProjectMigrateSpaceInstanceSource struct {
-	Name      string `json:"name,omitempty"`
-	Namespace string `json:"namespace,omitempty"`
-}
-
-// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
-
-type ProjectMigrateVirtualClusterInstance struct {
-	metav1.TypeMeta              `json:",inline"`
-	metav1.ObjectMeta            `json:"metadata,omitempty"`
-	SourceVirtualClusterInstance ProjectMigrateVirtualClusterInstanceSource `json:"sourceVirtualClusterInstance"`
-}
-
-type ProjectMigrateVirtualClusterInstanceSource struct {
 	Name      string `json:"name,omitempty"`
 	Namespace string `json:"namespace,omitempty"`
 }
@@ -8183,14 +8138,6 @@ type ProjectMigrateSpaceInstanceList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []ProjectMigrateSpaceInstance `json:"items"`
-}
-
-// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
-
-type ProjectMigrateVirtualClusterInstanceList struct {
-	metav1.TypeMeta `json:",inline"`
-	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []ProjectMigrateVirtualClusterInstance `json:"items"`
 }
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
