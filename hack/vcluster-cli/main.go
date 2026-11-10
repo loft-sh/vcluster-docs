@@ -97,6 +97,9 @@ func main() {
 	// Run the generation
 	genCmd := exec.Command("go", "run", "-mod=mod", docsGenPath, docsDir)
 	genCmd.Dir = workDir
+	// The source checkout can require a newer Go version than the docs repo.
+	// Allow this subprocess to select it even when CI sets GOTOOLCHAIN=local.
+	genCmd.Env = append(os.Environ(), "GOTOOLCHAIN=auto")
 	genCmd.Stdout = os.Stdout
 	genCmd.Stderr = os.Stderr
 	if err := genCmd.Run(); err != nil {
