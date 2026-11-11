@@ -27,7 +27,7 @@ const BASE_URL = process.env.TEST_BASE_URL
 
 // Paths with a known .md sibling (listed in llms.txt).
 const MD_BACKED_PATHS = [
-  '/docs/vcluster/configure/vcluster-yaml/sleep',
+  '/docs/vcluster/configure/lifecycle/sleep',
   '/docs/platform',
   '/docs/vcluster',
 ];
