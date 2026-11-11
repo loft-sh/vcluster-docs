@@ -33,6 +33,8 @@ This separation means all the heavy lifting (version creation, content, link fix
 
 Release notes and the What's new page aren't part of this skill. Use `docs-release-notes` for those. It covers what goes in the notes, and the backport label that carries them into the version folder this skill creates.
 
+When you version the docs, remove `/next/` from cross-product links in the release notes and What's new pages, in the current docs and the new version folder. Release notes drafted before versioning need `/next/` to resolve, so they always have some.
+
 ## When to Use This Skill
 
 Trigger this skill when:

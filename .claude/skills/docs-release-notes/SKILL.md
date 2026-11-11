@@ -23,17 +23,22 @@ version and flip it live. This skill covers what goes on the notes pages.
 ## Where the work happens
 
 Write release notes on a branch off `main` and open the PR into `main`, like any
-other docs change. The docs version for a release is cut at rc-1 and stays
-hidden until release day, so the notes have to reach that version folder too:
+other docs change. Notes are usually drafted well before the docs are versioned,
+which happens late in the release. Whether the PR needs a backport label depends
+on whether the version folder exists yet:
 
-- **Minor release:** add the backport label for the new version, such as
-  `backport-v0.39` (vCluster) or `backport-v5.1.0` (Platform). If the label
-  doesn't exist yet, create it with the same pattern. The label copies each
-  changed file to the same path in the version folder.
-- **Patch release:** add the backport label for the minor the patch belongs to,
-  so the new `## X.Y.Z` section lands in that version's folder as well.
+- **Minor release, before versioning:** no label. The notes live in the current
+  docs (`platform/` or `vcluster/`), and versioning copies them into the new
+  version folder.
+- **Minor release, after versioning:** add the backport label for the new
+  version, such as `backport-v0.39` (vCluster) or `backport-v5.1.0`
+  (Platform). If the label doesn't exist yet, create it with the same pattern.
+  The label copies each changed file to the same path in the version folder.
+- **Patch release:** the minor's version folder already exists, so add the
+  backport label for that minor. The new `## X.Y.Z` section then lands in the
+  version folder as well.
 - **Every page you change** for the release, such as the upgrade page or a
-  deprecation admonition, needs the same label. A page whose path differs in
+  deprecation admonition, follows the same rule. A page whose path differs in
   the version folder can't be backported by label. Edit it there by hand, with
   explicit approval. See "Backport changes to released versions" in
   CONTRIBUTING.md.
@@ -246,13 +251,16 @@ HTML comments, and the JSX comment between them is the one Vale doesn't lint:
 - Link to the task or reference page that has the detail:
   - Within a product, use relative links with the `.mdx` suffix, such as
     `../../overview/whats-new.mdx`. They keep the reader's docs version.
-  - Across products, use `/docs/<product>/<path>` with no version segment. It
-    resolves to the other product's stable docs. Never write `/next/` into a
-    link: once the release ships, it sends readers of released notes into
-    unreleased docs.
-  - A cross-product link to a page that's new in the paired release 404s until
-    that product's version flips live. Add a `{/* TODO after release: check
-    this link */}` comment, and check it on release day.
+  - Across products, the link depends on whether the docs are versioned yet.
+    Before versioning, the pages the release adds or moves exist only in the
+    current docs, which are served under `/next/`. Link them as
+    `/docs/<product>/next/<path>`, or the link won't resolve.
+  - When the docs are versioned for the release, remove `/next/` from those
+    links, in the current docs and in the new version folder. Left in, they send
+    readers of released notes into unreleased docs. A link with no version
+    segment resolves to the other product's stable docs.
+  - A link to a page that's new in the paired release can still 404 until that
+    product's version flips live. Check those links on release day.
 - Use the `v` prefix for every vCluster Labs product version in prose, for
   example "vCluster v0.38", "Platform v5.0", and "Also in v0.37.4". Vale only
   catches a version that follows a product name, so check bare versions by eye.
@@ -295,17 +303,19 @@ A note isn't the whole change:
 2. Run `docs-review` on each changed page for style, readability, and
    usability.
 3. Run Vale on each changed page and fix every warning.
-4. Open the PR into `main` with the backport label, then post the preview links
-   in the release thread in #release-engineering for product review. The PR
-   preview serves the current docs under `/docs/<product>/next/`, so the preview
-   links need that segment even though the page's own links don't.
+4. Open the PR into `main`, with the backport label if the version folder
+   exists. Then post the preview links in the release thread in
+   #release-engineering for product review. The PR preview serves the current
+   docs under `/docs/<product>/next/`, so the preview links need that segment.
 5. When a reviewer flags lines as too detailed, apply the same filter to the
    whole page, not only the lines they named. Then reply in the thread with what
    changed, per point.
 6. Before merge, clear every `TODO before merge` comment, or confirm with the
    owner that it can stay.
-7. On release day, after the version flips live, check every `TODO after
-   release` link and remove the comment.
+7. When the docs are versioned, remove `/next/` from the release notes and
+   What's new links, in the current docs and the new version folder.
+8. On release day, after the version flips live, check that every
+   cross-product link resolves.
 
 ## Checklist
 
@@ -319,9 +329,11 @@ A note isn't the whole change:
       without a reason, or internal mechanics
 - [ ] Hardening and resilience changes are summarized, one line each
 - [ ] Every product version in prose has a `v` prefix
-- [ ] No `/next/` in any link on the page
+- [ ] Cross-product links use `/next/` before versioning, and drop it once the
+      docs are versioned
 - [ ] New minor: category, What's new, upgrade path, and lifecycle data updated
 - [ ] Deprecated features have an admonition on their page
-- [ ] PR targets `main` with the backport label (or `next` for a staged major)
+- [ ] PR targets `main` (or `next` for a staged major), with the backport label
+      if the version folder exists
 - [ ] Fact check and docs review run, Vale clean, preview reviewed by product
-- [ ] Release day: `TODO after release` links checked and comments removed
+- [ ] Release day: cross-product links checked
