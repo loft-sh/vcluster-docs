@@ -60,13 +60,55 @@ After a user authenticates, Platform builds a Kubernetes-compatible identity for
 
 - the user's subject as the Kubernetes user name;
 - the user's direct groups;
-- `system:authenticated`;
+- `system:authenticated` and `loft:authenticated`;
 - platform groups such as `loft:user:<user-name>`;
-- one `loft:team:<team-name>` group for every effective team membership.
+- one `loft:team:<team-name>` group for every effective team membership;
+- exactly one scope group, `loft:platform` or `loft:tenant:<tenant-name>`. See [Scope groups](#scope-groups).
 
 This is why teams are useful beyond the UI. Platform permissions, project membership, admission policies, and cluster access can all refer to users and teams as Kubernetes-style subjects and groups.
 
 The subject is the name that role bindings and other Kubernetes-style checks see for the user. If the subject is empty or starts with a reserved prefix, Platform uses `loft:user:<user-name>` instead. Platform reserves the `loft:` and `system:` prefixes for its own identities, so a user's subject can't start with either one. See [Reserved subject prefixes](../users-permissions/managing-users/create.mdx#reserved-subject-prefixes).
+
+### Scope groups
+
+Every identity built from a user or from a team's access key carries one scope group. The scope group names the scope the identity belongs to.
+
+| Identity | Scope group |
+|----------|-------------|
+| A user or team access key that belongs to no tenant, including a platform admin | `loft:platform` |
+| A user or team access key that belongs to a tenant | `loft:tenant:<tenant-name>` |
+
+`loft:authenticated` stays on every identity, and the scope group sits next to it. This follows the Kubernetes pattern where a service account carries `system:serviceaccounts:<namespace>` next to `system:authenticated`.
+
+Platform derives the scope group from the identity's `tenant.vcluster.com/owner` label each time it builds the identity. A connected cluster's agent derives it the same way for direct-endpoint tokens. The group is never stored, so it doesn't appear on the user or team object. To see it, read the `groups` list of the [Self](../../api/resources/self.mdx) resource while connected as that identity.
+
+```bash
+kubectl create -o jsonpath='{range .status.groups[*]}{@}{"\n"}{end}' -f - <<EOF
+apiVersion: management.loft.sh/v1
+kind: Self
+EOF
+```
+
+The output lists one group per line, including exactly one of `loft:platform` or `loft:tenant:<tenant-name>`. See [Check which tenant you belong to](#check-which-tenant-you-belong-to) for how to connect.
+
+A [project member](#project-membership) named `*` binds the scope group of the project's own scope. That's what keeps a wildcard member from reaching across the tenant boundary in either direction.
+
+#### Reserved group names
+
+Only the ownership label can give an identity a scope group, so Platform reserves these group names:
+
+- `loft:platform`, and every group that starts with `loft:platform:`
+- the exact shape `loft:tenant:<name>`, with no further colon
+
+`loft:tenant:<tenant-name>:<group>` isn't reserved. That shape is free for a tenant's own identity provider groups.
+
+A reserved group never takes effect from anywhere else:
+
+- Adding one to a user's groups through the API returns `403` with `group "<group-name>" is derived from the identity's scope and cannot be set`.
+- SSO sync drops one that arrives from an identity provider.
+- A reserved group stored on a team, on an access key, or by an earlier Platform version is ignored.
+
+When Platform acts as an [OIDC provider](../../administer/authentication/oidc-provider.mdx), the `groups` claim it issues leaves out every group that starts with `loft:` or `system:`, scope groups included. An application that signs users in through Platform can't use scope groups to tell tenants apart.
 
 [Authentication and authorization →](../../overview/auth-explanation.mdx)
 
@@ -139,7 +181,9 @@ Tenants can't write roles of their own. Cluster role templates are shared with e
 
 ## Project membership
 
-Projects are where users and teams usually become operational. A project's member list can include specific users, specific teams, or all users at once. Each member receives a project role that defines what they can do inside that project.
+Projects are where users and teams usually become operational. A project's member list can include specific users, specific teams, or a wildcard member. Each member receives a project role that defines what they can do inside that project.
+
+A wildcard member, that is a user or team named `*`, appears in the UI as <Label>Everybody</Label> for a user or <Label>All teams</Label> for a team. It covers every identity in the project's own scope, not every identity on the platform. On a tenant's project, that's the tenant's users and team access keys. On a project no tenant owns, that's the platform's users and team access keys. A `*` team member covers the same identities as a `*` user member, users who belong to no team included. Platform binds the project's [scope group](#scope-groups), so a user or team created later is covered from its first request, and a deleted one loses access with its credentials.
 
 When a team is a project member, all current team members receive the team's project access. Platform's project members API resolves both the direct team entry and the users who belong to that team. This lets project views show the effective member set.
 
