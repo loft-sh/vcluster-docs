@@ -1,5 +1,5 @@
 ---
-title: Metal3 Network Integration
+title: Metal3 network integration
 sidebar_label: Network integration
 sidebar_position: 6
 ---
@@ -21,7 +21,7 @@ There are four modes, from a flat shared network to isolation in the hardware fa
 | No network integration (default) | None. The provisioning network is the tenant network. | Optional. Platform IPAM allocates addresses when a network CIDR is configured. | A single trusted tenant, or a lab where the provisioning network is the only network. |
 | Neutron (flat network) | None at the fabric. The network stays flat and shared; Ironic owns the port lifecycle. | Platform IPAM, per tenant network. | You want Ironic to drive ports through its neutron interface, but don't need hardware isolation. |
 | Netris | Hardware. Environment-level L2 isolation through Netris. | Platform IPAM; the subnet is derived from the Netris server cluster unless a CIDR is pinned. | Untrusted, external, or regulated tenants that must be isolated at the physical network layer. |
-| Aviz | Hardware. Environment-level isolation through an Aviz ONES fabric tenant. | Platform IPAM; a network CIDR is required because Aviz doesn't supply a subnet. | Untrusted, external, or regulated tenants on an Aviz ONES fabric. |
+| Aviz | Hardware. Environment-level isolation on tenant-aware fabric networks. See [Aviz prerequisites](#prerequisites) for the required segmentation settings. | Platform IPAM; a network CIDR is required because Aviz doesn't supply a subnet. | Untrusted, external, or regulated tenants, on a fabric with tenant-aware networking. |
 
 The two flat modes keep each cluster's control plane and API separate and manage their addresses independently. Every server still shares the same layer 2 network, so these modes don't provide network isolation. Netris and Aviz move that isolation boundary into the hardware fabric.
 
@@ -194,7 +194,9 @@ Servers select this network environment through the `vcluster.com/network-enviro
 
 ## Aviz (hardware network isolation)
 
-Aviz provides network isolation in hardware through an Aviz ONES fabric. Aviz ONES gives each Aviz tenant its own VXLAN segment for server-to-server traffic and its own VLAN for front-end and storage access. Once a server is allocated to an Aviz tenant, it can reach only servers in the same tenant on the server-to-server fabric. On provisioning, the platform attaches each server in a network environment to that environment's Aviz tenant. Give each tenant network environment its own Aviz tenant to separate tenant traffic at the physical network layer.
+Aviz ONES manages the physical network fabric and provides tenant isolation through network segmentation. On a tenant-aware east-west fabric, each Aviz tenant has its own VXLAN segment for server-to-server traffic. Allocated servers can reach only servers in the same Aviz tenant on that fabric. Front-end and storage segmentation depend on the fabric design. Creating an Aviz tenant doesn't enable segmentation on a network deployed without it.
+
+On provisioning, the platform attaches each server in a network environment to that environment's Aviz tenant. Give each tenant network environment its own Aviz tenant to separate tenant traffic at the physical network layer.
 
 A server joins the Aviz tenant the same way whether it runs as a standalone bare metal instance or as a [private node](/docs/vcluster/deploy/worker-nodes/private-nodes) in a cluster. The network environment decides the Aviz tenant, not the workload on the server.
 
@@ -204,8 +206,10 @@ Aviz requires [Neutron mode](#neutron-flat-network) and a network environment, t
 
 ### Prerequisites
 
+As a platform admin, configure the Metal3 provider after your network administrator prepares the ONES fabric. Follow the [Aviz fabric deployment guides](https://aviznetworks.gitbook.io/ones/ones-for-ai-factory/fabric) for the ONES-side setup.
+
 - An Aviz ONES fabric that already exists, on ONES 4.2 or later. The platform looks the fabric up by name and doesn't create it.
-- Tenant segmentation enabled on the fabric. A fabric deployed without it is a flat network, and Aviz tenants don't isolate servers on it.
+- Tenant-aware east-west networking enabled for server-to-server isolation. Verify `e-wTenantAware` in the [Aviz fabric details](https://aviznetworks.gitbook.io/ones/ones-for-ai-factory/fabric/tenancy-apis/fabrics). If you require front-end isolation, verify `n-sTenantAware` too. Confirm storage segmentation for your fabric design with your network administrator.
 - Each server known to Aviz ONES under the name the platform registers it with. By default this is its `BareMetalHost` name. See [Override the Aviz server name](#override-the-aviz-server-name).
 - A platform license that includes the `aviz` feature. Without it, provisioning the network environment fails with the reason `FeatureNotLicensed`.
 - Neutron enabled on the NodeProvider, with `neutron.networks.provisioning` set in `helmValues`. See [Neutron (flat network)](#neutron-flat-network).
@@ -273,10 +277,12 @@ When the network environment is provisioned, the platform checks the named Aviz 
 - If the tenant doesn't exist, the platform creates it as an unshared tenant. It records the tenant in the `aviz.vcluster.com/managed-tenant` annotation on the network environment. Don't set this annotation by hand.
 - If the tenant already exists, the platform adopts it and never marks it managed.
 
-When you delete the network environment, the platform deletes only a tenant recorded as managed. Aviz ONES refuses to delete a tenant while any server is still allocated to it, so the platform keeps retrying until every server is detached. Aviz ONES then deletes tenants asynchronously, one at a time. The platform requeues the deletion and checks again until the tenant is gone, so teardown can take several minutes. The platform never deletes an adopted tenant.
+Before deleting a network environment, release its instances or remove the cluster nodes that use it. The platform blocks deletion while any NodeClaims remain bound to the environment, even if their servers are already detached. A blocked network environment reports the reason `NodeClaimsBound`.
+
+When you delete the network environment, the platform deletes only a tenant recorded as managed. Aviz ONES refuses to delete a tenant while any server is still allocated to it. Any remaining allocations must be released before deletion can finish. Deletion is asynchronous and can take several minutes. The platform retries until the tenant is gone. The platform never deletes an adopted tenant.
 
 :::warning Don't share managed Aviz tenants
-The platform deletes a managed Aviz tenant when the network environment that created it is deleted. Deletion waits only for allocated servers to detach, not for other network environments that reference the tenant. Once the tenant is gone, servers in those network environments can't attach. Give each network environment its own Aviz tenant. Share only pre-existing tenants that the platform adopts instead of manages.
+The platform deletes a managed Aviz tenant when the network environment that created it is deleted. Other network environments that reference the Aviz tenant don't prevent its deletion once all servers are detached. Once the tenant is gone, servers in those network environments can't attach. Give each network environment its own Aviz tenant. Share only pre-existing tenants that the platform adopts instead of manages.
 :::
 
 ### Server attachment
@@ -285,7 +291,7 @@ A server isn't on any tenant's network while Ironic provisions or cleans it. It 
 
 The platform attaches each server to the Aviz tenant as a whole, unshared server. Aviz ONES rejects the attachment while another tenant holds the server. The platform doesn't split a server's GPUs between Aviz tenants.
 
-Attachment and detachment are asynchronous. Aviz ONES pushes configuration to the fabric, which can take several minutes. The platform treats a server as attached once Aviz ONES reports the tenant's configuration as applied. The platform doesn't request a new attachment while a push for the tenant is in progress. Servers joining the same tenant attach one after another. Detachment is complete once the server is no longer allocated to the tenant.
+Attachment and detachment are asynchronous and can take several minutes while Aviz ONES applies the fabric configuration. The platform waits for Aviz ONES to report the tenant's configuration as applied before treating a server as attached. Detachment is complete once the server is no longer allocated to the tenant.
 
 ### Override the Aviz server name
 
@@ -336,4 +342,6 @@ Servers select this network environment through the `vcluster.com/network-enviro
 
    A `False` status carries a reason and the error message. The configuration reasons are listed under [Select and configure the Aviz provider](#select-and-configure-the-aviz-provider). Other failures, such as wrong Aviz credentials, report `FailedToProvision` and retry.
 
-2. Provision a server into the network environment. After the NodeClaim is ready, check in Aviz ONES that the server is allocated to the `tenanta` tenant and that the tenant's configuration has been applied. Allow several minutes for the configuration push.
+2. Provision a server using the `compute` node type configured above. Follow [Independently provisioned instances](../../../deploy/independently-provisioned-machines.mdx) for a standalone instance, or [Cluster nodes](../../../deploy/cluster-nodes.mdx) for a private node. Use `metal3-provider` as the provider and `compute` as the node type in those guides.
+
+3. After the NodeClaim is ready, check in Aviz ONES that the server is allocated to the `tenanta` tenant. Check that the tenant's configuration has been applied. Allow several minutes for the configuration push.
