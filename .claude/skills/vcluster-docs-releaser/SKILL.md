@@ -31,6 +31,8 @@ The config flip PR changes only the version visibility in `docusaurus.config.js`
 
 This separation means all the heavy lifting (version creation, content, link fixes) is done during the rc-1 window, and release day is a low-risk config change.
 
+Release notes and the What's new page aren't part of this skill. Use `docs-release-notes` for those. It covers what goes in the notes, and the backport label that carries them into the version folder this skill creates.
+
 ## When to Use This Skill
 
 Trigger this skill when:

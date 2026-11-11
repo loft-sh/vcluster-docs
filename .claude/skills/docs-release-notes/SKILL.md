@@ -1,6 +1,6 @@
 ---
 name: docs-release-notes
-description: Write or update the per-release notes pages for vCluster Platform and vCluster, and the What's new page for a minor release. Decides what each change gets (its own entry, a summary line, or nothing), the section order, and the wording. Use when drafting release notes for a minor or patch release, triaging a tag diff or a Linear release project into notes, adding a patch section, or acting on review feedback that the notes are too detailed.
+description: Write or update the per-release notes pages for vCluster Platform and vCluster, and the What's new page for a minor release. Decides what each change gets (its own entry, a summary line, or nothing), the section order, the wording, and which branch and backport label carry the notes. Use when drafting release notes or a changelog for a minor or patch release, triaging a tag diff or a Linear release project into notes, adding a patch section, writing a What's new page, or acting on review feedback that the notes are too detailed.
 ---
 
 # Docs release notes
@@ -17,6 +17,34 @@ These pages are technical. The marketing announcement on vcluster.com/releases
 is drafted separately in Notion, and it's a different document. Don't copy one
 into the other.
 
+The `vcluster-docs-releaser` and `platform-docs-releaser` skills cut the docs
+version and flip it live. This skill covers what goes on the notes pages.
+
+## Where the work happens
+
+Write release notes on a branch off `main` and open the PR into `main`, like any
+other docs change. The docs version for a release is cut at rc-1 and stays
+hidden until release day, so the notes have to reach that version folder too:
+
+- **Minor release:** add the backport label for the new version, such as
+  `backport-v0.39` (vCluster) or `backport-v5.1.0` (Platform). If the label
+  doesn't exist yet, create it with the same pattern. The label copies each
+  changed file to the same path in the version folder.
+- **Patch release:** add the backport label for the minor the patch belongs to,
+  so the new `## X.Y.Z` section lands in that version's folder as well.
+- **Every page you change** for the release, such as the upgrade page or a
+  deprecation admonition, needs the same label. A page whose path differs in
+  the version folder can't be backported by label. Edit it there by hand, with
+  explicit approval. See "Backport changes to released versions" in
+  CONTRIBUTING.md.
+
+Release notes publish with the announcement on release day, when the version
+flips live. Merge before the flip, and don't announce the preview links outside
+the release thread.
+
+A major release staged on the `next` branch is the exception. Then the notes go
+into `next` with the rest of the release, and they reach `main` at cutover.
+
 ## The reader
 
 Write for a customer who runs the **previous GA release** and is deciding
@@ -29,25 +57,48 @@ changelog of everything engineering merged, and it isn't a debugging guide.
 
 ## Gather the changes
 
-1. **Diff the stable tags**, not the alphas. Compare the new release tag against
-   the previous GA tag in `loft-sh/loft-enterprise` (Platform) and
-   `loft-sh/vcluster-pro` (vCluster). A change that only differs from an earlier
-   alpha means nothing to a GA customer.
+1. **Diff the stable tags**, not the alphas. In `loft-sh/loft-enterprise`
+   (Platform) and `loft-sh/vcluster-pro` (vCluster), compare the new release
+   tag against the previous GA tag:
+   - Minor release: the previous minor's latest patch, such as `v0.38.0` against
+     `v0.37.5`.
+   - Patch release: the previous patch of the same minor, such as `v0.38.2`
+     against `v0.38.1`.
+
+   Before the release is tagged, use the newest pre-release in its place: the
+   latest rc on the release branch, or, if there's no release branch yet, the
+   latest tag on the repo's `main`, whether that's an alpha or an rc. Changes can
+   still land, so re-run the diff against the newest rc before merge, and
+   against the final tag once it exists.
+
+   The base is always a GA tag. A change that only differs from an earlier alpha
+   means nothing to a GA customer.
 2. **Read the release's removals and deprecations project in Linear** (for 5.0
    that was "5.0 Removals and Deprecations"). Each decided item goes in, and it
    goes at the top. An item needs a linked decision (Slack, a ticket comment, or
    a merged PR) before it's written as decided. A proposal page isn't one.
-3. **Check the release branch**, not `main`. Before you write "removed" or
-   "changed", confirm the PR is merged on the release branch, or has the
-   backport label. If it isn't there yet, add an MDX TODO comment with the PR
-   numbers and re-check before merge.
+3. **Check what's shipping**, not the tip of the product repo's `main`. Before
+   you write "removed" or "changed", confirm the change is in the release:
+   - If the release branch exists, such as `release-5.0`, confirm the PR is
+     merged on it, or has the backport label.
+   - If it doesn't exist yet, check against the latest tag on the repo's `main`,
+     whether that's an alpha or an rc. Find the tag with
+     `git tag --merged origin/main --sort=-v:refname | head -1`, then confirm the
+     PR's merge commit is in it with
+     `git merge-base --is-ancestor <merge-sha> <tag>`.
+
+   If the change isn't there yet, add an MDX TODO comment with the PR numbers
+   and re-check before merge.
 4. **Note patch backports.** For a minor release, a change that also shipped in
-   a patch of the previous minor still goes in, followed by "Also in 0.37.4."
+   a patch of the previous minor still goes in, followed by "Also in v0.37.4."
    That tells readers who already run that patch that nothing changes for them.
 
 ## Triage: add, summarize, or ignore
 
 Put every candidate change in exactly one bucket.
+
+The examples in this section come from the Platform v5.0 and vCluster v0.38
+notes. They show the shape of an entry, not current behavior.
 
 ### Add as its own entry
 
@@ -75,8 +126,10 @@ the reference page that has the detail.
 - **Tenant or permission hardening.** Ten scoping fixes become: "Tenant
   boundaries are enforced more strictly across access rules, ownership labels,
   connectors, stacks, and cluster scheduling. See Tenant boundary reference."
-- **Dependency and image security updates.** Write "The rebuilt Kubernetes
-  images include upstream security fixes." Leave out the CVE IDs.
+- **Upstream dependency and image updates.** Write "The rebuilt Kubernetes
+  images include upstream security fixes." Leave out the CVE IDs. This covers
+  fixes that come from upstream components only. A vulnerability in our own
+  code is a security fix, which goes under Ignore.
 - **Diagnostics and status improvements.** Write "Node claims report why
   provisioning is stuck or failing." Leave out the condition names and timers.
 - **Retry and resilience changes.** Write "Automatic snapshots retry through
@@ -104,13 +157,15 @@ the reference page that has the detail.
   integration that isn't sold on its own.
 - **Seamless API changes.** A kind deprecated in favor of a new API, when users
   see no difference, only confuses readers.
-- **Security fixes and open weaknesses.** Anything tied to a CVE or an advisory,
-  and any known issue that describes how to read or reach something a user
-  shouldn't. These go through the security disclosure process. Raise them with
-  the security team, and keep them out of the notes.
+- **Security fixes and open weaknesses in our own code.** Any vulnerability in
+  vCluster or Platform code, anything with a vCluster Labs advisory, and any
+  known issue that describes how to read or reach something a user shouldn't.
+  These go through the security disclosure process. Raise them with the
+  security team, and keep them out of the notes.
 - **Quiet removals.** Items product has decided to remove with no announcement.
   Check the removals project for "no public announcement".
-- **Unshipped features.** Nothing that isn't on the release branch.
+- **Unshipped features.** Nothing that isn't on the product release branch, or
+  in the latest tag on `main` when there's no release branch yet.
 
 If you're unsure, leave it out and ask the product reviewer. Over-detail is the
 failure mode reviewers flag most, and a missing line is easier to add than a
@@ -118,7 +173,32 @@ debugging note is to defend.
 
 ## Page structure
 
-Platform minor page, sections in this order, omitting any that are empty:
+### New minor release
+
+A new minor needs more than the notes page:
+
+1. Create `<product>/reference/release-notes/<major>-<minor>.mdx`. Copy the
+   frontmatter and intro from the previous minor's page, then update the
+   `title`, `sidebar_label`, and `description` to the new version, such as
+   `title: vCluster v0.39 release notes` and `sidebar_label: vCluster v0.39`.
+2. If the product has no `release-notes` folder yet, add a `_category_.json`
+   with `"label": "Release notes"`, `"position": 1`, `"collapsible": true`, and
+   `"collapsed": true`.
+3. Replace the What's new page with the new release (see [What's new
+   page](#whats-new-page)).
+4. Add the supported upgrade path, with a link to the new notes page:
+   - Platform: a `:::warning Upgrading to X.Y` admonition near the top of
+     `platform/administer/upgrade-migrate/upgrade.mdx`, when the upgrade has
+     removals or breaking changes.
+   - vCluster: a bullet at the top of the upgrade path list in
+     `vcluster/operate/upgrade/upgrade-version.mdx`.
+5. If the release changes supported versions, update
+   `docs/_partials/*_supported_versions.mdx` and run
+   `npm run generate-lifecycle-json`.
+
+### Platform minor page
+
+Sections in this order, omitting any that are empty:
 
 1. Intro paragraph with links to What's new and the upgrade path
 2. `## X.Y.0` with the release date
@@ -133,17 +213,29 @@ Platform minor page, sections in this order, omitting any that are empty:
 9. `### Fixes`
 10. `### Known issues`
 
-vCluster minor page: the same, except `### Upgrade notes` comes first and holds
-breaking changes and removals, because vCluster rarely removes config keys.
-Add `### Deprecations` after it when anything is deprecated.
+### vCluster minor page
 
-Patch release: add a `## X.Y.Z` section above the previous one, with the same
-headings, and omit the empty ones. Don't edit earlier patch sections except to
-fix errors.
+The same, except `### Upgrade notes` comes first and holds breaking changes and
+removals, because vCluster rarely removes config keys. Add `### Deprecations`
+after it when anything is deprecated.
+
+### Patch release
+
+Add a `## X.Y.Z` section above the previous one, with the same headings, and
+omit the empty ones. Don't edit earlier patch sections except to fix errors.
+
+### Vale toggles
 
 "Removed features" and "Breaking changes" trip `Loft.imperative-headings`. Wrap
-them in the Vale toggle comments already on the 5.0 page, with a JSX comment
-saying why.
+each one in Vale toggle comments, with a JSX comment saying why. The toggles are
+HTML comments, and the JSX comment between them is the one Vale doesn't lint:
+
+```mdx
+<!-- vale Loft.imperative-headings = NO -->
+{/* "Removed features" is the term readers scan release notes for. */}
+### Removed features
+<!-- vale Loft.imperative-headings = YES -->
+```
 
 ## Writing each entry
 
@@ -151,11 +243,20 @@ saying why.
   do.
 - New features use a bold label and a sentence: `- **Node pools.** A NodePool
   defines ...`
-- Link to the task or reference page that has the detail. Use relative `.mdx`
-  links within a product and `/docs/<product>/next/...` across products before
-  cutover.
-- Use the `v` prefix for versions in prose, for example "vCluster v0.38" and
-  "Platform v5.0". Vale enforces this.
+- Link to the task or reference page that has the detail:
+  - Within a product, use relative links with the `.mdx` suffix, such as
+    `../../overview/whats-new.mdx`. They keep the reader's docs version.
+  - Across products, use `/docs/<product>/<path>` with no version segment. It
+    resolves to the other product's stable docs. Never write `/next/` into a
+    link: once the release ships, it sends readers of released notes into
+    unreleased docs.
+  - A cross-product link to a page that's new in the paired release 404s until
+    that product's version flips live. Add a `{/* TODO after release: check
+    this link */}` comment, and check it on release day.
+- Use the `v` prefix for every vCluster Labs product version in prose, for
+  example "vCluster v0.38", "Platform v5.0", and "Also in v0.37.4". Vale only
+  catches a version that follows a product name, so check bare versions by eye.
+  Version numbers in headings, such as `## 0.38.0`, stay bare.
 - Follow the house style: no em dashes, contractions, sentences under about 25
   words, and the terminology rules in CLAUDE.md.
 - Track open questions as MDX comments: `{/* TODO before merge: <question> (<ticket>) */}`.
@@ -184,30 +285,43 @@ A note isn't the whole change:
 - **Deprecated:** add a `:::warning <Feature> is deprecated` admonition to the
   feature page. State the release, whether it's still available, and the
   replacement if one is decided.
-- **Older LTS docs:** a deprecation notice in a released version is a versioned
-  docs edit and needs explicit approval.
+- **Older released docs:** a deprecation notice in an earlier version's folder
+  is a versioned docs edit and needs explicit approval.
 
 ## Verify and review
 
 1. Run `docs-fact-check` on every entry that asserts behavior, against the
-   release tag or the release branch.
-2. Run Vale on each changed page and fix every warning.
-3. Open the PR, then post the preview links (`/docs/<product>/next/...` on the
-   PR preview) in the release thread in #release-engineering for product review.
-4. When a reviewer flags lines as too detailed, apply the same filter to the
+   product release tag, the release branch, or the latest tag on `main`.
+2. Run `docs-review` on each changed page for style, readability, and
+   usability.
+3. Run Vale on each changed page and fix every warning.
+4. Open the PR into `main` with the backport label, then post the preview links
+   in the release thread in #release-engineering for product review. The PR
+   preview serves the current docs under `/docs/<product>/next/`, so the preview
+   links need that segment even though the page's own links don't.
+5. When a reviewer flags lines as too detailed, apply the same filter to the
    whole page, not only the lines they named. Then reply in the thread with what
    changed, per point.
-5. Before merge, clear every `TODO before merge` comment, or confirm with the
+6. Before merge, clear every `TODO before merge` comment, or confirm with the
    owner that it can stay.
+7. On release day, after the version flips live, check every `TODO after
+   release` link and remove the comment.
 
 ## Checklist
 
-- [ ] Diffed against the previous GA tag, not an alpha
+- [ ] Diffed against the previous GA tag (previous patch for a patch release),
+      not an alpha, and re-diffed against the newest rc or final tag before merge
 - [ ] Every decided removal and deprecation from the Linear project is listed,
       at the top
-- [ ] Each "removed" or "changed" item is on the release branch
-- [ ] No CVE IDs, open security weaknesses, error strings without a reason, or
-      internal mechanics
+- [ ] Each "removed" or "changed" item is on the product release branch, or in
+      the latest alpha or rc tag on `main` if there's no branch yet
+- [ ] No CVE IDs, security fixes in our own code, open weaknesses, error strings
+      without a reason, or internal mechanics
 - [ ] Hardening and resilience changes are summarized, one line each
+- [ ] Every product version in prose has a `v` prefix
+- [ ] No `/next/` in any link on the page
+- [ ] New minor: category, What's new, upgrade path, and lifecycle data updated
 - [ ] Deprecated features have an admonition on their page
-- [ ] Fact check run, Vale clean, preview reviewed by product
+- [ ] PR targets `main` with the backport label (or `next` for a staged major)
+- [ ] Fact check and docs review run, Vale clean, preview reviewed by product
+- [ ] Release day: `TODO after release` links checked and comments removed
