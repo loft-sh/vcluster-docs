@@ -44,6 +44,9 @@ type ObjectInformation struct {
 	File        string
 
 	Object client.Object
+	// ExampleName names the example in retrieve, update, and delete commands when Object sets
+	// only metadata.generateName, since the server generates the real name at create.
+	ExampleName string
 
 	// ExtraImports is rendered with the import block at the top of the overview file.
 	ExtraImports string
@@ -323,6 +326,8 @@ func GenerateObjectOverview(information *ObjectInformation) {
 	exampleName := "my-object"
 	if information.Object.GetName() != "" {
 		exampleName = information.Object.GetName()
+	} else if information.ExampleName != "" {
+		exampleName = information.ExampleName
 	}
 
 	basePath := path.Join(BasePath, information.Resource) + "/"
@@ -357,12 +362,13 @@ func GenerateObjectOverview(information *ObjectInformation) {
 	// create "Create Object" partial
 	if information.Create {
 		writeTemplate(TemplateCreateObject, path.Join(basePath, "create.mdx"), CreateValues{
-			Name:        information.Name,
-			ExampleName: exampleName,
-			Resource:    information.Resource,
-			Project:     information.Project,
-			Namespace:   namespace,
-			YAMLObject:  string(out),
+			Name:         information.Name,
+			ExampleName:  exampleName,
+			GenerateName: information.Object.GetGenerateName(),
+			Resource:     information.Resource,
+			Project:      information.Project,
+			Namespace:    namespace,
+			YAMLObject:   string(out),
 		})
 	}
 
@@ -373,6 +379,9 @@ func GenerateObjectOverview(information *ObjectInformation) {
 		updateObject.SetGeneration(12)
 		updateObject.SetUID("af5f9f0f-8ab9-4b4b-a595-a95a5921f3c2")
 		updateObject.SetResourceVersion("66325905")
+		if updateObject.GetName() == "" {
+			updateObject.SetName(exampleName)
+		}
 		out, _ := yaml.Marshal(updateObject)
 		writeTemplate(TemplateUpdateObject, path.Join(basePath, "update.mdx"), UpdateValues{
 			Name:        information.Name,

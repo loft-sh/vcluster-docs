@@ -144,6 +144,50 @@ kubectl --context <control-plane-context> describe baremetalhost [[GLOBAL:BMH_NA
 - **Stop and create a new instance** when the error is a checksum mismatch or image URL failure. The image URL and checksum are written to Ironic's database at provisioning time, so updating the `OSImage` resource doesn't affect an in-flight request. Delete the instance in the UI, or delete its `NodeClaim` through the API, then create a new one with corrected image configuration.
 - **Correct the BareMetalHost configuration** when the BMC address, credentials reference, or boot MAC is wrong. Edit the resource in place when the field permits it. If you must recreate the host, release its instance first and wait for the `NodeClaim` to finish deleting before recreating it. Deleting a claimed BareMetalHost doesn't by itself clean up the claim.
 
+### Instance stays pending without a server
+
+An instance that can't find an eligible `BareMetalHost` waits, and its `NodeClaim` conditions say why:
+
+| Condition and reason | Message contains | Cause |
+|---|---|---|
+| `Provisioned`, `InsufficientCapacity` | `no available BareMetalHost found for NodeType <provider>.<node type>` | No free host passes the node type's selector and resource check. |
+| `Provisioned`, `InsufficientCapacity` | `among the hosts assigned to tenant <tenant> (N free unassigned host(s) are only used by OnDemand node types)` | The node type uses the `Assigned` policy. No eligible host owned by or exclusively assigned to the tenant is available. Free unassigned hosts are withheld. |
+| `Scheduled`, `FailedToSchedule` | `no available and matching node type found for node claim requirements` | The instance didn't name a node type, and no compatible node type has free capacity. |
+
+A `Scheduled` failure retries automatically with no time limit. A `Provisioned` wait is limited instead. If no host becomes available within the provisioning wait timeout, 30 minutes by default, the instance moves to `Failed`. To change the timeout, see [When provisioning fails](../../../concepts/machine-lifecycle.mdx#when-provisioning-fails).
+
+A selector that matches nothing doesn't raise a condition on the node type. Its `HasCapacity` condition stays true, and only the capacity total shows the problem:
+
+<InterpolatedCodeBlock
+  code={`kubectl --context <management-context> get nodetype [[VAR:NODE_TYPE:metal3-provider.compute-node]] \\
+  -o jsonpath='{.status.capacity}'`}
+/>
+
+A `total` of `0` means no usable host matches the node type. Check that the hosts carry the labels the node type's `machines.selector` names. Also check that they're in `available` state. The provider doesn't compare their inspected CPU and memory with the node type's resources. Keys under `vcluster.com` and `loft.sh` aren't copied from a host to its Machine. See [How host labels reach Machines](./overview.mdx#how-host-labels-reach-machines).
+
+For the `Assigned` case, assign another host to the tenant, release one of its instances, or switch the node type to `OnDemand`. See [Machine allocation](../../../concepts/machine-types-and-nodetypes.mdx#machine-allocation).
+
+If the instance has already timed out, correct the capacity problem. Increasing the timeout or making capacity available doesn't restart a failed claim. See [When provisioning fails](../../../concepts/machine-lifecycle.mdx#when-provisioning-fails) for manual replacement and Auto Nodes recovery.
+
+### SSH key is refused or not found
+
+An instance can only use SSH keys that its tenant can see. Two symptoms point to a key the tenant can't see.
+
+- **The platform refuses the `NodeClaim` at creation** with `ssh key "<name>" not found`. The key doesn't exist, or it isn't visible to the instance's tenant. The claim can reference the key directly or inherit it from its node type or node provider.
+- **An existing instance stops provisioning** and reports an error containing `failed to get ssh key <name>`. A required key doesn't exist or isn't visible to the instance's tenant. This can happen if the key was deleted or stopped being shared after the instance was created.
+
+To fix either one:
+
+1. Confirm the key exists. SSH key names are generated, so check the exact name, including its random suffix.
+
+   ```bash
+   kubectl --context <management-context> get sshkeys
+   ```
+
+2. For an instance in a tenant's project, share the key with that tenant, or reference a key the tenant owns. See [Share SSH keys with tenants](../../../images/ssh-keys.mdx#share-ssh-keys-with-tenants).
+
+A Metal3 instance in this state keeps reporting the error and retries provisioning. It provisions once the key is visible to its tenant again.
+
 ## Outcome-specific failures
 
 Use these checks after Metal3 reports the `BareMetalHost` as provisioned. First, map the instance to its underlying host.
@@ -177,7 +221,7 @@ An [independently provisioned instance](../../../deploy/independently-provisione
      -n loft-p-[[GLOBAL:PROJECT]] -o yaml`}
    />
 
-2. Confirm that every cluster-scoped `SSHKey` named by the node type exists and contains the intended public key.
+2. Confirm that every cluster-scoped `SSHKey` named by the node type exists and contains the intended public key. A key that the instance's tenant can't see isn't installed. See [SSH key is refused or not found](#ssh-key-is-refused-or-not-found).
 
    ```bash
    kubectl --context <management-context> get sshkey <ssh-key-name> -o yaml
@@ -270,6 +314,68 @@ data:
 
 **CIDR or range too small.** If the number of instances regularly exceeds the available address space, expand the range using the `metal3.vcluster.com/network-cidr` or `metal3.vcluster.com/network-ip-range` property. See [Network configuration](./networking.mdx#ipam).
 
+## Host operations
+
+### Redfish tab is missing
+
+The Metal3 UI requires a platform admin outside tenant scope, with the machine management and Metal3 features enabled. The Redfish entry additionally requires `create` permission on `metal3bmcs/redfish` in `cluster.loft.sh` for the host's cluster and namespace.
+
+Check those permissions before changing the BMC. Reading a Machine or its BareMetalHost doesn't grant permission to send BMC requests. See [Inspect the BMC](./operations.mdx#inspect-the-bmc).
+
+### Redfish request fails
+
+First distinguish a platform API error from an HTTP response returned by the BMC:
+
+| Symptom | Check |
+|---|---|
+| Permission denied before a BMC response | The caller's `create` permission on the Redfish subresource. |
+| Host or credential configuration error | The BareMetalHost's `spec.bmc.address`, `credentialsName`, and Secret in the same namespace. |
+| BMC type doesn't speak Redfish | Use a Redfish-compatible BMC scheme. An `ipmi://` address can't serve Redfish resources. |
+| Certificate or connection error | Connectivity and certificate trust from the platform agent to the BMC. Ironic's CA mount doesn't configure the agent. |
+| BMC returns HTTP 401 or 403 | The referenced credentials and the vendor permissions needed for the requested resource or action. |
+| BMC returns HTTP 404 | Whether that path exists on this firmware. Browse from `/redfish/v1` instead of assuming another vendor's resource IDs. |
+| Redirect response | The proxy returns redirects without following them. Check the BMC address and use the intended Redfish endpoint. |
+
+A successful platform API request can contain an unsuccessful BMC HTTP status. Read that status and the BMC's error message before retrying. Requests have a 30-second timeout. If an action times out, inspect the hardware state before sending it again.
+
+Don't copy raw responses containing passwords or session tokens into support tickets. Keep audit capture at [Metadata level](./operations.mdx#audit-bmc-requests).
+
+### Host has no usable DHCP address
+
+The platform DHCP server needs the host's `metal3.vcluster.com/ip-address` annotation as an IPv4 address with a prefix. A claim with no allocated address fails with `InvalidConfiguration` when the provider-managed DHCP server is enabled and the host's annotations aren't usable.
+
+Inspect the host on the control plane cluster:
+
+<InterpolatedCodeBlock
+  language="bash"
+  code={'kubectl --context <control-plane-context> get baremetalhost [[GLOBAL:BMH_NAME]] -n [[GLOBAL:NAMESPACE]] -o yaml'}
+/>
+
+Check the boot MAC, address prefix, gateway, and comma-separated DNS addresses. Gateway and DNS entries must be IPv4 addresses. Configure a [host address](./networking.mdx#set-a-host-address) before initial inspection. For claim-allocated addresses, check the node type's `metal3.vcluster.com/network-cidr` property and [IPAM configuration](./networking.mdx#ipam).
+
+After fixing a claim's terminal `InvalidConfiguration` failure, release the failed instance and create a new one. Follow [When provisioning fails](../../../concepts/machine-lifecycle.mdx#when-provisioning-fails) for recovery.
+
+During provisioning, if Ironic has waited more than 15 minutes for the deploy ramdisk's callback without the agent starting, the Machine reports `ramdisk not booted`. Check DHCP replies, boot files, and the IPA API path. This is separate from the instance's capacity-wait timeout. A host that never boots the ramdisk during initial inspection doesn't get this reason. It stays in `inspecting` instead. See [Stuck in `inspecting`](#stuck-in-inspecting).
+
+### Unexpected or missing IP address
+
+Compare the host's `metal3.vcluster.com/ip-address` annotation with the Metal3 list and the Machine's network details.
+
+- **Empty IP column:** the Metal3 list uses the configured annotation. It doesn't substitute an address from hardware inspection.
+- **Inspection address in Machine details:** check the NIC inventory, annotation, and `spec.bootMACAddress`. The configured address replaces inspected addresses only on the matching boot NIC.
+- **Different address in the running OS:** inspect any custom network data. The Machine address overlay doesn't parse a custom document to discover its configured address.
+- **Address changes during claim or release:** a claim can temporarily replace the host reservation. Release restores the operator's original DHCP annotations. See [Reuse and reprovisioning](./server-lifecycle.mdx#reuse-and-reprovisioning).
+
+Test routing and access from the intended client separately. A displayed IP isn't a connectivity check.
+
+### Unexpected power status
+
+Compare Ironic's current and target power states with the BareMetalHost's `spec.online` and `status.poweredOn`. The Metal3 badge prefers Ironic's power reading, but falls back to the host's status when no usable Ironic reading is available.
+
+During inspection, provisioning, or deprovisioning, BMO's own power reading can be stale. `Powering On`, `Powering Off`, and `Rebooting` indicate a transition, rather than proof that it completed.
+
+Check BMC connectivity and Ironic logs if a transition doesn't finish. Don't change `spec.online` or send repeated resets to fix an instance allocation problem. An `On` server can still have a provisioning or bootstrap failure. See [Common failures](#common-failures).
+
 ## Webhook readiness
 
 The Metal3 `ValidatingWebhook` validates every `BareMetalHost` create and update. It runs in the `bare-metal-operator` container on port 9443, reached through the `bare-metal-operator-webhook` Service, and defaults to `failurePolicy: Fail`. If the webhook endpoint is unreachable when you create a BareMetalHost, the API server rejects the request and the BareMetalHost is never created.
@@ -295,7 +401,7 @@ kubectl --context <control-plane-context> get validatingwebhookconfiguration bar
 
 ## Log locations
 
-Metal3 0.6.0 deploys separate workloads on the control plane cluster, in the namespace configured in the NodeProvider's `clusterRef`.
+Metal3 chart `0.6.0` and later deploy separate workloads on the control plane cluster, in the namespace configured in the NodeProvider's `clusterRef`.
 
 | Component | Container | Log command |
 |---|---|---|

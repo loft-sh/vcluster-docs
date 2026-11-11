@@ -20,8 +20,8 @@ A vCluster snapshot includes:
 - vCluster Helm release information
 - vCluster configuration (for example, `vcluster.yaml`)
 
-:::info Extra Steps for Private Nodes
-For clusters with private nodes, you may need to follow [additional steps](#use-snapshots-with-private-nodes).
+:::info Extra steps for private nodes
+If the cluster uses private nodes and its nodes changed since the snapshot, follow the [additional steps for private nodes](#use-snapshots-with-private-nodes) after the restore.
 :::
 
 ## Restore existing cluster from a snapshot
@@ -132,6 +132,8 @@ title="Restore from a local container snapshot"
 
 For standalone vCluster running as a systemd service, use the `--standalone` flag instead of a cluster name. This flag can't be used with `--driver docker`. The CLI automatically stops the vCluster service, restores the backing store data from the snapshot, and restarts the service.
 
+If the standalone instance runs vCluster Platform, the restore leaves node provider resources behind that you must clean up. Before you restore, read [Clean up node provider resources after an etcd restore](#clean-up-node-provider-resources-after-an-etcd-restore).
+
 <InterpolatedCodeBlock
   code={`vcluster restore --standalone "container://[[VAR:SNAPSHOT_PATH:/var/lib/vcluster/my-snapshot.tar.gz]]"`}
   language="bash"
@@ -166,38 +168,56 @@ The following steps assume a three-node setup where you run the restore on node 
 
 1. Stop the vCluster service on all nodes except the restore node:
 
-```bash
-# Run on nodes B and C
-systemctl stop vcluster
-```
+   ```bash
+   # Run on nodes B and C
+   systemctl stop vcluster
+   ```
 
 2. Run the restore on node A:
 
-<InterpolatedCodeBlock
-  code={`vcluster restore --standalone "[[VAR:SNAPSHOT_URL:snapshot-url]]"`}
-  language="bash"
-/>
+   <InterpolatedCodeBlock
+     code={`vcluster restore --standalone "[[VAR:SNAPSHOT_URL:snapshot-url]]"`}
+     language="bash"
+   />
 
 3. Delete the stale node objects for the stopped nodes from the restored cluster:
 
-```bash
-kubectl delete node <node-B> <node-C>
-```
+   ```bash
+   kubectl delete node <node-B> <node-C>
+   ```
 
 4. On nodes B and C, move the old vCluster state aside so they rejoin cleanly:
 
-```bash
-# Run on nodes B and C
-mv /var/lib/vcluster /var/lib/vcluster-bcp
-```
+   ```bash
+   # Run on nodes B and C
+   mv /var/lib/vcluster /var/lib/vcluster-bcp
+   ```
 
 5. On node A, create a join token with [`vcluster token create`](../../cli/vcluster_token_create.md):
 
-```bash
-vcluster token create --control-plane
-```
+   ```bash
+   vcluster token create --control-plane
+   ```
 
 6. Use the join script output to rejoin nodes B and C **one at a time**. Wait for each node to reach `Ready` before joining the next to rebuild etcd quorum sequentially.
+
+## Clean up node provider resources after an etcd restore
+
+An etcd restore of a control plane cluster that runs vCluster Platform doesn't roll back node provider state. The platform keeps node state, such as `NodeClaim` objects, in that etcd. External systems keep their own state, so after the restore it can differ from what etcd describes. Examples include Metal3 and Ironic, NICo, and cloud provider resources.
+
+This applies whether or not the control plane cluster is a standalone instance. For example:
+
+- `vcluster restore --standalone`, in single-node or HA mode, on a standalone instance that runs vCluster Platform.
+- A Velero or etcd snapshot restore of a control plane cluster that runs vCluster Platform.
+
+Restoring with [`vcluster platform backup` and `kubectl apply`](/docs/platform/next/administer/backup-restore/restore-platform) doesn't cause this, because that backup doesn't include `NodeClaim` objects or provider objects.
+
+The restored etcd data stays the source of truth. Controllers reconcile external infrastructure toward it. They reuse existing provider resources they can match and recreate missing resources where it's safe. Controllers never delete a provider resource that has no matching Kubernetes object, because they can't tell whether deleting it destroys workload data.
+
+You must find these orphaned resources and clean them up with each provider's own tooling. To find them, compare each provider's own inventory with the instances the platform shows after the restore. Instances created after the snapshot was taken are the most likely to be left behind:
+
+- **Metal3:** The machine shows `Available`, but Ironic still has the old deployment on it. The next instance on that machine starts from that deployment, including the previous instance's SSH key and data. Remove the deployment in Ironic before another instance uses the machine.
+- **NICo:** NICo keeps the instance running. The machine stays `Provisioned`, and you can't provision it again or delete it from the UI.
 
 ## Clone a cluster to a new cluster
 
@@ -205,7 +225,7 @@ You can use snapshots to clone an existing cluster and create a new cluster from
 
 When you run [`vcluster create --restore`](../../cli/vcluster_create.md) without `-f`, `--values`, or `--set`, vCluster reads the Helm configuration from the snapshot before installing the cluster. If it can't access the snapshot, the command exits before the new cluster starts. Providing configuration through one of those flags skips this check because vCluster uses the supplied configuration instead.
 
-:::warning Restore Failures
+:::warning Restore failures
 If the restore fails while using `vcluster create`, vCluster automatically deletes the new cluster.
 :::
 
@@ -221,7 +241,7 @@ vCluster certificates change when you create a cluster with a new name or namesp
 
 ## Migrate and override vCluster configuration options to create a new cluster
 
-When upgrading clusters, there are a couple of configuration options that aren't supported to change on an existing cluster. For example, changing the backing store type in place isn't supported. See [Backing store](../../configure/control-plane/components/backing-store/overview.mdx) for details. To change other options, migrate the cluster by creating a new one from a snapshot and applying updated configuration.
+Some configuration options can't change on an existing cluster. For example, you can't change the backing store type in place. See [Backing store](../../configure/control-plane/components/backing-store/overview.mdx) for details. To change these options, migrate the cluster by creating a new one from a snapshot with updated configuration.
 
 The one exception is restoring an embedded etcd snapshot onto a different backing store type, which doubles as a migration path. See [Migrate from embedded etcd to a different backing store](#migrate-from-embedded-etcd-to-a-different-backing-store).
 
@@ -262,7 +282,7 @@ vcluster create [[VAR:NEW_VCLUSTER_NAME:my-vcluster-external-db]] --namespace [[
 
 This guide covers migrating from embedded etcd only. Migrating in the other direction, such as from a database backing store to etcd, isn't documented or tested.
 
-### Limitations
+## Limitations
 
 When taking snapshots and restoring clusters, there are limitations:
 
@@ -272,11 +292,21 @@ When taking snapshots and restoring clusters, there are limitations:
 
 **Clusters using an external database**
 
-- Restoring onto an external database, whether configured with `dataSource` or `connector`, deletes the existing tenant-cluster key/value records (through kine, key by key) before replaying the snapshot. vCluster doesn't back up or roll back the external database itself. Before running `vcluster restore`, the database owner or administrator must take a native database backup so that a native external database restore can be triggered if the restore fails.
+- Restoring onto an external database, whether configured with `dataSource` or `connector`, deletes the cluster's existing key/value records (through kine, key by key) before replaying the snapshot. vCluster doesn't back up or roll back the external database itself. Before running `vcluster restore`, the database owner or administrator must take a native database backup so that a native external database restore can be triggered if the restore fails.
+
+**Clusters using the embedded database**
+
+- Restore refuses to write into an embedded database (SQLite) that's still serving requests, so a running control plane can't corrupt the restored data. The restore fails with this error:
+
+  ```text
+  embedded database backing store is still serving requests at <endpoint>, refusing to restore into a running control plane: stop the vCluster control plane and any of its leftover processes, then retry
+  ```
+
+  Stop the control plane and any leftover processes, then retry the restore. On a standalone instance, the restore stops leftover control plane and database processes before it starts.
 
 **Clusters using deployed etcd**
 
-- Restoring a cluster that already runs on deployed etcd (`controlPlane.backingStore.etcd.deploy`) isn't supported. Restore etcd with its own tooling instead. See [Back up and restore](../../configure/control-plane/components/backing-store/etcd/deploy.mdx#back-up-and-restore). Deployed etcd is a supported target when migrating an embedded etcd snapshot onto a new cluster; see [Migrate from embedded etcd to a different backing store](#migrate-from-embedded-etcd-to-a-different-backing-store).
+- Restoring a cluster that already runs on deployed etcd (`controlPlane.backingStore.etcd.deploy`) isn't supported. Restore etcd with its own tooling instead. See [Back up and restore](../../configure/control-plane/components/backing-store/etcd/deploy.mdx#back-up-and-restore). Deployed etcd is a supported target when migrating an embedded etcd snapshot onto a new cluster. See [Migrate from embedded etcd to a different backing store](#migrate-from-embedded-etcd-to-a-different-backing-store).
 
 **vcluster.yaml configuration**
 
@@ -288,11 +318,15 @@ When taking snapshots and restoring clusters, there are limitations:
 
 **Standalone: restore to a new node**
 
-- If you restore a snapshot on a different node, the standalone instance's etcd contains node details from the original machine. You must manually clean up stale node resources after restore (see [Use snapshots with private nodes](#use-snapshots-with-private-nodes)).
+- If you restore a snapshot on a different node, the standalone instance's etcd contains node details from the original machine. You must manually clean up stale node resources after the restore. See [Use snapshots with private nodes](#use-snapshots-with-private-nodes).
 
 **Standalone: cluster workloads aren't restored**
 
 - A standalone snapshot only restores the standalone instance's own etcd data. Each cluster running on the standalone instance has its own etcd, so workloads deployed inside clusters aren't restored by a standalone snapshot.
+
+**Node provider state isn't rolled back**
+
+- Any etcd-level restore of a control plane cluster that runs vCluster Platform, standalone or not, doesn't roll back external systems that keep their own state. Examples include Metal3 and Ironic, NICo, and cloud provider resources. Provider resources with no matching Kubernetes object aren't deleted automatically, so you must find and clean them up. See [Clean up node provider resources after an etcd restore](#clean-up-node-provider-resources-after-an-etcd-restore).
 
 **Clusters managed through the Argo CD integration**
 
@@ -304,11 +338,7 @@ The snapshot also includes node resources. Restoring to a different set of nodes
 
 ### Nodes removed between snapshot and restore
 
-When nodes exist in the snapshot but don't exist in the current cluster, manually delete those nodes from the restored cluster.
-
-The node shows up in `kubectl get nodes` but doesn't physically exist in the cluster.
-
-Run `kubectl delete node [name]` for each removed node.
+When nodes exist in the snapshot but not in the current cluster, they still show up in `kubectl get nodes` after the restore. Delete each removed node from the restored cluster:
 
 <InterpolatedCodeBlock
   code={`export NODE_NAME=[[VAR:NODE_NAME:my-node]]
@@ -318,9 +348,9 @@ kubectl delete node $NODE_NAME`}
 
 ### Nodes added between snapshot and restore
 
-When nodes joined the cluster after the snapshot, they don't exist in the restored cluster and aren't listed in `kubectl get nodes`.
+When nodes joined the cluster after the snapshot, they don't exist in the restored cluster and aren't listed in `kubectl get nodes`. Rejoin each of these private nodes with the `--force-join` flag.
 
-Re-join each private node with the `--force-join` flag.
+Create a join token:
 
 <InterpolatedCodeBlock
   code={`export VCLUSTER_NAME=[[VAR:VCLUSTER_NAME:my-vcluster]]
@@ -333,7 +363,7 @@ vcluster token create --expires=1h`}
   language="bash"
 />
 
-Append the `--force-join` flag to the output command before running it on the worker node.
+Append the `--force-join` flag to the join command from the output, then run it on the worker node:
 
 <InterpolatedCodeBlock
   code={`curl -sfLk https://[[VAR:VCLUSTER_ENDPOINT:vcluster-endpoint]]/node/join?token=[[VAR:TOKEN:token]] | sh - -- --force-join`}

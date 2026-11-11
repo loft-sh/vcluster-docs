@@ -7,7 +7,7 @@ setup() {
     SCRIPT="${BATS_TEST_DIRNAME}/resolve-inputs.sh"
     export GITHUB_OUTPUT="${BATS_TEST_TMPDIR}/gh_output"
     : >"$GITHUB_OUTPUT"
-    unset GITHUB_EVENT_NAME DISPATCH_EVENT DISPATCH_VERSION MANUAL_EVENT MANUAL_VERSION PLATFORM_V5_DOCS_BRANCH
+    unset GITHUB_EVENT_NAME DISPATCH_EVENT DISPATCH_VERSION MANUAL_EVENT MANUAL_VERSION PLATFORM_V5_DOCS_BRANCH VCLUSTER_038_DOCS_BRANCH
     # Model the remote refs fetched by the receiver without depending on the
     # runner's checkout depth or on which branch invoked the workflow.
     git init -q "${BATS_TEST_TMPDIR}/repo"
@@ -114,6 +114,37 @@ setup() {
     DISPATCH_EVENT=platform-released DISPATCH_VERSION=v5.0.0 run "$SCRIPT"
     [ "$status" -eq 0 ]
     grep -qx 'target_branch=main' "$GITHUB_OUTPUT"
+}
+
+@test "vcluster 0.38 release and RC syncs target next before cutover" {
+    for pair in vcluster-released:v0.38.0-rc.1 vcluster-released:v0.38.0 vcluster-cli-released:v0.38.0-rc.1 vcluster-cli-released:v0.38.0; do
+        : >"$GITHUB_OUTPUT"
+        VCLUSTER_038_DOCS_BRANCH=next DISPATCH_EVENT="${pair%%:*}" DISPATCH_VERSION="${pair#*:}" run "$SCRIPT"
+        [ "$status" -eq 0 ]
+        grep -qx 'target_branch=next' "$GITHUB_OUTPUT"
+    done
+}
+
+@test "other vcluster lines and platform 0.38 keep targeting main" {
+    for pair in vcluster-released:v0.37.7 vcluster-released:v0.39.0 vcluster-cli-released:v0.37.7 vcluster-released:v0.3.8 platform-released:v0.38.0; do
+        : >"$GITHUB_OUTPUT"
+        VCLUSTER_038_DOCS_BRANCH=next DISPATCH_EVENT="${pair%%:*}" DISPATCH_VERSION="${pair#*:}" run "$SCRIPT"
+        [ "$status" -eq 0 ]
+        grep -qx 'target_branch=main' "$GITHUB_OUTPUT"
+    done
+}
+
+@test "vcluster 0.38 targets main after the cutover flag is removed" {
+    DISPATCH_EVENT=vcluster-released DISPATCH_VERSION=v0.38.0 run "$SCRIPT"
+    [ "$status" -eq 0 ]
+    grep -qx 'target_branch=main' "$GITHUB_OUTPUT"
+}
+
+@test "invalid vcluster 0.38 target branch fails before checkout or PR creation" {
+    VCLUSTER_038_DOCS_BRANCH=unreviewed DISPATCH_EVENT=vcluster-released DISPATCH_VERSION=v0.38.0 run "$SCRIPT"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *'VCLUSTER_038_DOCS_BRANCH must be main or next'* ]]
+    ! grep -q '^target_branch=' "$GITHUB_OUTPUT"
 }
 
 @test "invalid target branch fails before checkout or PR creation" {

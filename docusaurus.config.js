@@ -202,6 +202,10 @@ const config = {
   plugins: [
     "docusaurus-plugin-sass",
     "plugin-image-zoom",
+    // Generates a title share card (og:image) for every page that doesn't set
+    // its own `image:` frontmatter. Runs in postBuild on Netlify production
+    // deploys only. See the plugin header.
+    "./plugins/og-title-cards",
     [
       "@signalwire/docusaurus-plugin-llms-txt",
       {
@@ -299,7 +303,7 @@ const config = {
             badge: true,
           },
           "0.36.0": {
-            label: "v0.36",
+            label: "v0.36 (EOS)",
             banner: "none",
             badge: true,
           },
@@ -346,7 +350,7 @@ const config = {
             badge: true,
           },
           "4.9.0": {
-            label: "v4.9",
+            label: "v4.9 (EOS)",
             banner: "none",
             badge: true,
           },
@@ -379,6 +383,9 @@ const config = {
     /** @type {import('@docusaurus/preset-classic').ThemeConfig} */
 
     {
+      // Default Open Graph and Twitter share image for every page. Not shown
+      // on the page itself. A page can override it with `image:` frontmatter.
+      image: 'media/social-card.png',
       imageZoom: {
         selector: '.markdown img, .intro-card img',
         options: {

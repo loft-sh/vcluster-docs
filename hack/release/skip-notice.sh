@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
 # skip-notice.sh: report a classify-version.sh skip. Routine skips stay a
-# notice; skips that need a person fail the run so the Slack alert fires
-# instead of the release passing unnoticed.
+# notice; out-of-range RCs warn and pass. Skips that need a person fail the
+# run so the Slack alert fires instead of the release passing unnoticed.
 #
 # Inputs (env):
 #   EVENT     vcluster-released | vcluster-cli-released | platform-released
@@ -17,6 +17,14 @@ set -eo pipefail
 
 case "$CHANNEL" in
     out-of-range)
+        # Match the classifier's RC forms. An unpublished RC has no docs
+        # target; keep the skip without turning it into a failed CI run.
+        case "$VERSION" in
+            *-rc.*|*-rc[0-9]*)
+                echo "::warning::No docs change for $EVENT $VERSION (channel=$CHANNEL): release candidate has no docs target; skipping generation."
+                exit 0
+                ;;
+        esac
         reason="not the next line after the highest frozen version in versions.json, versions.json is missing, or a never-frozen minor already owns current docs; freeze the missing version"
         ;;
     unfrozen-line)

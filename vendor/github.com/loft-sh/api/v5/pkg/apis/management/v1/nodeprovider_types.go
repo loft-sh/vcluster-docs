@@ -23,7 +23,7 @@ type NodeProvider struct {
 }
 
 // NodeProviderSpec defines the desired state of NodeProvider.
-// Only one of the provider types (Pods, BCM, Kubevirt) should be specified at a time.
+// Exactly one provider type must be set.
 type NodeProviderSpec struct {
 	storagev1.NodeProviderSpec `json:",inline"`
 }

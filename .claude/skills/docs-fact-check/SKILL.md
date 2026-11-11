@@ -215,6 +215,28 @@ express "requires X or later" for something that hasn't shipped. Don't substitut
 one in. If the version isn't knowable yet, leave a visible placeholder with a
 `{/* TODO before merge */}` comment rather than a plausible-looking guess.
 
+## Verified isn't the same as publishable
+
+This pass reads the implementation closely, so it's where internal detail gets
+into the docs. Keep the evidence and the page apart.
+
+- **Evidence goes in the report.** File paths, function names, branch logic, and
+  test names settle a verdict. They don't belong in the page, and a fix you
+  suggest shouldn't add them.
+- **Fix a wrong claim with the outcome.** When a claim is wrong, the correction is
+  the behavior the reader sees, not an account of the code path that produces it.
+- **Correct doesn't mean promised.** Behavior in the source isn't automatically a
+  supported contract. A race, a fallback, or an edge case the code tolerates may
+  be a bug Engineering plans to fix. When a page documents behavior like that,
+  mark it correct, say it may not be an intended contract, and ask the author to
+  confirm with Engineering before publishing. If it limits what the page
+  promises, the question for Engineering is how to word it and what readers
+  should do, not whether to leave it out.
+- **Hand depth questions to `docs-review`.** A claim can be correct and still be
+  implementation detail the reader doesn't need. Note it in your report and leave
+  the keep, summarize, move, or cut decision to the depth and placement check in
+  `docs-review`.
+
 ## Reporting
 
 Report per claim, not per file. For each one, give the claim as the page states
@@ -230,6 +252,43 @@ Three verdicts, and keep them distinct:
 
 Distinguishing wrong from unverified matters more than it looks. Collapsing them
 sends an author rewriting prose that was right all along.
+
+### Summary for the engineer reviewer
+
+When the check is for a PR that will go to an engineer for review, draft a
+summary comment for that PR as well. Engineers are asked to read it before they
+review, and to spend their time on the unverified claims instead of redoing the
+check. Their side of the review is in the "How to review a docs PR" page under
+Docs in Notion.
+
+Keep it short and in this shape:
+
+```markdown
+**Fact check summary** (verified at `<repo>@<ref>`)
+
+**Needs your eyes**
+- <claim, as the page states it>. <why it's unverified: unmerged, behavior is
+  ambiguous, or may not be an intended contract>
+
+**Fixed in this PR**
+- <claim that was wrong>. Now says <corrected behavior>.
+
+**Verified:** <count> claims, covering <short list of areas, such as defaults,
+flags, and UI paths>.
+```
+
+Rules for the comment:
+
+- **Unverified claims come first.** They're the reason the comment exists. Leave
+  the section out only when there are none, and say so.
+- **No private evidence.** `loft-sh/vcluster-docs` is public. Leave out file
+  paths and line numbers from private repos, customer names, and anything else
+  on the "Public GitHub, private Linear" list in "How to contribute to docs".
+  Put the full per-claim report in the Linear issue instead.
+- **One comment per PR.** On a rerun, edit the existing summary comment rather
+  than adding another one.
+- **Ask before posting.** Show the draft and post it only after the user
+  confirms. Posting is a public action.
 
 ## Delegating
 

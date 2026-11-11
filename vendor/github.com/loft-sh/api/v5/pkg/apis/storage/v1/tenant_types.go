@@ -50,9 +50,8 @@ const TenantLabel = "tenant.vcluster.com/owner"
 // It is mutually exclusive with TenantLabel; see the note there for what happens when a
 // resource carries both.
 //
-// An empty value reserves the resource for the platform, whose tenant is nameless. That is a
-// claim and not the absence of one, so the label's presence is the question to ask; see
-// tenancy.IsPlatformAssigned.
+// The value must name a tenant. The platform uses whatever no tenant owns or holds, so there
+// is nothing to reserve for it and an empty value is refused.
 //
 // The holder reads and references it; the operator keeps every write, including the delete.
 const TenantExclusiveHolderLabel = "tenant.vcluster.com/exclusive-to"
@@ -245,6 +244,12 @@ type TenantSpec struct {
 	// Connectors governs the admin-owned connectors this tenant may read.
 	// +optional
 	Connectors *TenantConnectors `json:"connectors,omitempty"`
+
+	// ExternalClusters governs whether this tenant's users may import externally
+	// deployed clusters, that is, clusters deployed outside the platform that
+	// register themselves with it afterwards.
+	// +optional
+	ExternalClusters *TenantExternalClusters `json:"externalClusters,omitempty"`
 }
 
 // TenantControlPlaneClusters governs the Control Plane Clusters a tenant may target.
@@ -260,9 +265,24 @@ type TenantControlPlaneClusters struct {
 }
 
 // TenantControlPlaneClusterAllow selects the admin-owned Control Plane Clusters a
-// tenant may target. A tenant cannot register a Control Plane Cluster of its own, so
-// there is no custom allowance.
+// tenant may target, by ByName or ByLabels. A tenant cannot register a Control Plane
+// Cluster of its own, so there is no custom allowance.
+//
+// ByName and a non-empty ByLabels may not both be set: a cluster that is both named and
+// labelled would be served twice. To grant a set plus one more cluster, label it and
+// widen ByLabels.
+//
+// An empty ByLabels is not an unset one: byLabels: {} matches every admin-owned Control
+// Plane Cluster, so beside ByName it admits all of them and ByName is ignored. Leave
+// ByLabels absent to grant by name.
+//
+// +kubebuilder:validation:XValidation:rule="!has(self.byName) || size(self.byName) == 0 || !has(self.byLabels) || size(self.byLabels) == 0",message="byName and byLabels cannot both be set: label the Control Plane Clusters you want and select them with byLabels"
 type TenantControlPlaneClusterAllow struct {
+	// ByName selects admin-owned Control Plane Clusters by their exact names. There is
+	// no wildcard.
+	// +optional
+	ByName []string `json:"byName,omitempty"`
+
 	// ByLabels selects Control Plane Clusters carrying all of these labels.
 	//
 	// An empty map and an absent one are deliberately different, which is why this
@@ -312,8 +332,17 @@ type TenantOSImages struct {
 }
 
 // TenantOSImageAllow selects the OS images a tenant may boot from: the admin-owned
-// images matching ByLabels, plus the tenant's own images when Custom allows them.
+// images named by ByName or matching ByLabels, plus the tenant's own images when Custom
+// allows them. ByName and ByLabels may not both be set: an image that is both named
+// and labelled would be served twice. To grant a set plus one more image, label it
+// and widen ByLabels.
+//
+// +kubebuilder:validation:XValidation:rule="!has(self.byName) || size(self.byName) == 0 || !has(self.byLabels) || size(self.byLabels) == 0",message="byName and byLabels cannot both be set: label the OS images you want and select them with byLabels"
 type TenantOSImageAllow struct {
+	// ByName selects admin-owned OS images by their exact names. There is no wildcard.
+	// +optional
+	ByName []string `json:"byName,omitempty"`
+
 	// ByLabels selects admin-owned OS images carrying all of these labels.
 	//
 	// An empty map and an absent one are deliberately different, which is why this
@@ -359,8 +388,7 @@ type TenantNodeTypes struct {
 // disjoint -- so a NodeType that is both named here and matched by these labels would be
 // served twice in one page, counted twice, and delivered twice to a watch.
 //
-// Only this capability can produce the collision, because it is the only one offering a
-// name selector at all. An empty byLabels is still allowed alongside byName: it resolves
+// Only capabilities offering a name selector can produce the collision. An empty byLabels is still allowed alongside byName: it resolves
 // to a shared baseline, which drops the name selector rather than adding a second leg.
 //
 // To grant a set plus an extra instance, label the extra one and widen byLabels. That is
@@ -403,10 +431,11 @@ type TenantNodeTypeAllow struct {
 // that category. Further categories (a capacity-property matcher, for instance) are
 // added as consumers for them appear; ByType is the only one with a consumer today.
 type TenantNodeTypeQuota struct {
-	// ByType caps how many nodes the tenant may run of each NodeType, keyed by
-	// NodeType name (e.g. "eu-west.medium": "5"). Values are non-negative integer
-	// counts, the same encoding a Project's Quotas use and the same one pkg/quota's
-	// admission path parses for management resources such as nodeclaims.
+	// ByType caps on-demand capacity per NodeType name (e.g. "eu-west.medium": "5"). Values are
+	// non-negative integer counts, the same encoding a Project's quotas use. Claims bound to machines
+	// the tenant owns or was assigned exclusively, and pinned claims, do not count. Metal3 and NICo types
+	// not OnDemand, and KubeVirt Assigned types, are not limited. Under OnDemand, an over-quota claim waits
+	// even with an assigned machine free; pin it with machineRef.
 	// +optional
 	ByType map[string]string `json:"byType,omitempty"`
 }
@@ -475,9 +504,33 @@ type TenantConnectors struct {
 	Allow *TenantConnectorAllow `json:"allow,omitempty"`
 }
 
-// TenantConnectorAllow selects the admin-owned connectors a tenant may read. A tenant
-// cannot create a connector of its own, so there is no custom allowance.
+// TenantExternalClusters holds a tenant's external cluster import setting.
+type TenantExternalClusters struct {
+	// Enabled lets the tenant's users register new externally deployed clusters into its
+	// projects. While it is off, clusters already imported keep re-registering, and operators
+	// registering into the tenant's projects are never refused. Default: disabled.
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
+}
+
+// TenantConnectorAllow selects the admin-owned connectors a tenant may read, by ByName
+// or ByLabels. A tenant cannot create a connector of its own, so there is no custom
+// allowance.
+//
+// ByName and a non-empty ByLabels may not both be set: a connector that is both named and
+// labelled would be served twice. To grant a set plus one more connector, label it and
+// widen ByLabels.
+//
+// An empty ByLabels is not an unset one: byLabels: {} matches every admin-owned connector,
+// so beside ByName it admits all of them and ByName is ignored. Leave ByLabels absent to
+// grant by name.
+//
+// +kubebuilder:validation:XValidation:rule="!has(self.byName) || size(self.byName) == 0 || !has(self.byLabels) || size(self.byLabels) == 0",message="byName and byLabels cannot both be set: label the connectors you want and select them with byLabels"
 type TenantConnectorAllow struct {
+	// ByName selects admin-owned connectors by their exact names. There is no wildcard.
+	// +optional
+	ByName []string `json:"byName,omitempty"`
+
 	// ByLabels selects admin-owned connectors carrying all of these labels. Only labels
 	// returned on connectors may be selected on: a label the API does not return, such as
 	// the connector type, is refused.
@@ -589,7 +642,8 @@ type TenantHostnameBinding struct {
 // instance, so projecting it would delay an operator's claim by a reconcile. A complete "who
 // can see this" answer is this boundary plus the instances carrying TenantExclusiveHolderLabel.
 type TenantResourceBoundary struct {
-	// Resource is the lowercase plural management.loft.sh resource name.
+	// Resource is the lowercase plural resource name: a management.loft.sh kind, or clusterroles
+	// or roles for the RBAC role kinds.
 	Resource string `json:"resource"`
 
 	// Enabled reports the governing capability's switch: absent where none governs the kind,

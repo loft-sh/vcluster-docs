@@ -436,28 +436,8 @@ spec:
 		SubResourceCreateDescription: "Move a space into another project using this API.",
 	})
 
-	// ProjectMigrateSpaceInstnace
-	util.GenerateObjectOverview(&util.ObjectInformation{
-		Title:       "Move vCluster To Other Project",
-		Description: "This API can be used to move a virtual cluster from one project to another.",
-		File:        path.Join(util.BaseResourcesPath, "project/migratevirtualclusterinstance.mdx"),
-		Name:        "Move Virtual Cluster To Other Project",
-		Resource:    "projects",
-		SubResource: "migratevirtualclusterinstance",
-		Object: &managementv1.ProjectMigrateVirtualClusterInstance{
-			TypeMeta: metav1.TypeMeta{
-				Kind:       "ProjectMigrateVirtualClusterInstance",
-				APIVersion: managementv1.SchemeGroupVersion.String(),
-			},
-			ObjectMeta: metav1.ObjectMeta{},
-			SourceVirtualClusterInstance: managementv1.ProjectMigrateVirtualClusterInstanceSource{
-				Name:      "my-virtual-cluster",
-				Namespace: "loft-p-my-other-project",
-			},
-		},
-		SubResourceCreate:            true,
-		SubResourceCreateDescription: "Move a virtual cluster into another project using this API.",
-	})
+	// ProjectMigrateVirtualClusterInstance was removed in Platform 5.0.
+	// Its 4.x API reference remains in the versioned documentation.
 
 	// ProjectMembers
 	util.GenerateObjectOverview(&util.ObjectInformation{
@@ -1537,14 +1517,18 @@ users:
 		Name:        "SSHKey",
 		Resource:    "sshkeys",
 		Description: "SSHKey holds a public SSH key that can be attached to auto-provisioned or manually joined nodes.",
+		ExtraContentBeforeExample: "The server generates SSHKey names. Create a key with `metadata.generateName`. A request that sets `metadata.name` is refused, so `kubectl apply` can't create one. " +
+			"After creation, only `spec.displayName`, `spec.description`, and metadata can change. To replace a public key, create a new key. " +
+			"See [SSH keys](../../vmetal/images/ssh-keys.mdx).\n",
 		File:        path.Join(util.BaseResourcesPath, "sshkey.mdx"),
+		ExampleName: "my-ssh-key-x7k2p",
 		Object: &managementv1.SSHKey{
 			TypeMeta: metav1.TypeMeta{
 				Kind:       "SSHKey",
 				APIVersion: managementv1.SchemeGroupVersion.String(),
 			},
 			ObjectMeta: metav1.ObjectMeta{
-				Name: "my-ssh-key",
+				GenerateName: "my-ssh-key-",
 			},
 			Spec: managementv1.SSHKeySpec{
 				SSHKeySpec: storagev1.SSHKeySpec{

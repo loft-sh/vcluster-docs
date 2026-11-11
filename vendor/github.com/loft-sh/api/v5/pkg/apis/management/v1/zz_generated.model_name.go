@@ -851,6 +851,26 @@ func (in NodeClaimStatus) OpenAPIModelName() string {
 }
 
 // OpenAPIModelName returns the OpenAPI model name for this type.
+func (in NodePool) OpenAPIModelName() string {
+	return "com.github.loft-sh.api.v5.pkg.apis.management.v1.NodePool"
+}
+
+// OpenAPIModelName returns the OpenAPI model name for this type.
+func (in NodePoolList) OpenAPIModelName() string {
+	return "com.github.loft-sh.api.v5.pkg.apis.management.v1.NodePoolList"
+}
+
+// OpenAPIModelName returns the OpenAPI model name for this type.
+func (in NodePoolSpec) OpenAPIModelName() string {
+	return "com.github.loft-sh.api.v5.pkg.apis.management.v1.NodePoolSpec"
+}
+
+// OpenAPIModelName returns the OpenAPI model name for this type.
+func (in NodePoolStatus) OpenAPIModelName() string {
+	return "com.github.loft-sh.api.v5.pkg.apis.management.v1.NodePoolStatus"
+}
+
+// OpenAPIModelName returns the OpenAPI model name for this type.
 func (in NodeProfile) OpenAPIModelName() string {
 	return "com.github.loft-sh.api.v5.pkg.apis.management.v1.NodeProfile"
 }
@@ -873,26 +893,6 @@ func (in NodeProfileStatus) OpenAPIModelName() string {
 // OpenAPIModelName returns the OpenAPI model name for this type.
 func (in NodeProvider) OpenAPIModelName() string {
 	return "com.github.loft-sh.api.v5.pkg.apis.management.v1.NodeProvider"
-}
-
-// OpenAPIModelName returns the OpenAPI model name for this type.
-func (in NodeProviderBCMGetResourcesResult) OpenAPIModelName() string {
-	return "com.github.loft-sh.api.v5.pkg.apis.management.v1.NodeProviderBCMGetResourcesResult"
-}
-
-// OpenAPIModelName returns the OpenAPI model name for this type.
-func (in NodeProviderBCMNodeGroup) OpenAPIModelName() string {
-	return "com.github.loft-sh.api.v5.pkg.apis.management.v1.NodeProviderBCMNodeGroup"
-}
-
-// OpenAPIModelName returns the OpenAPI model name for this type.
-func (in NodeProviderBCMNodeWithResources) OpenAPIModelName() string {
-	return "com.github.loft-sh.api.v5.pkg.apis.management.v1.NodeProviderBCMNodeWithResources"
-}
-
-// OpenAPIModelName returns the OpenAPI model name for this type.
-func (in NodeProviderBCMTestConnectionResult) OpenAPIModelName() string {
-	return "com.github.loft-sh.api.v5.pkg.apis.management.v1.NodeProviderBCMTestConnectionResult"
 }
 
 // OpenAPIModelName returns the OpenAPI model name for this type.
@@ -1188,21 +1188,6 @@ func (in ProjectMigrateSpaceInstanceList) OpenAPIModelName() string {
 // OpenAPIModelName returns the OpenAPI model name for this type.
 func (in ProjectMigrateSpaceInstanceSource) OpenAPIModelName() string {
 	return "com.github.loft-sh.api.v5.pkg.apis.management.v1.ProjectMigrateSpaceInstanceSource"
-}
-
-// OpenAPIModelName returns the OpenAPI model name for this type.
-func (in ProjectMigrateVirtualClusterInstance) OpenAPIModelName() string {
-	return "com.github.loft-sh.api.v5.pkg.apis.management.v1.ProjectMigrateVirtualClusterInstance"
-}
-
-// OpenAPIModelName returns the OpenAPI model name for this type.
-func (in ProjectMigrateVirtualClusterInstanceList) OpenAPIModelName() string {
-	return "com.github.loft-sh.api.v5.pkg.apis.management.v1.ProjectMigrateVirtualClusterInstanceList"
-}
-
-// OpenAPIModelName returns the OpenAPI model name for this type.
-func (in ProjectMigrateVirtualClusterInstanceSource) OpenAPIModelName() string {
-	return "com.github.loft-sh.api.v5.pkg.apis.management.v1.ProjectMigrateVirtualClusterInstanceSource"
 }
 
 // OpenAPIModelName returns the OpenAPI model name for this type.

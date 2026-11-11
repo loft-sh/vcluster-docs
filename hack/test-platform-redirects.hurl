@@ -31,11 +31,11 @@ HTTP 301
 [Asserts]
 header "Location" contains "/docs/platform/configure/introduction"
 
-# Test: configure/high-availability -> configure/introduction
+# Test: configure/high-availability -> administer/reliability-scaling/high-availability
 GET {{BASE_URL}}/docs/platform/configure/high-availability/
 HTTP 301
 [Asserts]
-header "Location" contains "/docs/platform/configure/introduction"
+header "Location" contains "/docs/platform/administer/reliability-scaling/high-availability"
 
 # Test: SSO paths -> consolidated single-sign-on page
 GET {{BASE_URL}}/docs/platform/configure/single-sign-on/overview/

@@ -1,5 +1,5 @@
 ---
-title: Production and Security
+title: Production and security
 sidebar_label: Production and security
 sidebar_position: 10
 description: Secure BMC credentials, harden OS image trust, enforce resource boundaries, and understand isolation in Metal3 production deployments.
@@ -71,6 +71,16 @@ spec:
 
 Create the `bmc-ca-bundle` Secret in the Metal3 release namespace on the control plane cluster, with the PEM-encoded CA certificate under key `ca.crt`. This is the namespace configured by the NodeProvider's `clusterRef`. Don't set `IRONIC_CACERT_FILE` for this purpose; that variable configures trust for the Ironic API rather than the BMC endpoints.
 
+### Control BMC proxy access
+
+The Metal3 UI is restricted to platform admins outside tenant scope. Within that view, Redfish Explorer checks permission to `create` `metal3bmcs/redfish` in the `cluster.loft.sh` API group. Scope access to the intended control plane cluster and BareMetalHost namespace.
+
+The proxy uses the BMC credentials referenced by the host. A user doesn't need direct read access to that Secret to send an authorized request. Treat this permission as hardware administration access. It permits both reads and changes, including actions that can disrupt workloads.
+
+The Redfish proxy verifies BMC TLS certificates unless the BareMetalHost sets `spec.bmc.disableCertificateVerification: true`.
+
+Keep `metal3bmcs/redfish` requests at `Metadata` level in custom audit policies. BMC requests and responses can carry passwords or session tokens. See [Audit BMC requests](./operations.mdx#audit-bmc-requests) and the [audit policy reference](../../../../administer/configure/platform-configs/audit-policy.mdx#metadata-only-for-sensitive-data).
+
 ## Trust the OS image pipeline
 
 ### Checksums are required
@@ -99,7 +109,7 @@ Turn verification back on when the platform presents a certificate from a public
 
 Ironic fetches images at provisioning time from the control plane cluster. If the image URL is external, a network outage or a change at the remote host blocks all provisioning. Host OS images on infrastructure you control, such as an internal artifact registry or object storage on a private endpoint.
 
-Platform admins create `OSImage` resources with the URL and checksum. Node types reference them by name, so tenants never supply raw image URLs, and the `OSImage` resource is the only place an image reference can be tampered with. Restrict write access to `OSImage` resources to platform admins.
+Node types reference `OSImage` resources by name. Control who can change an OSImage or a node type's image selection. Both affect which image the platform installs on the next provision.
 
 ### Image signing
 
@@ -109,7 +119,7 @@ Ironic doesn't natively verify image signatures. Checksum verification confirms 
 
 ### Which roles control what
 
-`NodeProvider` and `NodeType` resources are cluster-scoped and non-namespaced. Only platform admins can create or modify them; tenants have no direct access to these objects.
+`NodeProvider` and `NodeType` resources are cluster-scoped and non-namespaced. Platform admins manage their configuration. Tenants can read a reduced view of resources granted to them. That read access doesn't grant permission to change provider configuration. See [Reduced read view](../../../concepts/machine-types-and-nodetypes.mdx#what-users-without-edit-access-see).
 
 Project roles determine what members of a Project can do with `NodeClaim` (instance) resources. See [Project Membership](../../../../tenants/users-permissions/permissions/project.mdx) for the default Project Admin, Project User, and Project Viewer roles. No Project role grants permission to change the infrastructure configuration behind an instance.
 
@@ -159,20 +169,23 @@ The control plane cluster that runs Metal3 and Ironic has a uniquely elevated tr
 
 ### Limit access to BareMetalHost resources
 
-Only the `controller-manager` ServiceAccount and the vCluster Platform controller need permission to create, update, or delete `BareMetalHost` resources on the control plane cluster. Apply a restrictive ClusterRole:
+Limit BareMetalHost writes to the driver controllers and authorized infrastructure operators. The platform agent needs read access to BareMetalHosts and their BMC credential Secrets to serve BMC requests. It doesn't need write access, because UI operations impersonate the requesting user. That operator needs the underlying resource permissions for each operation. For example, adding a server creates a BareMetalHost and, when BMC credentials are supplied, a credential Secret.
+
+Scope direct operator access to the Metal3 namespace. For example, define this Role and bind it only to identities authorized to manage hosts:
 
 ```yaml
 apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
+kind: Role
 metadata:
   name: bmh-admin
+  namespace: metal3-system
 rules:
 - apiGroups: ["metal3.io"]
   resources: ["baremetalhosts"]
   verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 ```
 
-Bind this only to the service accounts that need it. Revoke any bindings that grant broad `*` verb access to `metal3.io` resources to human users.
+This Role covers BareMetalHosts only. Grant access to credential Secrets separately when needed. Keep tenant identities out of both grants, and audit direct operator access.
 
 ### Segment the control plane cluster's network
 
@@ -201,7 +214,7 @@ deploy:
         dedicated: metal3
 ```
 
-This confines Metal3 and Ironic to nodes that have BMC network access, so no other workload can reach the BMC network even if it obtains a credential Secret.
+These settings constrain Metal3 scheduling. Taints don't enforce network isolation, and workloads with matching tolerations can still run on those nodes. Enforce BMC reachability with network controls too. Include the platform agent when enabling Redfish Explorer.
 
 ### Enable audit logging on the control plane cluster
 
@@ -220,7 +233,7 @@ rules:
   verbs: ["create", "update", "patch", "delete"]
 ```
 
-Forward audit logs to your SIEM or log aggregation system. Alert on any `BareMetalHost` delete or update event outside of the `controller-manager` ServiceAccount.
+Forward audit logs to your SIEM or log aggregation system. Alert on BareMetalHost writes outside the expected controller identities and approved operator activity.
 
 ### Minimize human access
 
