@@ -134,6 +134,10 @@ def main():
 
     # Stacks. The 4.12 UI sends this key, and 4.12 has the page under understand/.
     stacks = UI + "stacks"
+    old = re.compile(r"# Stacks \(UI key added in 5\.0, no 4\.12 page\)\.[^\n]*\n#[^\n]*\n")
+    s, n = old.subn("# Stacks (UI key added in 4.12; the page moved to tenants/templates/ in 5.0)\n", s)
+    if n != 1:
+        die("Stacks comment not found")
     s = set_target(s, stacks, "/docs/platform/tenants/templates/what-are-stacks")
     s = set_target(s, stacks + "/:version", "/docs/platform/:version/tenants/templates/what-are-stacks")
     s = add_exact(s, stacks, "/docs/platform/tenants/templates/what-are-stacks")
