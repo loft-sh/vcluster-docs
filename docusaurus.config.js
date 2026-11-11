@@ -226,13 +226,6 @@ const config = {
             // The plugin compiles each entry to an anchored micromatch glob, so
             // an exact path excludes only that route and keeps its sub-pages.
             // A trailing `$` is a literal character and matches nothing.
-            // Aggregate config reference renders to ~380K, above the 100K
-            // agent truncation limit. Sub-pages are indexed individually.
-            // Retired in 0.38 (DOC-1556); remove this entry and the next one at
-            // the 0.38 cutover.
-            '/docs/vcluster/configure/vcluster-yaml',
-            // Aggregate sync reference in the released docs renders to ~161K.
-            '/docs/vcluster/configure/vcluster-yaml/sync',
             // The sync section of the vcluster.yaml reference renders to ~176K;
             // the Configure > Resource synchronization task pages are indexed.
             '/docs/vcluster/reference/vcluster-yaml/sync',
