@@ -13,7 +13,9 @@ It does three things:
    chain through. The unversioned route moves to the 0.38 path. Exact `/0.38.0`
    and `/next` routes are added ahead of the generic `/:version` route, because
    the Platform UI sends the vCluster instance's version. The generic route
-   stays on the 0.37 IA for older instances.
+   stays on the 0.37 IA for older instances. Keys whose page didn't move get an
+   exact `/0.38.0` route to their unversioned target, so they don't chain
+   through the `/docs/vcluster/0.38.0/*` stable redirect.
 3. Retargets any other exact rule whose target is one of the retired stable
    paths, so it doesn't chain through the new redirect.
 
@@ -73,6 +75,15 @@ VCLUSTER_KEYS = {
     "vpn": "configure/private-nodes/vpn",
 }
 
+# platform-ui-link/vcluster/<key> whose page has the same path in 0.38.
+UNMOVED_KEYS = [
+    "0-20-migration",
+    "standalone",
+    "high-availability",
+    "private-nodes",
+    "private-nodes-node-requirements",
+]
+
 # Platform keys that send every Platform version to stable vCluster sleep docs.
 # Their /next routes already point at the new page.
 SLEEP_KEYS = ["sleep-mode", "working-with-sleep-mode"]
@@ -129,6 +140,16 @@ def main():
             f'[[redirects]]\n  from = "{base}/0.38.0"\n  to = "{V}/{target}"\n\n'
             f'[[redirects]]\n  from = "{base}/next"\n  to = "{V}/next/{target}"\n\n'
         )
+        s = s.replace(generic, exact + generic, 1)
+    for key in UNMOVED_KEYS:
+        base = f"/docs/platform-ui-link/vcluster/{key}"
+        m = re.search(r'from = "' + re.escape(base) + r'"\n  to = "([^"]+)"', s)
+        if not m or not m.group(1).startswith(f"{V}/") or "/next/" in m.group(1):
+            die(f"unexpected unversioned target for {base}")
+        generic = f'[[redirects]]\n  from = "{base}/:version"\n'
+        if generic not in s:
+            die(f"no generic rule for {base}/:version")
+        exact = f'[[redirects]]\n  from = "{base}/0.38.0"\n  to = "{m.group(1)}"\n\n'
         s = s.replace(generic, exact + generic, 1)
     for key in SLEEP_KEYS:
         base = f"/docs/platform-ui-link/platform/{key}"
