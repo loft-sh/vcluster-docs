@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """Resolve current PR state from a completed, untrusted signal run."""
+import datetime
+import email.utils
 import json
 import os
 import re
 import sys
 import tempfile
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -70,11 +73,32 @@ class API:
         request = urllib.request.Request(self.root + '/repos/' + self.repo + path,
             headers={'Authorization': 'Bearer ' + self.token, 'Accept': 'application/vnd.github+json',
                      'X-GitHub-Api-Version': '2022-11-28'})
-        try:
-            with urllib.request.build_opener(SafeRedirect()).open(request, timeout=30) as response:
-                raw = response.read(MAX_BYTES + 1)
-        except (urllib.error.URLError, OSError) as exc:
-            raise Invalid('GitHub API request failed') from exc
+        for attempt in range(3):
+            try:
+                with urllib.request.build_opener(SafeRedirect()).open(request, timeout=30) as response:
+                    raw = response.read(MAX_BYTES + 1)
+                break
+            except urllib.error.HTTPError as exc:
+                cause = 'HTTP %d' % exc.code
+                transient = exc.code == 429 or 500 <= exc.code < 600
+                retry_after = exc.headers.get('Retry-After') if exc.headers else None
+            except (urllib.error.URLError, OSError) as exc:
+                cause = str(exc.reason if isinstance(exc, urllib.error.URLError) else exc)
+                transient = True
+                retry_after = None
+            if not transient or attempt == 2:
+                raise Invalid('GitHub API request failed for %s: %s' % (path or '/', cause))
+            delay = (2, 5)[attempt]
+            if retry_after:
+                try:
+                    delay = max(0, min(30, int(retry_after)))
+                except ValueError:
+                    try:
+                        retry_at = email.utils.parsedate_to_datetime(retry_after)
+                        delay = max(0, min(30, (retry_at - datetime.datetime.now(datetime.timezone.utc)).total_seconds()))
+                    except (TypeError, ValueError, OverflowError):
+                        pass
+            time.sleep(delay)
         if len(raw) > MAX_BYTES:
             raise Invalid('API response too large')
         return decode(raw)

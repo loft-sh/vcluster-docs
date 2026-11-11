@@ -3,6 +3,8 @@ import json
 import os
 from pathlib import Path
 import subprocess
+from unittest.mock import Mock
+from urllib.error import HTTPError, URLError
 
 import pytest
 
@@ -186,6 +188,53 @@ def test_api_request_budget_fails_before_network():
     api.calls = 30
     with pytest.raises(r.Invalid, match='API call limit'):
         api.get('/pulls/1')
+
+
+def http_error(code, headers=None):
+    return HTTPError('https://api.github.com/repos/org/docs/pulls/1', code, 'error', headers or {}, None)
+
+
+@pytest.mark.parametrize('failure', [http_error(500), http_error(429, {'Retry-After': '100'}), URLError('connection reset'), TimeoutError('timed out')])
+def test_api_retries_transient_failure_then_succeeds(monkeypatch, failure):
+    response = Mock()
+    response.__enter__ = Mock(return_value=response)
+    response.__exit__ = Mock(return_value=False)
+    response.read.return_value = b'{"ok": true}'
+    opener = Mock()
+    opener.open.side_effect = [failure, response]
+    sleep = Mock()
+    monkeypatch.setattr(r.urllib.request, 'build_opener', lambda *args: opener)
+    monkeypatch.setattr(r.time, 'sleep', sleep)
+    assert r.API('secret', 'org/docs').get('/pulls/1') == {'ok': True}
+    assert opener.open.call_count == 2
+    sleep.assert_called_once_with(30 if isinstance(failure, HTTPError) and failure.code == 429 else 2)
+
+
+@pytest.mark.parametrize('failure, cause', [(http_error(503), 'HTTP 503'), (URLError('connection reset'), 'connection reset')])
+def test_api_retry_exhausted_reports_cause_and_path(monkeypatch, failure, cause):
+    opener = Mock()
+    opener.open.side_effect = failure
+    sleep = Mock()
+    monkeypatch.setattr(r.urllib.request, 'build_opener', lambda *args: opener)
+    monkeypatch.setattr(r.time, 'sleep', sleep)
+    with pytest.raises(r.Invalid) as error:
+        r.API('secret', 'org/docs').get('/pulls/1')
+    assert cause in str(error.value) and '/pulls/1' in str(error.value)
+    assert 'secret' not in str(error.value)
+    assert opener.open.call_count == 3
+    assert [call.args[0] for call in sleep.call_args_list] == [2, 5]
+
+
+def test_api_does_not_retry_404(monkeypatch):
+    opener = Mock()
+    opener.open.side_effect = http_error(404)
+    sleep = Mock()
+    monkeypatch.setattr(r.urllib.request, 'build_opener', lambda *args: opener)
+    monkeypatch.setattr(r.time, 'sleep', sleep)
+    with pytest.raises(r.Invalid, match='HTTP 404'):
+        r.API('secret', 'org/docs').get('/pulls/1')
+    assert opener.open.call_count == 1
+    sleep.assert_not_called()
 
 
 def test_output_delimiter_collision_is_retried(tmp_path, monkeypatch):
