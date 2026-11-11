@@ -1,6 +1,6 @@
 ---
-title: Isolate clusters with Netris and NVIDIA BCM
-sidebar_label: Bare Metal (Netris)
+title: Isolate clusters with Netris
+sidebar_label: Netris
 sidebar_position: 5
 id: bare-metal
 sidebar_class_name: private-nodes
@@ -11,24 +11,22 @@ It allows for stronger isolation between the clusters, since the Pods in a clust
 
 Unlike cloud providers that offer stable network abstractions for automation, bare metal infrastructure lacks these built-in capabilities, making network configuration and management significantly more complex.
 This guide shows how vCluster with [Netris](https://netris.ai/) delivers an equally seamless integration for bare metal environments.
-It enables you to isolate clusters spanning mixed bare metal and VM private nodes that share the same underlying hardware with an exclusive network.
+It isolates each cluster on an exclusive network, with KubeVirt VMs as private nodes on the same underlying hardware.
+To add bare metal servers to an isolated Netris network, see the Metal3 driver's [Netris integration](/docs/platform/next/vmetal/drivers/bare-metal/metal3/network-integration#netris-hardware-network-isolation).
 
-Netris server clusters provide network abstractions that can be configured in different ways depending on your hardware setup—including access ports, trunk ports, or other network configurations.
-
-![Architecture](/img/netris_architecture.svg)
+Netris server clusters provide network abstractions that can be configured in different ways depending on your hardware setup, including access ports, trunk ports, or other network configurations.
 
 The goal of this guide is to have a cluster on an isolated network:
 
 - Cluster managed by vCluster platform
 - Control plane is reachable on the network behind a stable address
-- BCM server provisioned and joined as a private node
 - KubeVirt VM provisioned and joined as a private node
 - Nodes share the same network and can freely communicate
 - Hosts on other networks cannot reach the Nodes or workloads (unless explicitly peered)
 
 Like in traditional Kubernetes clusters, Nodes share the same network domain.
 Instead of control plane _nodes_, the vCluster control plane runs as (multihomed) Pods in the control plane cluster.
-This is transparent to the cluster; however, the control plane cluster remains inaccessible.
+This is transparent to the cluster, and the control plane cluster remains inaccessible.
 
 This can be repeated for any number of clusters.
 The VPCs of each cluster may also be peered to access shared services across clusters.
@@ -39,7 +37,7 @@ Netris provides software for managing and automating the switch fabric in a data
 
 We use the [Netris controller](https://netris.ai/docs/controller/) to manage the architecture logically (by servers being members in [server clusters](https://netris.ai/docs/controller/server-clusters/)) while the [Netris agent](https://netris.ai/docs/agent/) will implement it on the physical switches.
 
-In this guide, we use VLAN trunk ports to attach the control plane and VMs to the exclusive network, while bare metal servers connect through access ports.
+In this guide, we use VLAN trunk ports to attach the control plane and VMs to the exclusive network.
 
 ## Prerequisites
 
@@ -47,19 +45,15 @@ We assume the following:
 
 - Hardware deployed
 - Netris controller & agent installed & configured
-- Networks configured in Netris (VPC and Server cluster) and BCM (See [below](#prepare-networks))
-    - Default network with BCM head node
+- Networks configured in Netris (VPC and Server cluster) (See [below](#prepare-networks))
     - Control plane cluster network
     - vCluster tenant network
 - Netris controller API is reachable from the control plane cluster network
-- BCM head node (API) is reachable from the control plane cluster network
 - Control plane cluster set up (See [below](#prepare-control-plane-cluster))
-- BCM head node must be able to run commands on servers with plain `ssh` when they are on a different BCM network
-- At least one unused server in BCM is available
 
 ## Prepare networks
 
-We must prepare the networks for the control plane cluster and a vCluster tenant in Netris & BCM.
+We must prepare the networks for the control plane cluster and a vCluster tenant in Netris.
 
 ### Netris server clusters
 
@@ -96,7 +90,7 @@ We must prepare the networks for the control plane cluster and a vCluster tenant
 
     ![ServerCluster](/img/netris_create_host_cluster_servercluster.png)
 
-    The one for the tenant network doesn't have any endpoints with untagged ports until later.
+    The one for the tenant network doesn't have any endpoints with untagged ports.
     However, we add the control plane cluster servers as _shared_ endpoints.
 
     This configures the ports on the shared servers as trunk ports (additionally) carrying tagged VLAN traffic.
@@ -110,12 +104,6 @@ We must prepare the networks for the control plane cluster and a vCluster tenant
     We need the VLAN id (here it's `3`) later when we create the bridge.
 
     ![VnetId](/img/netris_edit_vcluster_vnet.png)
-
-### BCM networks
-
-    Create networks in BCM analogous to the server clusters in Netris:
-
-    ![BCM Network](/img/bcm_create_network.png)
 
 ## Prepare control plane cluster {#prepare-control-plane-cluster}
 
@@ -271,84 +259,6 @@ The following steps can be repeated for additional vCluster deployments.
 The control plane is accessible on the exclusive network at a fixed IP by means of kube-vip and the automatic configuration with information from Netris.
 For more details on kube-vip configuration, see [Kube-vip](../../../../configure/control-plane/advanced/kube-vip.mdx).
 
-## Join bare metal server
-
-### Configure BCM node provider
-
-1. Create BCM credentials secret
-
-    ```yaml
-    apiVersion: v1
-    kind: Secret
-    metadata:
-      name: bcm-credentials
-      namespace: vcluster-platform
-    stringData:
-      username: "your-bcm-username"
-      password: "your-bcm-password"
-    ```
-
-2. Create BCM Node Provider
-
-    ```yaml
-    apiVersion: management.loft.sh/v1
-    kind: NodeProvider
-    metadata:
-      name: bcm-netris
-    spec:
-      bcm:
-        secretRef:
-          name: bcm-credentials
-          namespace: vcluster-platform
-        endpoint: "https://your-bcm-endpoint.com"
-        nodeTypes:
-          - name: dgx-node
-            nodes:
-              - dgx-01
-            properties:
-              bcm.vcluster.com/network-interface: bond0
-    ```
-
-3. Update vCluster configuration
-
-    Add the BCM node provider to your vCluster configuration using auto-nodes:
-
-    ```yaml title="vcluster.yaml"
-    privateNodes:
-      enabled: true
-      autoNodes:
-        - provider: bcm-netris
-          static:
-            - name: dgx-pool
-              quantity: 1
-              nodeTypeSelector:
-                - property: vcluster.com/node-type
-                  value: dgx-node
-          properties:
-            netris.vcluster.com/server-cluster: netris-nodes
-    ```
-
-4. Verify node provisioning
-
-    The BCM node provider will automatically provision the bare metal server as a node in the cluster.
-    You can monitor the node claim status.
-
-    Run in the control plane cluster:
-
-    ```text
-    kubectl get nodeclaims -A
-    NAMESPACE   NAME           STATUS      VCLUSTER   TYPE                  CREATED AT
-    p-default   netris-8gnqh   Available   netris     bcm-netris.dgx-node   2025-10-27T19:39:45Z
-    ```
-
-    Once the node joins the cluster, the claim transitions from `Pending` to `Available` and the node will appear in the cluster:
-
-    ```text
-    kubectl get nodes
-    NAME     STATUS   ROLES    AGE   VERSION
-    dgx-01   Ready    <none>   68s   v1.34.1
-    ```
-
 ## Join VM running in control plane cluster infrastructure
 
 ### Configure KubeVirt node provider
@@ -404,16 +314,12 @@ For more details on kube-vip configuration, see [Kube-vip](../../../../configure
 
 2. Update vCluster configuration
 
-    Add both node providers to your vCluster configuration using auto-nodes:
+    Add the KubeVirt node provider to your vCluster configuration using auto-nodes:
 
     ```yaml title="vcluster.yaml"
     privateNodes:
       enabled: true
       autoNodes:
-        - provider: bcm-netris
-          static:
-            - name: dgx-pool
-              quantity: 1
         - provider: kubevirt-netris
           static:
             - name: vm-pool
@@ -433,7 +339,6 @@ For more details on kube-vip configuration, see [Kube-vip](../../../../configure
     ```text
     kubectl get nodeclaims -A
     NAMESPACE   NAME           STATUS      VCLUSTER   TYPE                        CREATED AT
-    p-default   netris-swwnh   Available   netris     bcm-netris.dgx-node         2025-10-27T19:48:06Z
     p-default   netris-8gnqh   Available   netris     kubevirt-netris.netris-vm   2025-10-27T19:39:45Z
     ```
 
@@ -442,6 +347,5 @@ For more details on kube-vip configuration, see [Kube-vip](../../../../configure
     ```bash
     kubectl get nodes
     NAME           STATUS   ROLES    AGE     VERSION
-    dgx-01         Ready    <none>   5m11s   v1.34.1
     netris-8gnqh   Ready    <none>   20s     v1.34.1
     ```
