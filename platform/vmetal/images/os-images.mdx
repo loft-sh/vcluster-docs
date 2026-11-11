@@ -59,6 +59,17 @@ The <Label>Management Access</Label> section sets `spec.access`. It also shows t
 
 OS images are a generic concept. The properties they carry depend on which node provider consumes them.
 
+An OSImage accepts only image properties. These are the provider properties that describe the image source and root disk, plus the platform's own image tags. The API refuses any other key, such as a network or node type property, with `is not an image property`. Tenants can create OSImages, so this keeps an image from changing what a `NodeClaim` attaches to.
+
+The accepted properties are:
+
+- Metal3: `metal3.vcluster.com/image-url`, `metal3.vcluster.com/image-checksum`, `metal3.vcluster.com/image-checksum-type`
+- KubeVirt: `kubevirt.vcluster.com/image-url`, `kubevirt.vcluster.com/image-datasource`, `kubevirt.vcluster.com/image-checksum`, `kubevirt.vcluster.com/root-disk-size`, `kubevirt.vcluster.com/image-datavolume-template`, `kubevirt.vcluster.com/root-disk-template`
+- NICo: `nico.vcluster.com/os-image-id`, `nico.vcluster.com/os-image-url`, `nico.vcluster.com/os-image-sha`, `nico.vcluster.com/os-image-disk`, `nico.vcluster.com/os-image-rootfs-id`, `nico.vcluster.com/os-image-rootfs-label`
+- Platform tags: `machines.vcluster.com/os-image-type`, `machines.vcluster.com/os-image-certified`, `machines.vcluster.com/os-image-icon`
+
+The check runs on every create and update. An OSImage created before the check existed can still carry another key. You can't edit that image until you remove the key.
+
 For [uploaded images](./upload-os-images.mdx), the platform supplies the image source and checksum from the uploaded file. Don't set the provider's source or checksum properties alongside `spec.connectorRef`. Other provider properties, such as the KubeVirt root disk size, still apply.
 
 ### Metal3
@@ -137,19 +148,24 @@ An image-based definition requires `nico.vcluster.com/os-image-url` and `nico.vc
 Use `nico.vcluster.com/os-image-disk` to select the target disk.
 
 At first use, the driver creates or finds the corresponding operating system in the consuming NICo tenant.
-Alternatively, set `nico.vcluster.com/os-image-id` to use an existing NICo operating system.
+Alternatively, set `nico.vcluster.com/os-image-id` on the OSImage to use an existing NICo operating system.
 See the [NICo image configuration](../drivers/bare-metal/nico/overview.mdx#prepare-an-operating-system-image) for the complete example, required NICo settings, and disk overwrite precautions.
 
 ## Use an OSImage
 
-Reference an OSImage by name in node type properties or `NodeClaim` properties.
+Reference an OSImage by name with the `vcluster.com/os-image` property. Set it on the node provider, the node type, or the `NodeClaim`.
 
 ```yaml
 properties:
   vcluster.com/os-image: ubuntu-noble
 ```
 
-The platform resolves the OSImage and applies its properties during provisioning.
+The Metal3, KubeVirt, NICo, and external platform drivers read image settings only from the OSImage that `vcluster.com/os-image` references. They ignore image properties set directly on a node provider, node type, network environment, or `NodeClaim`. The exception is `kubevirt.vcluster.com/root-disk-size`. It depends on the workload rather than on the image, so a value set on any of those objects overrides the OSImage's value.
+
+Metal3, NICo, and external platform instances require an OSImage. Without one, the instance fails with the reason `InvalidConfiguration`. A KubeVirt instance can run without one when its VM template brings its own root disk.
+
+When a `NodeClaim` is created, the platform checks that its tenant can use the OSImage it references, including a reference inherited from the node type or node provider. An OSImage the tenant can't use is refused the same way as a missing one, with `os image "<name>" not found`. If the reference comes from the node provider, the message is `node provider "<name>" references a resource that cannot be used` instead.
+
 On node providers that don't [support the property](#provider-specific-properties), it has no effect.
 
 ## Resolve image problems
@@ -166,8 +182,9 @@ Inspect the referenced image when a KubeVirt instance doesn't provision:
 | The provider reports `failed to get OSImage` | The value of `vcluster.com/os-image` doesn't match an existing cluster-scoped `OSImage`. List the images with `kubectl get osimages`, then correct the reference. |
 | The image is missing from KubeVirt image selection in the platform UI | Check `machines.vcluster.com/os-image-type`. Set it to `kubevirt`. A missing or different value classifies the image as another provider type or as custom. |
 | The image defines both `image-url` and `image-datasource` | Remove the source that you don't intend to use. The provider gives `image-datasource` precedence and ignores `image-url` and `image-checksum`. |
-| Provisioning reports that `kubevirt.vcluster.com/root-disk-size` is required | Add the property to the OS image or another effective property source. Use a valid Kubernetes storage quantity such as `20Gi`. |
+| Provisioning reports that `kubevirt.vcluster.com/root-disk-size` is required | Add the property to the OS image, or to the node provider, node type, network environment, or `NodeClaim`. Use a valid Kubernetes storage quantity such as `20Gi`. |
 | Provisioning reports an unsupported image URL scheme | Use a URL beginning with `http://`, `https://`, or `docker://`. |
+| Creating or updating the image fails with `is not an image property` | The image carries a key that isn't an [accepted image property](#provider-specific-properties). Remove the key from the image. If provisioning needs it, set it on the node type or node provider instead. |
 
 ## Access control
 

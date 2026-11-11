@@ -8,6 +8,7 @@ toc_max_heading_level: 3
 
 import MachineModelLifecycle from '@site/static/media/diagrams/machine-model-lifecycle.svg';
 import MachineTenantClusterFlow from '@site/static/media/diagrams/machine-tenant-cluster-flow.svg';
+import InterpolatedCodeBlock from '@site/src/components/InterpolatedCodeBlock';
 
 An instance is the customer-facing concept for vMetal's claim on one server (physical or virtual, depending on the driver behind it). In the API, a `NodeClaim` represents that request and tracks its lifecycle. This page describes the instance model at a driver-neutral level, from request through placement, quotas, failure, and release. For quick term definitions, see the [Glossary](../../reference/glossary.mdx).
 
@@ -130,6 +131,7 @@ The most common reasons are in the following table. The condition message names 
 | `Provisioned` | `Provisioning` | `Pending` | The driver is still working. No time limit. |
 | `Provisioned` | `ProvisioningError` | `Pending` | The driver returned an error. Retries automatically. |
 | `Provisioned` | `InvalidConfiguration`, `MachineNotFound`, or `NetworkEnvironmentNotAllowed` | `Failed` | Not retried. Fix the cause and replace the instance. |
+| `Provisioned` | `PropertiesNotAllowed` | `Failed` | The claim sets properties its node provider doesn't allow on a `NodeClaim`. The message names them. Remove them and replace the instance. See [When a provider disallows a claim's properties](#when-a-provider-disallows-a-claims-properties). |
 | `Joined` | `NotJoined` | `Pending` | The server hasn't registered as a node in its cluster yet. |
 
 A node type is chosen once. After the `Scheduled` condition is met, the claim keeps that node type for the rest of its life, even while it waits for capacity.
@@ -144,6 +146,24 @@ Once the instance is provisioned, the platform flags the mismatch in two places.
 - The node type gets a `ClaimedMachinesMatch` condition set to `False` with a warning that gives the number of claimed machines that no longer match. The node type's phase stays `Available`. The UI shows the warning next to the node type.
 
 To clear the warning, restore the machine's labels, or release the instance. The machine doesn't join another node type while the instance holds it.
+
+### When a provider disallows a claim's properties
+
+Each node provider decides which properties a `NodeClaim` may set. A few properties are never allowed on a claim, whatever the provider. The `vcluster.com/user-data-claim-policy` property is one of them. The platform checks a claim's properties on every reconcile. That catches a claim that skipped admission, and a claim that was scheduled before an upgrade disallowed one of its properties.
+
+What happens depends on whether the claim was already scheduled:
+
+- **Not yet scheduled:** the claim fails before anything is provisioned. The `Provisioned` condition reports `PropertiesNotAllowed`.
+- **Already scheduled:** the claim isn't failed, so its machine keeps running, and teardown still uses its properties. The platform records a `PropertiesNotAllowed` warning event on the claim instead. The event message names the properties and says the claim was scheduled before they were disallowed.
+
+To find flagged claims after an upgrade, check the events of your `NodeClaim` resources on the control plane cluster:
+
+<InterpolatedCodeBlock
+  code={'kubectl describe nodeclaim [[VAR:NODECLAIM_NAME:my-nodeclaim]] -n [[VAR:PROJECT_NAMESPACE:p-default]]'}
+  language="bash"
+/>
+
+The platform keeps reporting the warning until the claim is gone. To clear it, replace the instance with one that doesn't set the disallowed properties. If the properties come from the cluster's configuration, such as Auto Nodes node claim properties in `vcluster.yaml`, remove them there first so the replacement doesn't inherit them.
 
 ## When provisioning fails
 
@@ -194,6 +214,6 @@ The platform records its own state for an instance in `NodeClaim` annotations un
 - `machines.vcluster.com/reboot` reboots the instance's machine.
 - `platform.vcluster.com/source-node-claim` and `platform.vcluster.com/source-platform` mark an instance that a consuming platform creates through the [external platform](../drivers/bare-metal/external-platform.mdx) driver.
 
-Annotations outside the `vcluster.com` domain, such as `vcluster.loft.sh/*`, aren't affected.
+Annotations outside the `vcluster.com` domain, such as `vcluster.loft.sh/*`, aren't affected. Node providers, node types, network environments, and projects have the same guard. See [Annotations the API refuses](../../reference/platform-annotations.mdx#refused-annotations).
 
 See [Manage allowed node types](../../tenants/projects/allowed/node-types.mdx) for Project-level controls, and [Production and Security](../drivers/bare-metal/metal3/security.mdx#rbac-and-resource-boundaries) for the full RBAC and resource-boundary model on the Metal3 driver.

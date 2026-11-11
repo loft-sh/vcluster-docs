@@ -71,11 +71,13 @@ Metal3 node types default to `Assigned` unless the remote provider sets another 
 For every local NodeClaim, the provider creates a NodeClaim in the remote project.
 It resolves every reference to a local object first, so the remote platform never needs those objects:
 
-- **OS image:** the provider reads the OSImage named in `vcluster.com/os-image` on the local platform. It copies the image properties, such as the image URL and checksum, onto the remote claim.
-- **User data:** the local platform renders cloud-init, including SSH keys, user data templates, and the command that joins the node to the local cluster. The remote claim receives the finished document, so the server joins the local cluster when it boots.
-- **Network:** the properties of the local network environment are copied onto the remote claim. A network data template stays unrendered, because the remote platform renders it with the IP address it allocates.
+- **OS image:** the provider reads the OSImage named in `vcluster.com/os-image` on the local platform. It copies the OSImage's Metal3 image properties, `metal3.vcluster.com/image-url`, `metal3.vcluster.com/image-checksum`, and `metal3.vcluster.com/image-checksum-type`, onto the remote claim. Every claim needs an OSImage.
+- **User data:** the local platform renders cloud-init, including SSH keys, user data templates, and the command that joins the node to the local cluster. The remote claim receives the finished document, so the server joins the local cluster when it boots. See [Keep the remote operator's cloud-init](#keep-the-remote-operators-cloud-init).
+- **Network:** the remote platform allocates the node's network from one of its own network environments. A local network environment names that remote environment in its `platform.vcluster.com/remote-network-environment` property, and the remote claim references it. The local environment's other network settings aren't sent. A network data template stays unrendered, because the remote platform renders it with the IP address it allocates.
 
-All other properties pass through to the remote claim unchanged, where the remote Metal3 provider applies them.
+The remote claim also carries the other properties of the local node provider and the local claim, and the remote Metal3 provider applies them. The local node type's properties aren't sent. The remote claim names its remote node type, and the remote platform applies that node type's own properties.
+
+The provider checks the properties it forwards against the claim rules of the remote Metal3 provider. Suppose the remote provider would refuse one of them on a claim, such as a network setting. Then the local claim fails with the reason `InvalidConfiguration`, and the message names the property.
 
 The local NodeClaim is provisioned once the remote one is.
 The provider copies the remote machine ID and the node IP address onto the local claim, in the `platform.vcluster.com/machine-id` and `nodeclaim.vcluster.com/ip-address` annotations.
@@ -99,6 +101,7 @@ Make sure you have the following before you set up the provider:
 - An [OSImage](../../images/os-images.mdx) on the local platform that sets the Metal3 [image properties](./metal3/overview.mdx#image-configuration), including the image URL and checksum.
   Leave `spec.connectorRef` unset. The external platform provider rejects images backed by an OS image store.
   The examples on this page use an image named `ubuntu-noble`.
+- If your clusters select a network environment, a network environment on the remote platform for each local one. Set the remote environment's name in the local environment's `platform.vcluster.com/remote-network-environment` property.
 
 ## Prepare the remote platform
 
@@ -288,11 +291,12 @@ The provider reads the objects they reference and sends the result instead.
 
 | Property | What the provider sends to the remote claim |
 |----------|---------------------------------------------|
-| `vcluster.com/os-image` | The properties of the referenced OSImage, such as the image URL and checksum. |
+| `vcluster.com/os-image` | The Metal3 image URL, checksum, and checksum type of the referenced OSImage. Image properties set anywhere else aren't sent. |
 | `vcluster.com/ssh-keys` | The keys rendered into the cloud-init user data. |
 | `vcluster.com/user-data`, `vcluster.com/user-data-template-config`, and the other user data template properties | One rendered user data document that includes the cluster join command. |
 | `vcluster.com/network-data-template-config` and the other network data template properties | The network data template as an unrendered string. The remote platform renders it with the IP address it allocates. |
-| `vcluster.com/network-environment` | Not sent. The properties of the environment are merged into the claim properties instead. |
+| `vcluster.com/network-environment` | The name of the remote network environment, from the local environment's `platform.vcluster.com/remote-network-environment` property. A local environment without that property fails the claim with the reason `InvalidConfiguration`. |
+| `vcluster.com/user-data-claim-policy` | Not sent. It applies to the local rendering. Set the remote operator's policy on the remote platform. |
 
 See [OSImages](../../images/os-images.mdx) and [Machine config templates](../../images/machine-config-templates.mdx) for how to define these objects.
 
@@ -304,9 +308,16 @@ Add `vcluster.com/ssh-keys` to the node provider, node type, or node pool if you
 
 ### Passed through to the remote provider
 
-Every other property goes to the remote claim unchanged, and the remote Metal3 provider applies it.
-This includes the `metal3.vcluster.com/*` properties, such as `metal3.vcluster.com/server-name` to pin a specific server.
+Every other property of the local node provider and the local claim goes to the remote claim unchanged, and the remote Metal3 provider applies it.
+This includes the `metal3.vcluster.com/*` properties that the remote provider allows on a claim, such as `metal3.vcluster.com/server-name` to pin a specific server.
+Network settings, such as `metal3.vcluster.com/network-cidr`, come from the remote network environment instead. Sending one fails the claim.
 See the Metal3 [configuration properties](./metal3/overview.mdx#configuration-properties) for the full list.
+
+### Keep the remote operator's cloud-init
+
+By default, the user data on the remote claim replaces any user data the remote node provider or node type sets. To keep the remote operator's cloud-init, the remote platform admin sets `vcluster.com/user-data-claim-policy: Merge` on the remote node provider or node type. The remote platform then adds the local document to its own, and the remote operator's commands run first. See [`vcluster.com/user-data-claim-policy`](./metal3/overview.mdx#vclustercomuser-data-claim-policy).
+
+The OSImage still decides whether cloud-init runs at all. A custom image that skips cloud-init doesn't run either document.
 
 ## Use the node types in a cluster
 
@@ -381,6 +392,12 @@ Check that the provider is available again.
 </Step>
 </Flow>
 
+## Upgrade an existing setup
+
+The remote platform now refuses network settings on a claim, so a local network environment that carries its own network settings stops working. Before you upgrade, create the matching network environments on the remote platform, and set `platform.vcluster.com/remote-network-environment` on each local one.
+
+Upgrade the platform that runs the external platform provider first. It works against a remote platform that runs an earlier version.
+
 ## Limitations
 
 - The remote provider must be a Metal3 provider.
@@ -402,7 +419,7 @@ kubectl get nodeproviders.management.loft.sh remote-metal3 -o jsonpath='{.status
 |--------|---------|
 | `RemoteNodeProviderNotFound` | The remote node provider doesn't exist, or the access key can't read it. |
 | `UnsupportedRemoteNodeProvider` | The remote node provider isn't a Metal3 provider. |
-| `InvalidConfiguration` | The Secret has no `accessKey` key, or a NodeClaim references a missing OSImage or one backed by an OS image store. |
+| `InvalidConfiguration` | The Secret has no `accessKey` key. Or a NodeClaim has no OSImage, references a missing OSImage or one backed by an OS image store, uses a local network environment without `platform.vcluster.com/remote-network-environment`, or carries a property the remote Metal3 provider refuses on a claim. |
 | `RemoteNodeClaimConflict` | A NodeClaim with the same name in the remote project belongs to another claim, for example of another platform that shares the project. |
 | `RemoteNodeClaimDeleted` | The remote NodeClaim is being deleted on the remote platform, for example because someone deleted it there. |
 
