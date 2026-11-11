@@ -6,23 +6,24 @@ sidebar_position: 6
 
 The Metal3 provider provisions bare metal servers, but on its own it doesn't isolate the network those servers run on. Network integration determines how strongly each tenant's traffic is separated on the metal fabric and how the platform manages addresses for provisioned servers. The right choice depends on how much you trust the tenants that share your hardware. A single trusted team can run on a flat provisioning network, while untrusted or external tenants need isolation enforced in the physical network.
 
-The `metal3.neutronEnabled` NodeProvider field enables Neutron integration. Within Neutron mode, the `metal3.vcluster.com/network-provider` property selects an optional fabric provider on a network environment (a cluster-scoped [`NetworkEnvironment`](../../../concepts/network-environments.mdx) resource). Set the property to `netris` for Netris, or leave it empty for a flat network.
+The `metal3.neutronEnabled` NodeProvider field enables Neutron integration. Within Neutron mode, the `metal3.vcluster.com/network-provider` property selects an optional fabric provider on a network environment (a cluster-scoped [`NetworkEnvironment`](../../../concepts/network-environments.mdx) resource). Set the property to `netris` for Netris or `aviz` for Aviz, or leave it empty for a flat network. Netris and Aviz are network integrations for the Metal3 provider, not separate node providers.
 
 :::info Requires a network environment
-Neutron and Netris require a network environment. They support instances provisioned independently or used as [private nodes](/docs/vcluster/deploy/worker-nodes/private-nodes) for a <GlossaryTerm term="tenant-cluster">cluster</GlossaryTerm>. Use private nodes and a separate Netris server cluster for each network environment when tenants are untrusted.
+Neutron, Netris, and Aviz require a network environment. They support instances provisioned independently or used as [private nodes](/docs/vcluster/deploy/worker-nodes/private-nodes) for a <GlossaryTerm term="tenant-cluster">cluster</GlossaryTerm>. Use private nodes and a separate Netris server cluster or Aviz tenant for each network environment when tenants are untrusted.
 :::
 
 ## Choose a network integration mode
 
-There are three modes, from a flat shared network to full isolation in hardware.
+There are four modes, from a flat shared network to isolation in the hardware fabric.
 
 | Mode | Isolation level | IPAM | When to use |
 |---|---|---|---|
 | No network integration (default) | None. The provisioning network is the tenant network. | Optional. Platform IPAM allocates addresses when a network CIDR is configured. | A single trusted tenant, or a lab where the provisioning network is the only network. |
 | Neutron (flat network) | None at the fabric. The network stays flat and shared; Ironic owns the port lifecycle. | Platform IPAM, per tenant network. | You want Ironic to drive ports through its neutron interface, but don't need hardware isolation. |
 | Netris | Hardware. Environment-level L2 isolation through Netris. | Platform IPAM; the subnet is derived from the Netris server cluster unless a CIDR is pinned. | Untrusted, external, or regulated tenants that must be isolated at the physical network layer. |
+| Aviz | Hardware. Environment-level isolation through an Aviz ONES fabric tenant. | Platform IPAM; a network CIDR is required because Aviz doesn't supply a subnet. | Untrusted, external, or regulated tenants on an Aviz ONES fabric. |
 
-The two flat modes keep each cluster's control plane and API separate and manage their addresses independently. Every server still shares the same layer 2 network, so these modes don't provide network isolation. Only Netris moves that isolation boundary into the hardware fabric.
+The two flat modes keep each cluster's control plane and API separate and manage their addresses independently. Every server still shares the same layer 2 network, so these modes don't provide network isolation. Netris and Aviz move that isolation boundary into the hardware fabric.
 
 ## No network integration (default)
 
@@ -43,7 +44,7 @@ Because all servers share one network, use this mode only where the tenants shar
 In this mode Ironic drives its `neutron` network interface instead of writing addresses straight onto the `BareMetalHost`. The platform allocates the address for each port and Ironic manages the port lifecycle across provisioning, cleaning, and inspection.
 
 :::warning Neutron doesn't isolate the network
-Neutron changes how ports are managed, not how the network is segmented. The underlying network is still flat and shared across tenants. For isolation enforced in hardware, use Netris.
+Neutron changes how ports are managed, not how the network is segmented. The underlying network is still flat and shared across tenants. For isolation enforced in hardware, use Netris or Aviz.
 :::
 
 Enable Neutron and supply the externally provisioned network names that Ironic requests. The platform derives the chart's `neutron.enabled` value from `metal3.neutronEnabled`, but it doesn't set the network names. The chart refuses to install with Neutron enabled until `neutron.networks.provisioning` is set in `helmValues`.
@@ -190,3 +191,148 @@ spec:
 ```
 
 Servers select this network environment through the `vcluster.com/network-environment` property, described on the [Metal3 provider page](./overview.mdx#network-environment). Any server provisioned into it is attached to the `tenant-a` Netris server cluster. The server cluster forms the hardware-backed network boundary for this environment.
+
+## Aviz (hardware network isolation)
+
+Aviz provides network isolation in hardware through an Aviz ONES fabric. Aviz ONES gives each Aviz tenant its own VXLAN or VLAN segment on the switch underlay. On provisioning, the platform attaches each server in a network environment to that environment's Aviz tenant. Give each tenant network environment its own Aviz tenant to separate tenant traffic at the physical network layer.
+
+A server joins the Aviz tenant the same way whether it runs as a standalone bare metal instance or as a [private node](/docs/vcluster/deploy/worker-nodes/private-nodes) in a cluster. The network environment decides the Aviz tenant, not the workload on the server.
+
+An Aviz tenant is an object in Aviz ONES that groups the servers attached to it. It's unrelated to the platform's [Tenant](../../../../api/resources/tenant.mdx) resource. A platform Tenant can use an Aviz-backed network environment when that environment is lent to it, but the platform doesn't map the two by name.
+
+Aviz requires [Neutron mode](#neutron-flat-network) and a network environment, the same as Netris.
+
+### Prerequisites
+
+- An Aviz ONES fabric that already exists. The platform looks the fabric up by name and doesn't create it.
+- Each server known to Aviz ONES under the name the platform registers it with. By default this is its `BareMetalHost` name. See [Override the Aviz server name](#override-the-aviz-server-name).
+- A platform license that includes the `aviz` feature. Without it, provisioning the network environment fails with the reason `FeatureNotLicensed`.
+- Neutron enabled on the NodeProvider, with `neutron.networks.provisioning` set in `helmValues`. See [Neutron (flat network)](#neutron-flat-network).
+
+### Provide Aviz API credentials
+
+Create a Secret on the management cluster that contains the Aviz ONES API `url`, `username`, and `password`. The `url` is the root of the ONES instance, for example `https://ones.example.com:8089`.
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: aviz-credentials
+  namespace: vcluster-platform
+type: Opaque
+stringData:
+  url: https://ones.example.com:8089
+  username: admin
+  password: <password>
+```
+
+Reference the Secret through `spec.metal3.aviz.secretRef` on the NodeProvider. As with Netris, this namespace is independent of the namespace in `metal3.clusterRef`. Add the following settings to the provider configuration from the Neutron section:
+
+```yaml
+apiVersion: management.loft.sh/v1
+kind: NodeProvider
+metadata:
+  name: metal3-provider
+spec:
+  metal3:
+    neutronEnabled: true
+    aviz:
+      secretRef:
+        name: aviz-credentials
+        namespace: vcluster-platform
+    nodeTypes:
+      - name: compute
+        properties:
+          # Select the NetworkEnvironment shown later on this page by name.
+          vcluster.com/network-environment: tenant-a-network
+```
+
+The platform reads the credentials from the NodeProvider that the network environment's `providerRef` names. A network environment without a `providerRef` can't use Aviz.
+
+### Select and configure the Aviz provider
+
+Set the following properties under `spec.properties` on the network environment.
+
+| Property | Required | Description |
+|---|---|---|
+| `metal3.vcluster.com/network-provider` | Yes | Set to `aviz` to select the Aviz network provider. |
+| `aviz.vcluster.com/fabric` | Yes | Name of the existing Aviz ONES fabric. |
+| `aviz.vcluster.com/tenant` | Yes | Name of the Aviz tenant to attach each server to. 1 to 12 characters. It starts with a letter, followed by letters, digits, underscores, or hyphens. |
+| `metal3.vcluster.com/network-cidr` | Yes | Gateway and subnet that platform IPAM allocates from. Aviz doesn't supply subnet configuration, so you must set it. You can also set it on the node type or NodeProvider. |
+
+Configuration errors appear in two places:
+
+- **On the network environment**, as the reason on its `Provisioned` condition. A missing or invalid Aviz property reports `InvalidConfiguration`, a fabric that doesn't exist reports `FabricNotFound`, and a license without the `aviz` feature reports `FeatureNotLicensed`.
+- **On each NodeClaim**, which fails with `InvalidConfiguration` when no network CIDR is set.
+
+### Aviz tenant lifecycle
+
+When the network environment is provisioned, the platform checks the named Aviz tenant:
+
+- If the tenant doesn't exist, the platform creates it as an unshared tenant. It records the tenant in the `aviz.vcluster.com/managed-tenant` annotation on the network environment. Don't set this annotation by hand.
+- If the tenant already exists, the platform adopts it and never marks it managed.
+
+When you delete the network environment, the platform deletes only a tenant recorded as managed. Aviz ONES deletes tenants asynchronously, one at a time. The platform requeues the deletion and checks again until the tenant is gone, so teardown can take several minutes. The platform never deletes an adopted tenant.
+
+:::warning Don't share managed Aviz tenants
+The platform deletes a managed Aviz tenant when the network environment that created it is deleted. This happens even while other network environments still reference the tenant. Give each network environment its own Aviz tenant. Share only pre-existing tenants that the platform adopts instead of manages.
+:::
+
+### Server attachment
+
+A server isn't on any tenant's network while Ironic provisions or cleans it. It uses the provisioning and cleaning networks from the [Neutron configuration](#neutron-flat-network). The platform attaches the server to the Aviz tenant for its network environment. When the NodeClaim is released, the platform detaches the server so it can be provisioned for another tenant.
+
+The platform attaches each server to the Aviz tenant as a whole, unshared server. Aviz ONES rejects the attachment while another tenant holds the server. The platform doesn't split a server's GPUs between Aviz tenants.
+
+Attachment and detachment are asynchronous. Aviz ONES pushes configuration to the fabric, which can take several minutes. The platform treats a server as attached once Aviz ONES reports the tenant's configuration as applied. The platform doesn't request a new attachment while a push for the tenant is in progress. Servers joining the same tenant attach one after another. Detachment is complete once the server is no longer allocated to the tenant.
+
+### Override the Aviz server name
+
+By default a server is attached in Aviz ONES under its `BareMetalHost` name. If Aviz ONES knows the server by a different name, set the following annotation on the `BareMetalHost`:
+
+```yaml
+apiVersion: metal3.io/v1alpha1
+kind: BareMetalHost
+metadata:
+  name: server-01
+  annotations:
+    aviz.vcluster.com/server-name: rack1-server-01
+```
+
+The platform reads the annotation on every attach and detach. Don't change it while the server is attached, because detachment then targets the new name and leaves the server attached under the old one.
+
+### Example
+
+This network environment selects the Aviz provider. The platform creates the `tenanta` Aviz tenant on the `datacenter-1` fabric if it doesn't already exist:
+
+```yaml
+apiVersion: management.loft.sh/v1
+kind: NetworkEnvironment
+metadata:
+  name: tenant-a-network
+  labels:
+    # The assignment, providerRef, and properties can't be changed after creation.
+    tenant.vcluster.com/exclusive-to: tenant-a
+spec:
+  providerRef: metal3-provider
+  properties:
+    metal3.vcluster.com/network-provider: aviz
+    aviz.vcluster.com/fabric: datacenter-1
+    aviz.vcluster.com/tenant: tenanta
+    # Aviz doesn't supply a subnet, so the CIDR is required.
+    metal3.vcluster.com/network-cidr: 10.10.0.1/24
+```
+
+Servers select this network environment through the `vcluster.com/network-environment` property. Any server provisioned into it is attached to the `tenanta` Aviz tenant.
+
+### Verify the integration
+
+1. Check that the network environment's `Provisioned` condition is `True`:
+
+   ```bash
+   kubectl get networkenvironment tenant-a-network -o jsonpath='{.status.conditions[?(@.type=="Provisioned")]}'
+   ```
+
+   A `False` status carries a reason and the error message. The configuration reasons are listed under [Select and configure the Aviz provider](#select-and-configure-the-aviz-provider). Other failures, such as wrong Aviz credentials, report `FailedToProvision` and retry.
+
+2. Provision a server into the network environment. After the NodeClaim is ready, check in Aviz ONES that the server is allocated to the `tenanta` tenant and that the tenant's configuration has been applied. Allow several minutes for the configuration push.
