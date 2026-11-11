@@ -223,16 +223,13 @@ roles above and habits 1 and 2, which are the part that actually matters.
 1. Re-run `vale` and an MDX compile check. Passes 2 and 3 cause rewrites that
    reintroduce style problems.
    ```bash
-   node --input-type=module -e "import {compile} from '@mdx-js/mdx';import fs from 'node:fs';
-   for (const f of process.argv.slice(1)) {try {await compile(fs.readFileSync(f,'utf8'),{jsx:true});console.log('OK  ',f)} catch(e) {console.log('FAIL',f,e.message)}}" <files>
+   node hack/check-mdx-compile.mjs <files>
    ```
-   Keep `--input-type=module`. `@mdx-js/mdx` is ESM-only, so `require()` throws
-   `ERR_REQUIRE_ESM` on the Node 20 that several workflows in `.github/workflows/`
-   pin, even though the repo itself needs Node 22 or later.
-
-   Files using `<!-- vale off -->` fail this bare compile. That's expected, since the
-   site configures those as `format: 'md'`. Compare against the file at `HEAD` before
-   treating a failure as yours.
+   The script parses pages the way the site build does, so it accepts Vale's
+   `<!-- vale off -->` comments and custom heading IDs such as `{#anchor}`.
+   Bare `@mdx-js/mdx` rejects both, even though the site builds them. Treat any
+   `FAIL` as a real error and fix it. Don't convert Vale comments to `{/* */}` to
+   satisfy a compile check, because Vale ignores that form.
 2. Run the link checks rather than tracing links by hand. These are the same ones
    CI runs, documented under "Checking links before you push" in `CONTRIBUTING.md`:
    ```bash
