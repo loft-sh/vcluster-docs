@@ -96,9 +96,10 @@ changelog of everything engineering merged, and it isn't a debugging guide.
      `loft-sh/vcluster-pro`.
    - If it doesn't exist yet, check against the latest tag on the repo's `main`,
      whether that's an alpha or an rc. Find the tag with
-     `git tag --merged origin/main --sort=-v:refname | head -1`, then confirm the
-     PR's merge commit is in it with
-     `git merge-base --is-ancestor <merge-sha> <tag>`.
+     `git -c versionsort.suffix=- tag --merged origin/main --sort=-v:refname | head -1`,
+     then confirm the PR's merge commit is in it with
+     `git merge-base --is-ancestor <merge-sha> <tag>`. Without the
+     `versionsort.suffix` setting, Git sorts `v0.37.0-rc.5` above `v0.37.0`.
 
    If the change isn't there yet, add an MDX TODO comment with the PR numbers
    and re-check before merge.
@@ -277,8 +278,8 @@ that one rule, so Vale still lints the JSX comment against every other rule:
   example "vCluster v0.38", "Platform v5.0", and "Also in v0.37.4". Vale only
   catches a version that follows a product name, so check bare versions by eye.
   Version numbers in headings, such as `## 0.38.0`, stay bare.
-- Follow the house style: no em dashes, contractions, sentences under about 25
-  words, and the terminology rules in CLAUDE.md.
+- Follow the house style: use contractions, avoid em dashes, keep sentences
+  under about 25 words, and apply the terminology rules in CLAUDE.md.
 - Track open questions as MDX comments: `{/* TODO before merge: <question> (<ticket>) */}`.
   Name tickets and PRs, not people. The repo is public.
 
@@ -315,10 +316,11 @@ A note isn't the whole change:
 2. Run `docs-review` on each changed page for style, readability, and
    usability.
 3. Run Vale on each changed page and fix every warning.
-4. Open the PR into `main`, with the backport label if the version folder
-   exists. Then post the preview links in the release thread in
-   #release-engineering for product review. The PR preview serves the current
-   docs under `/docs/<product>/next/`, so the preview links need that segment.
+4. Open the PR into `main`, with a backport label for every version folder
+   that holds the page, if any exist yet. Then post the preview links in the
+   release thread in #release-engineering for product review. The PR preview
+   serves the current docs under `/docs/<product>/next/`, so the preview links
+   need that segment.
 5. When a reviewer flags lines as too detailed, apply the same filter to the
    whole page, not only the lines they named. Then reply in the thread with what
    changed, per point.
@@ -341,8 +343,7 @@ A note isn't the whole change:
       without a reason, or internal mechanics
 - [ ] Hardening and resilience changes are summarized, one line each
 - [ ] Every product version in prose has a `v` prefix
-- [ ] Cross-product links keep `/next/` until the other product flips, and drop
-      it in the config flip PR
+- [ ] Cross-product links keep `/next/` until the other product flips
 - [ ] New minor: category, What's new, upgrade path, and lifecycle data updated
 - [ ] Deprecated features have an admonition on their page
 - [ ] PR targets `main` (or `next` for a staged major), with a backport label

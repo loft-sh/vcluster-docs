@@ -23,11 +23,12 @@ Starting with Platform v4.8, docs versioning happens at rc-1, NOT on release day
 
 ### Config flip PR (release day)
 
-The config flip PR changes only the version visibility in `docusaurus.config.js`:
+The config flip PR changes the version visibility in `docusaurus.config.js`, plus one content change in the release notes:
 - Updates `lastVersion` to point to the new version
 - Adds the new version to the dropdown with "Stable" label
 - Demotes the previous stable version label (removes "Stable" suffix)
 - Updates SEO sitemap priorities, announcement bar, and netlify redirect (adds new version, removes previous)
+- Drops `/next/` from cross-product links in the release notes and What's new pages
 
 This separation means all the heavy lifting (version creation, API partials, content, link fixes) is done during the rc-1 window, and release day is a low-risk config change.
 
@@ -364,6 +365,7 @@ This PR is small, reviewable, and safe to merge by anyone with merge rights.
 | `docusaurus.config.js` | Add to `onlyIncludeVersions`, add version with `banner: "unreleased"` + `noIndex: true` | rc-1 |
 | `src/config/versionConfig.js` | Add version to `platformHiddenVersions` array | rc-1 |
 | `docusaurus.config.js` | `lastVersion`, labels, SEO, announcement bar | Release day |
+| Release notes and What's new pages (`platform/` and the new version folder) | Drop `/next/` from cross-product links | Release day |
 | `src/config/versionConfig.js` | Remove version from `platformHiddenVersions` | Release day |
 | `netlify.toml` | Add redirect for new lastVersion; remove redirect for previous lastVersion | Release day |
 | `hack/test-platform-X.Y.hurl` | New test file | Release day |

@@ -23,11 +23,12 @@ Starting with vCluster v0.33, docs versioning happens at rc-1, NOT on release da
 
 ### Config flip PR (release day)
 
-The config flip PR changes only the version visibility in `docusaurus.config.js`:
+The config flip PR changes the version visibility in `docusaurus.config.js`, plus one content change in the release notes:
 - Moves the new version entry from hidden to visible in the dropdown
 - Updates `lastVersion` to point to the new version
 - Demotes the previous stable version label (removes "Stable" suffix)
 - Updates SEO sitemap priorities, announcement bar, and netlify redirect (adds new version, removes previous)
+- Drops `/next/` from cross-product links in the release notes and What's new pages
 
 This separation means all the heavy lifting (version creation, content, link fixes) is done during the rc-1 window, and release day is a low-risk config change.
 
@@ -272,6 +273,7 @@ This PR is small, reviewable, and safe to merge by anyone with merge rights.
 | `vcluster/_fragments/default-k8s-version.mdx` | Update default k8s version if it changed (check `config/values.yaml` in vcluster OSS repo) | rc-1 |
 | `src/config/versionConfig.js` | Add version to `vclusterHiddenVersions` array | rc-1 |
 | `docusaurus.config.js` | `lastVersion`, labels, SEO, announcement bar | Release day |
+| Release notes and What's new pages (`vcluster/` and the new version folder) | Drop `/next/` from cross-product links | Release day |
 | `src/config/versionConfig.js` | Remove version from `vclusterHiddenVersions` | Release day |
 | `src/config/docsearch.js` | Update `stableVersion` to new stable version string | Release day |
 | `netlify.toml` | Add redirect for new lastVersion; remove redirect for previous lastVersion | Release day |
