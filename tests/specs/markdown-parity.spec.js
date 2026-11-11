@@ -18,9 +18,9 @@ const { test, expect } = require('@playwright/test');
 const BASE_URL = process.env.TEST_BASE_URL || 'https://www.vcluster.com';
 
 const SAMPLE_PAGES = [
-  '/docs/vcluster/key-features/sleep.md',
-  '/docs/vcluster/manage/backup-restore/backup.md',
-  '/docs/vcluster/manage/sleep-wakeup.md',
+  '/docs/vcluster/configure/lifecycle/sleep.md',
+  '/docs/vcluster/operate/backup-restore/backup.md',
+  '/docs/vcluster/operate/sleep-wakeup.md',
 ];
 
 test.describe('llms-txt markdown parity', () => {
