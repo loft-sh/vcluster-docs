@@ -33,8 +33,6 @@ This separation means all the heavy lifting (version creation, content, link fix
 
 Release notes and the What's new page aren't part of this skill. Use `docs-release-notes` for those. It covers what goes in the notes, and the backport label that carries them into the version folder this skill creates.
 
-When you version the docs, remove `/next/` from cross-product links in the release notes and What's new pages, in the current docs and the new version folder. Release notes drafted before versioning need `/next/` to resolve, so they always have some.
-
 ## When to Use This Skill
 
 Trigger this skill when:
@@ -259,6 +257,10 @@ Only two categories of versions belong in this redirect section:
 #### 7. `hack/test-vcluster-0.XX.hurl` — create hurl test
 
 Copy from previous version, update version numbers. Hurl tests run AFTER PR is deployed to Netlify preview.
+
+#### 8. Drop `/next/` from release notes links
+
+This is the one content change in the flip PR. Remove `/next/` from cross-product links in the release notes and What's new pages, in the current docs and in the new version folder. It can't happen earlier. A link with no version segment resolves to the other product's stable docs, which stay on the previous release until its flip moves `lastVersion`. Before then, `onBrokenLinks: "throw"` fails the build on any page that's new in the release. If the two products flip in separate PRs, drop `/next/` from links into each product in that product's flip PR. See the `docs-release-notes` skill.
 
 This PR is small, reviewable, and safe to merge by anyone with merge rights.
 

@@ -35,17 +35,22 @@ on whether the version folder exists yet:
   (Platform). If the label doesn't exist yet, create it with the same pattern.
   The label copies each changed file to the same path in the version folder.
 - **Patch release:** the minor's version folder already exists, so add the
-  backport label for that minor. The new `## X.Y.Z` section then lands in the
-  version folder as well.
+  backport label for that minor. Patches for an older minor can ship after the
+  next minor is versioned, and versioning copies every notes page into each new
+  version folder. Add a backport label for every version folder that holds the
+  page, or the copy in the stable docs misses the new section. For example, a
+  v0.38.3 section needs `backport-v0.38` and `backport-v0.39` once v0.39 is
+  versioned.
 - **Every page you change** for the release, such as the upgrade page or a
   deprecation admonition, follows the same rule. A page whose path differs in
   the version folder can't be backported by label. Edit it there by hand, with
   explicit approval. See "Backport changes to released versions" in
   CONTRIBUTING.md.
 
-Release notes publish with the announcement on release day, when the version
-flips live. Merge before the flip, and don't announce the preview links outside
-the release thread.
+Minor release notes publish with the announcement on release day, when the
+version flips live. Merge before the flip, and don't announce the preview links
+outside the release thread. A patch has no flip. Its section goes live in the
+stable docs when the backport PR merges.
 
 A major release staged on the `next` branch is the exception. Then the notes go
 into `next` with the rest of the release, and they reach `main` at cutover.
@@ -84,8 +89,11 @@ changelog of everything engineering merged, and it isn't a debugging guide.
    a merged PR) before it's written as decided. A proposal page isn't one.
 3. **Check what's shipping**, not the tip of the product repo's `main`. Before
    you write "removed" or "changed", confirm the change is in the release:
-   - If the release branch exists, such as `release-5.0`, confirm the PR is
-     merged on it, or has the backport label.
+   - If the release branch exists, confirm the PR is merged on it directly or
+     through a merged backport PR. A backport label only requests the backport
+     PR, which can still be open or conflicted. Release branches are named
+     `release-5.0` in `loft-sh/loft-enterprise` and `v0.38` in
+     `loft-sh/vcluster-pro`.
    - If it doesn't exist yet, check against the latest tag on the repo's `main`,
      whether that's an alpha or an rc. Find the tag with
      `git tag --merged origin/main --sort=-v:refname | head -1`, then confirm the
@@ -231,14 +239,15 @@ omit the empty ones. Don't edit earlier patch sections except to fix errors.
 
 ### Vale toggles
 
-"Removed features" and "Breaking changes" trip `Loft.imperative-headings`. Wrap
-each one in Vale toggle comments, with a JSX comment saying why. The toggles are
-HTML comments, and the JSX comment between them is the one Vale doesn't lint:
+"Breaking changes" trips `Loft.imperative-headings`, because the rule flags a
+heading whose first word ends in "ing". Wrap it in Vale toggle comments, with a
+JSX comment saying why. The toggles are HTML comments. The toggle turns off only
+that one rule, so Vale still lints the JSX comment against every other rule:
 
 ```mdx
 <!-- vale Loft.imperative-headings = NO -->
-{/* "Removed features" is the term readers scan release notes for. */}
-### Removed features
+{/* "Breaking changes" is the term readers scan release notes for. */}
+### Breaking changes
 <!-- vale Loft.imperative-headings = YES -->
 ```
 
@@ -251,16 +260,19 @@ HTML comments, and the JSX comment between them is the one Vale doesn't lint:
 - Link to the task or reference page that has the detail:
   - Within a product, use relative links with the `.mdx` suffix, such as
     `../../overview/whats-new.mdx`. They keep the reader's docs version.
-  - Across products, the link depends on whether the docs are versioned yet.
-    Before versioning, the pages the release adds or moves exist only in the
+  - Across products, the link depends on whether the other product has flipped
+    live yet. Until then, the pages its release adds or moves exist only in its
     current docs, which are served under `/next/`. Link them as
     `/docs/<product>/next/<path>`, or the link won't resolve.
-  - When the docs are versioned for the release, remove `/next/` from those
-    links, in the current docs and in the new version folder. Left in, they send
-    readers of released notes into unreleased docs. A link with no version
-    segment resolves to the other product's stable docs.
-  - A link to a page that's new in the paired release can still 404 until that
-    product's version flips live. Check those links on release day.
+  - Keep `/next/` until the other product's version flips live. A link with no
+    version segment resolves to the other product's stable docs, which stay on
+    the previous release until the flip moves `lastVersion`. Before then, a
+    page that's new in the paired release isn't there, and `onBrokenLinks:
+    "throw"` fails the build.
+  - Remove `/next/` in the release-day config flip PR, in the current docs and
+    in the new version folder. The build then checks every link. If the two
+    products flip in separate PRs, drop `/next/` from links into each product in
+    that product's flip PR.
 - Use the `v` prefix for every vCluster Labs product version in prose, for
   example "vCluster v0.38", "Platform v5.0", and "Also in v0.37.4". Vale only
   catches a version that follows a product name, so check bare versions by eye.
@@ -312,10 +324,9 @@ A note isn't the whole change:
    changed, per point.
 6. Before merge, clear every `TODO before merge` comment, or confirm with the
    owner that it can stay.
-7. When the docs are versioned, remove `/next/` from the release notes and
-   What's new links, in the current docs and the new version folder.
-8. On release day, after the version flips live, check that every
-   cross-product link resolves.
+7. In the release-day config flip PR, remove `/next/` from the cross-product
+   links in the release notes and What's new pages, in the current docs and the
+   new version folder. The build fails on any that don't resolve.
 
 ## Checklist
 
@@ -323,17 +334,18 @@ A note isn't the whole change:
       not an alpha, and re-diffed against the newest rc or final tag before merge
 - [ ] Every decided removal and deprecation from the Linear project is listed,
       at the top
-- [ ] Each "removed" or "changed" item is on the product release branch, or in
-      the latest alpha or rc tag on `main` if there's no branch yet
+- [ ] Each "removed" or "changed" item is merged on the product release branch
+      (not only labeled for backport), or in the latest alpha or rc tag on
+      `main` if there's no branch yet
 - [ ] No CVE IDs, security fixes in our own code, open weaknesses, error strings
       without a reason, or internal mechanics
 - [ ] Hardening and resilience changes are summarized, one line each
 - [ ] Every product version in prose has a `v` prefix
-- [ ] Cross-product links use `/next/` before versioning, and drop it once the
-      docs are versioned
+- [ ] Cross-product links keep `/next/` until the other product flips, and drop
+      it in the config flip PR
 - [ ] New minor: category, What's new, upgrade path, and lifecycle data updated
 - [ ] Deprecated features have an admonition on their page
-- [ ] PR targets `main` (or `next` for a staged major), with the backport label
-      if the version folder exists
+- [ ] PR targets `main` (or `next` for a staged major), with a backport label
+      for every version folder that holds the page
 - [ ] Fact check and docs review run, Vale clean, preview reviewed by product
-- [ ] Release day: cross-product links checked
+- [ ] Release day: `/next/` dropped from cross-product links in the flip PR
