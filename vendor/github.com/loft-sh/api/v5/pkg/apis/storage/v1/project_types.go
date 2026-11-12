@@ -4,18 +4,8 @@ import (
 	"strings"
 
 	agentstoragev1 "github.com/loft-sh/agentapi/v5/pkg/apis/loft/storage/v1"
-	argoapplicationsv1alpha1 "github.com/loft-sh/external-types/argoproj/argo-cd/v2/pkg/apis/application/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-)
-
-const (
-	ArgoIntegrationSynced agentstoragev1.ConditionType = "ArgoIntegrationSynced"
-
-	ArgoLastAppliedHashAnnotation                = "loft.sh/argo-integration-last-applied-hash"
-	ArgoPreviousClusterAnnotation                = "loft.sh/argo-integration-previous-cluster"
-	ArgoPreviousNamespaceAnnotation              = "loft.sh/argo-integration-previous-namespace"
-	ArgoPreviousVirtualClusterInstanceAnnotation = "loft.sh/argo-integration-previous-virtualclusterinstance"
 )
 
 const (
@@ -158,10 +148,6 @@ type ProjectSpec struct {
 	// NamespacePattern specifies template patterns to use for creating each space or tenant cluster's namespace
 	// +optional
 	NamespacePattern *NamespacePattern `json:"namespacePattern,omitempty"`
-
-	// ArgoIntegration holds information about ArgoCD Integration
-	// +optional
-	ArgoIntegration *ArgoIntegrationSpec `json:"argoCD,omitempty"`
 
 	// VaultIntegration holds information about Vault Integration
 	// +optional
@@ -391,140 +377,6 @@ type QuotaStatusProjectCluster struct {
 	// used amount.
 	// +optional
 	Used map[string]string `json:"used,omitempty"`
-}
-
-type ArgoIntegrationSpec struct {
-	// Enabled indicates if the ArgoCD Integration is enabled for the project -- this knob only
-	// enables the syncing of virtualclusters, but does not enable SSO integration or project
-	// creation (see subsequent spec sections!).
-	// +optional
-	Enabled bool `json:"enabled,omitempty"`
-
-	// Cluster defines the name of the cluster that ArgoCD is deployed into -- if not provided this
-	// will default to 'loft-cluster'.
-	// +optional
-	Cluster string `json:"cluster,omitempty"`
-
-	// VirtualClusterInstance defines the name of *tenant cluster* (instance) that ArgoCD is
-	// deployed into. If provided, Cluster will be ignored and Loft will assume that ArgoCD is
-	// running in the specified tenant cluster.
-	// +optional
-	VirtualClusterInstance string `json:"virtualClusterInstance,omitempty"`
-
-	// Namespace defines the namespace in which ArgoCD is running in the cluster.
-	// +optional
-	Namespace string `json:"namespace,omitempty"`
-
-	// SSO defines single-sign-on related values for the ArgoCD Integration. Enabling SSO will allow
-	// users to authenticate to ArgoCD via Loft.
-	// +optional
-	SSO *ArgoSSOSpec `json:"sso,omitempty"`
-
-	// Project defines project related values for the ArgoCD Integration. Enabling Project
-	// integration will cause Loft to generate and manage an ArgoCD appProject that corresponds to
-	// the Loft Project.
-	// +optional
-	Project *ArgoProjectSpec `json:"project,omitempty"`
-}
-
-type ArgoSSOSpec struct {
-	// Enabled indicates if the ArgoCD SSO Integration is enabled for this project. Enabling this
-	// will cause Loft to configure SSO authentication via Loft in ArgoCD. If Projects are *not*
-	// enabled, all users associated with this Project will be assigned either the 'read-only'
-	// (default) role, *or* the roles set under the AssignedRoles field.
-	// +optional
-	Enabled bool `json:"enabled,omitempty"`
-	// Host defines the ArgoCD host address that will be used for OIDC authentication between loft
-	// and ArgoCD. If not specified OIDC integration will be skipped, but vclusters/spaces will
-	// still be synced to ArgoCD.
-	// +optional
-	Host string `json:"host,omitempty"`
-	// AssignedRoles is a list of roles to assign for users who authenticate via Loft -- by default
-	// this will be the `read-only` role. If any roles are provided this will override the default
-	// setting.
-	// +optional
-	AssignedRoles []string `json:"assignedRoles,omitempty"`
-}
-
-type ArgoProjectSpec struct {
-	// Enabled indicates if the ArgoCD Project Integration is enabled for this project. Enabling
-	// this will cause Loft to create an appProject in ArgoCD that is associated with the Loft
-	// Project. When Project integration is enabled Loft will override the default assigned role
-	// set in the SSO integration spec.
-	// +optional
-	Enabled bool `json:"enabled,omitempty"`
-	// Metadata defines additional metadata to attach to the loft created project in ArgoCD.
-	// +optional
-	Metadata ArgoProjectSpecMetadata `json:"metadata,omitempty"`
-	// SourceRepos is a list of source repositories to attach/allow on the project, if not specified
-	// will be "*" indicating all source repositories.
-	// +optional
-	SourceRepos []string `json:"sourceRepos,omitempty"`
-	// Destinations contains list of destinations available for deployment
-	Destinations []argoapplicationsv1alpha1.ApplicationDestination `json:"destinations,omitempty"`
-	// Roles is a list of roles that should be attached to the ArgoCD project. If roles are provided
-	// no loft default roles will be set. If no roles are provided *and* SSO is enabled, loft will
-	// configure sane default values.
-	// +optional
-	Roles []ArgoProjectRole `json:"roles,omitempty"`
-	// ClusterResourceWhitelist contains a list of whitelisted cluster level resources
-	// If not specified or empty, deny all cluster-scope resources.
-	// +optional
-	ClusterResourceWhitelist []argoapplicationsv1alpha1.ClusterResourceRestrictionItem `json:"clusterResourceWhitelist,omitempty"`
-	// NamespaceResourceWhitelist contains a list of whitelisted namespace level resources
-	// If not specified or empty, allow all namespace-scope resources.
-	// +optional
-	NamespaceResourceWhitelist []metav1.GroupKind `json:"namespaceResourceWhitelist,omitempty"`
-	// ClusterResourceBlacklist contains a list of blacklisted cluster level resources
-	// +optional
-	ClusterResourceBlacklist []argoapplicationsv1alpha1.ClusterResourceRestrictionItem `json:"clusterResourceBlacklist,omitempty"`
-	// NamespaceResourceBlacklist contains a list of blacklisted namespace level resources
-	// +optional
-	NamespaceResourceBlacklist []metav1.GroupKind `json:"namespaceResourceBlacklist,omitempty"`
-	// SourceNamespaces defines the namespaces application resources are allowed to be created in
-	// +optional
-	SourceNamespaces []string `json:"sourceNamespaces,omitempty"`
-}
-
-type ArgoProjectSpecMetadata struct {
-	// ExtraAnnotations are optional annotations that can be attached to the project in ArgoCD.
-	// +optional
-	ExtraAnnotations map[string]string `json:"extraAnnotations,omitempty"`
-	// ExtraLabels are optional labels that can be attached to the project in ArgoCD.
-	// +optional
-	ExtraLabels map[string]string `json:"extraLabels,omitempty"`
-	// Description to add to the ArgoCD project.
-	// +optional
-	Description string `json:"description,omitempty"`
-}
-
-type ArgoProjectRole struct {
-	// Name of the ArgoCD role to attach to the project.
-	Name string `json:"name,omitempty"`
-	// Description to add to the ArgoCD project.
-	// +optional
-	Description string `json:"description,omitempty"`
-	// Rules ist a list of policy rules to attach to the role.
-	Rules []ArgoProjectPolicyRule `json:"rules,omitempty"`
-	// Groups is a list of OIDC group names to bind to the role.
-	Groups []string `json:"groups,omitempty"`
-}
-
-type ArgoProjectPolicyRule struct {
-	// Action is one of "*", "get", "create", "update", "delete", "sync", or "override".
-	// +optional
-	Action string `json:"action,omitempty"`
-	// Application is the ArgoCD project/repository to apply the rule to.
-	// DEPRECATED: Wasn't used. Kind provides a more flexible way to specify the resource type.
-	// +optional
-	Application string `json:"application,omitempty"`
-	// Kind is the kind to apply the rule to
-	// +optional
-	Kind string `json:"kind,omitempty"`
-	// Allow applies the "allow" permission to the rule, if allow is not set, the permission will
-	// always be set to "deny".
-	// +optional
-	Allow bool `json:"permission,omitempty"`
 }
 
 type VaultIntegrationSpec struct {

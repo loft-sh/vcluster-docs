@@ -276,36 +276,6 @@ func (in ArgoCDDestinationVirtualCluster) OpenAPIModelName() string {
 }
 
 // OpenAPIModelName returns the OpenAPI model name for this type.
-func (in ArgoIntegrationSpec) OpenAPIModelName() string {
-	return "com.github.loft-sh.api.v5.pkg.apis.storage.v1.ArgoIntegrationSpec"
-}
-
-// OpenAPIModelName returns the OpenAPI model name for this type.
-func (in ArgoProjectPolicyRule) OpenAPIModelName() string {
-	return "com.github.loft-sh.api.v5.pkg.apis.storage.v1.ArgoProjectPolicyRule"
-}
-
-// OpenAPIModelName returns the OpenAPI model name for this type.
-func (in ArgoProjectRole) OpenAPIModelName() string {
-	return "com.github.loft-sh.api.v5.pkg.apis.storage.v1.ArgoProjectRole"
-}
-
-// OpenAPIModelName returns the OpenAPI model name for this type.
-func (in ArgoProjectSpec) OpenAPIModelName() string {
-	return "com.github.loft-sh.api.v5.pkg.apis.storage.v1.ArgoProjectSpec"
-}
-
-// OpenAPIModelName returns the OpenAPI model name for this type.
-func (in ArgoProjectSpecMetadata) OpenAPIModelName() string {
-	return "com.github.loft-sh.api.v5.pkg.apis.storage.v1.ArgoProjectSpecMetadata"
-}
-
-// OpenAPIModelName returns the OpenAPI model name for this type.
-func (in ArgoSSOSpec) OpenAPIModelName() string {
-	return "com.github.loft-sh.api.v5.pkg.apis.storage.v1.ArgoSSOSpec"
-}
-
-// OpenAPIModelName returns the OpenAPI model name for this type.
 func (in Authentication) OpenAPIModelName() string {
 	return "com.github.loft-sh.api.v5.pkg.apis.storage.v1.Authentication"
 }
