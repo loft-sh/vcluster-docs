@@ -1,7 +1,6 @@
 package v1
 
 import (
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 )
@@ -18,7 +17,6 @@ type NodeProviderExec struct {
 
 type NodeProviderExecSpec struct {
 	// Command is the action to perform.
-	// +kubebuilder:validation:Enum=bcmTestConnection;bcmGetResources
 	Command string               `json:"command"`
 	Args    runtime.RawExtension `json:"args,omitempty"`
 }
@@ -26,26 +24,6 @@ type NodeProviderExecSpec struct {
 type NodeProviderExecStatus struct {
 	// Result is the output of the executed command.
 	Result runtime.RawExtension `json:"result,omitempty"`
-}
-
-type NodeProviderBCMNodeWithResources struct {
-	Name      string               `json:"name"`
-	Resources *corev1.ResourceList `json:"resources,omitempty"`
-}
-
-type NodeProviderBCMGetResourcesResult struct {
-	Nodes      []NodeProviderBCMNodeWithResources `json:"nodes"`
-	NodeGroups []NodeProviderBCMNodeGroup         `json:"nodeGroups"`
-}
-
-type NodeProviderBCMNodeGroup struct {
-	Name  string   `json:"name"`
-	Nodes []string `json:"nodes"`
-}
-
-type NodeProviderBCMTestConnectionResult struct {
-	Success bool   `json:"success"`
-	Message string `json:"message"`
 }
 
 type NodeProviderCalculateCostResult struct {

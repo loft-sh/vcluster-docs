@@ -30,6 +30,27 @@ setup() {
     [[ "$output" == *"--target-folder vcluster_versioned_docs/version-0.34.0/cli"* ]]
 }
 
+@test "CLI generator allows source toolchain upgrades and preserves its environment" {
+    cd "${BATS_TEST_DIRNAME}/../.."
+    mkdir -p "${BATS_TEST_TMPDIR}/bin" "${BATS_TEST_TMPDIR}/source"
+    go build -o "${BATS_TEST_TMPDIR}/generator" hack/vcluster-cli/main.go
+    cat > "${BATS_TEST_TMPDIR}/bin/go" <<'EOF'
+#!/usr/bin/env bash
+printf 'toolchain=%s\nprivate=%s\ndir=%s\n' "$GOTOOLCHAIN" "$GOPRIVATE" "$PWD"
+EOF
+    chmod +x "${BATS_TEST_TMPDIR}/bin/go"
+
+    run env GOTOOLCHAIN=local GOPRIVATE=example.test/private \
+        PATH="${BATS_TEST_TMPDIR}/bin:$PATH" \
+        "${BATS_TEST_TMPDIR}/generator" \
+        --source-path "${BATS_TEST_TMPDIR}/source" \
+        --target-folder "${BATS_TEST_TMPDIR}/output"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"toolchain=auto"* ]]
+    [[ "$output" == *"private=example.test/private"* ]]
+    [[ "$output" == *"dir=${BATS_TEST_TMPDIR}/source"* ]]
+}
+
 @test "platform-released → platform partials with both base flags" {
     EVENT_TYPE=platform-released \
         TARGET_FOLDER=platform_versioned_docs/version-4.6.0 \

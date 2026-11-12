@@ -100,7 +100,6 @@ func addKnownTypes(scheme *runtime.Scheme) error {
 		&ProjectImportSpace{},
 		&ProjectMembers{},
 		&ProjectMigrateSpaceInstance{},
-		&ProjectMigrateVirtualClusterInstance{},
 		&ProjectNodeTypes{},
 		&ProjectTemplates{},
 		&ProjectSecret{},
@@ -365,12 +364,6 @@ var (
 			func() runtime.Object { return &ProjectMigrateSpaceInstance{} }, // Register versioned resource
 			nil,
 			management.NewProjectMigrateSpaceInstanceREST,
-		),
-		builders.NewApiResourceWithStorage(
-			management.InternalProjectMigrateVirtualClusterInstanceREST,
-			func() runtime.Object { return &ProjectMigrateVirtualClusterInstance{} }, // Register versioned resource
-			nil,
-			management.NewProjectMigrateVirtualClusterInstanceREST,
 		),
 		builders.NewApiResourceWithStorage(
 			management.InternalProjectNodeTypesREST,
@@ -1009,14 +1002,6 @@ type ProjectMigrateSpaceInstanceList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []ProjectMigrateSpaceInstance `json:"items"`
-}
-
-// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
-
-type ProjectMigrateVirtualClusterInstanceList struct {
-	metav1.TypeMeta `json:",inline"`
-	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []ProjectMigrateVirtualClusterInstance `json:"items"`
 }
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
