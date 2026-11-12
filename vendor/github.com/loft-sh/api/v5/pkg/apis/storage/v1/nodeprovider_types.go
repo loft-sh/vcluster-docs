@@ -317,7 +317,7 @@ type TerraformTemplateSourceGit struct {
 	// Credentials is the reference to a secret containing the username and password for the git repository.
 	Credentials *SecretRef `json:"credentials,omitempty"`
 
-	// FetchInterval is the interval to use for refetching the git repository. Defaults to 5m. Refetching only checks for remote changes but does not do a complete repull.
+	// FetchInterval is the interval to use for refetching the git repository. Defaults to 1m. Refetching only checks for remote changes but does not do a complete repull.
 	FetchInterval string `json:"fetchInterval,omitempty"`
 
 	// ExtraEnv is the extra environment variables to use for the clone
