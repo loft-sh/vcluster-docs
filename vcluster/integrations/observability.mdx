@@ -1,0 +1,91 @@
+---
+title: Deliver the Fleet Observability credential
+sidebar_label: Fleet Observability
+sidebar_position: 12.5
+sidebar_class_name: free
+description: Turn on the observability integration so a cluster receives the metrics-writer Secret that its collectors use to send telemetry to vCluster Platform Fleet Observability.
+---
+
+The observability integration delivers a credential for [Fleet Observability](/docs/platform/next/fleet-operations/observability/overview) into a cluster. The cluster asks vCluster Platform for a `metrics-writer` access key and writes it into a Secret. The collectors running in the cluster read that Secret to reach the observability write gateway, so nobody has to create the token or copy it into the cluster by hand.
+
+The integration requires vCluster v0.38 or later and a cluster connected to vCluster Platform. A platform admin must first create an observability connector. See the [observability quickstart](/docs/platform/next/fleet-operations/observability/quickstart).
+
+## Configure the integration
+
+The integration adds three fields under `integrations.observability`:
+
+| Field | Default | Description |
+| -- | -- | -- |
+| `enabled` | `false` | Turns on credential delivery. |
+| `connector` | _(empty)_ | Name of the Platform observability connector to request the credential from. Required when `enabled` is `true`. |
+| `gatewaySecret` | `observability/metrics-writer` | Namespace and name of the delivered Secret. When you set it, set both `namespace` and `name`. |
+
+The cluster delivers nothing unless both `enabled` and `connector` are set. With `enabled: true`, the configuration fails validation if `connector` is empty or `gatewaySecret` sets only one of its two keys.
+
+### Use the default Secret
+
+Name the connector and leave `gatewaySecret` unset. This matches the defaults of the Fleet Observability collector template:
+
+```yaml title="vcluster.yaml"
+integrations:
+  observability:
+    enabled: true
+    # Name of the observability connector in Platform
+    connector: fleet-observability
+```
+
+The cluster writes the `metrics-writer` Secret into the `observability` namespace. It creates the namespace if it doesn't exist. If you already created a `metrics-writer` Secret there by hand, the cluster doesn't replace it, so delivery doesn't happen. See [How delivery works](#how-delivery-works).
+
+### Deliver the Secret elsewhere
+
+Set `gatewaySecret` when your collectors run in another namespace or read a Secret with another name:
+
+```yaml title="vcluster.yaml"
+integrations:
+  observability:
+    enabled: true
+    connector: fleet-observability
+    gatewaySecret:
+      # Namespace the collectors run in
+      namespace: monitoring
+      # Secret the collectors read
+      name: fleet-metrics-writer
+```
+
+Point the collectors at the same namespace and name. For the collector template, set its `destinationNamespace` and `gatewaySecretName` parameters. See [Configure edge collectors](/docs/platform/next/fleet-operations/observability/configure-edge-collectors).
+
+## How delivery works
+
+The delivered Secret holds three keys:
+
+- `endpoint`: the write gateway URL.
+- `token`: the `metrics-writer` access key.
+- `ca.crt`: the CA for the gateway certificate. It's empty when the gateway certificate chains to a public CA.
+
+The cluster requests the credential from Platform every 10 minutes and updates the Secret when it changes. If someone deletes the cluster's access key in Platform, the next request replaces it.
+
+The delivered Secret carries a label that marks it as managed by the integration. The cluster won't overwrite a Secret at the target that doesn't carry that label. That way, a `metrics-writer` Secret you already created by hand is safe. Delete that Secret or choose another target with `gatewaySecret`.
+
+When you change `gatewaySecret` or turn the integration off, the cluster deletes the Secret it delivered before. This happens when the control plane restarts with the new configuration, so a credential that nothing rotates doesn't stay behind.
+
+Deleting the Secret doesn't revoke the token. The access key stays valid in Platform until someone deletes it. See [Token lifetime and rotation](/docs/platform/next/integrations/identity-secrets/connectors/observability#token-lifetime-and-rotation).
+
+## Verify delivery
+
+Check that the Secret exists in the cluster:
+
+```bash
+kubectl get secret metrics-writer -n observability
+```
+
+If you set `gatewaySecret`, use its namespace and name instead.
+
+## Troubleshoot delivery
+
+When Platform refuses a credential request, the cluster logs the reason and keeps retrying. Common causes are a connector name that doesn't exist, a connector that isn't granted to the cluster's tenant, and a license that doesn't include Fleet Observability. Platform reports connector problems as a condition on the cluster's instance. See [A cluster gets no metrics-writer credential](/docs/platform/next/fleet-operations/observability/troubleshooting#a-cluster-gets-no-metrics-writer-credential).
+
+A platform that runs with embedded Kubernetes can't serve an observability connector. In that case the cluster fails to start with the integration on, because no retry can succeed. Turn the integration off for that cluster.
+
+## Config reference
+
+See [`integrations.observability`](../reference/vcluster-yaml/integrations.mdx#integrations-observability) in the vcluster.yaml reference.
