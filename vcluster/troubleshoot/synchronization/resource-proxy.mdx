@@ -231,14 +231,15 @@ A create, update, or delete request for a proxied custom resource fails, while r
 
 - A denial message from a ValidatingAdmissionPolicy or a validating webhook in the client cluster.
 - `server-side apply is not supported for proxied custom resources while admission enforcement is enabled: use update (PUT) or a merge patch instead`.
+- A 400 Bad Request that starts with `decode request body for admission`, `decode json patch`, `apply json patch`, `apply merge patch`, or `unsupported patch type`. The proxy couldn't build the object to evaluate, so no policy ran.
 
 On the client, `vcluster_proxy_admission_rejections_total` increases and `vcluster_proxy_request_total` records the request with reason `admission_denied`.
 
 ### Cause
 
-The proxy runs the client cluster's validating admission on every proxied write. See [Admission checks on proxied writes](../../overview/resource-synchronization/resource-proxy.mdx#admission). A write that the client cluster's policies reject is denied before it reaches the target, and the proxy refuses server-side apply outright.
+The proxy runs the client cluster's validating admission on every proxied write. See [Admission checks on proxied writes](../../overview/resource-synchronization/resource-proxy.mdx#admission). A write that the client cluster's policies reject is denied before it reaches the target, and the proxy refuses server-side apply outright. To evaluate a patch, the proxy applies it to the current object first. It accepts only JSON patches and merge patches, so a strategic merge patch fails with `unsupported patch type`.
 
-Clusters upgraded from a vCluster version before 0.37.2 didn't enforce these policies on proxied resources. Writes that used to succeed can fail after the upgrade.
+vCluster 0.36.2 and earlier, 0.37.0, and 0.37.1 don't enforce these policies on proxied resources. After an upgrade from one of those versions, writes that used to succeed can fail.
 
 ### Resolution
 
@@ -253,6 +254,7 @@ Clusters upgraded from a vCluster version before 0.37.2 didn't enforce these pol
 
 3. Fix the object so it satisfies the policy, or change the policy or its binding if the rejection isn't intended.
 4. For the server-side apply error, switch the caller to client-side `kubectl apply`, `kubectl replace`, or a merge or JSON patch. GitOps tools that use server-side apply, such as an Argo CD Application with the `ServerSideApply=true` sync option, need that option turned off for proxied resources.
+   For a decode or patch error, fix the request body or the patch. With `kubectl patch`, pass `--type merge` or `--type json`.
 5. Retry the write. It succeeds, and `vcluster_proxy_admission_rejections_total` stops increasing.
 
 If the write fails with 503 and reason `admission_check_failed` instead, the policies didn't run. The proxy couldn't read the current object from the target to build the admission request. Treat it like any other [503 from the target](#target-unavailable).
