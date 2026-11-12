@@ -12,7 +12,7 @@ import PageVariables from '@site/src/components/PageVariables';
 
 As a system admin, restore vCluster Platform management resources and identity after an outage or during migration to another control plane cluster.
 Use an existing [management backup](./backup-platform.mdx) for installations that store management resources in the control plane cluster's Kubernetes API.
-For an external database, follow [Restore an external database](../external-database/restore.mdx) and preserve the platform identity Secrets separately.
+For an external database, follow [Restore an external database](../external-database/restore.mdx). The platform stores its identity Secrets in that database, so restoring the database restores them too.
 
 For administrator lockout on an existing installation, use [Reset the admin password](../authentication/reset-admin-password.mdx).
 Account recovery doesn't require restoring the management plane.
@@ -84,7 +84,8 @@ Use a rehearsed recovery plan for other configurations.
 
 5. Review the backup's namespaces and local-cluster registration.
    If the backup includes the source's `loft-cluster` Cluster and the destination is a different Kubernetes cluster, remove that document.
-   Its `loft.sh/cluster-uid` annotation doesn't match the destination, and the destination creates its own local registration.
+   Its `loft.sh/cluster-uid` annotation doesn't match the destination, and applying it would overwrite the destination's own `loft-cluster`.
+   The destination platform creates that local registration whenever none exists, even with `DISABLE_DEFAULTS` set. It has no configuration Secret to remove.
    See [Exclude resources](./backup-platform.mdx#exclude-resources) for the reason and for remote registrations:
 
    <InterpolatedCodeBlock
@@ -100,14 +101,14 @@ Use a rehearsed recovery plan for other configurations.
      code={'kubectl apply -f [[VAR:RESTORE_FILE:restore.yaml]]'}
    />
 
-   Project namespaces can take time to appear after their Projects are restored.
-   If namespaced resources fail for that reason, wait for Project reconciliation and apply the file again.
+   The platform creates each Project's namespace after the Project is applied, so resources in that namespace can fail in the same apply.
+   If they do, wait for the Project namespaces to appear and apply the file again.
    Resolve every apply error before continuing. Move DNS to the destination when it's ready, then complete the verification steps below.
 
 ## Restore onto an existing installation
 
 Review which existing resources the backup overwrites before applying it. Use a backup from the same installation for same-cluster recovery.
-If you apply identity Secrets after the platform has started, restart the platform Deployment so it loads them:
+Restart the platform Deployment after applying. The restart loads restored identity Secrets and re-owns restored Tenant configuration Secrets:
 
 <InterpolatedCodeBlock
   language="bash"
@@ -123,8 +124,9 @@ Navigate to **Platform > Platform Config > Backup and Restore**, click **Restore
 - UI restore skips identity Secrets. Restore those separately through Kubernetes, then restart if their values changed.
 - UI restore records each object that fails to apply in the platform logs and continues with the rest. The success message doesn't confirm that every object applied.
   Check the platform logs for `apply backup` errors, then complete the verification steps below.
-- Restore a UI backup that contains Tenants through the UI. UI restore re-establishes each Tenant configuration Secret's owner reference.
-  Applying the same file with kubectl leaves those Secrets unowned, so the platform doesn't read the Tenants' configuration, including hostnames.
+- Restore a UI backup that contains Tenants through the UI. UI restore re-establishes each Tenant configuration Secret's owner reference, and returns an error if that step fails.
+  If you apply the same file with kubectl, those Secrets stay unowned until the platform restarts. Until then, the platform doesn't read the Tenants' configuration, including hostnames.
+  Restart the `loft` Deployment after a kubectl apply, as shown in [Restore onto an existing installation](#restore-onto-an-existing-installation).
 
 ## Restore with Velero or an etcd snapshot
 
