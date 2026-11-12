@@ -10,7 +10,6 @@ import Flow, {Step} from "@site/src/components/Flow";
 import NavStep from "@site/src/components/NavStep";
 import Button from "@site/src/components/Button";
 import Label from "@site/src/components/Label";
-import InterpolatedCodeBlock from '@site/src/components/InterpolatedCodeBlock';
 
 A KubeVirt VM can take a whole physical GPU through PCI passthrough. Two pieces work together:
 
@@ -25,7 +24,7 @@ The KubeVirt path passes through whole GPUs only. For vGPU or other GPU sharing,
 - CPUs and firmware that support IOMMU, Intel VT-d or AMD-Vi. The operator can turn IOMMU on in the kernel, but the hardware has to support it.
 - Platform administrator access, and a license with VM management. The **Host Devices** tab is shown only to platform administrators.
 
-Node preparation can reboot nodes or restart their kubelets. The operator cordons nodes but doesn't drain workloads. Plan a maintenance window before configuring host devices. See [What preparing a node costs](#what-preparing-a-node-costs).
+Node preparation can reboot nodes or restart their kubelets. The operator cordons nodes but doesn't drain workloads, and uncordons them when it's done. Plan a maintenance window before configuring host devices. See [What preparing a node costs](#what-preparing-a-node-costs).
 
 ## Deploy the device operator
 
@@ -39,9 +38,9 @@ spec:
         enabled: true
 ```
 
-In the platform UI, the **vCluster Device Operator** toggle can only be set when the provider is created. The platform installs chart `vcluster-device-operator` version `0.2.2` from `oci://ghcr.io/loft-sh/charts` by default. Override it with `chartRepo`, `chart`, `version`, and `helmValues` under `vClusterDeviceOperator`. The platform uninstalls the operator when you delete the provider, as long as `enabled` is still `true` at that point.
+In the platform UI, the **vCluster Device Operator** toggle can only be set when the provider is created. The platform installs chart `vcluster-device-operator` version `0.2.2` from `oci://ghcr.io/loft-sh/charts` by default. Override it with `chartRepo`, `chart`, `version`, and `helmValues` under `vClusterDeviceOperator`. The platform uninstalls the operator when you delete the provider, as long as `enabled` is still `true` at that point. The `HostDevice` CRD and any existing host devices stay on the cluster.
 
-vCluster Platform 4.12 installs chart `0.0.7`, so upgrading the platform also upgrades an operator whose `version` isn't pinned. The platform takes ownership of the `HostDevice` CRD that the older chart installed, so the upgrade doesn't fail on it.
+vCluster Platform v4.12 installs chart `0.0.7`, so upgrading the platform also upgrades an operator whose `version` isn't pinned. The platform takes ownership of the `HostDevice` CRD that the older chart installed, so the upgrade doesn't fail on it.
 
 ## Configure host devices
 
@@ -106,15 +105,21 @@ Preparing nodes disrupts them, so plan a window:
 
 - Turning on IOMMU or hugepages reboots the node. One reboot applies both.
 - NUMA settings restart the kubelet instead.
-- The operator cordons each node first but doesn't drain it. It works through one node at a time within each host device.
+- The operator cordons each node first but doesn't drain it. It uncordons the node once the node is ready again.
+- It works through one node at a time within each host device.
 
 If a kubelet reconfiguration doesn't come back healthy, the operator restores the previous configuration and marks the node `Failed`. It retries only after the desired NUMA configuration changes.
 
 ### Watch progress
 
-The **Host Devices** tab shows each host device's status and its ready nodes against the nodes it selects. Click **Show Devices** to see each node's phase, IOMMU, hugepage, and NUMA state, and every GPU with its PCI address, vendor and device ID, driver, IOMMU group, and whether it's selected and bound.
+The **Host Devices** tab shows each host device's status and its ready nodes against the nodes it selects. Click **Show Devices** to see each node's phase and its IOMMU, hugepage, and NUMA state. It also lists every GPU with its PCI address, vendor ID, device ID, driver, IOMMU group, and whether it's selected and bound.
 
-A node moves through `Pending`, `RebootPending`, `Rebooting`, `Configuring`, and `Binding` to `Ready`. Once a node is `Ready`, KubeVirt advertises its GPUs under the resource name.
+A node moves through `Pending`, `RebootPending`, `Rebooting`, `Configuring`, and `Binding` to `Ready`. Once a node is `Ready`, KubeVirt advertises its GPUs under the resource name. To confirm, check the nodes' allocatable count for that name:
+
+```bash
+kubectl get nodes -l nvidia.com/gpu.present=true \
+  -o custom-columns='NAME:.metadata.name,GPUS:.status.allocatable.nvidia\.com/A100'
+```
 
 ## Give each VM a GPU
 
@@ -149,7 +154,7 @@ spec:
                     memory: 8Gi
 ```
 
-The `gpus` list is what attaches GPUs. The `nvidia.com/gpu` entry in `resources`, the **GPU count** field in the platform UI, only describes the node type for sizing and display. Keep the two in step.
+The `gpus` list is what attaches GPUs. The `nvidia.com/gpu` entry in `resources`, the **GPU count** field in the platform UI, doesn't attach one. The platform uses it to choose node types. It ranks a node type with a GPU count as more expensive than one without. Dynamic Auto Nodes pools pick such a node type only for requests that ask for GPUs. Keep the count equal to the number of entries in `gpus`.
 
 The node type editor in the platform UI offers **GPU passthrough** and **GPU with NUMA pinning** examples to start from.
 
@@ -202,6 +207,6 @@ The platform doesn't install or configure the NVIDIA GPU Operator. A host device
 
 ## Limitations
 
-- One host device owns a given set of nodes. If two node selectors overlap, the host device whose name sorts first wins. The other reports a `Conflict` condition and doesn't prepare any of its nodes.
+- Each node belongs to one host device. If two node selectors overlap, only the host device whose name sorts first prepares nodes. The other reports a `Conflict` condition and prepares none of its nodes. Keep node selectors from overlapping.
 - Settings only apply forward. Clearing IOMMU, hugepages, or NUMA settings doesn't revert a node, and allocated hugepages aren't reclaimed.
 - The KubeVirt path binds each selected GPU to `vfio-pci` as a whole device, so a VM always gets whole GPUs. MIG, time slicing, and vGPU aren't available on it.
