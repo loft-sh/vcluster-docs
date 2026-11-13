@@ -60,6 +60,53 @@ The cluster's `integrations.observability.connector` must name a connector its o
 
 Platform checks the grant again before it issues a writer key. If the tenant can no longer use the connector, the subresource returns 400 and issues no key. The cluster reports `ObservabilityConnectorUnresolved=False` with reason `ObservabilityConnectorUnusable`. A key issued before the grant was lost keeps writing.
 
+### Who can call the subresource
+
+The subresource accepts `create` on `virtualclusterinstances/observabilityconnector` in the `management.loft.sh` group, in the cluster's project namespace. The request body is empty. Platform reads the connector name from the instance's own rendered configuration, never from the request.
+
+Every cluster's Platform identity holds `create` on this subresource, but Platform answers a cluster only for its own instance. A request for any other instance returns 403 before Platform reads anything, so the refusal doesn't reveal whether that instance exists.
+
+The default project roles don't grant the subresource. A user with full management access, such as the `loft-management-admin` role, can call it. The response carries the cluster's live writer token, and the call creates the key if the cluster has none yet. Platform logs these requests at `Metadata` level only, so the token never reaches the audit log. See [Metadata-only for sensitive data](../../../administer/configure/platform-configs/audit-policy.mdx#metadata-only-for-sensitive-data).
+
+### Response fields
+
+| Field | Contents |
+|---|---|
+| `status.endpoint` | The OTLP/HTTP URL of the connector's write gateway, as reachable from this cluster's collector. For a `LoadBalancer` gateway, it's the load balancer address. For a `ClusterIP` gateway, it's the in-cluster Service name. |
+| `status.token` | The cluster's `metrics-writer` access key. It stays the same across calls. |
+| `status.caCert` | The PEM CA certificate for the endpoint. It's empty when the gateway certificate chains to a publicly trusted CA, so the collector uses the system trust store. |
+
+### Token lifetime and rotation
+
+The first call creates a `metrics-writer` AccessKey for the cluster, owned by the cluster's tenant. Every later call returns the same key, so calling the subresource never rotates the token. If a cluster has more than one key, Platform returns the oldest and logs `multiple metrics-writer accesskeys for vCluster, using oldest key`. Delete the extra keys.
+
+List the key for a cluster:
+
+<InterpolatedCodeBlock
+  language="bash"
+  code={"kubectl get accesskeys.storage.loft.sh -l platform.vcluster.com/metrics-writer=true,loft.sh/vcluster-instance-name=[[VAR:CLUSTER:my-vcluster]],loft.sh/vcluster-instance-namespace=[[VAR:PROJECT_NAMESPACE:p-default]]"}
+/>
+
+Platform doesn't reconcile the key after it issues it. The cluster requests its credential again every 10 minutes, and that request is what replaces a deleted key. To rotate the token, delete the AccessKey and let the cluster fetch a new one. See [Rotation](../../../fleet-operations/observability/configure-metrics-access.mdx#rotation) for the gap in metrics that rotation causes.
+
+Deleting the cluster deletes its key. Turning the integration off, or deleting the cluster's `metrics-writer` Secret, doesn't revoke the key. Delete the AccessKey to revoke it.
+
+### Failure responses
+
+The status code tells the cluster whether to retry. The message names the specific cause. Platform also reports the causes an admin has to fix as an `ObservabilityConnectorUnresolved` condition on the instance. See [A cluster gets no metrics-writer credential](../../../fleet-operations/observability/troubleshooting.mdx#a-cluster-gets-no-metrics-writer-credential).
+
+| Status | Cause | What the cluster does |
+|---|---|---|
+| 400 | The instance's connector reference or the connector itself needs a fix. The connector doesn't exist, isn't usable by the tenant, is misconfigured, or isn't reachable from this cluster. The instance names no connector, or has the integration turned off. | Logs the refusal as an error and asks again every 10 minutes. |
+| 403 | The license doesn't include Fleet Observability, or the caller isn't this instance's cluster. | Logs the refusal as an error with a suggested fix and asks again every 10 minutes. |
+| 404 | The instance doesn't exist or is being deleted. | Asks again every 10 minutes. |
+| 405 | Platform runs on embedded Kubernetes, which never builds an observability connector. | Fails to start if Platform returns this during startup. Otherwise, logs the refusal every 10 minutes. Turn the integration off for the cluster. |
+| 503 | The write gateway isn't ready yet. Its load balancer has no address, or its certificate Secret doesn't exist yet. Platform also returns 503 for an instance it hasn't rendered yet. | Asks again every 30 seconds. |
+
+A 500 response means a Platform-side read failed, and says nothing about the connector. The cluster asks again every 30 seconds.
+
+A failed request never removes a `metrics-writer` Secret the cluster already delivered. The collectors keep the last credential they received.
+
 ## Delete a connector
 
 The gateway cleanup controller manages a finalizer on the backing Secret. API deletion can leave cleanup pending, particularly when an expired license prevents the controller from running. Keep gateway resources and the finalizer under controller management until cleanup completes.
