@@ -1652,6 +1652,48 @@ users:
 		Delete:   true,
 	})
 
+	// NodePool - authored by platform, tenant, or project admins to keep nodes for one
+	// private nodes cluster, so all four operations are served.
+	util.GenerateObjectOverview(&util.ObjectInformation{
+		Title:       "Node Pool",
+		Name:        "NodePool",
+		Resource:    "nodepools",
+		Description: "A NodePool keeps a set of nodes for one cluster that uses private nodes, all built from one template. A static pool keeps a fixed number of nodes that the platform creates. A dynamic pool hands scaling to Karpenter inside the cluster.",
+		File:        path.Join(util.BaseResourcesPath, "nodepool.mdx"),
+		Object: &managementv1.NodePool{
+			TypeMeta: metav1.TypeMeta{
+				Kind:       "NodePool",
+				APIVersion: managementv1.SchemeGroupVersion.String(),
+			},
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "compute",
+				Namespace: "p-my-project",
+			},
+			Spec: managementv1.NodePoolSpec{
+				NodePoolSpec: storagev1.NodePoolSpec{
+					VClusterRef: "my-cluster",
+					Static:      &storagev1.NodePoolStatic{Replicas: 3},
+					Template: storagev1.NodePoolTemplate{
+						ProviderRef: "my-provider",
+						Requirements: []corev1.NodeSelectorRequirement{{
+							Key:      "vcluster.com/node-type",
+							Operator: corev1.NodeSelectorOpIn,
+							Values:   []string{"my-provider.standard"},
+						}},
+						NodeLabels: map[string]string{
+							"workload.example.com/tier": "compute",
+						},
+					},
+				},
+			},
+		},
+		Project:  true,
+		Create:   true,
+		Retrieve: true,
+		Update:   true,
+		Delete:   true,
+	})
+
 	// ProjectSecret
 	util.GenerateObjectOverview(&util.ObjectInformation{
 		Title:       "Project Secret",
