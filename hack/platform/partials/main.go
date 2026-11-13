@@ -1667,7 +1667,7 @@ users:
 			},
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "compute",
-				Namespace: "p-default",
+				Namespace: "p-my-project",
 			},
 			Spec: managementv1.NodePoolSpec{
 				NodePoolSpec: storagev1.NodePoolSpec{
