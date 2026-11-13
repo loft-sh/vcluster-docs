@@ -971,66 +971,6 @@ func RegisterConversions(s *runtime.Scheme) error {
 	}); err != nil {
 		return err
 	}
-	if err := s.AddGeneratedConversionFunc((*CostControl)(nil), (*management.CostControl)(nil), func(a, b interface{}, scope conversion.Scope) error {
-		return Convert_v1_CostControl_To_management_CostControl(a.(*CostControl), b.(*management.CostControl), scope)
-	}); err != nil {
-		return err
-	}
-	if err := s.AddGeneratedConversionFunc((*management.CostControl)(nil), (*CostControl)(nil), func(a, b interface{}, scope conversion.Scope) error {
-		return Convert_management_CostControl_To_v1_CostControl(a.(*management.CostControl), b.(*CostControl), scope)
-	}); err != nil {
-		return err
-	}
-	if err := s.AddGeneratedConversionFunc((*CostControlClusterConfig)(nil), (*management.CostControlClusterConfig)(nil), func(a, b interface{}, scope conversion.Scope) error {
-		return Convert_v1_CostControlClusterConfig_To_management_CostControlClusterConfig(a.(*CostControlClusterConfig), b.(*management.CostControlClusterConfig), scope)
-	}); err != nil {
-		return err
-	}
-	if err := s.AddGeneratedConversionFunc((*management.CostControlClusterConfig)(nil), (*CostControlClusterConfig)(nil), func(a, b interface{}, scope conversion.Scope) error {
-		return Convert_management_CostControlClusterConfig_To_v1_CostControlClusterConfig(a.(*management.CostControlClusterConfig), b.(*CostControlClusterConfig), scope)
-	}); err != nil {
-		return err
-	}
-	if err := s.AddGeneratedConversionFunc((*CostControlGPUSettings)(nil), (*management.CostControlGPUSettings)(nil), func(a, b interface{}, scope conversion.Scope) error {
-		return Convert_v1_CostControlGPUSettings_To_management_CostControlGPUSettings(a.(*CostControlGPUSettings), b.(*management.CostControlGPUSettings), scope)
-	}); err != nil {
-		return err
-	}
-	if err := s.AddGeneratedConversionFunc((*management.CostControlGPUSettings)(nil), (*CostControlGPUSettings)(nil), func(a, b interface{}, scope conversion.Scope) error {
-		return Convert_management_CostControlGPUSettings_To_v1_CostControlGPUSettings(a.(*management.CostControlGPUSettings), b.(*CostControlGPUSettings), scope)
-	}); err != nil {
-		return err
-	}
-	if err := s.AddGeneratedConversionFunc((*CostControlGlobalConfig)(nil), (*management.CostControlGlobalConfig)(nil), func(a, b interface{}, scope conversion.Scope) error {
-		return Convert_v1_CostControlGlobalConfig_To_management_CostControlGlobalConfig(a.(*CostControlGlobalConfig), b.(*management.CostControlGlobalConfig), scope)
-	}); err != nil {
-		return err
-	}
-	if err := s.AddGeneratedConversionFunc((*management.CostControlGlobalConfig)(nil), (*CostControlGlobalConfig)(nil), func(a, b interface{}, scope conversion.Scope) error {
-		return Convert_management_CostControlGlobalConfig_To_v1_CostControlGlobalConfig(a.(*management.CostControlGlobalConfig), b.(*CostControlGlobalConfig), scope)
-	}); err != nil {
-		return err
-	}
-	if err := s.AddGeneratedConversionFunc((*CostControlResourcePrice)(nil), (*management.CostControlResourcePrice)(nil), func(a, b interface{}, scope conversion.Scope) error {
-		return Convert_v1_CostControlResourcePrice_To_management_CostControlResourcePrice(a.(*CostControlResourcePrice), b.(*management.CostControlResourcePrice), scope)
-	}); err != nil {
-		return err
-	}
-	if err := s.AddGeneratedConversionFunc((*management.CostControlResourcePrice)(nil), (*CostControlResourcePrice)(nil), func(a, b interface{}, scope conversion.Scope) error {
-		return Convert_management_CostControlResourcePrice_To_v1_CostControlResourcePrice(a.(*management.CostControlResourcePrice), b.(*CostControlResourcePrice), scope)
-	}); err != nil {
-		return err
-	}
-	if err := s.AddGeneratedConversionFunc((*CostControlSettings)(nil), (*management.CostControlSettings)(nil), func(a, b interface{}, scope conversion.Scope) error {
-		return Convert_v1_CostControlSettings_To_management_CostControlSettings(a.(*CostControlSettings), b.(*management.CostControlSettings), scope)
-	}); err != nil {
-		return err
-	}
-	if err := s.AddGeneratedConversionFunc((*management.CostControlSettings)(nil), (*CostControlSettings)(nil), func(a, b interface{}, scope conversion.Scope) error {
-		return Convert_management_CostControlSettings_To_v1_CostControlSettings(a.(*management.CostControlSettings), b.(*CostControlSettings), scope)
-	}); err != nil {
-		return err
-	}
 	if err := s.AddGeneratedConversionFunc((*DatabaseConnector)(nil), (*management.DatabaseConnector)(nil), func(a, b interface{}, scope conversion.Scope) error {
 		return Convert_v1_DatabaseConnector_To_management_DatabaseConnector(a.(*DatabaseConnector), b.(*management.DatabaseConnector), scope)
 	}); err != nil {
@@ -2781,46 +2721,6 @@ func RegisterConversions(s *runtime.Scheme) error {
 	}); err != nil {
 		return err
 	}
-	if err := s.AddGeneratedConversionFunc((*SharedSecret)(nil), (*management.SharedSecret)(nil), func(a, b interface{}, scope conversion.Scope) error {
-		return Convert_v1_SharedSecret_To_management_SharedSecret(a.(*SharedSecret), b.(*management.SharedSecret), scope)
-	}); err != nil {
-		return err
-	}
-	if err := s.AddGeneratedConversionFunc((*management.SharedSecret)(nil), (*SharedSecret)(nil), func(a, b interface{}, scope conversion.Scope) error {
-		return Convert_management_SharedSecret_To_v1_SharedSecret(a.(*management.SharedSecret), b.(*SharedSecret), scope)
-	}); err != nil {
-		return err
-	}
-	if err := s.AddGeneratedConversionFunc((*SharedSecretList)(nil), (*management.SharedSecretList)(nil), func(a, b interface{}, scope conversion.Scope) error {
-		return Convert_v1_SharedSecretList_To_management_SharedSecretList(a.(*SharedSecretList), b.(*management.SharedSecretList), scope)
-	}); err != nil {
-		return err
-	}
-	if err := s.AddGeneratedConversionFunc((*management.SharedSecretList)(nil), (*SharedSecretList)(nil), func(a, b interface{}, scope conversion.Scope) error {
-		return Convert_management_SharedSecretList_To_v1_SharedSecretList(a.(*management.SharedSecretList), b.(*SharedSecretList), scope)
-	}); err != nil {
-		return err
-	}
-	if err := s.AddGeneratedConversionFunc((*SharedSecretSpec)(nil), (*management.SharedSecretSpec)(nil), func(a, b interface{}, scope conversion.Scope) error {
-		return Convert_v1_SharedSecretSpec_To_management_SharedSecretSpec(a.(*SharedSecretSpec), b.(*management.SharedSecretSpec), scope)
-	}); err != nil {
-		return err
-	}
-	if err := s.AddGeneratedConversionFunc((*management.SharedSecretSpec)(nil), (*SharedSecretSpec)(nil), func(a, b interface{}, scope conversion.Scope) error {
-		return Convert_management_SharedSecretSpec_To_v1_SharedSecretSpec(a.(*management.SharedSecretSpec), b.(*SharedSecretSpec), scope)
-	}); err != nil {
-		return err
-	}
-	if err := s.AddGeneratedConversionFunc((*SharedSecretStatus)(nil), (*management.SharedSecretStatus)(nil), func(a, b interface{}, scope conversion.Scope) error {
-		return Convert_v1_SharedSecretStatus_To_management_SharedSecretStatus(a.(*SharedSecretStatus), b.(*management.SharedSecretStatus), scope)
-	}); err != nil {
-		return err
-	}
-	if err := s.AddGeneratedConversionFunc((*management.SharedSecretStatus)(nil), (*SharedSecretStatus)(nil), func(a, b interface{}, scope conversion.Scope) error {
-		return Convert_management_SharedSecretStatus_To_v1_SharedSecretStatus(a.(*management.SharedSecretStatus), b.(*SharedSecretStatus), scope)
-	}); err != nil {
-		return err
-	}
 	if err := s.AddGeneratedConversionFunc((*SnapshotRequest)(nil), (*management.SnapshotRequest)(nil), func(a, b interface{}, scope conversion.Scope) error {
 		return Convert_v1_SnapshotRequest_To_management_SnapshotRequest(a.(*SnapshotRequest), b.(*management.SnapshotRequest), scope)
 	}); err != nil {
@@ -4508,9 +4408,6 @@ func Convert_management_AgentAuditEventStatus_To_v1_AgentAuditEventStatus(in *ma
 
 func autoConvert_v1_AgentCostControlConfig_To_management_AgentCostControlConfig(in *AgentCostControlConfig, out *management.AgentCostControlConfig, s conversion.Scope) error {
 	out.Enabled = (*bool)(unsafe.Pointer(in.Enabled))
-	if err := Convert_v1_CostControlClusterConfig_To_management_CostControlClusterConfig(&in.CostControlClusterConfig, &out.CostControlClusterConfig, s); err != nil {
-		return err
-	}
 	return nil
 }
 
@@ -4521,9 +4418,6 @@ func Convert_v1_AgentCostControlConfig_To_management_AgentCostControlConfig(in *
 
 func autoConvert_management_AgentCostControlConfig_To_v1_AgentCostControlConfig(in *management.AgentCostControlConfig, out *AgentCostControlConfig, s conversion.Scope) error {
 	out.Enabled = (*bool)(unsafe.Pointer(in.Enabled))
-	if err := Convert_management_CostControlClusterConfig_To_v1_CostControlClusterConfig(&in.CostControlClusterConfig, &out.CostControlClusterConfig, s); err != nil {
-		return err
-	}
 	return nil
 }
 
@@ -6292,11 +6186,9 @@ func autoConvert_v1_ConfigStatus_To_management_ConfigStatus(in *ConfigStatus, ou
 	out.ProjectNamespacePrefix = (*string)(unsafe.Pointer(in.ProjectNamespacePrefix))
 	out.DevPodSubDomain = in.DevPodSubDomain
 	out.UISettings = (*uiv1.UISettingsConfig)(unsafe.Pointer(in.UISettings))
-	out.VaultIntegration = (*storagev1.VaultIntegrationSpec)(unsafe.Pointer(in.VaultIntegration))
 	out.DisableConfigEndpoint = in.DisableConfigEndpoint
 	out.AuthenticateVersionEndpoint = in.AuthenticateVersionEndpoint
 	out.Cloud = (*management.Cloud)(unsafe.Pointer(in.Cloud))
-	out.CostControl = (*management.CostControl)(unsafe.Pointer(in.CostControl))
 	out.PlatformDB = (*management.PlatformDB)(unsafe.Pointer(in.PlatformDB))
 	out.ImageBuilder = (*management.ImageBuilder)(unsafe.Pointer(in.ImageBuilder))
 	out.Database = (*management.DatabaseKine)(unsafe.Pointer(in.Database))
@@ -6316,11 +6208,9 @@ func autoConvert_management_ConfigStatus_To_v1_ConfigStatus(in *management.Confi
 	out.ProjectNamespacePrefix = (*string)(unsafe.Pointer(in.ProjectNamespacePrefix))
 	out.DevPodSubDomain = in.DevPodSubDomain
 	out.UISettings = (*uiv1.UISettingsConfig)(unsafe.Pointer(in.UISettings))
-	out.VaultIntegration = (*storagev1.VaultIntegrationSpec)(unsafe.Pointer(in.VaultIntegration))
 	out.DisableConfigEndpoint = in.DisableConfigEndpoint
 	out.AuthenticateVersionEndpoint = in.AuthenticateVersionEndpoint
 	out.Cloud = (*Cloud)(unsafe.Pointer(in.Cloud))
-	out.CostControl = (*CostControl)(unsafe.Pointer(in.CostControl))
 	out.PlatformDB = (*PlatformDB)(unsafe.Pointer(in.PlatformDB))
 	out.ImageBuilder = (*ImageBuilder)(unsafe.Pointer(in.ImageBuilder))
 	out.Database = (*DatabaseKine)(unsafe.Pointer(in.Database))
@@ -6846,154 +6736,6 @@ func autoConvert_management_ConvertVirtualClusterConfigStatus_To_v1_ConvertVirtu
 // Convert_management_ConvertVirtualClusterConfigStatus_To_v1_ConvertVirtualClusterConfigStatus is an autogenerated conversion function.
 func Convert_management_ConvertVirtualClusterConfigStatus_To_v1_ConvertVirtualClusterConfigStatus(in *management.ConvertVirtualClusterConfigStatus, out *ConvertVirtualClusterConfigStatus, s conversion.Scope) error {
 	return autoConvert_management_ConvertVirtualClusterConfigStatus_To_v1_ConvertVirtualClusterConfigStatus(in, out, s)
-}
-
-func autoConvert_v1_CostControl_To_management_CostControl(in *CostControl, out *management.CostControl, s conversion.Scope) error {
-	out.Enabled = (*bool)(unsafe.Pointer(in.Enabled))
-	if err := Convert_v1_CostControlGlobalConfig_To_management_CostControlGlobalConfig(&in.Global, &out.Global, s); err != nil {
-		return err
-	}
-	if err := Convert_v1_CostControlClusterConfig_To_management_CostControlClusterConfig(&in.Cluster, &out.Cluster, s); err != nil {
-		return err
-	}
-	out.Settings = (*management.CostControlSettings)(unsafe.Pointer(in.Settings))
-	return nil
-}
-
-// Convert_v1_CostControl_To_management_CostControl is an autogenerated conversion function.
-func Convert_v1_CostControl_To_management_CostControl(in *CostControl, out *management.CostControl, s conversion.Scope) error {
-	return autoConvert_v1_CostControl_To_management_CostControl(in, out, s)
-}
-
-func autoConvert_management_CostControl_To_v1_CostControl(in *management.CostControl, out *CostControl, s conversion.Scope) error {
-	out.Enabled = (*bool)(unsafe.Pointer(in.Enabled))
-	if err := Convert_management_CostControlGlobalConfig_To_v1_CostControlGlobalConfig(&in.Global, &out.Global, s); err != nil {
-		return err
-	}
-	if err := Convert_management_CostControlClusterConfig_To_v1_CostControlClusterConfig(&in.Cluster, &out.Cluster, s); err != nil {
-		return err
-	}
-	out.Settings = (*CostControlSettings)(unsafe.Pointer(in.Settings))
-	return nil
-}
-
-// Convert_management_CostControl_To_v1_CostControl is an autogenerated conversion function.
-func Convert_management_CostControl_To_v1_CostControl(in *management.CostControl, out *CostControl, s conversion.Scope) error {
-	return autoConvert_management_CostControl_To_v1_CostControl(in, out, s)
-}
-
-func autoConvert_v1_CostControlClusterConfig_To_management_CostControlClusterConfig(in *CostControlClusterConfig, out *management.CostControlClusterConfig, s conversion.Scope) error {
-	out.Metrics = (*storagev1.Metrics)(unsafe.Pointer(in.Metrics))
-	out.OpenCost = (*storagev1.OpenCost)(unsafe.Pointer(in.OpenCost))
-	return nil
-}
-
-// Convert_v1_CostControlClusterConfig_To_management_CostControlClusterConfig is an autogenerated conversion function.
-func Convert_v1_CostControlClusterConfig_To_management_CostControlClusterConfig(in *CostControlClusterConfig, out *management.CostControlClusterConfig, s conversion.Scope) error {
-	return autoConvert_v1_CostControlClusterConfig_To_management_CostControlClusterConfig(in, out, s)
-}
-
-func autoConvert_management_CostControlClusterConfig_To_v1_CostControlClusterConfig(in *management.CostControlClusterConfig, out *CostControlClusterConfig, s conversion.Scope) error {
-	out.Metrics = (*storagev1.Metrics)(unsafe.Pointer(in.Metrics))
-	out.OpenCost = (*storagev1.OpenCost)(unsafe.Pointer(in.OpenCost))
-	return nil
-}
-
-// Convert_management_CostControlClusterConfig_To_v1_CostControlClusterConfig is an autogenerated conversion function.
-func Convert_management_CostControlClusterConfig_To_v1_CostControlClusterConfig(in *management.CostControlClusterConfig, out *CostControlClusterConfig, s conversion.Scope) error {
-	return autoConvert_management_CostControlClusterConfig_To_v1_CostControlClusterConfig(in, out, s)
-}
-
-func autoConvert_v1_CostControlGPUSettings_To_management_CostControlGPUSettings(in *CostControlGPUSettings, out *management.CostControlGPUSettings, s conversion.Scope) error {
-	out.Enabled = in.Enabled
-	out.AvgGPUPrice = (*management.CostControlResourcePrice)(unsafe.Pointer(in.AvgGPUPrice))
-	return nil
-}
-
-// Convert_v1_CostControlGPUSettings_To_management_CostControlGPUSettings is an autogenerated conversion function.
-func Convert_v1_CostControlGPUSettings_To_management_CostControlGPUSettings(in *CostControlGPUSettings, out *management.CostControlGPUSettings, s conversion.Scope) error {
-	return autoConvert_v1_CostControlGPUSettings_To_management_CostControlGPUSettings(in, out, s)
-}
-
-func autoConvert_management_CostControlGPUSettings_To_v1_CostControlGPUSettings(in *management.CostControlGPUSettings, out *CostControlGPUSettings, s conversion.Scope) error {
-	out.Enabled = in.Enabled
-	out.AvgGPUPrice = (*CostControlResourcePrice)(unsafe.Pointer(in.AvgGPUPrice))
-	return nil
-}
-
-// Convert_management_CostControlGPUSettings_To_v1_CostControlGPUSettings is an autogenerated conversion function.
-func Convert_management_CostControlGPUSettings_To_v1_CostControlGPUSettings(in *management.CostControlGPUSettings, out *CostControlGPUSettings, s conversion.Scope) error {
-	return autoConvert_management_CostControlGPUSettings_To_v1_CostControlGPUSettings(in, out, s)
-}
-
-func autoConvert_v1_CostControlGlobalConfig_To_management_CostControlGlobalConfig(in *CostControlGlobalConfig, out *management.CostControlGlobalConfig, s conversion.Scope) error {
-	out.Metrics = (*storagev1.Metrics)(unsafe.Pointer(in.Metrics))
-	return nil
-}
-
-// Convert_v1_CostControlGlobalConfig_To_management_CostControlGlobalConfig is an autogenerated conversion function.
-func Convert_v1_CostControlGlobalConfig_To_management_CostControlGlobalConfig(in *CostControlGlobalConfig, out *management.CostControlGlobalConfig, s conversion.Scope) error {
-	return autoConvert_v1_CostControlGlobalConfig_To_management_CostControlGlobalConfig(in, out, s)
-}
-
-func autoConvert_management_CostControlGlobalConfig_To_v1_CostControlGlobalConfig(in *management.CostControlGlobalConfig, out *CostControlGlobalConfig, s conversion.Scope) error {
-	out.Metrics = (*storagev1.Metrics)(unsafe.Pointer(in.Metrics))
-	return nil
-}
-
-// Convert_management_CostControlGlobalConfig_To_v1_CostControlGlobalConfig is an autogenerated conversion function.
-func Convert_management_CostControlGlobalConfig_To_v1_CostControlGlobalConfig(in *management.CostControlGlobalConfig, out *CostControlGlobalConfig, s conversion.Scope) error {
-	return autoConvert_management_CostControlGlobalConfig_To_v1_CostControlGlobalConfig(in, out, s)
-}
-
-func autoConvert_v1_CostControlResourcePrice_To_management_CostControlResourcePrice(in *CostControlResourcePrice, out *management.CostControlResourcePrice, s conversion.Scope) error {
-	out.Price = in.Price
-	out.TimePeriod = in.TimePeriod
-	return nil
-}
-
-// Convert_v1_CostControlResourcePrice_To_management_CostControlResourcePrice is an autogenerated conversion function.
-func Convert_v1_CostControlResourcePrice_To_management_CostControlResourcePrice(in *CostControlResourcePrice, out *management.CostControlResourcePrice, s conversion.Scope) error {
-	return autoConvert_v1_CostControlResourcePrice_To_management_CostControlResourcePrice(in, out, s)
-}
-
-func autoConvert_management_CostControlResourcePrice_To_v1_CostControlResourcePrice(in *management.CostControlResourcePrice, out *CostControlResourcePrice, s conversion.Scope) error {
-	out.Price = in.Price
-	out.TimePeriod = in.TimePeriod
-	return nil
-}
-
-// Convert_management_CostControlResourcePrice_To_v1_CostControlResourcePrice is an autogenerated conversion function.
-func Convert_management_CostControlResourcePrice_To_v1_CostControlResourcePrice(in *management.CostControlResourcePrice, out *CostControlResourcePrice, s conversion.Scope) error {
-	return autoConvert_management_CostControlResourcePrice_To_v1_CostControlResourcePrice(in, out, s)
-}
-
-func autoConvert_v1_CostControlSettings_To_management_CostControlSettings(in *CostControlSettings, out *management.CostControlSettings, s conversion.Scope) error {
-	out.PriceCurrency = in.PriceCurrency
-	out.AvgCPUPricePerNode = (*management.CostControlResourcePrice)(unsafe.Pointer(in.AvgCPUPricePerNode))
-	out.AvgRAMPricePerNode = (*management.CostControlResourcePrice)(unsafe.Pointer(in.AvgRAMPricePerNode))
-	out.GPUSettings = (*management.CostControlGPUSettings)(unsafe.Pointer(in.GPUSettings))
-	out.ControlPlanePricePerCluster = (*management.CostControlResourcePrice)(unsafe.Pointer(in.ControlPlanePricePerCluster))
-	return nil
-}
-
-// Convert_v1_CostControlSettings_To_management_CostControlSettings is an autogenerated conversion function.
-func Convert_v1_CostControlSettings_To_management_CostControlSettings(in *CostControlSettings, out *management.CostControlSettings, s conversion.Scope) error {
-	return autoConvert_v1_CostControlSettings_To_management_CostControlSettings(in, out, s)
-}
-
-func autoConvert_management_CostControlSettings_To_v1_CostControlSettings(in *management.CostControlSettings, out *CostControlSettings, s conversion.Scope) error {
-	out.PriceCurrency = in.PriceCurrency
-	out.AvgCPUPricePerNode = (*CostControlResourcePrice)(unsafe.Pointer(in.AvgCPUPricePerNode))
-	out.AvgRAMPricePerNode = (*CostControlResourcePrice)(unsafe.Pointer(in.AvgRAMPricePerNode))
-	out.GPUSettings = (*CostControlGPUSettings)(unsafe.Pointer(in.GPUSettings))
-	out.ControlPlanePricePerCluster = (*CostControlResourcePrice)(unsafe.Pointer(in.ControlPlanePricePerCluster))
-	return nil
-}
-
-// Convert_management_CostControlSettings_To_v1_CostControlSettings is an autogenerated conversion function.
-func Convert_management_CostControlSettings_To_v1_CostControlSettings(in *management.CostControlSettings, out *CostControlSettings, s conversion.Scope) error {
-	return autoConvert_management_CostControlSettings_To_v1_CostControlSettings(in, out, s)
 }
 
 func autoConvert_v1_DatabaseConnector_To_management_DatabaseConnector(in *DatabaseConnector, out *management.DatabaseConnector, s conversion.Scope) error {
@@ -11343,100 +11085,6 @@ func autoConvert_management_SelfSubjectAccessReviewStatus_To_v1_SelfSubjectAcces
 // Convert_management_SelfSubjectAccessReviewStatus_To_v1_SelfSubjectAccessReviewStatus is an autogenerated conversion function.
 func Convert_management_SelfSubjectAccessReviewStatus_To_v1_SelfSubjectAccessReviewStatus(in *management.SelfSubjectAccessReviewStatus, out *SelfSubjectAccessReviewStatus, s conversion.Scope) error {
 	return autoConvert_management_SelfSubjectAccessReviewStatus_To_v1_SelfSubjectAccessReviewStatus(in, out, s)
-}
-
-func autoConvert_v1_SharedSecret_To_management_SharedSecret(in *SharedSecret, out *management.SharedSecret, s conversion.Scope) error {
-	out.ObjectMeta = in.ObjectMeta
-	if err := Convert_v1_SharedSecretSpec_To_management_SharedSecretSpec(&in.Spec, &out.Spec, s); err != nil {
-		return err
-	}
-	if err := Convert_v1_SharedSecretStatus_To_management_SharedSecretStatus(&in.Status, &out.Status, s); err != nil {
-		return err
-	}
-	return nil
-}
-
-// Convert_v1_SharedSecret_To_management_SharedSecret is an autogenerated conversion function.
-func Convert_v1_SharedSecret_To_management_SharedSecret(in *SharedSecret, out *management.SharedSecret, s conversion.Scope) error {
-	return autoConvert_v1_SharedSecret_To_management_SharedSecret(in, out, s)
-}
-
-func autoConvert_management_SharedSecret_To_v1_SharedSecret(in *management.SharedSecret, out *SharedSecret, s conversion.Scope) error {
-	out.ObjectMeta = in.ObjectMeta
-	if err := Convert_management_SharedSecretSpec_To_v1_SharedSecretSpec(&in.Spec, &out.Spec, s); err != nil {
-		return err
-	}
-	if err := Convert_management_SharedSecretStatus_To_v1_SharedSecretStatus(&in.Status, &out.Status, s); err != nil {
-		return err
-	}
-	return nil
-}
-
-// Convert_management_SharedSecret_To_v1_SharedSecret is an autogenerated conversion function.
-func Convert_management_SharedSecret_To_v1_SharedSecret(in *management.SharedSecret, out *SharedSecret, s conversion.Scope) error {
-	return autoConvert_management_SharedSecret_To_v1_SharedSecret(in, out, s)
-}
-
-func autoConvert_v1_SharedSecretList_To_management_SharedSecretList(in *SharedSecretList, out *management.SharedSecretList, s conversion.Scope) error {
-	out.ListMeta = in.ListMeta
-	out.Items = *(*[]management.SharedSecret)(unsafe.Pointer(&in.Items))
-	return nil
-}
-
-// Convert_v1_SharedSecretList_To_management_SharedSecretList is an autogenerated conversion function.
-func Convert_v1_SharedSecretList_To_management_SharedSecretList(in *SharedSecretList, out *management.SharedSecretList, s conversion.Scope) error {
-	return autoConvert_v1_SharedSecretList_To_management_SharedSecretList(in, out, s)
-}
-
-func autoConvert_management_SharedSecretList_To_v1_SharedSecretList(in *management.SharedSecretList, out *SharedSecretList, s conversion.Scope) error {
-	out.ListMeta = in.ListMeta
-	out.Items = *(*[]SharedSecret)(unsafe.Pointer(&in.Items))
-	return nil
-}
-
-// Convert_management_SharedSecretList_To_v1_SharedSecretList is an autogenerated conversion function.
-func Convert_management_SharedSecretList_To_v1_SharedSecretList(in *management.SharedSecretList, out *SharedSecretList, s conversion.Scope) error {
-	return autoConvert_management_SharedSecretList_To_v1_SharedSecretList(in, out, s)
-}
-
-func autoConvert_v1_SharedSecretSpec_To_management_SharedSecretSpec(in *SharedSecretSpec, out *management.SharedSecretSpec, s conversion.Scope) error {
-	out.SharedSecretSpec = in.SharedSecretSpec
-	return nil
-}
-
-// Convert_v1_SharedSecretSpec_To_management_SharedSecretSpec is an autogenerated conversion function.
-func Convert_v1_SharedSecretSpec_To_management_SharedSecretSpec(in *SharedSecretSpec, out *management.SharedSecretSpec, s conversion.Scope) error {
-	return autoConvert_v1_SharedSecretSpec_To_management_SharedSecretSpec(in, out, s)
-}
-
-func autoConvert_management_SharedSecretSpec_To_v1_SharedSecretSpec(in *management.SharedSecretSpec, out *SharedSecretSpec, s conversion.Scope) error {
-	out.SharedSecretSpec = in.SharedSecretSpec
-	return nil
-}
-
-// Convert_management_SharedSecretSpec_To_v1_SharedSecretSpec is an autogenerated conversion function.
-func Convert_management_SharedSecretSpec_To_v1_SharedSecretSpec(in *management.SharedSecretSpec, out *SharedSecretSpec, s conversion.Scope) error {
-	return autoConvert_management_SharedSecretSpec_To_v1_SharedSecretSpec(in, out, s)
-}
-
-func autoConvert_v1_SharedSecretStatus_To_management_SharedSecretStatus(in *SharedSecretStatus, out *management.SharedSecretStatus, s conversion.Scope) error {
-	out.SharedSecretStatus = in.SharedSecretStatus
-	return nil
-}
-
-// Convert_v1_SharedSecretStatus_To_management_SharedSecretStatus is an autogenerated conversion function.
-func Convert_v1_SharedSecretStatus_To_management_SharedSecretStatus(in *SharedSecretStatus, out *management.SharedSecretStatus, s conversion.Scope) error {
-	return autoConvert_v1_SharedSecretStatus_To_management_SharedSecretStatus(in, out, s)
-}
-
-func autoConvert_management_SharedSecretStatus_To_v1_SharedSecretStatus(in *management.SharedSecretStatus, out *SharedSecretStatus, s conversion.Scope) error {
-	out.SharedSecretStatus = in.SharedSecretStatus
-	return nil
-}
-
-// Convert_management_SharedSecretStatus_To_v1_SharedSecretStatus is an autogenerated conversion function.
-func Convert_management_SharedSecretStatus_To_v1_SharedSecretStatus(in *management.SharedSecretStatus, out *SharedSecretStatus, s conversion.Scope) error {
-	return autoConvert_management_SharedSecretStatus_To_v1_SharedSecretStatus(in, out, s)
 }
 
 func autoConvert_v1_SnapshotRequest_To_management_SnapshotRequest(in *SnapshotRequest, out *management.SnapshotRequest, s conversion.Scope) error {

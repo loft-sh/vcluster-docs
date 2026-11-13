@@ -980,35 +980,6 @@ spec:
 		Delete:   true,
 	})
 
-	// SharedSecret
-	util.GenerateObjectOverview(&util.ObjectInformation{
-		Name:        "Global Secret",
-		Resource:    "sharedsecrets",
-		Description: "Global Secrets can be used to share sensitive information across users, teams and connected clusters. You can either access shared secrets through the Loft CLI or sync them directly to a project secret.",
-		File:        path.Join(util.BaseResourcesPath, "sharedsecret.mdx"),
-		Object: &storagev1.SharedSecret{
-			TypeMeta: metav1.TypeMeta{
-				Kind:       "SharedSecret",
-				APIVersion: managementv1.SchemeGroupVersion.String(),
-			},
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "my-global-secret",
-				Namespace: "loft",
-			},
-			Spec: storagev1.SharedSecretSpec{
-				DisplayName: "My Global Secret",
-				Description: "Secret Data is base64 encoded.",
-				Data: map[string][]byte{
-					"password": []byte("password"),
-				},
-			},
-		},
-		Create:   true,
-		Retrieve: true,
-		Update:   true,
-		Delete:   true,
-	})
-
 	// OwnedAccessKey
 	util.GenerateObjectOverview(&util.ObjectInformation{
 		Name:        "Owned Access Key",
@@ -1191,7 +1162,6 @@ spec:
 			"| `projects` | Projects |\n" +
 			"| `projectsecrets` | Project-scoped secrets |\n" +
 			"| `selves` | Current user information |\n" +
-			"| `sharedsecrets` | Shared secrets |\n" +
 			"| `spaceinstances` | Space instances |\n" +
 			"| `spacetemplates` | Space templates |\n" +
 			"| `stackinstances` | Project-scoped Stack instances |\n" +

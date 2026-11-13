@@ -481,36 +481,6 @@ func (in ConvertVirtualClusterConfigStatus) OpenAPIModelName() string {
 }
 
 // OpenAPIModelName returns the OpenAPI model name for this type.
-func (in CostControl) OpenAPIModelName() string {
-	return "com.github.loft-sh.api.v5.pkg.apis.management.v1.CostControl"
-}
-
-// OpenAPIModelName returns the OpenAPI model name for this type.
-func (in CostControlClusterConfig) OpenAPIModelName() string {
-	return "com.github.loft-sh.api.v5.pkg.apis.management.v1.CostControlClusterConfig"
-}
-
-// OpenAPIModelName returns the OpenAPI model name for this type.
-func (in CostControlGPUSettings) OpenAPIModelName() string {
-	return "com.github.loft-sh.api.v5.pkg.apis.management.v1.CostControlGPUSettings"
-}
-
-// OpenAPIModelName returns the OpenAPI model name for this type.
-func (in CostControlGlobalConfig) OpenAPIModelName() string {
-	return "com.github.loft-sh.api.v5.pkg.apis.management.v1.CostControlGlobalConfig"
-}
-
-// OpenAPIModelName returns the OpenAPI model name for this type.
-func (in CostControlResourcePrice) OpenAPIModelName() string {
-	return "com.github.loft-sh.api.v5.pkg.apis.management.v1.CostControlResourcePrice"
-}
-
-// OpenAPIModelName returns the OpenAPI model name for this type.
-func (in CostControlSettings) OpenAPIModelName() string {
-	return "com.github.loft-sh.api.v5.pkg.apis.management.v1.CostControlSettings"
-}
-
-// OpenAPIModelName returns the OpenAPI model name for this type.
 func (in DatabaseConnector) OpenAPIModelName() string {
 	return "com.github.loft-sh.api.v5.pkg.apis.management.v1.DatabaseConnector"
 }
@@ -1393,26 +1363,6 @@ func (in SelfSubjectAccessReviewSpec) OpenAPIModelName() string {
 // OpenAPIModelName returns the OpenAPI model name for this type.
 func (in SelfSubjectAccessReviewStatus) OpenAPIModelName() string {
 	return "com.github.loft-sh.api.v5.pkg.apis.management.v1.SelfSubjectAccessReviewStatus"
-}
-
-// OpenAPIModelName returns the OpenAPI model name for this type.
-func (in SharedSecret) OpenAPIModelName() string {
-	return "com.github.loft-sh.api.v5.pkg.apis.management.v1.SharedSecret"
-}
-
-// OpenAPIModelName returns the OpenAPI model name for this type.
-func (in SharedSecretList) OpenAPIModelName() string {
-	return "com.github.loft-sh.api.v5.pkg.apis.management.v1.SharedSecretList"
-}
-
-// OpenAPIModelName returns the OpenAPI model name for this type.
-func (in SharedSecretSpec) OpenAPIModelName() string {
-	return "com.github.loft-sh.api.v5.pkg.apis.management.v1.SharedSecretSpec"
-}
-
-// OpenAPIModelName returns the OpenAPI model name for this type.
-func (in SharedSecretStatus) OpenAPIModelName() string {
-	return "com.github.loft-sh.api.v5.pkg.apis.management.v1.SharedSecretStatus"
 }
 
 // OpenAPIModelName returns the OpenAPI model name for this type.
