@@ -9,7 +9,8 @@ import Flow, { Step } from '@site/src/components/Flow';
 import InterpolatedCodeBlock from '@site/src/components/InterpolatedCodeBlock';
 import PageVariables from '@site/src/components/PageVariables';
 
-{/* TODO(DOC-1930): Pools don't adopt auto nodes instances (checked 2026-11-06 against Platform release-5.0 and vCluster v0.38). Confirm with Engineering that no in-place adoption is planned before the auto nodes deprecation lands. Details in DOC-1930. */}
+{/* Fact-checked 2026-11-13 against Platform v5.0.0-rc.5 and vCluster v0.38.0-rc.2. */}
+{/* TODO(DOC-1930): Hold out of v5.0. Rewrite for Metal3 static pools and validate the complete migration with QA before publishing. The procedure below still assumes spare capacity. Reuse of released machines needs a separate, validated sequence and downtime guidance. */}
 
 A cluster that defines its nodes under `privateNodes.autoNodes` in `vcluster.yaml` can move them to [node pools](./node-pools.mdx). The move brings up new nodes from a pool, shifts the workloads onto them, and then removes the old nodes.
 
@@ -24,17 +25,17 @@ A pool can't take over a node that auto nodes created, so the move replaces node
 
 - **Spare capacity.** The old and new nodes run side by side until you remove the old ones. The node provider needs enough free machines for the new pool's nodes.
 - **Workloads reschedule.** Pods move to the new nodes. Data on a node's local disks doesn't move with them.
-- **Different machines.** The new nodes claim free machines of a matching node type. They don't reuse the machines the old nodes run on.
+- **Different machines during the move.** This procedure creates the new pool before removing the old one, so it needs spare machines. Metal3 can reuse machines after the old instances release them. Reusing those machines requires a different sequence with a period of reduced capacity.
 
 You also need:
 
-- A cluster that runs vCluster v0.38 or later. If the cluster runs an older version, upgrade it first and keep `autoNodes` in place. The upgrade doesn't affect the existing nodes.
+- A cluster that runs vCluster v0.38 or later. If the cluster runs an older version, upgrade it first and keep `autoNodes` in place. Verify that the existing nodes are healthy after the upgrade.
 - A cluster whose existing nodes are healthy on Platform v5.0. Finish any upgrade recovery before you start the move.
 - Everything listed in [Before you begin](./node-pools.mdx#before-you-begin) for node pools, such as allowed node types and access to create NodePools in the project.
 
 ## Map auto nodes fields to pool fields
 
-Each field of an auto nodes pool in `vcluster.yaml` has a counterpart in a NodePool:
+Use these mappings to transfer auto nodes settings from `vcluster.yaml` to a NodePool:
 
 | `vcluster.yaml` field | NodePool field |
 |---|---|
@@ -55,9 +56,11 @@ Static pools have no `terminationGracePeriod` field. Leave it out when you move 
 <Step>
 Write a NodePool that matches the auto nodes pool.
 
-Give the pool a different name from the auto nodes pool. A dynamic pool that repeats a name from `vcluster.yaml` is ignored with the reason `NameConflict`.
+Give the pool a different name from the auto nodes pool. The platform rejects a new static or dynamic pool whose name repeats a pool in the cluster's `vcluster.yaml`. If a name clash occurs later, a dynamic pool is ignored with the reason `NameConflict`.
 
-When you move a dynamic pool, give the new pool a higher `weight` than the auto nodes pool. Karpenter tries pools with a higher weight first, so the pods you drain later land on nodes from the new pool rather than on new nodes from the old one.
+For a dynamic pool, a higher `weight` gives the new pool preference when Karpenter provisions nodes. Weights range from 1 to 100. You can't increase the preference this way if the old pool already has weight 100. Weight doesn't guarantee that drained pods land on the new pool or prevent the old pool from creating nodes. Verify workload placement before removing the old pool.
+
+{/* TODO(DOC-1930): Dynamic migration remains unvalidated and is outside the planned Metal3 static-pool rewrite. Weight alone is not a migration guarantee. */}
 
 For example, this auto nodes configuration:
 
@@ -107,14 +110,12 @@ Create the pool on the control plane cluster, in the project's namespace.
   language="bash"
 />
 
-Wait until the pool reports `Ready`. See [Check a pool's status](./node-pools.mdx#check-a-pools-status). A static pool is ready once all its nodes have joined. A dynamic pool is ready with no nodes, and adds them when you drain the old nodes in a later step.
+Wait until the pool reports `Ready`. See [Check a pool's status](./node-pools.mdx#check-a-pools-status). A static pool is ready once all its nodes have joined. A dynamic pool can be ready with no nodes. It adds nodes when pending pods need capacity that the pool can provide.
 </Step>
 <Step>
 Find the nodes that the auto nodes pool created.
 
 Connect to the cluster. The old nodes carry the auto nodes pool's name in the `vcluster.loft.sh/static-node-pool` label for a static pool, or in the `karpenter.sh/nodepool` label for a dynamic pool. The commands on this page use the static label. Swap in the dynamic label when you move a dynamic pool.
-
-{/* TODO(DOC-1930): Confirm on a live cluster that the static-node-pool label reaches the Node. */}
 
 <InterpolatedCodeBlock
   code={'kubectl get nodes -l vcluster.loft.sh/static-node-pool=[[VAR:AUTO_NODES_POOL:node-pool-1]]'}
@@ -131,7 +132,7 @@ Drain each old node so its pods move to the new pool's nodes.
 
 Check that the workloads run on the new nodes before you go on.
 
-Until the next step, you can still back out. Run `kubectl uncordon` on each old node, then delete the new pool.
+Until the next step, you can still back out. Run `kubectl uncordon` on each old node, then delete the new pool. Wait for the workloads to recover on the remaining nodes and verify their health.
 </Step>
 <Step>
 Remove the auto nodes pool from `vcluster.yaml`.
