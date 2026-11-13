@@ -1,0 +1,324 @@
+---
+title: Platform v5.0 release notes
+sidebar_label: Platform v5.0
+description: Customer-facing changes in vCluster Platform v5.0, including breaking changes, new features, behavior changes, fixes, and known issues.
+---
+
+This page lists the customer-facing changes in each Platform v5.0 release. For
+an overview of the release, see [What's new](../../overview/whats-new.mdx).
+
+## 5.0.0
+
+Released November 18, 2026.
+
+Upgrading to v5.0 is supported only from v4.12. Platform v5.0 is a limited
+availability release, so
+[contact vCluster Labs](https://www.vcluster.com/enterprise-demo) before you
+upgrade an existing installation. If you rely on a feature that v5.0 removes,
+stay on Platform v4.12.
+
+<!-- vale Loft.imperative-headings = NO -->
+{/* "Removed features" is the term readers scan release notes for. */}
+### Removed features
+<!-- vale Loft.imperative-headings = YES -->
+
+{/* Verified 11-13 at v5.0.0-rc.6: every removal below landed on release-5.0. */}
+
+- **Shared secrets.** Shared secrets, shown as **Global Secrets** in the UI, are
+  removed. Project secrets can no longer sync from a shared secret. A project
+  secret that synced from one keeps its last data and becomes an ordinary
+  project secret. The `imagePullSecrets` field on users and teams is removed
+  too. Use project secrets instead, optionally synced from
+  [HashiCorp Vault](../../integrations/identity-secrets/hashicorp-vault.mdx).
+  Vault is now configured per project only. A `vault` key left in the platform
+  configuration is ignored, and the platform logs a message saying so.
+
+  Upgrading leaves the `sharedsecrets.storage.loft.sh` CRD and its objects,
+  including their secret data, in the control plane cluster. Once you no longer
+  need that data, run `kubectl delete crd sharedsecrets.storage.loft.sh`. The
+  `loft-secrets-admin`, `loft-secrets-creator`, and `loft-secrets-viewer` role
+  templates also stay and grant nothing, so you can delete them. New
+  installations don't include them.
+
+  A management backup that contains shared secrets can't be restored into
+  v5.0, including one taken from v4.12 or with an older CLI. Back up with
+  `--skip sharedsecrets`, or remove the shared secrets from the backup file.
+  To keep managing shared secrets on v4.12, use a vCluster CLI compatible with
+  v4.12. See the vCluster v0.38 release notes for the CLI changes.
+- **Cost control.** Cost control and its ROI dashboard are removed. Upgrading
+  uninstalls the Prometheus and OpenCost releases the platform installed for
+  cost control and keeps their persistent volume claims. A `costControl` key
+  left in the platform configuration is ignored.
+- **Argo CD project integration.** The project-level Argo CD integration, set
+  with `spec.argoCD` on a project, is removed. The platform no longer creates an
+  Argo CD project for each platform project. Use the cluster's Argo CD
+  integration in `vcluster.yaml` instead. See
+  [Connect Argo CD](../../integrations/gitops-cicd/argocd/connect-argocd.mdx).
+  Upgrading leaves what the old integration created in place, including the
+  objects inside Argo CD, for you to delete. When you delete a project or
+  cluster, the platform removes the finalizer the old integration added. If you
+  roll back to v4.12, the projects' Argo CD settings are lost.
+- **Bundled apps.** New installations no longer get the ArgoCD, jsPolicy,
+  Ingress Nginx, Cert Manager, Prometheus Stack, and OpenTelemetry Collector
+  apps. Upgraded installations keep their copies, which no longer receive
+  updates, until you delete them. The example apps stay.
+- **Moving clusters between projects.** The `migratevirtualclusterinstance`
+  subresource on projects, deprecated in v4.11, is removed.
+- **BCM node provider.** The BCM node provider is removed, with no migration.
+  Node providers of type BCM stop working after the upgrade.
+
+### Deprecations
+
+- **Namespaces (spaces)** managed through projects are deprecated, and platform
+  management of namespaces is planned for removal in a later v5.0 patch
+  release. In v5.0.0 they keep working in projects outside tenants, and the UI
+  shows a deprecation banner on the namespace pages. Tenant projects can't
+  create or import namespaces, and namespaces can't be moved into a tenant
+  project. After removal, existing namespaces and their workloads stay on their
+  clusters, but the platform no longer manages them. Move workloads that need
+  continued platform management to clusters.
+- The [Istio integration](/docs/vcluster/next/integrations/istio) and sleep
+  mode for Istio ingress are deprecated. Nothing is removed in v5.0.
+- Metal3 `bareMetalHosts.selector` is deprecated in favor of
+  `machines.selector`. Setting both is refused.
+- The Terraform template variables `var.vcluster.requirements` and
+  `var.vcluster.nodeEnvironment` are deprecated. Use `var.vcluster.properties`
+  and `var.vcluster.networkEnvironment`.
+- The `DatabaseConnector` API is deprecated in favor of the Connector API. It
+  still lists shared-database connectors.
+
+<!-- vale Loft.imperative-headings = NO -->
+{/* "Breaking changes" is the term readers scan release notes for. */}
+### Breaking changes
+<!-- vale Loft.imperative-headings = YES -->
+
+Each item below needs action when you upgrade.
+
+- `Tenant.spec.resourceAllowances`, `spec.resourceQuotas`, and `spec.hostnames`
+  are removed with no conversion. Per-capability fields, ownership labels,
+  `nodeTypes.quota.byType`, and the tenant configuration replace them.
+- Tenant users can't import externally deployed clusters until a platform admin
+  sets `spec.externalClusters.enabled` on their Tenant. The setting is off for
+  every Tenant, including upgraded ones. Clusters already imported keep working.
+- A wildcard project member (`User/*` or `Team/*`) binds the project's scope
+  group, `loft:platform` or `loft:tenant:<tenant>`, instead of
+  `loft:authenticated` or `loft:team:*`. Existing bindings are rewritten in
+  place on the first reconcile. On a platform without tenants, `User/*` keeps
+  its effect, but `Team/*` now also reaches users who belong to no team. Roll
+  back only to a version with scope groups. No v4.12 release has them, so
+  rolling back to v4.12 returns wildcard members to their pre-v5.0 reach, and
+  tenant users regain the wildcard roles. Agents that Platform doesn't upgrade
+  refuse wildcard members on direct endpoints until upgraded. See
+  [What the upgrade changes](../../tenants/manage-tenants/move-existing-resources.mdx#what-the-upgrade-changes).
+- SSH keys require `metadata.generateName` when created. A fixed
+  `metadata.name` is refused, including in declarative manifests. After creation,
+  `spec.publicKey`, `spec.owner`, and `spec.access` are immutable. Create a new
+  key to replace them and update references to its generated name. A node claim
+  can reference only SSH keys its tenant can see.
+- The `cluster-collector` template reads credentials from the `metrics-writer`
+  Secret. Applications with only one of `otlpEndpoint` and `bearerToken` set
+  fail to render with `BuildApplicationFailed`. Existing collectors keep their
+  last configuration, but application changes stop applying. Migrate before
+  deleting or reinstalling collectors. See
+  [Upgrade collectors that use the token parameters](../../fleet-operations/observability/configure-edge-collectors.mdx#upgrade-collectors-that-use-the-token-parameters).
+- `NodeEnvironment` is replaced by `NetworkEnvironment`. The Terraform node
+  provider field `nodeEnvironmentTemplate` becomes
+  `networkEnvironmentTemplate.infrastructure`, and administrators create network
+  environments instead of the platform creating one per cluster. The old
+  template's `kubernetes` section has no replacement, and nothing converts the
+  old field.
+- NICo node types are defined by an administrator in `spec.nico.nodeTypes`.
+  `instanceTypeIds`, automatically created node types, `siteIPBlockCIDR`, and
+  the `nico.vcluster.com/org` and `nico.vcluster.com/node-provider` annotations
+  are removed.
+- The default Metal3 chart moves from 0.4.1 to 0.7.3. Ironic's database moves
+  to a MariaDB StatefulSet by default, and `mariadb.mode` must be `statefulset`
+  or `external`. Bundled Metal3 no longer uses `ironic.ipaAdvertiseIP` or a
+  LoadBalancer for IPA, and Neutron needs `neutron.networks.provisioning`.
+  Servers reach the IPA API through the DHCP proxy. See
+  [Metal3 requirements](../../vmetal/drivers/bare-metal/metal3/requirements.mdx).
+- Metal3 no longer filters hosts by inspected CPU or memory against the node
+  type's `resources`. Node types that relied on that filter can now select
+  smaller hosts. Use labels and selectors to express hardware size requirements.
+  The `resources` field still informs scheduling and cost.
+- The Platform API Go module moves from `github.com/loft-sh/api/v4` to
+  `github.com/loft-sh/api/v5`.
+- Stack templates use `parameters`. A template written for a v4.12 pre-release
+  that still uses `inputs` is refused with an unknown field error. Platform
+  v4.12.0 and later already use `parameters`.
+- Node claims can't set the properties their node provider controls. Metal3
+  claims can't set the network CIDR, IP range, or DNS server properties. NICo
+  claims can't set the OS image ID, and KubeVirt claims accept only an allowed set. The API
+  refuses such a claim, and an Auto Nodes claim fails with
+  `PropertiesNotAllowed`. A claim's `ccm-enabled` property is ignored, and the
+  node provider's setting applies.
+- The `vcluster.com/user-data-template-secret` and
+  `vcluster.com/network-data-template-secret` properties are removed. On
+  upgrade, the platform copies each Secret they name on a node provider, node
+  type, or network environment into a MachineConfigTemplate, and switches to the
+  matching `-config` property. If it can't copy a Secret, it leaves that
+  property in place, logs the problem, and retries. See
+  [Machine config templates](../../vmetal/images/machine-config-templates.mdx).
+
+### New features
+
+#### Tenants
+
+- **Tenants.** A Tenant is a customer-organization boundary above projects. A
+  platform admin grants each Tenant the node types, OS images, templates, SSH
+  keys, connectors, and control plane clusters it may use, and lends machines
+  and network environments to it. See
+  [What are tenants](../../tenants/concepts/what-are-tenants.mdx).
+- **Tenant administration.** Each Tenant gets an admin user, an admin team, and
+  a default project. Tenant admins manage their own users, teams, and projects,
+  and roles added inside a Tenant must be management role templates. Tenant
+  admins can impersonate users within their own tenant. See
+  [Create and configure a tenant](../../tenants/manage-tenants/create-and-configure-tenants.mdx).
+- **Tenant access to control plane clusters.** A tenant user reaches a control
+  plane cluster through the platform proxy only when the cluster is assigned to
+  their tenant and a cluster access admits them. See
+  [Cluster access](../../tenants/users-permissions/permissions/cluster.mdx).
+- **Per-tenant branding.** Each Tenant can have its own logo and colors in the
+  platform UI. See [Brand a tenant](../../tenants/manage-tenants/brand-a-tenant.mdx).
+- **Grants by name.** Tenants can be granted node types, OS images, control
+  plane clusters, and connectors by name with `allow.byName`, as well as by
+  label.
+- **External cluster imports per tenant.** A platform admin decides per Tenant
+  whether its users can import clusters deployed outside the platform, with
+  `spec.externalClusters.enabled`. See
+  [Allow importing externally deployed clusters](../../tenants/manage-tenants/create-and-configure-tenants.mdx#allow-importing-externally-deployed-clusters).
+- **Move v4.12 resources into tenants.** See
+  [Move existing resources into tenants](../../tenants/manage-tenants/move-existing-resources.mdx).
+
+#### Machines and bare metal
+
+- **Node pools.** A NodePool defines the nodes for a cluster with private nodes
+  in the platform instead of in `vcluster.yaml`. Cluster creation, templates,
+  and the cluster's **Node Pools** tab manage them. Node pools need the Auto
+  Nodes license feature, plus Machine Management when the node provider draws
+  from the machine inventory. Node pools need vCluster v0.38 in the cluster.
+  See [Node pools](../../vmetal/deploy/node-pools.mdx).
+- **Machine allocation policy.** Metal3 and NICo node types choose between
+  `Assigned` placement on machines reserved for a tenant and `OnDemand`
+  placement on unassigned machines only.
+  See [Machine types and node types](../../vmetal/concepts/machine-types-and-nodetypes.mdx).
+- **Machine selection by label.** Metal3 node types select Machines with
+  `machines.selector`, and BareMetalHost labels sync to Machines. See
+  [Machines](../../use-platform/machines/overview.mdx).
+- **OS image store.** Upload OS images to a store and provision machines from
+  them. See [OS images](../../vmetal/images/os-images.mdx).
+- **Redfish Explorer.** Platform admins can browse a host's Redfish resources
+  and run BMC actions from the platform UI.
+  See [Inspect the BMC](../../vmetal/drivers/bare-metal/metal3/operations.mdx#inspect-the-bmc).
+- **Power actions for bare metal machines.** Metal3 and external platform
+  machines can be started, stopped, and hard rebooted, as KubeVirt VMs already
+  could. Use **Start**, **Stop**, and **Reboot** in the UI, or set a node
+  claim's `spec.power.state` or its `machines.vcluster.com/reboot` annotation.
+  {/* Docs page tracked in DOC-1973, after the cutover. */}
+- **Network environments.** A NetworkEnvironment describes the network that
+  machines join. Administrators create them and lend them to Tenants.
+  See [Network environments](../../vmetal/concepts/network-environments.mdx).
+- **Aviz network integration.** The Metal3 provider can allocate servers to an
+  Aviz ONES tenant through a network environment. It needs the `aviz` license
+  feature, Neutron mode, and an explicit network CIDR. Network segmentation
+  depends on your ONES fabric configuration.
+  See [Metal3 network integration](../../vmetal/drivers/bare-metal/metal3/network-integration.mdx).
+- **Node claim timeout.** A node claim waiting for a machine during provisioning
+  fails after 30 minutes by default. Set
+  `machines.vcluster.com/provisioning-wait-timeout` to change it. Capacity waits
+  during scheduling retry without a time limit.
+- **Node claim diagnostics.** Node claims report why provisioning is stuck or
+  failing. See [Machine lifecycle](../../vmetal/concepts/machine-lifecycle.mdx).
+- **Host devices and GPU passthrough** for KubeVirt VMs through the vCluster
+  Device Operator. Platform v4.12 deployed operator chart 0.0.7, and v5.0
+  deploys 0.2.2. See
+  [Host devices](../../vmetal/drivers/virtual-machines/host-devices.mdx).
+
+#### Stacks
+
+- **Stacks.** Platform v5.0 completes the Stack workflows for administrators and
+  tenants, including RBAC, templates, and lifecycle. See
+  [What are stacks](../../tenants/templates/what-are-stacks.mdx).
+- **Certified stacks.** The certified bundle adds NVIDIA NVKE Management Plane.
+  The bundle comes from the `loft-sh/vcluster-stacks` repository and includes
+  NVIDIA Dynamo and Saturn Cloud Enterprise, also in v4.12.5.
+  See [Certified stacks](../../integrations/cluster-workloads/certified-stacks/index.mdx).
+
+#### Connectors and observability
+
+- **Connector API.** Connectors are now managed through a new Connector API,
+  and platform admins can grant connectors to Tenants.
+  See [Connectors](../../integrations/identity-secrets/connectors/overview.mdx).
+- **Telemetry destinations.** The observability gateway forwards telemetry to
+  additional destinations, and edge collectors can collect pod logs. See
+  [Install the observability gateway](../../fleet-operations/observability/install-observability-gateway.mdx).
+
+#### Operations
+
+- **Management backup keeps identities.** A platform restored from a
+  management backup keeps its identity. Also in v4.12.4.
+  See [Back up the platform](../../administer/backup-restore/backup-platform.mdx).
+- **Administrator recovery.** Recover access when no platform admin can sign in.
+  See [Reset the admin password](../../administer/authentication/reset-admin-password.mdx).
+  Also in v4.12.2.
+- **Argo CD cluster labels.** Clusters registered in Argo CD carry project and
+  instance labels. Add your own with `spec.argoCD.cluster.metadata` on a control
+  plane cluster, or with `integrations.argoCD.cluster.metadata` in a cluster's
+  `vcluster.yaml`. This makes ApplicationSet cluster generators usable. See
+  [Connect Argo CD](../../integrations/gitops-cicd/argocd/connect-argocd.mdx).
+  Also in v4.12.2.
+
+### Changes
+
+- Upgrading doesn't move anything into a Tenant. Resources created before v5.0
+  stay with the platform.
+- New Tenant names can't contain `--`.
+- Tenant boundaries are enforced more strictly across access rules, ownership
+  labels, connectors, stacks, and cluster scheduling. See
+  [Tenant boundary reference](../../tenants/manage-tenants/tenant-boundary-reference.mdx).
+- Metal3 and NICo placements on machines assigned to the Tenant don't count
+  toward its node type quota. KubeVirt placements count regardless of allocation
+  policy.
+- Metal3 and NICo node types default to the `Assigned` policy, and KubeVirt
+  node types default to `OnDemand`. A node type's own policy wins, then the
+  node provider's `spec.machineAllocationPolicy`.
+- Metal3 skips OS image TLS verification by default. Set
+  `ipaImages.insecure: false` to verify.
+- A Tenant's KubeVirt VMs run in a namespace named `<tenant>--<namespace>`.
+- Users who can't update node providers and node types see a reduced,
+  read-only view of them.
+- Upgrading re-applies the certified stack bundle once. Fields the bundle sets
+  on certified objects are reset.
+- Automatic snapshots retry through connection errors instead of failing.
+  Retention also deletes the archive of a pruned failed snapshot from storage.
+  See [Retries after connection errors](/docs/vcluster/next/operate/backup-restore/view-snapshots#retries-after-connection-errors).
+- Inside a Tenant, apps, stacks, and Argo CD applications can't deploy onto a
+  control plane cluster or with target `host`.
+- A cluster now fails, instead of staying pending, when its database connector
+  fails.
+- The platform refuses to start when `LICENSE_TOKEN` is set but empty, for
+  example from a Secret that isn't populated yet. The pod restarts until the
+  Secret has a value. Before, the platform fell back to activation, a cached
+  license, or `LICENSE_KEY`.
+- `helm registry login` for OCI registries now verifies TLS, unless the chart
+  sets `insecureSkipTlsVerify`. Before, the platform skipped verification on
+  login. A registry with a certificate the platform doesn't trust now fails
+  login until you add its CA or set `insecureSkipTlsVerify`.
+
+### Fixes
+
+- Deleted clusters no longer count toward per-user quotas. Also in v4.12.4.
+- Named SSO connectors honor `auth.disableUserCreation`. Also in v4.12.6.
+
+### Known issues
+
+- A node claim on a Metal3 host that Platform v4.12 provisioned can't be
+  deleted when the host matches more than one claim by name and project. The
+  claim reports `AmbiguousHost` until an admin labels the host with
+  `metal3.vcluster.com/node-claim-uid` set to the UID of the claim it runs for.
+
+- An OS image upload in the browser can't resume after the page reloads, and an
+  upload can't be canceled.
+- Deleting an OS image waits while its store is unreachable.
+- The observability gateway keeps queued telemetry in memory, so a restart
+  loses it.
