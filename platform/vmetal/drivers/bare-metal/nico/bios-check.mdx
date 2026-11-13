@@ -1,0 +1,412 @@
+---
+title: Check BIOS settings with NICo
+sidebar_label: Check BIOS settings
+sidebar_position: 2
+description: Require BIOS settings on the machines a NICo node type uses, and configure nico-bmc-proxy so vCluster Platform can read them.
+---
+
+import FeatureTable from '@site/src/components/FeatureTable';
+import Flow, {Step} from '@site/src/components/Flow';
+import InterpolatedCodeBlock from '@site/src/components/InterpolatedCodeBlock';
+import PageVariables from '@site/src/components/PageVariables';
+import NicoBiosReadPath from '@site/static/media/diagrams/nico-bios-read-path.svg';
+import NicoBiosReadPathNarrow from '@site/static/media/diagrams/nico-bios-read-path-narrow.svg';
+
+<FeatureTable names="auto-nodes-nico" />
+
+A node type can require that its machines have specific BIOS settings.
+vCluster Platform reads each machine's BIOS through NICo's `nico-bmc-proxy` and records the result on the Machine.
+It places a claim of that node type only on a machine whose settings match.
+
+The platform never holds a BMC credential.
+It sends Redfish reads to `nico-bmc-proxy` and authenticates with a client certificate.
+The proxy fetches the BMC credential from NICo and forwards the request.
+
+<figure>
+  <NicoBiosReadPath className="diagram-wide" style={{width: '100%', height: 'auto'}} role="img" aria-label="The host validation controller in vCluster Platform sends a Redfish read to nico-bmc-proxy and authenticates with a client certificate. The proxy fetches the BMC credential from the NICo API and forwards the read to the machine's BMC. The BIOS attributes come back to the controller, which records the result in the Machine's status." />
+  <NicoBiosReadPathNarrow className="diagram-narrow" style={{width: '100%', maxWidth: '440px', height: 'auto'}} role="img" aria-label="The host validation controller in vCluster Platform sends a Redfish read to nico-bmc-proxy and authenticates with a client certificate. The proxy fetches the BMC credential from the NICo API and forwards the read to the machine's BMC. The BIOS attributes come back to the controller, which records the result in the Machine's status." />
+  <figcaption>The platform reaches the BMC only through nico-bmc-proxy. The proxy holds the BMC credential, and the platform records what it reads on the Machine.</figcaption>
+</figure>
+
+This guide is for the platform administrator, and for whoever operates the NICo installation.
+It assumes the NodeProvider is already connected, as described in [NVIDIA Infra Controller](./overview.mdx).
+
+## How the check works
+
+1. You describe the settings a kind of host must have in a `HostValidationProfile`.
+2. A node type selects profiles by label.
+3. The platform reads the BIOS of every machine that a node type with profiles selects.
+   It records a result per profile and per setting under the Machine's `status.hostValidation.outOfBand`.
+4. A node type places a claim only on a machine that matched every profile it selects.
+
+A machine is read while nobody outside the platform uses it, including while it waits in a validation cluster.
+The BMC answers while the operating system runs.
+A machine assigned to a Tenant is still read.
+A machine that runs an instance, or that's being handed to one, waits until it's free.
+
+A `Matched` or `Mismatched` result stays until something asks for a new check.
+A `RebootRequired` or `ReadFailed` result is read again after five minutes.
+A machine is checked again after it's released from an instance and after it's taken back from a Tenant.
+Whoever had root on the host could have changed its BIOS settings.
+
+A node type advertises capacity only for machines that matched its profiles.
+If none match, the node type's `HasCapacity` condition is `False`, and claims for it wait.
+A claim that names the node type directly fails with `InsufficientCapacity` once its provisioning wait runs out.
+The platform never changes a BIOS setting or reboots a machine, so a machine that doesn't match stays out until someone fixes it.
+See [Fix a machine that doesn't match](#fix-a-machine-that-doesnt-match).
+
+## Prerequisites
+
+- A NICo installation that runs `nico-bmc-proxy`, reachable from the control plane cluster that runs vCluster Platform.
+- A DNS name for the proxy. Its serving certificate carries DNS names only, so the platform can't reach it by IP address.
+- Platform administrator access to the management API, to create `HostValidationProfile` resources and edit the NodeProvider.
+- Access to change the NICo Helm values and to restart the proxy.
+
+Set these values to match your installation.
+`PROVIDER`, `NODE_TYPE_NAME`, and `INSTANCE_TYPE_ID` are the values you used in [NVIDIA Infra Controller](./overview.mdx).
+
+<PageVariables
+  PROVIDER="nico"
+  NODE_TYPE_NAME="dgx-b200"
+  INSTANCE_TYPE_ID="33333333-3333-4333-8333-333333333333"
+  HARDWARE_CLASS="dgx-b200"
+  PROXY_HOST="nico-bmc-proxy.example.com"
+  PROXY_PORT="1079"
+/>
+
+## Describe the required settings
+
+A profile names the settings a kind of host must have, grouped by where they live.
+For a Redfish `Bios` group, `attribute` is the name from the BMC's attribute registry.
+
+Attribute names and values are specific to the hardware vendor and BIOS version.
+They're the keys and values under `Attributes` in the system's Redfish `Bios` resource, the same resource the platform reads.
+Read that resource with your BMC tooling to find them, or run a first check against a draft profile.
+Each setting's result records the value the BMC reports, as described in [Fix a machine that doesn't match](#fix-a-machine-that-doesnt-match).
+
+<InterpolatedCodeBlock
+  language="yaml"
+  title="host-validation-profile.yaml"
+  code={'apiVersion: management.loft.sh/v1\n' +
+    'kind: HostValidationProfile\n' +
+    'metadata:\n' +
+    '  name: [[GLOBAL:HARDWARE_CLASS]]\n' +
+    '  labels:\n' +
+    '    hardware-class: [[GLOBAL:HARDWARE_CLASS]]\n' +
+    'spec:\n' +
+    '  displayName: DGX B200\n' +
+    '  outOfBand:\n' +
+    '  - name: host-bios\n' +
+    '    target: Host\n' +
+    '    type: Redfish\n' +
+    '    redfish:\n' +
+    '      resource: Bios\n' +
+    '    settings:\n' +
+    '    - name: acs-off\n' +
+    '      attribute: IIOS1E\n' +
+    '      value: IIOS1EDisabled\n' +
+    '      purpose: Let GPUs and NICs talk directly'}
+/>
+
+<InterpolatedCodeBlock
+  code={'kubectl apply -f host-validation-profile.yaml'}
+  language="bash"
+/>
+
+The comparison is exact and case-sensitive.
+Before it compares, the platform renders a string as it is, a boolean as `true` or `false`, and a number in decimal.
+
+## Require the profile on a node type
+
+Select profiles by label on the node type in `spec.nico.nodeTypes`.
+A node type with no `hostValidationProfiles` requires nothing, and an empty selector selects every profile.
+
+<InterpolatedCodeBlock
+  language="yaml"
+  title="NodeProvider excerpt"
+  code={'spec:\n' +
+    '  nico:\n' +
+    '    nodeTypes:\n' +
+    '    - name: [[GLOBAL:NODE_TYPE_NAME]]\n' +
+    '      machines:\n' +
+    '        selector:\n' +
+    '          matchLabels:\n' +
+    '            nico.vcluster.com/instance-type-id: [[GLOBAL:INSTANCE_TYPE_ID]]\n' +
+    '      hostValidationProfiles:\n' +
+    '        selector:\n' +
+    '          matchLabels:\n' +
+    '            hardware-class: [[GLOBAL:HARDWARE_CLASS]]'}
+/>
+
+A node type requires the profiles its selector matches.
+A selector that matches no profile requires none.
+
+## Point the NodeProvider at the proxy
+
+Set `spec.nico.endpoints.bmcProxy` on the NodeProvider.
+`url` is an absolute HTTPS URL that carries the port.
+The port is `1079` unless the site changed it, or the node port if the proxy is exposed through a `NodePort` Service, as described in [Configure nico-bmc-proxy](#configure-nico-bmc-proxy).
+`caBundle` is the base64 encoding of the PEM of the CA that issued the proxy's serving certificate.
+Save that CA's PEM as `proxy-ca.pem` and encode it on one line:
+
+<InterpolatedCodeBlock
+  code={'base64 < proxy-ca.pem | tr -d \'\\n\''}
+  language="bash"
+/>
+
+Paste the output as `caBundle`:
+
+<InterpolatedCodeBlock
+  language="yaml"
+  title="NodeProvider excerpt"
+  code={'spec:\n' +
+    '  nico:\n' +
+    '    endpoints:\n' +
+    '      bmcProxy:\n' +
+    '        url: https://[[GLOBAL:PROXY_HOST]]:[[GLOBAL:PROXY_PORT]]\n' +
+    '        caBundle: [[VAR:CA_BUNDLE:LS0tLS1CRUdJTi...]]'}
+/>
+
+Once the endpoint is set, the platform publishes what the proxy has to be configured with:
+
+<InterpolatedCodeBlock
+  code={'kubectl get nodeprovider [[GLOBAL:PROVIDER]] -o jsonpath=\'{.status.nico.bmcProxy}\''}
+  language="bash"
+/>
+
+- `clientCA` is the PEM of the CA the proxy has to trust.
+- `issuerCN` is that CA's common name, `vcluster-platform`.
+- `principal` is the identity the proxy sees for this NodeProvider, `external-role/vcluster-platform-<provider>`.
+
+Save `clientCA` to a file for the next section:
+
+<InterpolatedCodeBlock
+  code={'kubectl get nodeprovider [[GLOBAL:PROVIDER]] -o jsonpath=\'{.status.nico.bmcProxy.clientCA}\' > vcluster-platform-ca.pem'}
+  language="bash"
+/>
+
+Copy `principal` rather than building it by hand.
+It's derived from the NodeProvider's name, not from its display name.
+
+## Configure nico-bmc-proxy
+
+Run these steps against the NICo installation, not against vCluster Platform.
+They change the NICo Helm values and end with a restart of the proxy.
+If the platform runs outside NICo's cluster, they also need a DNS record, a route, and a firewall rule.
+
+NICo installs the proxy as a subchart of its umbrella chart.
+Every key in these steps goes under the `nico-bmc-proxy:` block of the umbrella values file.
+A key written at the top level is ignored without an error.
+
+Starting with NICo chart v2.3.0, the subchart always runs.
+In earlier releases, `nico-bmc-proxy.enabled` defaults to `true`, so check that nobody set it to `false`.
+
+<Flow>
+<Step>
+
+**Mount the platform's certificate authority**
+
+The proxy reads the CA it trusts as an issuer from `admin_root_cafile_path`.
+The chart doesn't mount a file there, so add a Secret that holds `vcluster-platform-ca.pem` and mount it at that path.
+The default path is `/etc/forge/carbide-bmc-proxy/site/admin_root_cert_pem`.
+
+Verify that the file exists in the running container.
+The proxy skips a file it can't read without logging it.
+A file with no PEM block in it also adds no CA, without an error.
+Only a malformed PEM block fails, which stops the proxy at start.
+
+</Step>
+<Step>
+
+**Trust the issuer and grant the reads**
+
+`configFiles.nicoBmcProxyConfig` replaces the whole configuration file.
+Start from the configuration the release renders, keep every table it contains, and add the platform to it.
+The `[tls]` table is required, and the proxy doesn't start without it.
+
+Add the issuer, the principal, and an ACL for the principal:
+
+<InterpolatedCodeBlock
+  language="toml"
+  title="nico-bmc-proxy configuration excerpt"
+  code={'# append to the existing allowed_principals\n' +
+    'allowed_principals = ["...", "external-role/vcluster-platform-[[GLOBAL:PROVIDER]]"]\n' +
+    '\n' +
+    '[auth.trust]\n' +
+    '# keep the existing settings\n' +
+    'additional_issuer_cns = ["vcluster-platform"]\n' +
+    '\n' +
+    '[auth.acls]\n' +
+    '# keep the existing entries\n' +
+    '"external-role/vcluster-platform-[[GLOBAL:PROVIDER]]" = [\n' +
+    '  "GET /redfish/v1/Systems",\n' +
+    '  "GET /redfish/v1/Systems/*",\n' +
+    '  "GET /redfish/v1/Systems/*/Bios",\n' +
+    '  "GET /redfish/v1/Systems/*/Bios/*",\n' +
+    ']'}
+/>
+
+The chart sets `additional_issuer_cns` to an empty list.
+While it's empty, no client certificate becomes an external identity.
+
+The ACL uses wildcards because the platform follows the links the BMC returns.
+It reads the system collection, then each member in order until one has a `Bios` link.
+A refused read of any member fails the whole check.
+The system ID and the name of the pending settings resource vary between hardware.
+
+</Step>
+<Step>
+
+**Expose the proxy outside NICo's cluster**
+
+Skip this step if vCluster Platform runs in NICo's cluster.
+
+The proxy's Service is a ClusterIP on port 1079.
+Set `externalService.enabled` to `true`, and add the proxy's DNS name to `certificate.extraDnsNames`.
+By default, `externalService` creates a Service of type `LoadBalancer`, which exposes the proxy outside the cluster.
+If your site doesn't use load balancers, set `externalService.type` to `NodePort`.
+Kubernetes then assigns the Service a node port in place of 1079.
+The chart also sets `externalTrafficPolicy` to `Local`, so the DNS name has to resolve to a node that runs a proxy pod.
+`extraDnsNames` is used only while `certificate.dnsNames` is empty, so add the name to `dnsNames` if it's set.
+
+<InterpolatedCodeBlock
+  language="yaml"
+  title="NICo umbrella values excerpt"
+  code={'nico-bmc-proxy:\n' +
+    '  externalService:\n' +
+    '    enabled: true\n' +
+    '  certificate:\n' +
+    '    extraDnsNames:\n' +
+    '    - [[GLOBAL:PROXY_HOST]]'}
+/>
+
+With a `NodePort` Service, read the assigned port after the upgrade:
+
+<InterpolatedCodeBlock
+  code={'kubectl get service --all-namespaces --field-selector metadata.name=nico-bmc-proxy-external \\\n' +
+    '  -o jsonpath=\'{.items[0].spec.ports[?(@.name=="proxy")].nodePort}\''}
+  language="bash"
+/>
+
+Set `PROXY_PORT` at the top of the page to that port, and update `spec.nico.endpoints.bmcProxy.url` on the NodeProvider to match.
+
+The DNS record, the route, and any firewall rule are separate from the chart.
+Open the firewall for the port in `url`.
+
+</Step>
+<Step>
+
+**Restart the proxy**
+
+The proxy reloads the CA file on the first connection after five minutes.
+It reads the trust settings, the ACLs, and `allowed_principals` once at start, so restart it after you change them.
+If Stakater Reloader runs in NICo's cluster, the proxy restarts on its own when its ConfigMap changes.
+
+</Step>
+</Flow>
+
+## Verify the check
+
+Pick a machine that a node type with profiles selects, and that the platform can read now.
+The platform drops a request for a new check on a machine that no such node type selects.
+It reads a machine that no claim holds only while the machine is `Available`.
+It doesn't read a machine that a claim holds or has reserved, unless that claim is the machine's own validation claim.
+List the machines of the node type's instance type, and set `MACHINE` to one of them:
+
+<InterpolatedCodeBlock
+  code={'kubectl get machines -l nico.vcluster.com/instance-type-id=[[GLOBAL:INSTANCE_TYPE_ID]]'}
+  language="bash"
+/>
+
+<PageVariables MACHINE="nico.fm100ht0example" />
+
+A `Matched` or `Mismatched` result isn't read again on its own, so ask for a new check:
+
+<InterpolatedCodeBlock
+  code={'kubectl annotate machine [[GLOBAL:MACHINE]] machines.vcluster.com/rerun-host-validation-out-of-band='}
+  language="bash"
+/>
+
+The check runs asynchronously, so results you read right away can still be the previous ones.
+The platform removes the annotation only after it records the new results, so wait until the annotation is gone:
+
+<InterpolatedCodeBlock
+  code={'while kubectl get machine [[GLOBAL:MACHINE]] -o jsonpath=\'{.metadata.annotations}\' \\\n' +
+    '  | grep -q rerun-host-validation-out-of-band; do sleep 5; done'}
+  language="bash"
+/>
+
+If the loop doesn't end, the platform can't read the machine now, for one of the reasons above.
+
+Then read the result per profile:
+
+<InterpolatedCodeBlock
+  code={'kubectl get machine [[GLOBAL:MACHINE]] \\\n' +
+    '  -o jsonpath=\'{range .status.hostValidation.outOfBand.profiles[*]}{.name}{": "}{.result}{" "}{.message}{"\\n"}{end}\''}
+  language="bash"
+/>
+
+| Result | Meaning |
+| --- | --- |
+| `Matched` | Every setting has the required value. |
+| `Mismatched` | A setting has another value or is missing. |
+| `RebootRequired` | The required value is pending and takes effect at the next reboot. It's read again after five minutes. |
+| `ReadFailed` | The platform couldn't read the BIOS. The message says why. It's read again after five minutes. |
+| `Unsupported` | The NodeProvider isn't a NICo provider, or has no `bmcProxy` endpoint. |
+| `Reading` | A check is running. |
+
+## Fix a machine that doesn't match
+
+The platform reports a mismatch but never changes a BIOS setting or reboots a machine.
+To see each setting's required, current, and pending values, read the per-setting results:
+
+<InterpolatedCodeBlock
+  code={'kubectl get machine [[GLOBAL:MACHINE]] \\\n' +
+    '  -o jsonpath=\'{range .status.hostValidation.outOfBand.profiles[*].groups[*].settings[*]}{.name}{": "}{.result}{" expected="}{.expected}{" current="}{.current}{" staged="}{.staged}{"\\n"}{end}\''}
+  language="bash"
+/>
+
+A setting reads `Missing` when the BMC doesn't report its attribute at all.
+That usually means the profile describes another class of hardware, or the attribute name is wrong.
+
+To bring a machine into line:
+
+1. Change the setting through NICo or the hardware vendor's tooling.
+2. If the new value is only pending, reboot the machine through NICo or the BMC.
+   Until then the result is `RebootRequired`, and the platform reads it again every five minutes.
+3. Ask for a new check, as described in [Verify the check](#verify-the-check).
+
+When every profile matches, the node type counts the machine as capacity again.
+
+## Troubleshoot
+
+The Machine's `HostValidated` condition reports the worst of the profiles its node types require now.
+It also reflects the machine's in-band validation attempt, and a request for a new check that hasn't run yet.
+
+A profile's message names what went wrong.
+In the messages below, a value in angle brackets stands for one from your site, and `...` marks text left out.
+
+| The message reads | Check |
+| --- | --- |
+| `the BMC proxy did not answer for "<serial>": ...` | That the DNS name resolves, the port in `url` is 1079 or the node port, routing and firewall allow it, `caBundle` is the right CA, and then the mounted CA file. |
+| `GET <path> for "<serial>" was refused: ...` | The ACL and `allowed_principals` first. If they're right, the BMC rejected the credential the proxy holds, which is on the NICo side. |
+| `the BMC proxy knows no BMC for serial "<serial>": ...` | The Machine's `status.hardware.serial`, and NICo's inventory. |
+| `the BMC proxy reached neither the BMC of "<serial>" nor its credential: ...` | NICo's credential for the BMC, or the proxy's route to the BMC. |
+| `the BMC answered for serial "<reported>", not "<serial>": ...` | The BMC reported another serial than the one the platform routed by. |
+| `node provider "<provider>" has no way of reading the machine's BIOS` | The NodeProvider isn't a NICo provider, or `spec.nico.endpoints.bmcProxy` isn't set. |
+| `... caBundle of "<url>" holds no PEM encoded certificate` | `caBundle` isn't the base64 encoding of a PEM. |
+| `the machine has no serial number, so its BMC cannot be reached` | The machine has no `status.hardware.serial` yet. |
+
+When you apply the NodeProvider, the API server rejects a `caBundle` that holds no certificate with `caBundle must hold at least one PEM encoded certificate`.
+
+The proxy's log shows the identity it computed for the platform.
+`Request denied by BMC proxy principal allow-list` carries `present_principals`.
+If it's empty, check `additional_issuer_cns`. If it's present but not listed, check `allowed_principals`.
+
+## Limitations
+
+- Only NICo can read a machine's BIOS. A Metal3 node type that selects profiles picks no machines.
+- The client CA is derived from the platform's license key. If the key changes, reads fail.
+  They work again once you install the new `clientCA` from `status.nico.bmcProxy` on the proxy.
+- A profile that changes doesn't change a recorded result. Ask for a new check to apply it.
+- A claim pinned to a machine has no node type, so no profile applies to it.
