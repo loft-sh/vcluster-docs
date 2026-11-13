@@ -7,13 +7,11 @@ toc_min_heading_level: 2
 toc_max_heading_level: 3
 ---
 
-
 import Flow, {Step} from "@site/src/components/Flow";
 import FeatureTable from '@site/src/components/FeatureTable';
 import KubeVirtNodeProvisioningFlow from '@site/static/media/diagrams/kubevirt-node-provisioning-flow.svg';
 
 <FeatureTable names="auto-nodes-kubevirt" />
-
 
 The KubeVirt provider allows you to use [KubeVirt](https://kubevirt.io/) to automatically provision virtual machines as nodes for your clusters.
 When a vCluster requests a new node, the platform creates a KubeVirt `VirtualMachine` based on the template defined in the `NodeProvider` and the
@@ -169,6 +167,8 @@ A KubeVirt `NodeProvider` configuration consists of a reference to the control p
 
 Here is a minimal configuration for a KubeVirt provider. It defines a single node type that uses the base template without any modifications.
 
+The examples on this page boot from an OSImage named `ubuntu-container-disk`. Create it first, as shown in [Container registry image source](../../images/os-images.mdx#container-registry-image-source).
+
 ```yaml
 apiVersion: management.loft.sh/v1
 kind: NodeProvider
@@ -177,7 +177,7 @@ metadata:
 spec:
   displayName: "KubeVirt Minimal Provider"
   properties:
-    kubevirt.vcluster.com/image-url: docker://quay.io/containerdisks/ubuntu:22.04
+    vcluster.com/os-image: ubuntu-container-disk
     kubevirt.vcluster.com/root-disk-size: 20Gi
   kubeVirt:
     # clusterRef allows configuration of where KubeVirt is running and where VirtualMachines will be created.
@@ -335,7 +335,7 @@ metadata:
 spec:
   displayName: "KubeVirt Advanced Provider"
   properties:
-    kubevirt.vcluster.com/image-url: docker://quay.io/containerdisks/ubuntu:22.04
+    vcluster.com/os-image: ubuntu-container-disk
     kubevirt.vcluster.com/root-disk-size: 20Gi
   kubeVirt:
     clusterRef:
@@ -494,34 +494,22 @@ test-kubevirt-node-1-9xm54   Ready    &lt;none&gt;   27s   v1.33.4
 
 ## Configuration properties
 
-Properties are key-value pairs on the NodeProvider, NodeType, or NodeClaim that control provisioning behavior. NodeClaim properties take precedence over NodeType. NodeType properties take precedence over NodeProvider.
-
-### Inline template
-
-#### `kubevirt.vcluster.com/vm-template`
-
-**Type:** `string` (inline YAML of a `VirtualMachine` resource)
-
-Allows a NodeClaim to fully specify its `VirtualMachine` template inline, bypassing the NodeProvider's `virtualMachineTemplate` and any NodeType. When this property is set on a NodeClaim, the provider skips the default NodeType-based scheduling and uses the supplied template directly. The claim does not need a `typeRef` in this case.
-
-This is useful when a tenant wants to create a one-off VM whose shape does not match any predefined NodeType.
-
-:::note Standalone instances only
-This property is currently only compatible with standalone instances. It cannot be used with NodeClaims created by a cluster's node pool. This is not enforced. Setting it on a node-pool claim will produce undefined behavior.
-:::
+Properties are key-value pairs on the NodeProvider, NodeType, or NodeClaim that control provisioning behavior. NodeClaim properties take precedence over NodeType. NodeType properties take precedence over NodeProvider. A NodeClaim accepts only some of these properties. The management API rejects a claim that sets one the provider doesn't allow on a claim. See [When a provider disallows a claim's properties](../../concepts/machine-lifecycle.mdx#when-a-provider-disallows-a-claims-properties).
 
 ### Image configuration
 
 The image configuration properties synthesize a root-disk `DataVolumeTemplate`, volume, and disk and prepend them to the VM template. The synthesized disk is prepended to the VM's disk list, so it takes boot precedence over any other OS disks defined in the template.
+
+Set the image configuration properties on the [KubeVirt OSImage](../../images/os-images.mdx#kubevirt) that `vcluster.com/os-image` references. The provider reads them only from that OSImage, and ignores them on a node provider, node type, or network environment. A `NodeClaim` that sets them is rejected. The one exception is `kubevirt.vcluster.com/root-disk-size`, which any of those objects, including the `NodeClaim`, can set to override the OSImage's value.
 For administrator workflows, ownership, and import troubleshooting, see [Data Volumes](./data-volumes.mdx).
 
 #### `vcluster.com/os-image`
 
 **Type:** `string`
 
-<!-- vale Vale.Terms = NO -->
-References a [KubeVirt OSImage](../../images/os-images.mdx#kubevirt) resource by name. The OSImage's properties merge into the NodeClaim's properties. If the OSImage sets `kubevirt.vcluster.com/image-url` or `kubevirt.vcluster.com/image-datasource`, the NodeClaim's source-related fields (`image-url`, `image-checksum`, `image-datasource`) are discarded before the overlay to avoid mismatched sources.
-<!-- vale Vale.Terms = YES -->
+References a [KubeVirt OSImage](../../images/os-images.mdx#kubevirt) resource by name. The provider builds the root disk from the image settings on this OSImage.
+
+Without an OSImage, the VM template owns the disks. An instance whose VM has no disk other than the cloud-init disk fails with the reason `InvalidConfiguration`. A VM template that brings its own root disk works without an OSImage.
 
 #### `kubevirt.vcluster.com/image-url`
 
@@ -551,6 +539,8 @@ For a cross-namespace clone, the connected-cluster credentials the KubeVirt node
 **Required:** Yes, whenever image configuration is used.
 
 Storage request for the synthesized root-disk DataVolume. Provisioning fails if image configuration is set without a root-disk size.
+
+Set it on the OSImage. A value on the node provider, node type, network environment, or `NodeClaim` overrides the OSImage's value, because the right size depends on the workload rather than on the image.
 
 #### `kubevirt.vcluster.com/image-datavolume-template`
 
@@ -794,7 +784,7 @@ metadata:
   name: kubevirt-netris-provider
 spec:
   properties:
-    kubevirt.vcluster.com/image-url: docker://quay.io/containerdisks/ubuntu:22.04
+    vcluster.com/os-image: ubuntu-container-disk
     kubevirt.vcluster.com/root-disk-size: 20Gi
   kubeVirt:
     clusterRef:
