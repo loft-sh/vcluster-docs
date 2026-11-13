@@ -48,7 +48,9 @@ type ClusterAgentConfigCommon struct {
 	// AnalyticsSpec holds info needed for the agent to send analytics data to the analytics backend.
 	AnalyticsSpec AgentAnalyticsSpec `json:"analyticsSpec"`
 
-	// CostControl holds the settings related to the Cost Control ROI dashboard and its metrics gathering infrastructure
+	// CostControl is always disabled. Cost Control was removed, but agents from v4 treat a
+	// missing setting as enabled, so the platform sends enabled: false to make them uninstall
+	// their Cost Control releases.
 	CostControl *AgentCostControlConfig `json:"costControl,omitempty"`
 
 	// AuthenticateVersionEndpoint will force authentication for the '/version' endpoint. Will only work with vCluster v0.27 & later
@@ -108,11 +110,6 @@ type AgentAnalyticsSpec struct {
 }
 
 type AgentCostControlConfig struct {
-	// Enabled specifies whether the ROI dashboard should be available in the UI, and if the metrics infrastructure
-	// that provides dashboard data is deployed
+	// Enabled is always false.
 	Enabled *bool `json:"enabled,omitempty"`
-
-	// CostControlClusterConfig are settings for each cluster's managed components. These settings apply to all connected clusters
-	// unless overridden by modifying the Cluster's spec
-	CostControlClusterConfig `json:",inline"`
 }

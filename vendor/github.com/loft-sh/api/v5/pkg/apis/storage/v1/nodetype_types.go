@@ -76,9 +76,9 @@ type NodeTypeSpec struct {
 	DisplayName string `json:"displayName,omitempty"`
 
 	// MachineAllocationPolicy selects the machines a tenant's NodeClaims of this type may use: Assigned
-	// only those the tenant owns or was assigned exclusively, OnDemand also those no tenant owns or
-	// holds (never another tenant's or the platform's). Claims no tenant owns reach unassigned machines
-	// either way. Honored by metal3 and nico; externalPlatform node types mirror the remote's value.
+	// uses only those the tenant owns or was assigned exclusively, OnDemand uses only those no tenant
+	// owns or holds, never the tenant's own or another tenant's. Claims no tenant owns reach unassigned
+	// machines either way. Honored by metal3 and nico; externalPlatform node types mirror the remote's value.
 	// kubevirt ignores it and runs every VM on the cluster's shared nodes. Empty falls back to the
 	// provider's spec.machineAllocationPolicy, then to OnDemand for kubevirt and Assigned for the rest.
 	// +optional
@@ -93,7 +93,7 @@ const (
 	// MachineAllocationPolicyAssigned places a tenant's claims only on machines it owns or was
 	// assigned exclusively.
 	MachineAllocationPolicyAssigned MachineAllocationPolicy = "Assigned"
-	// MachineAllocationPolicyOnDemand also places them on machines no tenant owns or holds.
+	// MachineAllocationPolicyOnDemand places them only on machines no tenant owns or holds.
 	MachineAllocationPolicyOnDemand MachineAllocationPolicy = "OnDemand"
 )
 

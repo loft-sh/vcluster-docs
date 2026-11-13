@@ -2,33 +2,15 @@ package v1
 
 import (
 	agentstoragev1 "github.com/loft-sh/agentapi/v5/pkg/apis/loft/storage/v1"
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 const (
 	LoftCluster = "loft-cluster"
 
-	MetricsFederationServiceNamespaceAnnotation = "loft.sh/metrics-federation-service-namespace"
-	MetricsFederationServiceNameAnnotation      = "loft.sh/metrics-federation-service-name"
-	MetricsFederationServicePortAnnotation      = "loft.sh/metrics-federation-service-port"
-
-	PrometheusLastAppliedHashAnnotation                              = "loft.sh/prometheus-last-applied-hash"
-	PrometheusDeployed                  agentstoragev1.ConditionType = "PrometheusDeployed"
-	PrometheusAvailable                 agentstoragev1.ConditionType = "PrometheusAvailable"
-
-	GlobalPrometheusServiceAddress                                         = "loft.sh/global-prometheus-service-address"
-	GlobalPrometheusLastAppliedHashAnnotation                              = "loft.sh/global-prometheus-last-applied-hash"
-	GlobalPrometheusDeployed                  agentstoragev1.ConditionType = "GlobalPrometheusDeployed"
-	GlobalPrometheusAvailable                 agentstoragev1.ConditionType = "GlobalPrometheusAvailable"
-
 	EmbeddedPostgresAppliedHashAnnotation                              = "loft.sh/platform-db-applied-hash"
 	EmbeddedPostgresDeployed              agentstoragev1.ConditionType = "EmbeddedPostgresDeployed"
 	EmbeddedPostgresAvailable             agentstoragev1.ConditionType = "EmbeddedPostgresAvailable"
-
-	OpenCostLastAppliedHashAnnotation                              = "loft.sh/opencost-last-applied-hash"
-	OpenCostDeployed                  agentstoragev1.ConditionType = "OpenCostDeployed"
-	OpenCostAvailable                 agentstoragev1.ConditionType = "OpenCostAvailable"
 
 	BuildKitServiceAddress                                         = "loft.sh/buildkit-service-address"
 	BuildKitLastAppliedHashAnnotation                              = "loft.sh/buildkit-last-applied-hash"
@@ -117,12 +99,6 @@ type ClusterSpec struct {
 	// Access holds the access rights for users and teams
 	// +optional
 	Access []Access `json:"access,omitempty"`
-
-	// Metrics holds the cluster's metrics backend configuration
-	Metrics *Metrics `json:"metrics,omitempty"`
-
-	// OpenCost holds the cluster's OpenCost backend configuration
-	OpenCost *OpenCost `json:"opencost,omitempty"`
 
 	// ArgoCD holds the cluster's argo cd configuration
 	// +optional
@@ -232,36 +208,4 @@ type HelmChartRepository struct {
 	// verification
 	// +optional
 	Insecure bool `json:"insecure,omitempty"`
-}
-
-type Metrics struct {
-	// Replicas is the number of desired replicas.
-	Replicas *int32 `json:"replicas,omitempty"`
-
-	// Resources are compute resource required by the metrics backend
-	Resources *corev1.ResourceRequirements `json:"resources,omitempty"`
-
-	// Retention is the metrics data retention period. Default is 1y
-	Retention string `json:"retention,omitempty"`
-
-	// Storage contains settings related to the metrics backend's persistent volume configuration
-	Storage `json:"storage,omitempty"`
-}
-
-type Storage struct {
-	// StorageClass the storage class to use when provisioning the metrics backend's persistent volume
-	// If set to "-" or "" dynamic provisioning is disabled
-	// If set to undefined or null (the default), the cluster's default storage class is used for provisioning
-	StorageClass *string `json:"storageClass,omitempty"`
-
-	// Size the size of the metrics backend's persistent volume
-	Size string `json:"size,omitempty"`
-}
-
-type OpenCost struct {
-	// Replicas is the number of desired replicas.
-	Replicas *int32 `json:"replicas,omitempty"`
-
-	// Resources are compute resource required by the OpenCost backend
-	Resources *corev1.ResourceRequirements `json:"resources,omitempty"`
 }

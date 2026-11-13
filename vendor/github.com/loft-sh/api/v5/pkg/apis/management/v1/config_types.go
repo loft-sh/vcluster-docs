@@ -61,10 +61,6 @@ type ConfigStatus struct {
 	// +optional
 	UISettings *uiv1.UISettingsConfig `json:"uiSettings,omitempty"`
 
-	// VaultIntegration holds the vault integration configuration
-	// +optional
-	VaultIntegration *storagev1.VaultIntegrationSpec `json:"vault,omitempty"`
-
 	// DisableLoftConfigEndpoint will disable setting config via the UI and config.management.loft.sh endpoint
 	DisableConfigEndpoint bool `json:"disableConfigEndpoint,omitempty"`
 
@@ -74,9 +70,6 @@ type ConfigStatus struct {
 	// Cloud holds the settings to be used exclusively in vCluster Cloud based
 	// environments and deployments.
 	Cloud *Cloud `json:"cloud,omitempty"`
-
-	// CostControl holds the settings related to the Cost Control ROI dashboard and its metrics gathering infrastructure
-	CostControl *CostControl `json:"costControl,omitempty"`
 
 	// PlatformDB holds the settings related to the postgres database that platform uses to store data
 	PlatformDB *PlatformDB `json:"platformDB,omitempty"`
@@ -306,73 +299,9 @@ type MaintenanceWindow struct {
 	TimeWindow string `json:"timeWindow,omitempty"`
 }
 
-type CostControl struct {
-	// Enabled specifies whether the ROI dashboard should be available in the UI, and if the metrics infrastructure
-	// that provides dashboard data is deployed
-	Enabled *bool `json:"enabled,omitempty"`
-
-	// Global are settings for globally managed components
-	Global CostControlGlobalConfig `json:"global,omitempty"`
-
-	// Cluster are settings for each cluster's managed components. These settings apply to all connected clusters
-	// unless overridden by modifying the Cluster's spec
-	Cluster CostControlClusterConfig `json:"cluster,omitempty"`
-
-	// Settings specify price-related settings that are taken into account for the ROI dashboard calculations.
-	Settings *CostControlSettings `json:"settings,omitempty"`
-}
-
 type PlatformDB struct {
 	// StorageClass sets the storage class for the PersistentVolumeClaim used by the platform database statefulSet.
 	StorageClass string `json:"storageClass,omitempty"`
-}
-
-type CostControlGlobalConfig struct {
-	// Metrics these settings apply to metric infrastructure used to aggregate metrics across all connected clusters
-	Metrics *storagev1.Metrics `json:"metrics,omitempty"`
-}
-
-type CostControlClusterConfig struct {
-	// Metrics are settings applied to metric infrastructure in each connected cluster. These can be overridden in
-	// individual clusters by modifying the Cluster's spec
-	Metrics *storagev1.Metrics `json:"metrics,omitempty"`
-
-	// OpenCost are settings applied to OpenCost deployments in each connected cluster. These can be overridden in
-	// individual clusters by modifying the Cluster's spec
-	OpenCost *storagev1.OpenCost `json:"opencost,omitempty"`
-}
-
-type CostControlSettings struct {
-	// PriceCurrency specifies the currency.
-	PriceCurrency string `json:"priceCurrency,omitempty"`
-
-	// AvgCPUPricePerNode specifies the average CPU price per node.
-	AvgCPUPricePerNode *CostControlResourcePrice `json:"averageCPUPricePerNode,omitempty"`
-
-	// AvgRAMPricePerNode specifies the average RAM price per node.
-	AvgRAMPricePerNode *CostControlResourcePrice `json:"averageRAMPricePerNode,omitempty"`
-
-	// GPUSettings specifies GPU related settings.
-	GPUSettings *CostControlGPUSettings `json:"gpuSettings,omitempty"`
-
-	// ControlPlanePricePerCluster specifies the price of one physical cluster.
-	ControlPlanePricePerCluster *CostControlResourcePrice `json:"controlPlanePricePerCluster,omitempty"`
-}
-
-type CostControlGPUSettings struct {
-	// Enabled specifies whether GPU settings should be available in the UI.
-	Enabled bool `json:"enabled,omitempty"`
-
-	// AvgGPUPrice specifies the average GPU price.
-	AvgGPUPrice *CostControlResourcePrice `json:"averageGPUPrice,omitempty"`
-}
-
-type CostControlResourcePrice struct {
-	// Price specifies the price.
-	Price float64 `json:"price,omitempty"`
-
-	// TimePeriod specifies the time period for the price.
-	TimePeriod string `json:"timePeriod,omitempty"`
 }
 
 type ImageBuilder struct {

@@ -491,11 +491,6 @@ func (in InstanceDeployedAppStatus) OpenAPIModelName() string {
 }
 
 // OpenAPIModelName returns the OpenAPI model name for this type.
-func (in KindSecretRef) OpenAPIModelName() string {
-	return "com.github.loft-sh.api.v5.pkg.apis.storage.v1.KindSecretRef"
-}
-
-// OpenAPIModelName returns the OpenAPI model name for this type.
 func (in KubeVirtDeployment) OpenAPIModelName() string {
 	return "com.github.loft-sh.api.v5.pkg.apis.storage.v1.KubeVirtDeployment"
 }
@@ -638,11 +633,6 @@ func (in Metal3NodeTypeSpec) OpenAPIModelName() string {
 // OpenAPIModelName returns the OpenAPI model name for this type.
 func (in Metal3ProviderDeployment) OpenAPIModelName() string {
 	return "com.github.loft-sh.api.v5.pkg.apis.storage.v1.Metal3ProviderDeployment"
-}
-
-// OpenAPIModelName returns the OpenAPI model name for this type.
-func (in Metrics) OpenAPIModelName() string {
-	return "com.github.loft-sh.api.v5.pkg.apis.storage.v1.Metrics"
 }
 
 // OpenAPIModelName returns the OpenAPI model name for this type.
@@ -976,11 +966,6 @@ func (in ObjectsStatus) OpenAPIModelName() string {
 }
 
 // OpenAPIModelName returns the OpenAPI model name for this type.
-func (in OpenCost) OpenAPIModelName() string {
-	return "com.github.loft-sh.api.v5.pkg.apis.storage.v1.OpenCost"
-}
-
-// OpenAPIModelName returns the OpenAPI model name for this type.
 func (in PodSelector) OpenAPIModelName() string {
 	return "com.github.loft-sh.api.v5.pkg.apis.storage.v1.PodSelector"
 }
@@ -1088,26 +1073,6 @@ func (in SSOIdentity) OpenAPIModelName() string {
 // OpenAPIModelName returns the OpenAPI model name for this type.
 func (in SecretRef) OpenAPIModelName() string {
 	return "com.github.loft-sh.api.v5.pkg.apis.storage.v1.SecretRef"
-}
-
-// OpenAPIModelName returns the OpenAPI model name for this type.
-func (in SharedSecret) OpenAPIModelName() string {
-	return "com.github.loft-sh.api.v5.pkg.apis.storage.v1.SharedSecret"
-}
-
-// OpenAPIModelName returns the OpenAPI model name for this type.
-func (in SharedSecretList) OpenAPIModelName() string {
-	return "com.github.loft-sh.api.v5.pkg.apis.storage.v1.SharedSecretList"
-}
-
-// OpenAPIModelName returns the OpenAPI model name for this type.
-func (in SharedSecretSpec) OpenAPIModelName() string {
-	return "com.github.loft-sh.api.v5.pkg.apis.storage.v1.SharedSecretSpec"
-}
-
-// OpenAPIModelName returns the OpenAPI model name for this type.
-func (in SharedSecretStatus) OpenAPIModelName() string {
-	return "com.github.loft-sh.api.v5.pkg.apis.storage.v1.SharedSecretStatus"
 }
 
 // OpenAPIModelName returns the OpenAPI model name for this type.
@@ -1293,11 +1258,6 @@ func (in StackTemplateSpec) OpenAPIModelName() string {
 // OpenAPIModelName returns the OpenAPI model name for this type.
 func (in StackTemplateStatus) OpenAPIModelName() string {
 	return "com.github.loft-sh.api.v5.pkg.apis.storage.v1.StackTemplateStatus"
-}
-
-// OpenAPIModelName returns the OpenAPI model name for this type.
-func (in Storage) OpenAPIModelName() string {
-	return "com.github.loft-sh.api.v5.pkg.apis.storage.v1.Storage"
 }
 
 // OpenAPIModelName returns the OpenAPI model name for this type.
