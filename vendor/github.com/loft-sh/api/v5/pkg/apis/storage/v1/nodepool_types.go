@@ -23,8 +23,7 @@ const (
 
 const (
 	// NodePoolConditionTypeSupported is True when the pool may run: the license allows it, its
-	// cluster exists and, for a dynamic pool, runs a vCluster version that reads node pools
-	// from the platform.
+	// cluster exists and runs a vCluster version that takes node pools from the platform.
 	NodePoolConditionTypeSupported agentstoragev1.ConditionType = "Supported"
 	// NodePoolConditionTypeNetworkReady is True when the network environment the pool places
 	// its nodes in is available. It is absent while the pool places its nodes in none.
@@ -44,11 +43,11 @@ const (
 	NodePoolReasonVClusterNotFound = "VClusterNotFound"
 	// NodePoolReasonVClusterDeleting marks a pool whose cluster is being deleted.
 	NodePoolReasonVClusterDeleting = "VClusterDeleting"
-	// NodePoolReasonVClusterVersionUnknown marks a dynamic pool whose cluster has not reported
-	// a version yet.
+	// NodePoolReasonVClusterVersionUnknown marks a pool whose cluster has not reported a
+	// version yet.
 	NodePoolReasonVClusterVersionUnknown = "VClusterVersionUnknown"
-	// NodePoolReasonVClusterVersionUnsupported marks a dynamic pool whose cluster runs a
-	// vCluster version that does not read node pools from the platform.
+	// NodePoolReasonVClusterVersionUnsupported marks a pool whose cluster runs a vCluster
+	// version that does not take node pools from the platform.
 	NodePoolReasonVClusterVersionUnsupported = "VClusterVersionUnsupported"
 	// NodePoolReasonNodeProviderNotFound marks a pool whose node provider does not exist.
 	NodePoolReasonNodeProviderNotFound = "NodeProviderNotFound"
@@ -136,7 +135,8 @@ type NodePoolSpec struct {
 	// +optional
 	Access []Access `json:"access,omitempty"`
 
-	// VClusterRef is the name of the cluster in this namespace the pool's nodes join.
+	// VClusterRef is the name of the cluster in this namespace the pool's nodes join. The
+	// cluster has to run a vCluster version that takes node pools from the platform.
 	// It cannot be changed.
 	VClusterRef string `json:"vClusterRef"`
 
@@ -147,8 +147,7 @@ type NodePoolSpec struct {
 
 	// Dynamic hands the pool to Karpenter inside the cluster, which creates nodes for the pods
 	// that need them, removes the ones it can consolidate and replaces drifted ones within the
-	// disruption budgets. The cluster has to run a vCluster version that reads node pools from
-	// the platform. Mutually exclusive with Static.
+	// disruption budgets. Mutually exclusive with Static.
 	// +optional
 	Dynamic *NodePoolDynamic `json:"dynamic,omitempty"`
 

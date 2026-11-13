@@ -10,13 +10,18 @@ import NodeClaimsDiagram from '@site/static/media/diagrams/node-claims-diagram.s
 Node providers let you configure sources for private nodes for clusters automatically. Platform supports the following node providers:
 * [Terraform](../drivers/virtual-machines/terraform.mdx) (powered by [OpenTofu](https://opentofu.org) under the hood)
 * [KubeVirt](../drivers/virtual-machines/kubevirt.mdx) <!-- vale Vale.Terms = NO --> for VM-backed private nodes. To inspect and operate KubeVirt VMs directly, see [Virtual Machines](../drivers/virtual-machines/overview.mdx).
-* [Nvidia Base Command Manager](../drivers/bare-metal/bcm.mdx) <!-- vale Vale.Terms = NO --> (BCM) for existing BCM-managed clusters.
 * [Metal3](../drivers/bare-metal/metal3/overview.mdx) for bare metal provisioning using Metal3 and Ironic.
 * [External platform](../drivers/bare-metal/external-platform.mdx) for private nodes from a Metal3 provider on another vCluster Platform.
-* [NVIDIA Infra Controller](../drivers/bare-metal/nico.mdx) (NICo) for bare metal provisioning using NVIDIA's infrastructure management platform.
+* [NVIDIA Infra Controller](../drivers/bare-metal/nico/overview.mdx) (NICo) for bare metal provisioning using NVIDIA's infrastructure management platform.
 * Cluster API, for infrastructure provisioned through a Cluster API provider's own contract. Available as a driver mechanism rather than a specific provider.
 
 These node providers implement the common vMetal `NodeClaim` API and lifecycle. Clusters request capacity through the same model without depending on the underlying infrastructure API. See [vMetal overview](../overview.mdx) for how they fit together.
+
+:::note Node types inside a tenant
+A [tenant](../../tenants/concepts/what-are-tenants.mdx) is granted node types, not providers.
+Granting one makes the provider it belongs to reachable as well, since the grant would be
+unusable otherwise. That shows up as a derived grant in the tenant's status boundary.
+:::
 
 Each node provider defines provider-specific configuration and node types that clusters select from.
 When a cluster requests a new node, it creates a node claim, telling the platform to provision a node with the given requirements. The platform then matches these requirements to the cheapest available node type and creates a node from that type.
@@ -148,11 +153,11 @@ The platform automatically adds these properties:
 * `node.kubernetes.io/instance-type`: The official Kubernetes label, carrying the fully qualified node type name. Unlike `vcluster.com/node-type`, it only ever holds that single value, because Karpenter rejects a list here.
 * `kubernetes.io/os`: Always `linux`.
 * `topology.kubernetes.io/zone`: Maps to the `spec.zone` field of the node type. Defaults to `global` if unspecified.
-* `karpenter.sh/capacity-type`: Always `on-demand`. Capacity type distinctions are not currently supported.
+* `karpenter.sh/capacity-type`: `on-demand` unless the node type sets it in its properties.
 
 ### Resources
 
-The `resources` field is required on each node type and specifies the computing resources nodes of that type provide. Certain node providers (such as BCM or KubeVirt) auto-discover resources, while others require you to specify at least `cpu` and `memory` for each node type.
+The `resources` field is required on each node type and specifies the computing resources nodes of that type provide. Certain node providers, such as KubeVirt, auto-discover resources, while others require you to specify at least `cpu` and `memory` for each node type.
 Resources are specified according to the [Kubernetes resource units](https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/#resource-units-in-kubernetes).
 
 You can also specify custom resources such as `nvidia.com/gpu`, used for scheduling inside the cluster. The platform does not schedule a node claim to a node type with custom resources unless those resources are explicitly requested. A cluster that does not request a GPU is never assigned a GPU node type, even if it is the only available type.
@@ -175,8 +180,7 @@ Capacity is the number of available nodes for a given node type. The appropriate
 Depending on the provider, capacity is set manually or discovered automatically:
 * *Terraform*: set using `maxCapacity`, otherwise unlimited
 * *KubeVirt*: set using `maxCapacity`, otherwise unlimited
-* *BCM*: is automatically discovered
-* *Metal3*: determined by available BareMetalHosts matching the node type's label selector
+* *Metal3*: determined by the available servers matching the node type's `machines.selector` and resources
 * *External platform*: the remote node type's free capacity. For `Assigned` types with finite capacity, this is capped at the free Machines the access key can read across the remote provider. `OnDemand` and unlimited types aren't capped. See [Node types and capacity](../drivers/bare-metal/external-platform.mdx#node-types-and-capacity).
 * *NICo*: counted from the provider's Machines that match the node type's machine label selector and are available or already claimed by that node type
 
@@ -185,6 +189,63 @@ If specified, the platform tracks how many nodes of this type have been created 
 ### Property merging
 
 Provisioning properties, such as OS image, SSH keys, and network configuration, can be set at the node provider level, the node type level, or the individual node claim level. When the same property is set at more than one level, the most specific level wins: node claim properties override node type properties, which override node provider properties.
+
+### Machine allocation
+
+For providers that draw from a machine inventory, a node type's machine allocation policy decides which machines a tenant's node claims can use. Metal3 and NICo place servers by it. KubeVirt ignores it and runs every VM on the KubeVirt cluster's own nodes.
+
+An operator assigns a machine to a Tenant by setting the `tenant.vcluster.com/exclusive-to` label on the Machine, or with the **Assign to tenant** action on the admin **Machines** page. A Machine can also belong to a tenant through the `tenant.vcluster.com/owner` label. A machine is unassigned only when neither label is present.
+
+| Policy | Metal3 UI option | A tenant's node claims use |
+|---|---|---|
+| `Assigned` | **Reserved hosts only** | Only machines owned by or exclusively assigned to the tenant. A claim waits when none of them is free. |
+| `OnDemand` | **Reserved, then unassigned** | Machines owned by or exclusively assigned to the tenant first, then unassigned machines. Never another tenant's machine. |
+
+A node claim made outside any tenant, such as one by a platform administrator, draws from unassigned machines under either policy.
+
+Set the policy on the node type with `machineAllocationPolicy`, or on the node provider with `spec.machineAllocationPolicy` as the default for node types that leave theirs empty. When neither is set, the node type uses `Assigned`.
+
+```yaml
+apiVersion: management.loft.sh/v1
+kind: NodeProvider
+metadata:
+  name: metal3-provider
+spec:
+  # Default for this provider's node types.
+  machineAllocationPolicy: Assigned
+  metal3:
+    nodeTypes:
+      - name: compute-node
+        # This node type also draws from unassigned servers.
+        machineAllocationPolicy: OnDemand
+        machines:
+          selector:
+            matchLabels:
+              role: compute
+```
+
+Under `Assigned`, free unassigned machines are withheld from tenants. A tenant's claim waits even when an unassigned server of the right type is idle. Switch the node type to `OnDemand` to let it take one.
+
+### What users without edit access see
+
+A user who can't update a node provider or node type sees a restricted copy of it, without its infrastructure configuration. They see the provider's name and the node type's spec, phase, cost, and capacity, but not labels, deploy settings, or the Metal3 `clusterRef`. When no provider the user can read exposes `clusterRef`, the platform UI hides **Add Server**.
+
+Users in a tenant see this restricted copy of any provider or node type their tenant doesn't own. If they can't tell which node type to use, or a node type needs changing, an operator with edit access has to identify or edit it.
+
+### Change or delete a node type in use
+
+{/* Deferred link (DOC-1941): link to
+    ../../tenants/troubleshoot/tenants.mdx#a-node-type-cant-be-hidden-or-deleted-while-node-claims-use-it
+    once #2818 merges to next. */}
+
+The platform refuses a change that would take a node type away from node claims that still use it. Each refusal names those node claims. The following changes are refused while node claims use the node type:
+
+- Deleting the node type.
+- Removing the node type from its node provider's `nodeTypes`.
+- Relabeling the node type, directly or through its node provider, so that a tenant using it is no longer granted it.
+- Editing a tenant's `spec.nodeTypes` so it no longer grants the node type to that tenant.
+
+Delete the named node claims first. Deleting or removing the node type goes through once their deletion has started. A change that hides the node type waits until they're fully gone.
 
 ## Node claims
 

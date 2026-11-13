@@ -896,26 +896,6 @@ func (in NodeProvider) OpenAPIModelName() string {
 }
 
 // OpenAPIModelName returns the OpenAPI model name for this type.
-func (in NodeProviderBCMGetResourcesResult) OpenAPIModelName() string {
-	return "com.github.loft-sh.api.v5.pkg.apis.management.v1.NodeProviderBCMGetResourcesResult"
-}
-
-// OpenAPIModelName returns the OpenAPI model name for this type.
-func (in NodeProviderBCMNodeGroup) OpenAPIModelName() string {
-	return "com.github.loft-sh.api.v5.pkg.apis.management.v1.NodeProviderBCMNodeGroup"
-}
-
-// OpenAPIModelName returns the OpenAPI model name for this type.
-func (in NodeProviderBCMNodeWithResources) OpenAPIModelName() string {
-	return "com.github.loft-sh.api.v5.pkg.apis.management.v1.NodeProviderBCMNodeWithResources"
-}
-
-// OpenAPIModelName returns the OpenAPI model name for this type.
-func (in NodeProviderBCMTestConnectionResult) OpenAPIModelName() string {
-	return "com.github.loft-sh.api.v5.pkg.apis.management.v1.NodeProviderBCMTestConnectionResult"
-}
-
-// OpenAPIModelName returns the OpenAPI model name for this type.
 func (in NodeProviderCalculateCostResult) OpenAPIModelName() string {
 	return "com.github.loft-sh.api.v5.pkg.apis.management.v1.NodeProviderCalculateCostResult"
 }
@@ -1208,21 +1188,6 @@ func (in ProjectMigrateSpaceInstanceList) OpenAPIModelName() string {
 // OpenAPIModelName returns the OpenAPI model name for this type.
 func (in ProjectMigrateSpaceInstanceSource) OpenAPIModelName() string {
 	return "com.github.loft-sh.api.v5.pkg.apis.management.v1.ProjectMigrateSpaceInstanceSource"
-}
-
-// OpenAPIModelName returns the OpenAPI model name for this type.
-func (in ProjectMigrateVirtualClusterInstance) OpenAPIModelName() string {
-	return "com.github.loft-sh.api.v5.pkg.apis.management.v1.ProjectMigrateVirtualClusterInstance"
-}
-
-// OpenAPIModelName returns the OpenAPI model name for this type.
-func (in ProjectMigrateVirtualClusterInstanceList) OpenAPIModelName() string {
-	return "com.github.loft-sh.api.v5.pkg.apis.management.v1.ProjectMigrateVirtualClusterInstanceList"
-}
-
-// OpenAPIModelName returns the OpenAPI model name for this type.
-func (in ProjectMigrateVirtualClusterInstanceSource) OpenAPIModelName() string {
-	return "com.github.loft-sh.api.v5.pkg.apis.management.v1.ProjectMigrateVirtualClusterInstanceSource"
 }
 
 // OpenAPIModelName returns the OpenAPI model name for this type.

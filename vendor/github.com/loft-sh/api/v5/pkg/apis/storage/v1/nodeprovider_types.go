@@ -7,7 +7,6 @@ import (
 )
 
 const (
-	NodeProviderTypeBCM              string = "bcm"
 	NodeProviderTypeKubeVirt         string = "kubeVirt"
 	NodeProviderTypeTerraform        string = "terraform"
 	NodeProviderTypeClusterAPI       string = "clusterAPI"
@@ -51,10 +50,6 @@ const (
 	// NodeTypeMaxCapacityAnnotation is the annotation used to store the maximum capacity of a NodeType
 	NodeTypeMaxCapacityAnnotation = "autoscaling.loft.sh/max-capacity"
 
-	// BCM specific annotations
-	NodeTypeNodesAnnotation      = "bcm.loft.sh/nodes"
-	NodeTypeNodeGroupsAnnotation = "bcm.loft.sh/node-groups"
-
 	// KubeVirt specific annotations
 	NodeTypeVMTemplateAnnotation = "kubevirt.vcluster.com/vm-template"
 
@@ -90,15 +85,11 @@ func (a *NodeProvider) SetConditions(conditions agentstoragev1.Conditions) {
 }
 
 // NodeProviderSpec defines the desired state of NodeProvider.
-// Only one of the provider types (Pods, BCM, Kubevirt) should be specified at a time.
+// Exactly one provider type must be set.
 type NodeProviderSpec struct {
 	// Properties are global properties that are applied to all node claims and environments managed by this provider.
 	// +optional
 	Properties map[string]string `json:"properties,omitempty"`
-
-	// BCM configures a node provider for BCM Bare Metal Cloud environments.
-	// +optional
-	BCM *NodeProviderBCM `json:"bcm,omitempty"`
 
 	// Kubevirt configures a node provider using KubeVirt, enabling virtual machines
 	// to be provisioned as nodes within a vCluster.
@@ -147,18 +138,6 @@ type NodeProviderClusterAPI struct {
 
 	// NodeTypes define NodeTypes that should be automatically created for this provider.
 	NodeTypes []ClusterAPINodeTypeSpec `json:"nodeTypes,omitempty"`
-}
-
-// NodeProviderBCMSpec defines the configuration for a BCM node provider.
-type NodeProviderBCM struct {
-	// SecretRef is a reference to secret with keys for BCM auth.
-	SecretRef *NamespacedRef `json:"secretRef"`
-
-	// Endpoint is an address for head node.
-	Endpoint string `json:"endpoint"`
-
-	// NodeTypes define NodeTypes that should be automatically created for this provider.
-	NodeTypes []BCMNodeTypeSpec `json:"nodeTypes,omitempty"`
 }
 
 // NodeProviderNICo configures a node provider backed by the NVIDIA Infra
@@ -338,7 +317,7 @@ type TerraformTemplateSourceGit struct {
 	// Credentials is the reference to a secret containing the username and password for the git repository.
 	Credentials *SecretRef `json:"credentials,omitempty"`
 
-	// FetchInterval is the interval to use for refetching the git repository. Defaults to 5m. Refetching only checks for remote changes but does not do a complete repull.
+	// FetchInterval is the interval to use for refetching the git repository. Defaults to 1m. Refetching only checks for remote changes but does not do a complete repull.
 	FetchInterval string `json:"fetchInterval,omitempty"`
 
 	// ExtraEnv is the extra environment variables to use for the clone
@@ -353,16 +332,6 @@ type TerraformNodeTypeSpec struct {
 
 	// MaxCapacity is the maximum number of nodes that can be created for this NodeType.
 	MaxCapacity int `json:"maxCapacity,omitempty"`
-}
-
-type BCMNodeTypeSpec struct {
-	NamedNodeTypeSpec `json:",inline"`
-
-	// Nodes specifies nodes.
-	Nodes []string `json:"nodes,omitempty"`
-
-	// NodeGroups is the name of the node groups to use for this provider.
-	NodeGroups []string `json:"nodeGroups,omitempty"`
 }
 
 type NamespacedRef struct {
@@ -606,10 +575,19 @@ type NodeProviderMetal3 struct {
 	// with different tags, or from different NetBox instances.
 	// +optional
 	NetBox *NodeProviderMetal3NetBox `json:"netBox,omitempty"`
+
+	// Aviz attaches BareMetalHosts to an Aviz fabric tenant on provisioning.
+	// +optional
+	Aviz *NodeProviderMetal3Aviz `json:"aviz,omitempty"`
 }
 
 type NodeProviderMetal3Netris struct {
 	// SecretRef references a Secret with keys url, username and password for the Netris API.
+	SecretRef *NamespacedRef `json:"secretRef"`
+}
+
+type NodeProviderMetal3Aviz struct {
+	// SecretRef references a Secret with keys url, username and password for the Aviz API.
 	SecretRef *NamespacedRef `json:"secretRef"`
 }
 

@@ -1,0 +1,186 @@
+---
+title: Manage connected NVIDIA NVKE clusters
+sidebar_label: Connect NVKE clusters
+sidebar_position: 20
+description: Connect an NVKE-created Kubernetes cluster to Platform, deploy applications, and configure metrics.
+---
+
+import Flow, { Step } from '@site/src/components/Flow';
+import InterpolatedCodeBlock from '@site/src/components/InterpolatedCodeBlock';
+
+Connect an existing [NVIDIA Kubernetes Engine (NVKE)](https://github.com/dsx-ai-factory/nvke) workload cluster to vCluster Platform
+so you can view the cluster and deploy Apps, Stacks, and telemetry collectors into it.
+This workflow is separate from [installing an NVKE management plane](./certified-stacks/nvidia-nvke.mdx).
+
+## Before you begin
+
+- Platform v5.0+ and a v0.38+ `vcluster` CLI.
+- Provision a workload cluster through NVKE, and confirm its nodes are ready using its kubeconfig.
+- Have administrator access to that Kubernetes cluster and permission to connect clusters to Platform.
+- Check [agent networking and connectivity](../../administer/control-plane-clusters/agent-settings/overview.mdx) for the environment.
+
+Follow the upstream [NVKE installation and evaluation guides](https://github.com/dsx-ai-factory/nvke#getting-started)
+to provision the cluster. The local simulator can demonstrate connection and application delivery without proving GPU behavior or bare metal provisioning.
+
+NVKE retains ownership of cluster creation, node pools, upgrades, and deletion.
+This guide doesn't create a cluster with vCluster or replace the NVKE provisioning path.
+Platform represents the connected Kubernetes cluster as a control plane cluster, even when you only use it as an application destination.
+You don't need to run additional cluster control planes on the NVKE-created cluster's GPU nodes for this workflow.
+
+Direct access to a connected control plane cluster grants broad permissions.
+This guide uses platform administrator access. It doesn't cover restricted project-user or tenant access to the connected cluster.
+
+## Connect the workload cluster
+
+The CLI installs the Platform agent into the Kubernetes context you select.
+Check the context before running the connection command so the agent lands in the NVKE-created cluster.
+
+<Flow>
+<Step>
+Log in to the Platform instance used for the evaluation.
+
+<InterpolatedCodeBlock language="bash" code={'vcluster platform login [[VAR:PLATFORM_URL:https://platform.example.com]]'} />
+
+Complete the login method configured for that instance.
+</Step>
+<Step>
+Check the destination cluster's identity and node readiness.
+
+<InterpolatedCodeBlock language="bash" code={'kubectl --context [[VAR:NVKE_CONTEXT:nvke-eu]] cluster-info\n' +
+  'kubectl --context [[VAR:NVKE_CONTEXT:nvke-eu]] get nodes'} />
+
+Expect the intended NVKE API endpoint and ready nodes. Resolve node or networking failures through NVKE before connecting.
+</Step>
+<Step>
+Connect that cluster with a unique Platform name.
+
+<InterpolatedCodeBlock language="bash" code={'vcluster platform add cluster [[VAR:CONNECTED_NAME:nvke-eu]] --display-name "[[VAR:DISPLAY_NAME:NVKE Europe]]" --context [[VAR:NVKE_CONTEXT:nvke-eu]]'} />
+
+The command installs the Platform agent. Repeat with distinct names and contexts to connect more clusters.
+</Step>
+<Step>
+Check the connected-cluster list.
+
+```bash
+vcluster platform list clusters
+```
+
+Confirm that the name you supplied appears. Open its detail view in the platform UI and check the agent connection status.
+</Step>
+</Flow>
+
+For alternative connection methods and agent settings, see
+[Connect a cluster](../../administer/control-plane-clusters/connect-cluster.mdx).
+Use this connected-cluster path rather than a vCluster Standalone join command, which expects an existing standalone installation.
+
+## Deploy a Stack to the connected cluster
+
+Choose a StackTemplate already available in your evaluation environment.
+For the first check, use an application whose requirements the NVKE cluster already satisfies.
+A successful non-GPU application deployment is a useful first result before testing GPU workloads.
+
+<Flow>
+<Step>
+Connect to the Platform management API.
+
+```bash
+vcluster platform connect management
+```
+
+Create the StackInstance in a project namespace where you have permission to deploy to the connected cluster.
+</Step>
+<Step>
+Save the following manifest as `nvke-workload.yaml` after selecting your template, owner, and connected-cluster name.
+Add the parameters required by that StackTemplate.
+
+<InterpolatedCodeBlock
+  language="yaml"
+  title="nvke-workload.yaml"
+  code={'apiVersion: management.loft.sh/v1\n' +
+    'kind: StackInstance\n' +
+    'metadata:\n' +
+    '  name: nvke-workload\n' +
+    'spec:\n' +
+    '  displayName: NVKE application evaluation\n' +
+    '  owner:\n' +
+    '    user: [[VAR:OWNER:admin]]\n' +
+    '  destination:\n' +
+    '    # Use the Platform name, not the Kubernetes context name.\n' +
+    '    cluster:\n' +
+    '      name: [[VAR:CONNECTED_NAME:nvke-eu]]\n' +
+    '  templateRef:\n' +
+    '    name: [[VAR:STACK_TEMPLATE:REPLACE_WITH_STACK_TEMPLATE]]\n' +
+    '  # Supply the parameters required by the selected StackTemplate.\n' +
+    '  parameters: {}\n' +
+    '  prunePolicy: Retain'}
+/>
+</Step>
+<Step>
+Apply the StackInstance and inspect its phase and task messages.
+
+<InterpolatedCodeBlock language="bash" code={'kubectl apply -n [[VAR:PROJECT_NAMESPACE:p-default]] -f nvke-workload.yaml\n' +
+  'kubectl get stackinstance nvke-workload -n [[VAR:PROJECT_NAMESPACE:p-default]] -o yaml'} />
+
+When every task reports `Healthy`, the StackInstance reports `status.phase: Healthy`.
+If a task fails, the StackInstance reports `Degraded`. Inspect `status.tasks` for the failed task and its message.
+Verify the application in the NVKE cluster itself before calling the deployment successful.
+</Step>
+</Flow>
+
+For catalog installation through the UI and task permissions, see [Use a Stack](../../use-platform/apps/use-stacks.mdx).
+
+NVIDIA Dynamo is a possible next workload when the cluster has suitable GPUs, a device plugin, model access, and storage.
+The Dynamo Stack installs the serving runtime. You must also deploy a model as described in the [Dynamo guide](./certified-stacks/nvidia-dynamo.mdx).
+Then send an inference request to confirm that the model responds.
+
+## Add metrics deliberately
+
+Connection and telemetry installation are separate steps.
+Check that your NVKE-created cluster includes the Metrics API needed for basic CPU and memory usage.
+Run these checks in the workload cluster:
+
+<InterpolatedCodeBlock language="bash" code={'kubectl --context [[VAR:NVKE_CONTEXT:nvke-eu]] get apiservice v1beta1.metrics.k8s.io\n' +
+  'kubectl --context [[VAR:NVKE_CONTEXT:nvke-eu]] top nodes'} />
+
+If the API is absent or unavailable, configure [Kubernetes Metrics Server](https://github.com/kubernetes-sigs/metrics-server)
+using a version compatible with the selected Kubernetes release. Resolve its API and kubelet connectivity before checking the platform UI.
+Don't disable kubelet certificate verification to work around a Metrics API failure.
+
+For centralized metrics, configure the [Fleet Observability pipeline](../../fleet-operations/observability/overview.mdx).
+Control plane cluster collection needs collectors and a reachable backend, just like other destinations.
+For GPU telemetry, follow the [GPU observability deployment order](../../fleet-operations/observability/gpu-observability-templates.mdx).
+
+NVKE's NKTP installation and NVIDIA Fleet Intelligence Agent don't automatically configure Platform's complete collection and query path.
+Record which collector, gateway, and backend produced each dashboard result.
+
+## Verify the integration
+
+Confirm each result:
+
+| Check | What to confirm |
+| --- | --- |
+| Connection | Platform version, CLI version, NVKE version, connected-cluster name, and healthy agent status. |
+| Application delivery | StackTemplate and parameters, StackInstance task status, and workload status in the NVKE cluster. |
+| Basic metrics | Available Metrics API and successful node CPU/memory query. |
+| Fleet telemetry | Collector and backend configuration, query result, and cluster labels. |
+| GPU workload, if tested | Actual GPU capacity, device plugin or operator, workload request, and successful inference or compute result. |
+
+Keep simulator and real-hardware results separate.
+
+## Clean up
+
+Remove evaluation workloads before disconnecting the cluster. Review each application's data-retention behavior first.
+Deleting a StackInstance removes its managed applications even when `prunePolicy` is `Retain`.
+That setting controls tasks removed from a template, not retention of the entire Stack on deletion.
+
+<InterpolatedCodeBlock language="bash" code={'kubectl delete stackinstance nvke-workload -n [[VAR:PROJECT_NAMESPACE:p-default]]'} />
+
+Check for application resources, storage, and collectors left in the NVKE cluster.
+Review the [connected-cluster architecture](../../administer/control-plane-clusters/what-are-clusters.mdx) before changing agent or registration resources.
+Delete the workload cluster through NVKE after cleanup if it was created only for this evaluation.
+
+## Next steps
+
+- [NVIDIA DSX OS integration overview](../nvidia-dsx-os.mdx).
+- [Observe GPU nodes with NVSentinel](../../fleet-operations/observability/nvsentinel-gpu-observability.mdx).
+- [Use a Stack](../../use-platform/apps/use-stacks.mdx).

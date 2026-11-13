@@ -436,28 +436,8 @@ spec:
 		SubResourceCreateDescription: "Move a space into another project using this API.",
 	})
 
-	// ProjectMigrateSpaceInstnace
-	util.GenerateObjectOverview(&util.ObjectInformation{
-		Title:       "Move vCluster To Other Project",
-		Description: "This API can be used to move a virtual cluster from one project to another.",
-		File:        path.Join(util.BaseResourcesPath, "project/migratevirtualclusterinstance.mdx"),
-		Name:        "Move Virtual Cluster To Other Project",
-		Resource:    "projects",
-		SubResource: "migratevirtualclusterinstance",
-		Object: &managementv1.ProjectMigrateVirtualClusterInstance{
-			TypeMeta: metav1.TypeMeta{
-				Kind:       "ProjectMigrateVirtualClusterInstance",
-				APIVersion: managementv1.SchemeGroupVersion.String(),
-			},
-			ObjectMeta: metav1.ObjectMeta{},
-			SourceVirtualClusterInstance: managementv1.ProjectMigrateVirtualClusterInstanceSource{
-				Name:      "my-virtual-cluster",
-				Namespace: "loft-p-my-other-project",
-			},
-		},
-		SubResourceCreate:            true,
-		SubResourceCreateDescription: "Move a virtual cluster into another project using this API.",
-	})
+	// ProjectMigrateVirtualClusterInstance was removed in Platform 5.0.
+	// Its 4.x API reference remains in the versioned documentation.
 
 	// ProjectMembers
 	util.GenerateObjectOverview(&util.ObjectInformation{
@@ -1669,6 +1649,48 @@ users:
 		},
 		Project:  true,
 		Retrieve: true,
+		Delete:   true,
+	})
+
+	// NodePool - authored by platform, tenant, or project admins to keep nodes for one
+	// private nodes cluster, so all four operations are served.
+	util.GenerateObjectOverview(&util.ObjectInformation{
+		Title:       "Node Pool",
+		Name:        "NodePool",
+		Resource:    "nodepools",
+		Description: "A NodePool keeps a set of nodes for one cluster that uses private nodes, all built from one template. A static pool keeps a fixed number of nodes that the platform creates. A dynamic pool hands scaling to Karpenter inside the cluster.",
+		File:        path.Join(util.BaseResourcesPath, "nodepool.mdx"),
+		Object: &managementv1.NodePool{
+			TypeMeta: metav1.TypeMeta{
+				Kind:       "NodePool",
+				APIVersion: managementv1.SchemeGroupVersion.String(),
+			},
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "compute",
+				Namespace: "p-my-project",
+			},
+			Spec: managementv1.NodePoolSpec{
+				NodePoolSpec: storagev1.NodePoolSpec{
+					VClusterRef: "my-cluster",
+					Static:      &storagev1.NodePoolStatic{Replicas: 3},
+					Template: storagev1.NodePoolTemplate{
+						ProviderRef: "my-provider",
+						Requirements: []corev1.NodeSelectorRequirement{{
+							Key:      "vcluster.com/node-type",
+							Operator: corev1.NodeSelectorOpIn,
+							Values:   []string{"my-provider.standard"},
+						}},
+						NodeLabels: map[string]string{
+							"workload.example.com/tier": "compute",
+						},
+					},
+				},
+			},
+		},
+		Project:  true,
+		Create:   true,
+		Retrieve: true,
+		Update:   true,
 		Delete:   true,
 	})
 

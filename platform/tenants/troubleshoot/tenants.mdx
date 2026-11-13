@@ -1,0 +1,646 @@
+---
+title: Troubleshoot tenants
+sidebar_label: Tenants
+sidebar_class_name: free
+description: Diagnose why a tenant can't see granted inventory, why a tenant write is refused, why NICo onboarding stalls, and why a tenant can't be created.
+---
+
+import NavStep from "@site/src/components/NavStep";
+import Label from "@site/src/components/Label";
+import Button from "@site/src/components/Button";
+
+Effective access is the intersection of three layers, so start by working out
+which one is denying.
+
+| Layer | Symptom | Where to go |
+|-------|---------|-------------|
+| Tenant boundary | A whole kind is missing, or specific instances are | This page |
+| Project boundary | The tenant can reach it but a project member can't | [allowed node types](../projects/allowed/node-types.mdx), [clusters](../projects/allowed/clusters.mdx), [templates](../projects/allowed/templates.mdx) |
+| Quotas and admission | The object is visible but creating it is refused | [Troubleshoot quota denials](./quota-admission.mdx) |
+
+The rest of this page covers the tenant boundary. It assumes platform admin
+access, since a tenant can't read tenants.
+
+Start with the resolved boundary report. The tenant controller writes it to the
+tenant's status, one entry per resource.
+
+```bash
+kubectl get tenant acme -o jsonpath='{.status.boundary}' | jq
+```
+
+Each entry reports whether the tenant can create its own instances, what happens
+to the platform's instances that no selector matches, and which selectors are in
+effect. Selector changes don't wait for this report to update. The derived node
+provider grant is the exception and changes when the tenant controller
+reconciles it. See the [boundary reference](../manage-tenants/tenant-boundary-reference.mdx)
+for what each field means.
+
+## A Tenant can't see something you granted
+
+Work down this table. The first two causes account for most reports.
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| Capability is on, none of the platform's instances visible | No `allow` is set, or its selectors match nothing | Add an `allow`, or widen the selector |
+| Some instances visible, others not | The missing instances don't carry the label your selector requires | Label them, or grant by name where the capability supports it |
+| Nothing of that kind is visible, not even the tenant's own instances or ones you assigned | The capability is absent or `enabled: false`, which withholds the whole resource | Set `enabled: true` |
+| A whole resource is missing, and no capability covers it | The shipped default hides the platform's instances of that kind | Assign an instance to the tenant, or share it with every tenant. Projects, clusters, space instances, project secrets, node pools, users, teams, access keys, and config maps can't be assigned or shared. See [ownership labels](../manage-tenants/tenant-boundary-reference.mdx#ownership-labels) |
+
+Two rules cause most of the confusion.
+
+**Enabling a capability grants nothing on its own.** `enabled: true` with no
+`allow` means the capability is available and none of the platform's instances
+is selected. The tenant sees only the instances it owns or that are assigned to
+it, often an empty list, rather than an error.
+
+**Label selectors match all specified pairs.** With a non-empty selector, an
+instance has to carry every pair. An empty selector matches every admin-owned
+instance, including those without labels. Check the labels on the instance, not
+just the selector on the tenant.
+
+```bash
+kubectl get osimage ubuntu-2404 -o jsonpath='{.metadata.labels}' | jq
+```
+
+## A Tenant can see a node provider you didn't grant
+
+This is expected. Granting a node type makes the node provider that node type
+belongs to reachable, because the grant would be unusable otherwise.
+
+It appears in the tenant's status boundary as a derived grant rather than as
+something you wrote.
+
+```bash
+kubectl get tenant acme -o jsonpath='{.status.boundary}' \
+  | jq '.[] | select(.resource == "nodeproviders")'
+```
+
+Derived grants are recalculated, so revoking the node type removes the provider
+when the tenant controller reconciles it. Don't edit `derived` by hand. The
+request path reads it, and the controller overwrites manual changes during its
+next reconciliation.
+
+## A write is refused
+
+### Name must start with the Tenant prefix
+
+```text
+SSHKey.management.loft.sh "build" is invalid: metadata.name: Invalid value:
+"build": must start with "acme--": this kind is cluster-scoped, so its name is
+shared with every tenant on the platform
+```
+
+Tenant-owned cluster-scoped resources are named `<tenant>--<name>`, including
+when a platform admin creates them. The error names
+the exact prefix required. Namespace-scoped resources and platform-owned
+inventory granted or assigned to tenants aren't affected.
+
+### A resource's tenant can't be changed
+
+```text
+projects.management.loft.sh is forbidden: a resource's tenant cannot be changed
+(this resource belongs to the platform, and the write assigns it to tenant
+"acme"); delete and recreate the resource instead
+```
+
+The write added, changed, or removed the `tenant.vcluster.com/owner` label on a
+resource that already exists. Ownership is set at creation and never moves, for
+platform admins too. Revert the label, and recreate the resource under the
+tenant instead. A GitOps sync that adds the label to an existing manifest fails
+this way. See
+[Move existing resources into tenants](../manage-tenants/move-existing-resources.mdx).
+
+### A GitOps service account's write is forbidden
+
+The refusal comes from Kubernetes RBAC and reads like this one.
+
+```text
+projects.management.loft.sh "acme--team-a" is forbidden: User
+"system:serviceaccount:argocd:argocd-application-controller" cannot update
+resource "projects" in API group "management.loft.sh" at the cluster scope
+```
+
+A Kubernetes service account can update a tenant's existing cluster-scoped
+resources through the management API when RBAC allows it. It doesn't need a
+Platform access key for that. Check the resource, API group, and verb named in
+the refusal against the service account's RBAC permissions.
+
+Once RBAC allows the request, Platform validates the write within the resource
+owner's tenant limits. Check that the tenant can own the resource kind and use
+its references. Ownership can't change on an update.
+
+A service account can't create a tenant-owned cluster-scoped resource. Platform
+refuses the owner label from it, and refuses a `<tenant>--` name without that
+label. Create the resource with a platform admin's access key instead. See
+[Choose the identity](../manage-tenants/move-existing-resources.mdx#choose-the-identity).
+
+### A label is maintained by the platform
+
+```text
+label "tenant.vcluster.com/owner" is maintained by the platform and cannot be set
+```
+
+A tenant identity sent a `tenant.vcluster.com/` label. Platform sets the owner
+label on a tenant's resources itself, and a tenant can't set the others. Remove
+the label from the request or the manifest.
+
+A Kubernetes identity, such as a GitOps service account, gets the same refusal
+when it sends the owner label on a create. Create the resource with a platform
+admin's access key instead. Kubernetes identities and platform admins can repeat
+an existing owner label unchanged on updates and patches. They still can't
+change which tenant owns the resource.
+
+### The tenant may not own or write the instance
+
+```text
+tenant "acme" may not own instances of this resource
+```
+
+The tenant tried to create an instance of a kind its capability doesn't let it
+author. For OS images and SSH keys, set `allow.custom.enabled: true` on the
+capability. Other kinds in the capability table can't be authored by a tenant.
+
+```text
+tenant "acme" may not write an instance it does not own
+```
+
+The tenant can see the instance through a grant, but a grant is read access. A
+tenant can't update an instance a platform admin owns, which includes uploading
+a file to a granted OS image. Create a tenant-owned image instead.
+
+### A namespace can't be created in a tenant project
+
+```text
+tenant "acme" may not use this endpoint
+```
+
+No one can create, import, or migrate a namespace (space) into a tenant
+project, a platform admin included. Run the workload in a cluster instead.
+
+### A cluster's template or deploy mode can't be changed
+
+```text
+spec.template: Forbidden: a tenant may not change an inline spec.template
+spec.external: Forbidden: a tenant may not change spec.external or the loft.sh/skip-helm-deploy annotation
+```
+
+A change to the annotation reports the same message on
+`metadata.annotations[loft.sh/skip-helm-deploy]` instead of `spec.external`.
+
+A tenant tried to edit a cluster's inline template, its `spec.external` field,
+or its `loft.sh/skip-helm-deploy` annotation. Those decide what Platform
+deploys, so only a platform admin can change them.
+
+### A cluster needs a template
+
+```text
+spec.templateRef.name: Forbidden: tenant "acme" must reference a template the project allows, and may not supply an inline spec.template
+```
+
+Someone tried to create a cluster in a tenant project without a template, or
+with an inline template. Every cluster in a tenant project must name a template
+the project allows, whatever the user's role. This includes platform admins, so
+a platform admin working in a customer's project sees this refusal too. Choose an allowed template, or ask a platform
+admin to grant the tenant one and add it to the project's allowed templates.
+
+```text
+spec.requireTemplate.disabled: Forbidden: a tenant may not waive the project's template requirement
+```
+
+A tenant tried to turn off its project's template requirement. The waiver
+doesn't apply in a tenant project, so it wouldn't take effect. If a
+platform admin already set it, the tenant's other edits to the project still go
+through.
+
+### An externally deployed cluster can't be imported
+
+```text
+tenant "acme" does not allow importing externally deployed clusters; ask a platform admin to enable it
+```
+
+Importing clusters deployed outside Platform is off by default for each tenant.
+A platform admin turns it on with `spec.externalClusters.enabled`. See
+[Allow importing externally deployed clusters](../manage-tenants/create-and-configure-tenants.mdx#allow-importing-externally-deployed-clusters).
+
+### A node claim names a node type the tenant can't use
+
+```text
+nodeType "eu-west.large" does not exist or is not allowed for tenant "acme"
+```
+
+The node type isn't granted to the tenant through its `nodeTypes` capability, or
+it doesn't exist. Platform refuses the request when it's created rather than
+leaving it Pending. The message is the same in both cases, so it doesn't reveal
+which node types exist. Grant the node type to the tenant, or choose one the
+tenant already has. This applies when a platform admin creates the request in a
+tenant project too.
+
+A node claim that Platform already accepted can lose its node type later, such as if the node type no longer exists. The claim then waits as `Pending`,
+and its `Provisioned` condition has the reason `NodeTypeNotAllowed`. Grant the
+node type again, or replace the node claim.
+
+### A pinned node claim's machine isn't covered by an allowed node type
+
+```text
+machine "nico-provider.m-0042" is not covered by a node type this project may use
+```
+
+A node claim that pins a machine with `machineRef` stays inside the node type
+boundary. At least one node type that selects the machine has to be granted to
+the tenant and allowed by the project's `allowedNodeTypes`. Platform checks this
+when the claim is created, even when a platform admin creates it.
+
+A tenant user sees only the message above, because the reason names node types
+and the node provider. A platform admin who creates the claim also sees the
+tenant and the reason appended.
+
+```text
+machine "nico-provider.m-0042" is not covered by a node type this project may use:
+tenant "acme": it is in the pool of node type(s) eu-west.large, and the tenant's
+spec.nodeTypes allows none of them; allow one of them for the tenant first
+```
+
+| Reason | Fix |
+|--------|-----|
+| `it is in the pool of node type(s) ..., and the tenant's spec.nodeTypes allows none of them` | Grant the tenant one of the listed node types |
+| `node type(s) ... cover it and may be used, but the allowlist excludes all of them` | Add one of the listed node types to the project's [allowed node types](../projects/allowed/node-types.mdx) |
+| `no node type of provider "..." selects it` | Add a node type whose machine selector matches the machine, or widen an existing one |
+| `its labels are not synced yet, retry in a few seconds` | Retry the request |
+| `its provider "..." does not exist` | Restore the node provider, or create the claim on a machine of an existing provider |
+| `its provider "..." is being deleted` | Wait for the deletion to finish and use a machine of another provider |
+
+### A node type can't be hidden or deleted while node claims use it
+
+Platform refuses a change that would take a node type away from node claims
+that still use it. Each refusal names the node claims as `<namespace>/<name>`.
+Up to five are named, followed by a count of the rest.
+
+```text
+Tenant.management.loft.sh "acme" is invalid: spec.nodeTypes: Forbidden: this
+change hides node types from the tenant while its node claims use them: node
+type "eu-west.large" is used by 1 node claim: loft-p-team-a/gpu-worker-1.
+Delete those node claims and wait until they are gone, or keep the node types
+allowed.
+```
+
+| Change | Response | Message includes |
+|--------|----------|---------------------|
+| A tenant edit to `spec.nodeTypes` that stops granting a node type the tenant's node claims use | `422` on `spec.nodeTypes` | `this change hides node types from the tenant` |
+| A label change on a node type that takes it out of a tenant's grant while that tenant's node claims use it | `403` | `this label change hides the node type from` |
+| A node provider edit that changes a node type's labels the same way | `422` on `spec.<provider>.nodeTypes` | `this label change hides node type` |
+| A node provider edit that removes a node type | `422` on `spec.<provider>.nodeTypes` | `removing these node types would delete them while node claims use them` |
+| Deleting a node type | `409` | `node type is still used by` |
+
+Delete the node claims the message names, or keep the node type as it is. A
+change that hides a node type stays refused until those node claims are fully
+gone, including any that are still terminating. Removing or deleting a node type
+goes through as soon as the deletion of every named node claim has started.
+
+### Both `byName` and `byLabels` are set
+
+```text
+byName and byLabels cannot both be set: label the OS images you want and select them with byLabels
+```
+
+A capability accepts a name list or a non-empty label selector, not both. Remove
+one of them. The message names the capability's resource kind.
+
+### A username, email, or subject is unavailable
+
+A tenant that creates or updates a user with a username, email, or identity
+subject already in use elsewhere on the platform gets a `422` error. The detail
+reads `Value is unavailable, use a different username`, with `email` or
+`subject` in place of `username` as appropriate. Platform doesn't say who holds
+the value, because one tenant isn't entitled to know about another's users.
+Choose a different value.
+
+A subject that starts with `loft:` or `system:` is refused for every caller, on
+create and on any change to the subject. A tenant admin setting subjects for
+SSO users can hit this.
+
+```text
+subject must not start with "loft:" or "system:", which are reserved for platform identities
+```
+
+### A role can't be bound
+
+```text
+clusterroletemplates.management.loft.sh "loft-cluster-admin" is forbidden: role
+is not a management role template
+```
+
+Inside a tenant, a user or team can only receive a cluster role template that's
+marked as a management role. A role that isn't one, such as
+`loft-cluster-admin`, would grant rights outside the tenant boundary. The same
+refusal applies when a platform admin edits a tenant's user or team. Choose a
+management role instead. See
+[Roles inside a tenant](../concepts/what-are-users-and-teams.mdx#roles-inside-a-tenant).
+
+`role is not an existing management role template` means the named template
+doesn't exist. Check the spelling.
+
+### A group is derived from the identity's scope
+
+```text
+group "loft:platform" is derived from the identity's scope and cannot be set
+```
+
+The write added a reserved group to a user's `spec.groups`. Platform derives
+`loft:platform` and `loft:tenant:<name>` from the user's ownership label, so no
+one can set them. Remove the group. A group shaped
+`loft:tenant:<tenant-name>:<group>` isn't reserved and can be set. See
+[Reserved group names](../concepts/what-are-users-and-teams.mdx#reserved-group-names).
+
+### A user or team isn't one this tenant can see
+
+```text
+not a user or team this tenant can see
+```
+
+A tenant's write named a user or team in `spec.access`, `spec.owner`, or a
+team's `spec.users` that the tenant can't see. Either the identity belongs to
+another tenant, or it doesn't exist yet. Name one of the tenant's own users or
+teams. In a GitOps repository, apply users and teams before the resources that
+name them. See
+[A tenant names only users and teams it can see](../manage-tenants/tenant-boundary-reference.mdx#a-tenant-names-only-users-and-teams-it-can-see).
+
+### A user or team doesn't belong to the tenant that owns the object
+
+A write gets a `422` with a message that contains this text:
+
+```text
+user "<name>" does not belong to tenant "<tenant>", which owns this object
+```
+
+The message reads `team` instead of `user` when the name is a team. A resource a
+tenant owns can name only that tenant's users and teams, even when a platform
+admin writes it. The refused name either belongs to another tenant, or doesn't
+exist yet and lacks the tenant's prefix, such as `acme--`. Name one of the
+tenant's own users or teams, or create the user or team in the tenant first.
+
+### A connector isn't usable
+
+A cluster that names a connector the tenant can't use is refused with this
+message.
+
+```text
+does not name a usable connector
+```
+
+An OS image that names an image store connector the tenant can't use is refused
+with this message.
+
+```text
+does not name a usable image store
+```
+
+The connector might not exist, might be the wrong type, or might not be granted
+to the tenant. The error is the same in each case, so it doesn't reveal which
+connectors exist. Grant the connector through the tenant's `connectors`
+capability, or name one the tenant already has.
+
+Platform checks a cluster's connector again after the write. A cluster that
+hasn't finished setting up its database reports the `DBConnectorSynced`
+condition as `False` with the reason `ConnectorUnusable`. A cluster that already
+set up its database keeps it.
+
+### A network environment can't be created
+
+```text
+tenant "acme" may not own instances of this resource
+```
+
+A tenant can't own a network environment, so Platform refuses one created by
+the tenant, or by a platform admin with the tenant as owner. A platform admin
+creates it as a platform resource and assigns it to the tenant with
+`tenant.vcluster.com/exclusive-to` at creation.
+
+### An assignment is refused
+
+```text
+tenant "acme" has nodeTypes turned off. Turn it on for the tenant first
+```
+
+The message names the capability field, such as `controlPlaneClusters`,
+`nodeTypes`, `osImages`, `sshKeys`, `templates`, or `connectors`.
+
+You assigned a resource to a tenant with the `tenant.vcluster.com/exclusive-to`
+label while the governing capability is switched off for that tenant. Enable the
+capability first, then assign.
+
+Projects, clusters, space instances, project secrets, node pools, users, teams,
+access keys, and config maps can't be assigned at all. Trying returns a refusal
+like this one.
+
+```text
+projects cannot be assigned to a tenant with tenant.vcluster.com/exclusive-to
+```
+
+A machine assignment is refused when the tenant isn't allowed any node type that
+selects the machine.
+
+```text
+this machine is not associated with a node type allowed for tenant "acme": it is
+in the pool of node type(s) eu-west.large, and the tenant's spec.nodeTypes allows
+none of them; allow one of them for the tenant first
+```
+
+Grant the tenant one of the node types the message lists, then assign the
+machine again. If the message says no node type of the provider selects the
+machine, add or widen a node type's machine selector first.
+
+### A hostname is already claimed
+
+```text
+hostname is already claimed by another Tenant
+```
+
+Each hostname can be claimed by one tenant. The error doesn't say which tenant holds
+it, because one tenant isn't entitled to know about another. As a platform admin
+you can find it:
+
+```bash
+kubectl get tenants -o json \
+  | jq -r '.items[] | select(.status.hostnames[]?.hostname == "acme.example.com") | .metadata.name'
+```
+
+The check is best effort. Two writes claiming the same hostname seconds apart
+can both be accepted. Requests on a hostname held by more than one tenant don't
+resolve to either tenant. If requests on a tenant's hostname don't reach that
+tenant, run the query above and remove the duplicate claim.
+
+## A tenant user can't be added to a team
+
+```text
+user "acme--bob" belongs to tenant "acme"; an object no tenant owns can only name platform users and teams
+```
+
+A user only counts as a member of teams in their own tenant. Platform refuses a
+write that adds a tenant user to a team no tenant owns, which includes every
+platform team. Add the user to a team in their own tenant instead. A platform
+team can still name a platform user who hasn't signed in yet.
+
+## A wildcard project member doesn't grant access
+
+A project member named `*`, shown as <Label>Everybody</Label> in the UI, covers
+only the identities in the project's own scope.
+
+- A tenant user doesn't get the role of a `*` member on a project no tenant
+  owns. Add the user to a project in their own tenant instead.
+- A platform admin's own identity doesn't get the role of a `*` member on a
+  tenant's project. Platform admins still reach tenant projects through their
+  admin role.
+
+If the scope matches and access is still refused, check the upgrade state.
+
+- **During a rolling upgrade to 5.0,** replicas still on the old version refuse
+  wildcard members. Named members keep working. The refusals stop when the
+  rollout finishes.
+- **On a connected cluster's direct endpoint,** an agent that Platform doesn't
+  upgrade, because of `DISABLE_AGENT` or the `loft.sh/cluster-ignore-agent`
+  annotation, refuses
+  wildcard members. Upgrade that agent to the matching version.
+
+See [Project membership](../concepts/what-are-users-and-teams.mdx#project-membership).
+
+## A tenant user can't reach a cluster they can see
+
+A tenant user can see a control plane cluster granted to their tenant, but a
+`kubectl` request through Platform returns `403` with
+`no cluster access: access denied`.
+
+Seeing a cluster doesn't grant access into it. A platform admin has to do two
+things, because tenants can't do either.
+
+- Assign the control plane cluster to the tenant by setting
+  `tenant.vcluster.com/exclusive-to` to the tenant name. A cluster the tenant
+  only sees through its `controlPlaneClusters` grant or the
+  `tenant.vcluster.com/all` label can't be reached through any cluster access.
+- Create a cluster access that lists the cluster and names the user, one of
+  their teams, or all users. Assign it to the tenant with the
+  `tenant.vcluster.com/exclusive-to` label or share it with every tenant by
+  setting the `tenant.vcluster.com/all` label to `"true"`. These labels go on the
+  `ClusterAccess` object's `metadata.labels`. An unlabeled platform-owned access
+  doesn't reach tenant users, even when it names them.
+See [Cluster access and tenants](../users-permissions/permissions/cluster.mdx#cluster-access-and-tenants).
+
+## NICo onboarding doesn't finish
+
+Platform onboards a tenant to NICo once it has a NICo node type granted or a
+NICo network environment assigned. Check the tenant's conditions.
+
+```bash
+kubectl get tenant acme -o jsonpath='{.status.conditions}' \
+  | jq '.[] | select(.type | startswith("NICo"))'
+```
+
+| Condition is `False` | Cause | Fix |
+|----------------------|-------|-----|
+| `NICoNodeProviderFound` | A granted NICo node type or the node provider it references doesn't exist, or the tenant's grants point at more than one NICo node provider | Grant node types and assign network environments from a single, existing NICo node provider |
+| `NICoSiteCredentialsAvailable` | Platform couldn't issue the token it signs for the tenant on the NICo endpoint. The reason is `CredentialsUnavailable` | Read the condition's message, which names the signing failure, and check Platform's OIDC signing key and issuer configuration |
+| `NICoOnboarded` | Onboarding hasn't finished or failed. Besides the NICo org not being ready, this condition also repeats node provider and credential failures from the rows above | Read the condition's reason and message |
+| `NICoOnboarded`, reason `TenantOrgIsProviderOrg` | The tenant was created with `generateName`, and the generated name matches the NICo org of a NICo node provider. A tenant created with an explicit name is refused instead | Delete the tenant and create it again under another name |
+
+## A Tenant can't be created
+
+### License limits
+
+```text
+cannot create tenant, because tenant license limit of 3 would be exceeded
+```
+
+```text
+cannot create tenant, because its bootstrap admin user would exceed the user
+license limit of 50
+```
+
+Two separate limits apply. Creating a tenant always creates its admin user, so
+the user limit is checked as well as the tenant limit.
+
+Both are checked on create only, so reaching either limit still leaves the
+tenants you have editable and deletable.
+
+The Free, Dev, and Prod plans allow three tenants, and the Scale plan has no
+tenant limit. To create another tenant, delete one you no longer need or move
+to the Scale plan.
+
+### The Multi-Tenancy feature isn't licensed
+
+Creating or changing a tenant needs the Multi-Tenancy feature. Click
+<NavStep>Platform > Platform Config</NavStep> and check the
+<Label>License and Billing</Label> tab.
+
+### The name is rejected
+
+A tenant name is a DNS label, capped at 32 characters, and can't contain `--`.
+A `generateName` prefix is capped at 27 characters to leave room for the
+generated suffix. See
+[name rules](../manage-tenants/tenant-boundary-reference.mdx#tenant-names).
+
+A name that matches the NICo org of an existing NICo node provider is refused
+as reserved for platform workloads. Choose another name.
+
+## A Tenant is stuck deleting
+
+A tenant that's already being deleted can still have its finalizers removed
+without the Multi-Tenancy feature, so a lapsed license can't strand it. That
+exemption covers metadata-only updates. A change to the tenant's spec is still
+refused, even during deletion.
+
+A tenant onboarded to NICo carries a cleanup finalizer. A network environment
+still assigned to the tenant on its recorded NICo node provider blocks that
+cleanup, and the `NICoOnboarded` condition names it. Check the condition, the
+tenant's finalizers, and the network environments assigned to the tenant.
+
+```bash
+kubectl get tenant acme -o jsonpath='{.metadata.finalizers}'
+kubectl get tenant acme -o jsonpath='{.status.conditions}' \
+  | jq '.[] | select(.type == "NICoOnboarded")'
+```
+
+Delete the network environment the condition names, and the tenant finishes
+deleting.
+
+Once deletion starts, the platform management API refuses requests from the
+tenant's users with `403` and a message like this one. The same applies to
+users whose tenant no longer exists.
+
+```text
+user "acme--jane" is labeled for tenant "acme", which cannot be resolved:
+tenant is terminating
+```
+
+The reason reads `no such tenant` when the tenant is gone.
+
+The agent proxy caches allowed cluster access decisions for 15 seconds.
+Requests with a cached allowance can continue until it expires. See
+[Cluster access and tenants](../users-permissions/permissions/cluster.mdx#cluster-access-and-tenants).
+
+## A tenant admin can't do something they should
+
+A tenant admin holds full rights inside the boundary, so a refusal usually means
+the action reaches outside it rather than that a role is missing.
+
+The quickest check is to look at the platform as they do. Click
+<NavStep>Platform > Tenants</NavStep>, open the tenant's row menu, and click
+<Button>Impersonate</Button>. Choose the tenant's admin user in the
+<Label>Switch to Tenant</Label> dialog. A banner shows while you're impersonating. Impersonation needs
+the management admin role or the `Impersonator` management role. See
+[Impersonate a user](../users-permissions/managing-users/impersonate.mdx).
+
+Things that are outside the boundary by design, whatever the role:
+
+- Registering a control plane cluster
+- Creating templates or stacks
+- Creating connectors
+- Creating network environments
+- Creating cluster accesses
+- Creating namespaces (spaces) in a tenant project
+- Changing a cluster's inline template or deploy mode
+- Creating a cluster without a template, or waiving a project's template
+  requirement
+- Importing externally deployed clusters, until a platform admin turns it on
+  for the tenant
+- Seeing or editing any other tenant
+
+See [current limitations](../manage-tenants/overview.mdx#current-limitations).
