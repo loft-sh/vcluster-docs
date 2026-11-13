@@ -44,7 +44,7 @@ Work down this table. The first two causes account for most reports.
 | Capability is on, none of the platform's instances visible | No `allow` is set, or its selectors match nothing | Add an `allow`, or widen the selector |
 | Some instances visible, others not | The missing instances don't carry the label your selector requires | Label them, or grant by name where the capability supports it |
 | Nothing of that kind is visible, not even the tenant's own instances or ones you assigned | The capability is absent or `enabled: false`, which withholds the whole resource | Set `enabled: true` |
-| A whole resource is missing, and no capability covers it | The shipped default hides the platform's instances of that kind | Assign an instance to the tenant, or share it with every tenant. Projects, clusters, space instances, project secrets, users, and teams can't be assigned or shared. See [ownership labels](../manage-tenants/tenant-boundary-reference.mdx#ownership-labels) |
+| A whole resource is missing, and no capability covers it | The shipped default hides the platform's instances of that kind | Assign an instance to the tenant, or share it with every tenant. Projects, clusters, space instances, project secrets, node pools, users, teams, access keys, and config maps can't be assigned or shared. See [ownership labels](../manage-tenants/tenant-boundary-reference.mdx#ownership-labels) |
 
 Two rules cause most of the confusion.
 
@@ -132,6 +132,9 @@ spec.template: Forbidden: a tenant may not change an inline spec.template
 spec.external: Forbidden: a tenant may not change spec.external or the loft.sh/skip-helm-deploy annotation
 ```
 
+A change to the annotation reports the same message on
+`metadata.annotations[loft.sh/skip-helm-deploy]` instead of `spec.external`.
+
 A tenant tried to edit a cluster's inline template, its `spec.external` field,
 or its `loft.sh/skip-helm-deploy` annotation. Those decide what Platform
 deploys, so only a platform admin can change them.
@@ -142,17 +145,18 @@ deploys, so only a platform admin can change them.
 spec.templateRef.name: Forbidden: tenant "acme" must reference a template the project allows, and may not supply an inline spec.template
 ```
 
-A tenant user tried to create a cluster without a template, or with an inline
-template. Every cluster in a tenant project must name a template the project
-allows, whatever the user's role. Choose an allowed template, or ask a platform
+Someone tried to create a cluster in a tenant project without a template, or
+with an inline template. Every cluster in a tenant project must name a template
+the project allows, whatever the user's role. This includes platform admins, so
+a platform admin working in a customer's project sees this refusal too. Choose an allowed template, or ask a platform
 admin to grant the tenant one and add it to the project's allowed templates.
 
 ```text
 spec.requireTemplate.disabled: Forbidden: a tenant may not waive the project's template requirement
 ```
 
-A tenant tried to turn off its project's template requirement. Tenant users are
-held to the requirement anyway, so the waiver wouldn't take effect. If a
+A tenant tried to turn off its project's template requirement. The waiver
+doesn't apply in a tenant project, so it wouldn't take effect. If a
 platform admin already set it, the tenant's other edits to the project still go
 through.
 
@@ -210,6 +214,8 @@ spec.nodeTypes allows none of them; allow one of them for the tenant first
 | `node type(s) ... cover it and may be used, but the allowlist excludes all of them` | Add one of the listed node types to the project's [allowed node types](../projects/allowed/node-types.mdx) |
 | `no node type of provider "..." selects it` | Add a node type whose machine selector matches the machine, or widen an existing one |
 | `its labels are not synced yet, retry in a few seconds` | Retry the request |
+| `its provider "..." does not exist` | Restore the node provider, or create the claim on a machine of an existing provider |
+| `its provider "..." is being deleted` | Wait for the deletion to finish and use a machine of another provider |
 
 ### A node type can't be hidden or deleted while node claims use it
 
@@ -250,9 +256,19 @@ one of them. The message names the capability's resource kind.
 ### A username, email, or subject is unavailable
 
 A tenant that creates or updates a user with a username, email, or identity
-subject already in use elsewhere on the platform gets a `422` error. The detail reads
-`value is unavailable`. Platform doesn't say who holds the value, because one
-tenant isn't entitled to know about another's users. Choose a different value.
+subject already in use elsewhere on the platform gets a `422` error. The detail
+reads `Value is unavailable, use a different username`, with `email` or
+`subject` in place of `username` as appropriate. Platform doesn't say who holds
+the value, because one tenant isn't entitled to know about another's users.
+Choose a different value.
+
+A subject that starts with `loft:` or `system:` is refused for every caller, on
+create and on any change to the subject. A tenant admin setting subjects for
+SSO users can hit this.
+
+```text
+subject must not start with "loft:" or "system:", which are reserved for platform identities
+```
 
 ### A connector isn't usable
 
@@ -283,16 +299,19 @@ set up its database keeps it.
 ### An assignment is refused
 
 ```text
-tenant "acme" has this resource switched off, so it would never be served the
-assignment; enable the capability first
+tenant "acme" has nodeTypes turned off. Turn it on for the tenant first
 ```
 
-You assigned a resource to a tenant with the `tenant.vcluster.com/exclusive-to` label
-while the governing capability is switched off for that tenant. Enable the
+The message names the capability field, such as `controlPlaneClusters`,
+`nodeTypes`, `osImages`, `sshKeys`, `templates`, or `connectors`.
+
+You assigned a resource to a tenant with the `tenant.vcluster.com/exclusive-to`
+label while the governing capability is switched off for that tenant. Enable the
 capability first, then assign.
 
-Projects, clusters, space instances, project secrets, users, and teams can't be
-assigned at all. Trying returns a refusal like this one.
+Projects, clusters, space instances, project secrets, node pools, users, teams,
+access keys, and config maps can't be assigned at all. Trying returns a refusal
+like this one.
 
 ```text
 projects cannot be assigned to a tenant with tenant.vcluster.com/exclusive-to
@@ -327,15 +346,20 @@ kubectl get tenants -o json \
 ```
 
 The check is best effort. Two writes claiming the same hostname seconds apart
-can both be accepted. Requests on a hostname held by more than one tenant then
-return `404`. If a tenant's hostname returns `404`, run the query above and
-remove the duplicate claim.
+can both be accepted. Requests on a hostname held by more than one tenant don't
+resolve to either tenant. If requests on a tenant's hostname don't reach that
+tenant, run the query above and remove the duplicate claim.
 
-## A tenant user doesn't get a team's roles
+## A tenant user can't be added to a team
 
-Team membership only counts inside the user's own tenant. A platform team can
-list a tenant user, and Platform accepts the write, but that user never gets the
-team's roles. Add the user to a team in their own tenant instead.
+```text
+user "acme--bob" belongs to tenant "acme"; an object no tenant owns can only name platform users and teams
+```
+
+A user only counts as a member of teams in their own tenant. Platform refuses a
+write that adds a tenant user to a team no tenant owns, which includes every
+platform team. Add the user to a team in their own tenant instead. A platform
+team can still name a platform user who hasn't signed in yet.
 
 ## NICo onboarding doesn't finish
 
@@ -349,9 +373,10 @@ kubectl get tenant acme -o jsonpath='{.status.conditions}' \
 
 | Condition is `False` | Cause | Fix |
 |----------------------|-------|-----|
-| `NICoNodeProviderFound` | A referenced node provider is missing or isn't a NICo provider, or the tenant's grants point at more than one | Grant node types and assign network environments from a single NICo node provider |
-| `NICoSiteCredentialsAvailable` | Platform couldn't load the tenant's credentials for the NICo endpoint | Check the node provider's NICo endpoint configuration |
-| `NICoOnboarded` | The NICo org, which is the tenant name, isn't ready yet or failed to be created | Read the condition's reason and message |
+| `NICoNodeProviderFound` | A granted NICo node type or the node provider it references doesn't exist, or the tenant's grants point at more than one NICo node provider | Grant node types and assign network environments from a single, existing NICo node provider |
+| `NICoSiteCredentialsAvailable` | Platform couldn't issue the token it signs for the tenant on the NICo endpoint. The reason is `CredentialsUnavailable` | Read the condition's message, which names the signing failure, and check Platform's OIDC signing key and issuer configuration |
+| `NICoOnboarded` | Onboarding hasn't finished or failed. Besides the NICo org not being ready, this condition also repeats node provider and credential failures from the rows above | Read the condition's reason and message |
+| `NICoOnboarded`, reason `TenantOrgIsProviderOrg` | The tenant was created with `generateName`, and the generated name matches the NICo org of a NICo node provider. A tenant created with an explicit name is refused instead | Delete the tenant and create it again under another name |
 
 ## A Tenant can't be created
 
@@ -398,6 +423,20 @@ A tenant that's already being deleted can still have its finalizers removed
 without the Multi-Tenancy feature, so a lapsed license can't strand it. That
 exemption covers metadata-only updates. A change to the tenant's spec is still
 refused, even during deletion.
+
+A tenant onboarded to NICo carries a cleanup finalizer. A network environment
+still assigned to the tenant on its recorded NICo node provider blocks that
+cleanup, and the `NICoOnboarded` condition names it. Check the condition, the
+tenant's finalizers, and the network environments assigned to the tenant.
+
+```bash
+kubectl get tenant acme -o jsonpath='{.metadata.finalizers}'
+kubectl get tenant acme -o jsonpath='{.status.conditions}' \
+  | jq '.[] | select(.type == "NICoOnboarded")'
+```
+
+Delete the network environment the condition names, and the tenant finishes
+deleting.
 
 As soon as deletion starts, the tenant's users lose access to everything. The
 same applies to users whose tenant no longer exists. Expect tenant users to be

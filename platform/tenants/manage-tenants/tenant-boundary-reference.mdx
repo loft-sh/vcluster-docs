@@ -60,7 +60,9 @@ configuration. Don't edit it directly. The controller overwrites manual changes
 during its next reconciliation.
 
 The status is mostly a report. Platform works the spec-derived rules out again
-on every request, so selector changes don't wait for the report to update.
+on every request, so label selector changes don't wait for the report to update.
+A name grant is applied by a controller, so it takes effect after a short
+reconciliation.
 
 `derived` is the exception. Granting a node type also makes its node provider
 reachable, since the grant would otherwise be unusable. The tenant controller
@@ -71,14 +73,15 @@ changes during its next reconciliation.
 ## Capability-governed resources
 
 These deny by default. Nothing is visible until the matching capability is
-enabled and a selector matches.
+enabled. Once it's on, the tenant sees the platform's instances a selector
+matches, plus any assigned to it or shared with every tenant.
 
 | Resource | Capability | Tenant can author its own |
 |----------|-----------|---------------------------|
 | `clusters` | `controlPlaneClusters` | No |
 | `nodetypes` | `nodeTypes` | No |
-| `osimages` | `osImages` | Yes, with `allow.custom` |
-| `sshkeys` | `sshKeys` | Yes, with `allow.custom` |
+| `osimages` | `osImages` | Yes, with `allow.custom.enabled: true` |
+| `sshkeys` | `sshKeys` | Yes, with `allow.custom.enabled: true` |
 | `virtualclustertemplates` | `templates` | No |
 | `apps` | `templates` | No |
 | `stacktemplates` | `templates` | No |
@@ -92,9 +95,10 @@ owns, and it can't create new ones. Instances it created before the capability
 was switched off stay in place, but the tenant can't see them until the
 capability is enabled again.
 
-A tenant reading a connector sees its configuration but not its credentials.
-Platform redacts them for any caller who can't update the connector, and a tenant
-can't update one it doesn't own.
+A tenant reading a connector never sees its credentials. Platform redacts them
+for any caller who can't update the connector, and a tenant can't update one it
+doesn't own. For some connector types, such as Argo CD and observability, the
+tenant sees only the name and type.
 
 ## Shipped defaults
 
@@ -110,6 +114,7 @@ platform's.
 | `projects` | Projects |
 | `virtualclusterinstances` | Clusters |
 | `projectsecrets` | Project secrets |
+| `nodepools` | Node pools |
 | `nodeclaims` | Instances (`NodeClaim`) |
 | `argocdapplications` | Argo CD applications |
 | `appinstances` | App instances |
@@ -122,11 +127,14 @@ platform's.
 | `teams` | Teams |
 | `oidcclients` | OIDC clients |
 | `databaseconnectors` | Database connectors |
+| `accesskeys` | Access keys |
+| `configmaps` | Config maps |
 
 `machines` and `nodeprofiles` are resources a platform admin lends by hand. No
 capability grants them, so a tenant reaches one of the platform's only through
-an exclusive assignment or the share-with-every-tenant label. The inventory sync
-writes machines, so in practice a tenant doesn't create them.
+an exclusive assignment or the share-with-every-tenant label. No one creates a
+machine through the API, a platform admin included. The inventory sync creates
+them, and only their labels and annotations can be edited.
 
 A machine can only be assigned to a tenant that's allowed a node type covering
 it. At least one node type of the machine's provider must select the machine,
@@ -137,6 +145,10 @@ any tenant. Providers that keep no machine inventory aren't checked.
 `users` and `teams` are the tenant's own identities. A tenant never sees the
 platform's users or teams, and a platform team can't be lent to a tenant.
 
+Projects, clusters, project secrets, node pools, users, teams, access keys, and
+config maps can't be assigned to a tenant. See
+[the exclusive-to label](#tenantvclustercomexclusive-to).
+
 Namespaces (space instances) are turned off for tenants. No one can create,
 import, or migrate a namespace into a tenant project, a platform admin included.
 Each attempt is refused with `tenant "acme" may not use this endpoint`.
@@ -145,14 +157,22 @@ On a cluster in a tenant project, the tenant can't change the inline
 `spec.template`, `spec.external`, or the `loft.sh/skip-helm-deploy` annotation.
 Those decide what Platform deploys, so only a platform admin can change them.
 
-Every cluster a tenant user creates must name a template the project allows.
-This holds for tenant admins and project admins too, and the project's
-`requireTemplate` waiver doesn't apply to tenant users. A tenant can't turn the
-waiver on either. If a platform admin already set it, the tenant's other edits
-to the project still go through.
+Every cluster created in a tenant project must name a template the project
+allows. This holds for everyone, including tenant admins, project admins, and
+platform admins. A request without a template, or with an inline
+`spec.template`, is refused with `must reference a template the project allows,
+and may not supply an inline spec.template`. The project's `requireTemplate`
+waiver doesn't apply in a tenant project. A tenant can't turn the waiver on
+either. If a platform admin already set it, the tenant's other edits to the
+project still go through.
+
+A tenant can't change its project's namespace pattern, which decides the control
+plane namespace each cluster lands in. Only a platform admin can change it.
 
 Importing a cluster deployed outside Platform into a tenant project is off by
-default. A platform admin turns it on per tenant. See
+default. A platform admin turns it on per tenant. The setting only limits the
+tenant's own users. While it's off, clusters already imported keep working, and
+a platform admin can still import into the tenant's projects. See
 [Allow importing externally deployed clusters](./create-and-configure-tenants.mdx#allow-importing-externally-deployed-clusters).
 
 `oidcclients` and `databaseconnectors` are sensitive, which is
@@ -188,7 +208,7 @@ described under `derived` in [Read the resolved boundary](#read-the-resolved-bou
 A tenant whose role allows updating node providers is still refused with
 `may not write an instance it does not own`.
 
-### Shared with every Tenant
+### Shared with every tenant
 
 | Resource | What it is | Tenant can author its own |
 |----------|-----------|---------------------------|
@@ -200,7 +220,7 @@ A tenant that creates users has to assign them roles, and Platform already ships
 the roles worth assigning. Authoring stays denied, because writing a cluster
 role template is writing RBAC.
 
-Every tenant can read every cluster role and role that no tenant owns, including
+Every tenant can read every cluster role and role that no tenant owns or holds, including
 built-in ones such as `cluster-admin`. A role grants nothing without a binding,
 so reading one gives the tenant no access. A binding that names a role another
 tenant owns grants nothing.
@@ -242,28 +262,44 @@ metadata:
     tenant.vcluster.com/exclusive-to: acme
 ```
 
-The value is the tenant name. An empty value reserves the resource for the
-platform, which is a claim rather than the absence of one. Removing the label
-returns the resource to the pool, except on a network environment, where the
-assignment can't be changed or removed once set.
+The value is the tenant name, and an empty value is refused. To leave a resource
+with the platform, remove the label rather than emptying it. The same holds for
+`tenant.vcluster.com/owner` label.
+
+```text
+tenant.vcluster.com/exclusive-to must name a tenant; the platform uses whatever no tenant holds, so remove the label rather than setting it to an empty value
+```
+
+Removing the label returns the resource to the pool, except on a network
+environment. Its assignment is set at creation and can't be added, changed, or
+removed afterward.
 
 The holding tenant reads and references the resource. Every write, including
 deletion, stays with the platform admin.
 
 Any resource can carry the label except projects, clusters, space instances,
-project secrets, users, and teams. Platform refuses it on these
-kinds. Resources in a project take their tenant from the project, so a loan
+project secrets, node pools, users, teams, access keys, and config maps.
+Platform refuses it on these kinds.
+
+```text
+<resource> cannot be assigned to a tenant with tenant.vcluster.com/exclusive-to
+```
+
+Resources in a project take their tenant from the project, so a loan
 can't say who owns them. Assigning a user or team would hand over authority
-rather than lend capacity. To lend the use of a credential, use a connector.
+rather than lend capacity. Lending an access key or config map would hand over
+the token or data itself. To lend the use of a credential, use a connector.
 
 If a capability governs the resource, the tenant must have that capability
 enabled before you assign to it. Otherwise the assignment is refused, because the
 tenant would never be served it.
 
 ```text
-tenant "acme" has this resource switched off, so it would never be served the
-assignment; enable the capability first
+tenant "acme" has nodeTypes turned off. Turn it on for the tenant first
 ```
+
+The capability field name, such as `controlPlaneClusters`, `nodeTypes`,
+`osImages`, `sshKeys`, `templates`, or `connectors`, fills the slot.
 
 ### `tenant.vcluster.com/all`
 
@@ -323,8 +359,14 @@ because the platform still owns those. Namespace-scoped resources are
 unaffected, because their names are already scoped by the namespace.
 
 The prefix is reserved in the other direction too. A cluster-scoped name that
-starts with an existing tenant's prefix must belong to that tenant, so a platform
-admin can't create a platform-owned or lent resource named `acme--<name>`.
+starts with `<tenant>--` must belong to that tenant, even if the tenant doesn't
+exist yet. A platform admin can't create a platform-owned or lent resource named
+`acme--<name>`. Platform checks this on create, and only while the Multi-Tenancy
+license feature is active.
+
+```text
+names starting with "acme--" belong to tenant "acme": the object must be owned by it
+```
 
 Omitting the prefix produces a validation error naming the prefix required.
 
@@ -348,14 +390,15 @@ shared with every tenant on the platform
 |---------|-------|
 | Capability absent | Withheld. The tenant sees none of the platform's instances, none lent to it, and none of its own, and can't author new ones |
 | `enabled: false` | Same as absent |
-| `enabled: true`, no `allow` | Enabled, no admin-owned instance selected. The tenant still sees instances it owns or that are assigned to it |
-| `allow.byLabels: {}` | Every admin-owned instance of that resource |
+| `enabled: true`, no `allow` | Enabled, no admin-owned instance selected. The tenant still sees instances it owns, instances assigned to it, and instances shared with every tenant |
+| `allow.byLabels: {}` | Every admin-owned instance of that resource, except ones assigned to another tenant |
 | `allow.byLabels` absent or null | No admin-owned instances |
-| `allow.byName: [a, b]` | Exactly those admin-owned instances. A name that doesn't exist yet takes effect when the instance is created |
+| `allow.byName: [a, b]` | Exactly those admin-owned instances. A name that doesn't exist yet takes effect shortly after the instance is created |
 
 Label selectors match all specified pairs. With a non-empty selector, an
 instance has to carry every pair. An empty selector matches every admin-owned
-instance, including those without labels.
+instance, including those without labels. An instance assigned to another tenant
+is never matched.
 
 `controlPlaneClusters`, `nodeTypes`, `osImages`, and `connectors` offer both
 `byName` and `byLabels`, and accept only one of them at a time. Setting `byName`
