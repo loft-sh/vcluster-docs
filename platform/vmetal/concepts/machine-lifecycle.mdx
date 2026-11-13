@@ -74,7 +74,7 @@ Drivers that draw from a machine inventory, such as Metal3 and NICo, place an in
 - `tenant.vcluster.com/owner` marks the machine as owned by the tenant.
 - `tenant.vcluster.com/exclusive-to` assigns the machine exclusively to one tenant. Only a platform admin sets it. A machine can't carry both labels.
 
-A machine with neither label is unassigned. Under the `Assigned` allocation policy, a tenant's instances use only the tenant's own machines. Under `OnDemand`, they use the tenant's machines first, then unassigned ones. An instance never lands on another tenant's machine. See [Machine allocation](./machine-types-and-nodetypes.mdx#machine-allocation) for defaults, configuration, and placement outside a tenant.
+A machine with neither label is unassigned. Under the `Assigned` allocation policy, a tenant's instances use only the tenant's own machines. Under `OnDemand`, they use only unassigned machines, never the tenant's reserved machines. An instance never lands on another tenant's machine. See [Machine allocation](./machine-types-and-nodetypes.mdx#machine-allocation) for defaults, configuration, and placement outside a tenant.
 
 KubeVirt ignores the allocation policy and runs every VM on the KubeVirt cluster's own nodes.
 
@@ -90,11 +90,11 @@ Two quotas limit how many instances can exist. A request has to fit both.
 The **tenant node type quota**, `spec.nodeTypes.quota.byType` on the Tenant, caps how many instances of each node type a tenant holds across all its projects. It caps on-demand capacity only, so what counts depends on where an instance lands:
 
 - A Metal3 or NICo node type with the `Assigned` policy isn't limited, because it only draws on capacity assigned to the tenant. Metal3 and NICo node types use `Assigned` unless you set otherwise.
-- Under `OnDemand`, an instance on a machine the tenant owns or is exclusively assigned doesn't count. Only instances on unassigned machines count.
+- New `OnDemand` instances use only unassigned machines and count toward the quota. An existing instance on a reserved machine remains exempt.
 - An instance pinned with `machineRef` never counts.
 - A node type from a provider without a machine inventory, such as KubeVirt or Terraform, counts every instance.
 
-One exception applies under `OnDemand`. The platform checks the quota before it picks a machine, even when a machine assigned to the tenant is free. An over-quota request is refused at creation or waits during scheduling, as described below. To use the assigned machine, pin the instance to it with `machineRef`.
+Free reserved machines don't make capacity available to an `OnDemand` request. To use a reserved machine, choose an `Assigned` node type or pin the instance with `machineRef`.
 
 The **project instance quota** caps the number of `NodeClaim` resources in a project, optionally per provider and per user or team. It counts every instance, including instances on machines assigned to the tenant. See [Instance quotas](../../tenants/projects/quotas.mdx#instance-quotas).
 
@@ -122,7 +122,8 @@ The most common reasons are in the following table. The condition message names 
 | Condition | Reason | Phase | What happens next |
 |---|---|---|---|
 | `Scheduled` | `TenantNodeTypeQuotaExceeded` | `Pending` | The tenant's quota for the node type is used up. Retries automatically. See [Quotas](#quotas). |
-| `Scheduled` | `FailedToSchedule` | `Pending` | No compatible node type has free capacity. Retries automatically, with no time limit. |
+| `Scheduled` | `InsufficientCapacity` | `Pending` | A matching Metal3 or NICo node type has no free machine the request can use. Retries automatically, with no time limit. |
+| `Scheduled` | `FailedToSchedule` | `Pending` | No matching node type exists, or another provider's matching types have no free capacity. Retries automatically, with no time limit. |
 | `Scheduled` | `FailedToSchedule` | `Failed` | Scheduling hit an error, such as a missing node provider. Inside a tenant, the message says the node provider doesn't exist or the tenant isn't granted any of its node types. Retries automatically. |
 | `Provisioned` | `NodeTypeNotAllowed` | `Pending` | The claim's node type no longer exists, or the tenant can no longer use it. Retries automatically. |
 | `Provisioned` | `WaitingForNetworkEnvironment` | `Pending` | Waits until the cluster's network environment is ready. |
