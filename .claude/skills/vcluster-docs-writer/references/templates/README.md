@@ -10,7 +10,7 @@ apply, and don't pad one to make it fit.
 | [task.md](task.md) | One job the reader does from start to finish | Configure, Operate, Use the platform |
 | [troubleshooting.md](troubleshooting.md) | One problem: what the reader sees, why, and the fix | Troubleshoot |
 | [reference.md](reference.md) | Values a reader looks up: fields, behavior matrices, condition reasons, permissions | Next to the feature's concept and task pages, or Reference |
-| [section-overview.md](section-overview.md) | The `overview.mdx` at the top of a section: who it's for and which page to open next | Top-level sections, and subsections where readers have to choose |
+| [section-overview.md](section-overview.md) | The `overview.mdx` at the top of a section: what the section is, the model it builds on, and where to go next | Top-level sections, and subsections where readers have to choose |
 
 Integration pages follow the "Integration Pages" section of
 [style-guide.md](../style-guide.md) rather than a template of their own.
@@ -30,7 +30,7 @@ lands, not as a rule that every page must be exactly one type.
 | Troubleshooting | Fix a problem they can see | How-to | Troubleshoot, `troubleshoot/` inside a feature | troubleshooting.md |
 | Concept | Understand how it works and choose a design | Explanation | Plan, `concepts/` inside a feature, the vCluster Overview section | Writer skill, "Concept and Explanation Pages" |
 | Reference | Look up a value | Reference | Next to the feature's other pages, Reference, generated API and vcluster.yaml pages | reference.md |
-| Section overview | Find the right page in a section | (Wayfinding) | `overview.mdx` at the top of a section | section-overview.md |
+| Section overview | Understand what a section is and find the right page in it | Explanation, then wayfinding | `overview.mdx` at the top of a section | section-overview.md |
 
 The feature template is a deliberate mix of concept and task, because it's
 the first draft an engineer writes for a new feature. When a feature page
