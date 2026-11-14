@@ -247,7 +247,7 @@ Note: Claude Code reads this file automatically (local and CI).
 
 Start new pages from the template for their type in
 `.claude/skills/vcluster-docs-writer/references/templates/`: feature, task,
-troubleshooting, and reference. Its README maps each kind of information to the
+troubleshooting, reference, and section overview. Its README maps each kind of information to the
 page type where it belongs. The templates apply `references/style-guide.md` to those page
 types, and the style guide wins where they disagree.
 
