@@ -9,7 +9,9 @@ fix quickly.
 - `title` starts with "Resolve" and names the problem in the reader's terms,
   for example "Resolve CoreDNS DNS timeouts and SERVFAIL errors".
 - `sidebar_label` is the short symptom, for example "CoreDNS DNS timeouts".
-- `description` repeats the symptom and the affected setup in one sentence.
+- `description` repeats the symptom and the affected setup, in one
+  sentence of 100 to 160 characters. See the `description` note in
+  `section-overview.md` for why the range matters.
   Search results show it, so include the error text or the condition a reader
   would search for.
 - Place the page under the Troubleshoot subsection for the system that fails
@@ -48,7 +50,7 @@ fix quickly.
 ---
 title: Resolve <problem in the reader's terms>
 sidebar_label: <short symptom>
-description: <Symptom and the setup it affects, in one sentence.>
+description: <Symptom and the setup it affects, in 100 to 160 characters.>
 ---
 
 import Flow, { Step } from '@site/src/components/Flow';

@@ -3,6 +3,13 @@
 Docs for a new vCluster or platform feature or setting. Engineers usually
 write the first draft of these pages for the features they build.
 
+## Frontmatter
+
+- `title` names the feature or setting, in sentence case.
+- `description` says what the feature does and why someone would turn it on, in one
+  sentence of 100 to 160 characters. See the `description` note in
+  `section-overview.md` for why the range matters.
+
 ## 1. Overview
 
 - **What:** a high-level description of the feature.
