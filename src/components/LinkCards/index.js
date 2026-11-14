@@ -8,7 +8,9 @@ import styles from './styles.module.css';
 // One clickable card with a Material icon, a title, and a short description.
 // Set `product` ("vcluster" or "platform") to keep the reader's docs version,
 // with `to` given relative to that product's docs root.
-export function LinkCard({to, product, icon, title, description}) {
+// `tags` is an optional list of short labels shown under the title, such as the
+// product, the license tier, or the worker node models a guide supports.
+export function LinkCard({to, product, icon, title, description, tags}) {
   const CardLink = product ? VersionAwareDocLink : Link;
   return (
     <CardLink to={to} product={product} className={clsx('card', styles.card)}>
@@ -18,6 +20,15 @@ export function LinkCard({to, product, icon, title, description}) {
         </span>
       )}
       <span className={styles.title}>{title}</span>
+      {tags?.length > 0 && (
+        <span className={styles.tags}>
+          {tags.map((tag) => (
+            <span key={tag} className={styles.tag}>
+              {tag}
+            </span>
+          ))}
+        </span>
+      )}
       {description && <span className={styles.description}>{description}</span>}
     </CardLink>
   );
