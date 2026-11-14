@@ -2,13 +2,14 @@
 title: Instance and server concepts
 sidebar_label: Instance and server
 sidebar_position: 0
-description: The driver-neutral instance and server model, including lifecycle phases, placement, quotas, provisioning failures, and release.
+description: The driver-neutral instance and server model, including lifecycle phases, placement, quotas, provisioning failures, power control, and release.
 toc_max_heading_level: 3
 ---
 
 import MachineModelLifecycle from '@site/static/media/diagrams/machine-model-lifecycle.svg';
 import MachineTenantClusterFlow from '@site/static/media/diagrams/machine-tenant-cluster-flow.svg';
 import InterpolatedCodeBlock from '@site/src/components/InterpolatedCodeBlock';
+import NavStep from '@site/src/components/NavStep';
 
 An instance is the customer-facing concept for vMetal's claim on one server (physical or virtual, depending on the driver behind it). In the API, a `NodeClaim` represents that request and tracks its lifecycle. This page describes the instance model at a driver-neutral level, from request through placement, quotas, failure, and release. For quick term definitions, see the [Glossary](../../reference/glossary.mdx).
 
@@ -184,6 +185,97 @@ A claim that failed during provisioning isn't retried. Fixing the cause, adding 
 Auto Nodes records a `PlatformNodeClaimProvisioningFailed` event on its node claim inside the cluster. It removes the failed instance and replaces it with a new claim, rather than restarting the failed one. A static pool restores its configured count. A dynamic pool requests capacity when workloads still need it.
 
 For Metal3 causes and checks, see [Instance stays pending without a server](../drivers/bare-metal/metal3/troubleshooting.mdx#instance-stays-pending-without-a-server).
+
+## Power control
+
+The platform can power an instance's server on and off and reboot it, when the driver supports it. The Metal3, KubeVirt, and [external platform](../drivers/bare-metal/external-platform.mdx) drivers support power control. NICo and Terraform don't.
+
+An instance supports power control when its `NodeClaim` reports a power state in `status.power.state`. If that field is empty, the platform doesn't change the server's power, and the UI shows no power actions for it.
+
+Powering off or rebooting doesn't drain the node first, so workloads on it are interrupted. Drain the node yourself before you stop or reboot a worker that runs workloads you want to keep.
+
+The platform keeps each server in the power state its instance asks for. If you power a server off another way, for example through its BMC, the platform powers it back on. Use the instance's power actions or its `NodeClaim` instead.
+
+### Power an instance from the UI
+
+Open the <NavStep>Instances</NavStep> page of the project, then open the instance's actions. Click **Start**, **Stop**, or **Reboot**.
+
+Platform admins can also open <NavStep>Bare Metal > Machines</NavStep>. A machine that an instance holds offers the same actions, which act on that instance.
+
+Only the actions that fit the current state appear. **Start** appears for an instance that's off. **Stop** and **Reboot** appear for one that's on. **Reboot** asks for confirmation first. A bare metal server is hard rebooted, which cycles its power without shutting down the operating system.
+
+The UI shows requested power changes as `Powering On`, `Powering Off`, or `Rebooting`. These indicators can appear before the driver acts and aren't confirmation that a change finished. To verify a reboot, record the server's boot ID before using **Reboot** and compare it afterward, as described below.
+
+### Power an instance with the API
+
+Set `spec.power.state` on the `NodeClaim` to `On` or `Off`. An empty value means `On`. The platform compares the desired state with the observed one and powers the server on or off until they match.
+
+<InterpolatedCodeBlock
+  code={'kubectl patch nodeclaim [[VAR:NODECLAIM_NAME:my-nodeclaim]] -n [[VAR:PROJECT_NAMESPACE:p-default]] \\\n  --type merge -p \'{"spec":{"power":{"state":"Off"}}}\''}
+  language="bash"
+/>
+
+Before you reboot, record the server's boot ID. For a worker that joined a cluster, read it from the cluster's Node:
+
+<InterpolatedCodeBlock
+  code={'kubectl get node [[VAR:NODE_NAME:my-node]] -o jsonpath=\'{.status.nodeInfo.bootID}\''}
+  language="bash"
+/>
+
+For a control plane instance or an independently provisioned instance, which has no Node, connect to the server and read it there:
+
+```bash
+cat /proc/sys/kernel/random/boot_id
+```
+
+To reboot the server, set the `machines.vcluster.com/reboot` annotation on the `NodeClaim`. The platform reboots only a server that's on, and removes the annotation once it has asked the driver to reboot. If the server is off, the platform drops the request, so the server doesn't reboot after its next start.
+
+<InterpolatedCodeBlock
+  code={'kubectl annotate nodeclaim [[VAR:NODECLAIM_NAME:my-nodeclaim]] -n [[VAR:PROJECT_NAMESPACE:p-default]] \\\n  machines.vcluster.com/reboot=true'}
+  language="bash"
+/>
+
+To confirm a start or stop, check that `status.power.state` reaches `On` or `Off`, respectively.
+
+<InterpolatedCodeBlock
+  code={'kubectl get nodeclaim [[VAR:NODECLAIM_NAME:my-nodeclaim]] -n [[VAR:PROJECT_NAMESPACE:p-default]] \\\n  -o jsonpath=\'{.status.power.state}\''}
+  language="bash"
+/>
+
+To confirm a reboot, read the boot ID again the same way. A different boot ID confirms that the server restarted. An `On` power state alone doesn't confirm a reboot. It can still reflect the state before the reboot started. The reboot annotation can disappear before the reboot finishes.
+
+Both changes need permission to update the instance. The default Project User role can only watch instances. See [Security and ownership boundaries](#security-and-ownership-boundaries).
+
+### Power states
+
+`status.power.state` reports the observed power state.
+
+| State | Meaning |
+|---|---|
+| `On` | The server was observed on. A requested change can still be pending. |
+| `Off` | The server was observed off. A requested change can still be pending. |
+| `Starting` | The server is powering on. |
+| `Stopping` | The server is powering off. |
+| `Rebooting` | The driver has a reboot in progress. |
+| Empty | The platform can't determine the power state, or the driver doesn't support power control. |
+
+KubeVirt also passes through its own VM statuses, such as `Migrating` or `Provisioning`.
+
+While the state is transitional, the platform waits for the change to finish and doesn't send another request. When the state is empty, the platform doesn't act, and checks again about every 2 minutes.
+
+### How each driver controls power
+
+| Driver | On and off | Reboot | Observed state |
+|---|---|---|---|
+| Metal3 | Sets the `BareMetalHost`'s `spec.online` | Sets the `reboot.metal3.io` annotation on the `BareMetalHost` with mode `hard` | The host's `status.poweredOn`, compared with `spec.online` |
+| KubeVirt | Starts or stops the `VirtualMachine` | Restarts the `VirtualMachine` | The `VirtualMachine`'s `status.printableStatus` |
+| External platform | Sets `spec.power.state` on the remote `NodeClaim` | Sets `machines.vcluster.com/reboot` on the remote `NodeClaim` | The remote `NodeClaim`'s `status.power.state` |
+
+On **Metal3**, a powered-off server stays provisioned, so powering it on again boots the same disk. The platform reports `Starting` or `Stopping` until the Bare Metal Operator applies `spec.online`, and `Rebooting` while a reboot annotation is on the host. A detached `BareMetalHost` reports no power state. The platform changes only a host that the instance holds. This includes instances provisioned before an upgrade from Platform v4.12.
+
+On the **external platform** driver, the remote platform powers the server. The local instance shows `Starting`, `Stopping`, or `Rebooting` until the remote platform acts on the request. A remote platform that doesn't report power state, such as one older than Platform v5.0, shows no power state, and the local platform can't power its servers.
+
+On the remote platform, the UI shows the power actions of the instance that the external platform driver created as disabled. Their tooltip names the instance to use instead. Power changes made on the remote instance are reverted, because the local instance keeps asking for its own desired state.
 
 ## Release and reclaim
 
