@@ -1,31 +1,32 @@
 # Section overview template
 
-One page at the top of a sidebar section that tells readers what the section
-covers, whether it's for them, and which page to open next. It's mostly
-wayfinding, with just enough explanation to make the choice between pages
-clear. The reader arrives from the sidebar, search, or a link from another
-section, and leaves within a minute for the page they need.
+One page at the top of a sidebar section. It answers "what even is this
+section?" before it answers "where do I go next?" A reader arrives from the
+sidebar, search, or a link elsewhere, often unsure whether the section is the
+right place. The page orients them, explains the idea the section is built on,
+and then routes them to the page they need.
 
-Good examples: `vcluster/operate/overview.mdx` and
-`platform/use-platform/overview.mdx`.
+A page that's only headings over bulleted link lists fails this. It repeats the
+sidebar and never says what the section is for.
+
+The model to copy is `platform/tenants/overview.mdx`. It opens with what the
+section covers, explains the tenant model with a diagram and a table, says when
+tenants apply, summarizes the boundary in two paragraphs, and routes the rest
+of the section through a prose paragraph and one card grid.
 
 ## Does the section need one?
-
-The sidebar already lists a section's pages. An overview earns its place by
-adding what the sidebar can't: who the section is for, which page fits which
-situation, the order to read pages in, and what lives in another section.
 
 Write an overview when any of these is true:
 
 - **It's a top-level section** in the vCluster or Platform sidebar.
+- **Readers need a model first.** The section's pages make sense only once the
+  reader understands an idea they share, such as the tenant hierarchy.
 - **Readers have to choose.** The section has several pages or subfolders, and
   their titles alone don't tell a reader which one fits their situation.
 - **Order matters.** The pages are steps or decisions a reader works through
   in sequence, such as planning before deploying.
 - **It serves more than one role.** For example, a platform admin and a
   project user would start in different places.
-- **Other pages link to the section as a whole**, and the link needs a page
-  that explains where to go next.
 
 Skip the overview when:
 
@@ -33,8 +34,6 @@ Skip the overview when:
   point. Put it at `sidebar_position: 0` instead of adding a page above it.
 - **The section has two or three pages** whose titles already make the choice
   obvious.
-- **It would only repeat the sidebar.** A bulleted list of the child pages,
-  with nothing about when to use each one, adds a click and no information.
 - **A generator owns the section index**, such as the Platform API resource
   pages.
 
@@ -43,54 +42,89 @@ overview or be flattened. Before flattening, check the IA plan for whether the
 section is expected to grow. A folder that's waiting for planned content keeps
 its overview.
 
-When the test says yes but the overview turns into a long explanation, the
-explanation belongs on a concept page. Keep a short version in the overview
-intro and link to the concept page.
+### When a concept page already explains the section
+
+Often a concept page in the section already explains the model the whole
+section builds on. Don't write a link hub above it. Split it instead:
+
+- **The orienting half moves to the overview.** That's what the thing is, a
+  diagram, who does what, and when it applies.
+- **The mechanics stay on the concept page.** That's how it works in detail,
+  edge cases, and the reference tables other pages link into.
+
+Leave the concept page at its path so existing links and anchors keep working.
+Give it a short intro that links back to the overview, and give the overview a
+short summary that links to the concept page.
 
 ## Frontmatter and title
 
-- `title` names the section, for example "Operate" or "Use the platform".
-  Never use "Overview" as the title, because the title is the page's H1, its
-  browser tab, and its search result.
+- `title` names the section, usually matching its `_category_.json` label, for
+  example "Deliver services to tenants". Never use "Overview", because the
+  title is the page's H1, its browser tab, and its search result.
 - `sidebar_label: Overview`, so the section name isn't repeated under itself.
 - `sidebar_position: 0`. Put the section's own position and tier badge
   (`className`) in its `_category_.json`.
 - `slug` matches the folder URL, plugin-relative, for example
-  `slug: /operate`. See "Sidebar Navigation Conventions" in the writer skill's
+  `slug: /tenants`. See "Sidebar Navigation Conventions" in the writer skill's
   `SKILL.md`.
-- `description` says what the section helps the reader do, in one sentence of
-  100 to 160 characters. Docusaurus uses it for the meta description and the
-  Open Graph description, so it's what search results and link previews on
-  social sites show. Without one, Docusaurus uses the first paragraph, which
-  on an overview is often an admonition or a fragment. LinkedIn flags
+- `description` says what the section is about, in one sentence of 100 to 160
+  characters. Docusaurus uses it for the meta description and the Open Graph
+  description, so it's what search results and link previews on social sites
+  show. Without one, Docusaurus uses the first paragraph. LinkedIn flags
   descriptions under 100 characters, and search engines truncate them after
   about 160.
 
-## Sections
+## The three jobs, in order
 
-1. **Intro.** One to three sentences: what the section covers and who it's
-   for. When a neighboring section covers related work, say where the line
-   falls, for example "Deploy decides how a cluster is built. This section
-   covers running it."
-2. **Framing (optional).** One short paragraph or list of the idea a reader
-   needs before choosing a page, such as what a project controls. Link to the
-   concept page for more. If this grows past a paragraph, move it to a
-   concept page.
-3. **Grouped links.** Group pages by what the reader is trying to do, not by
-   sidebar order. Give each link a bold lead-in naming the goal and one
-   sentence saying what the page does or when to use it. Use an `H2` per group
-   when there are more than about eight links. When order matters, use a
-   numbered list instead.
-4. **Covered in other sections (optional).** Work a reader might expect here
-   that lives elsewhere, one line per item, each with a link. Use full
-   `/docs/` paths for pages in the other product.
-5. **Config reference (Configure sections only).** A link to the matching key
-   in the generated `vcluster.yaml` reference.
+### 1. Orient
 
-Use bulleted lists by default. A card grid (`LinkCardGrid` from
-`@site/src/components/LinkCards`) suits a top-level landing page with many
-destinations that readers scan, such as Integrate and automate. Use one grid
-per page at most.
+Open with prose, not a list. In one or two short paragraphs, say what the
+section covers, who works in it, and where it stops. Then explain the idea the
+section is built on, such as the tenant hierarchy, the planning sequence, or
+what the management plane is.
+
+- Use a diagram when one exists for the model.
+- Use a table when the content is tabular, such as roles and what each does.
+- Say when the section applies and when it doesn't, if a reader might not need
+  it at all, as "Tenants are optional" does.
+- When a neighboring section covers related work, say where the line falls,
+  for example "Deploy decides how a cluster is built. This section covers
+  running it."
+
+### 2. Explain just enough to choose
+
+Give the reader what they need to pick a page, and no more. Two or three short
+paragraphs is usually the limit. Link to the concept page for the full story.
+
+When the choice depends on conditions, such as which monitoring approach fits
+which deployment, use an "If you… / Use…" table so the condition sits in the
+left column where scanning finds it.
+
+### 3. Route
+
+Open the routing with a sentence or two of prose that explains how the section
+is organized, for example how its groups follow the same handoff as the model
+above. Then route with one form:
+
+- **A card grid** (`LinkCardGrid` from `@site/src/components/LinkCards`) for a
+  handful of destinations a reader scans, each with a one-line description.
+  Use one grid per page at most. A card's `to` is a plugin-relative URL, not a
+  file path, and `validate-mdx-links` doesn't check it. Use the page's served
+  URL: its `slug` if it has one, and the folder URL for a file named after its
+  folder, such as `external-database/external-database.mdx`. A wrong URL
+  fails the build, because broken links throw.
+- **A numbered list** when the pages are read in order.
+- **A table** when readers look things up, such as commands by task.
+- **A short list** when the items are truly parallel and a grid would be
+  overkill.
+
+Weave links into the prose of the first two jobs too. A sentence that says
+"read [what projects are](...) next" routes as well as a bullet does, and it
+says why.
+
+End with "Covered in other sections" only when readers often look here for
+work that lives elsewhere. Keep it short. Configure sections end with a link
+to the matching key in the generated `vcluster.yaml` reference.
 
 ## Skeleton
 
@@ -100,36 +134,40 @@ title: <Section name>
 sidebar_label: Overview
 sidebar_position: 0
 slug: /<folder-url>
-description: <What this section helps the reader do, in 100 to 160 characters.>
+description: <What this section is about, in 100 to 160 characters.>
 ---
 
-This section covers <scope> for <role>. <Where the line falls with a
-neighboring section, if a reader could confuse them.>
+import {LinkCard, LinkCardGrid} from '@site/src/components/LinkCards';
 
-## <Reader goal>
+This section covers <scope>. <Who works in it, and where it stops relative to
+a neighboring section.>
 
-- **<Goal>.** [<Page title>](./<page>.mdx) <what it does or when to use it>.
-- **<Goal>.** [<Page title>](./<page>.mdx) <what it does or when to use it>.
+<The idea the section is built on, in a paragraph or two. Add a diagram or a
+table if the content calls for one.>
 
-## <Reader goal>
+## <When this applies, or the choice the reader faces>
 
-1. [<First page>](./<page>.mdx) <what the reader decides or does here>.
-2. [<Second page>](./<page>.mdx) <what the reader decides or does here>.
+<Just enough to choose. Use an "If you… / Use…" table when the choice depends
+on conditions. Link to the concept page for the details.>
 
-## Covered in other sections
+## Work in this section
 
-- To <goal>, see [<Page title>](../<section>/<page>.mdx).
-- To <goal>, see [<Page title>](/docs/<product>/<path>) in the <product> docs.
+<A sentence or two on how the section is organized.>
+
+<LinkCardGrid>
+  <LinkCard product="<vcluster|platform>" to="/<path>" icon="<material icon>" title="<Group>" description="<What the reader does there, in one line.>" />
+</LinkCardGrid>
 ````
 
 ## Don't
 
+- Don't build the page from headings that each hold only a bulleted list.
+- Don't open with a list. Open with what the section is.
 - Don't use "Overview" as the title.
-- Don't explain how a feature works beyond a short paragraph. Link to the
-  concept page.
+- Don't explain mechanics at length. Summarize, then link to the concept page.
 - Don't put procedures, commands, or configuration examples on the page. Link
   to the task page.
-- Don't list child pages in sidebar order without saying what each is for.
+- Don't stack routing forms. Pick one card grid, one list, or one table.
 - Don't use a bare `DocCardList` as the page's only content.
 - Don't make an overview the only page that holds a feature's real content. A
   full guide in `overview.mdx` belongs on a page named for what it is.
