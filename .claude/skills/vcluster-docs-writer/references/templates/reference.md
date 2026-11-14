@@ -22,7 +22,9 @@ findable by scanning and don't make them read prose to find it.
 
 - `title` names the thing being described, for example "Tenant capability
   reference" or "Machine condition reasons". Use sentence case.
-- `description` says what the reader can look up, in one sentence.
+- `description` says what the reader can look up, in one
+  sentence of 100 to 160 characters. See the `description` note in
+  `section-overview.md` for why the range matters.
 - Place the page by the rules in "Where reference pages go" in
   [README.md](README.md).
 
@@ -47,7 +49,7 @@ findable by scanning and don't make them read prose to find it.
 ---
 title: <Thing> reference
 sidebar_label: <Thing> reference
-description: <What the reader can look up here, in one sentence.>
+description: <What the reader can look up here, in 100 to 160 characters.>
 ---
 
 <What this page lists and when you need it.> For how <feature> works, see

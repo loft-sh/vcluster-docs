@@ -10,7 +10,9 @@ page.
 - `title` starts with a verb and names the outcome, for example "Rotate
   certificates". Use sentence case.
 - `sidebar_label` usually matches the title, shortened if needed.
-- `description` says what the reader accomplishes, in one sentence.
+- `description` says what the reader accomplishes, in one
+  sentence of 100 to 160 characters. See the `description` note in
+  `section-overview.md` for why the range matters.
 
 ## Sections
 
@@ -41,7 +43,7 @@ page.
 ---
 title: <Verb> <outcome>
 sidebar_label: <Verb> <outcome>
-description: <What the reader accomplishes, in one sentence.>
+description: <What the reader accomplishes, in 100 to 160 characters.>
 ---
 
 import Flow, { Step } from '@site/src/components/Flow';
