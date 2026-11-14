@@ -108,7 +108,11 @@ above. Then route with one form:
 
 - **A card grid** (`LinkCardGrid` from `@site/src/components/LinkCards`) for a
   handful of destinations a reader scans, each with a one-line description.
-  Use one grid per page at most.
+  Use one grid per page at most. A card's `to` is a plugin-relative URL, not a
+  file path, and `validate-mdx-links` doesn't check it. Use the page's served
+  URL: its `slug` if it has one, and the folder URL for a file named after its
+  folder, such as `external-database/external-database.mdx`. A wrong URL
+  fails the build, because broken links throw.
 - **A numbered list** when the pages are read in order.
 - **A table** when readers look things up, such as commands by task.
 - **A short list** when the items are truly parallel and a grid would be
