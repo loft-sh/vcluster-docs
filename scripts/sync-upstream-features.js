@@ -51,6 +51,7 @@ const DEPRECATED_FEATURES = new Set([
   'rancher-integration',
   'secret-encryption',
   'vcp-distro-admission-control',
+  'vcp-distro-isolated-cp',   // removed in vCluster 0.28
   'devpod',
   'disable-platform-db',  // allowBefore: 2025-09-09 - expires soon
 ]);

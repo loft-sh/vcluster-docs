@@ -292,7 +292,6 @@ function insertOrUpdateFeatureTable(filePath, featureIds) {
 // To add a feature here, it must be a deliberate decision — not a missing assignment.
 const NO_PLAN_REQUIRED = new Set([
   'vnode-runtime',             // add-on product, separate pricing
-  'vcp-distro-isolated-cp',    // experimental, not GA
   'air-gapped-mode',           // deployment mode, not a plan-gated feature
   'vm-management',             // enabled on a per-customer basis
   'auto-nodes-nico',           // not yet assigned a plan tier in loft-sh/plans
