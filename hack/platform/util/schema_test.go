@@ -216,3 +216,18 @@ func TestBuildContentStopsAtRecursiveDefinition(t *testing.T) {
 		t.Fatalf("recursive content grew unexpectedly large: %d bytes", len(content))
 	}
 }
+
+func TestIsTodoLine(t *testing.T) {
+	cases := map[string]bool{
+		`TODO: update the default value to "Merge" when spec.os.name is not windows in v1.34`: true,
+		"  TODO(someone): fix this":                   true,
+		"Note that this field cannot be set on TODO.": false,
+		"TODOS are not markers":                       false,
+		"":                                            false,
+	}
+	for line, want := range cases {
+		if got := isTodoLine(line); got != want {
+			t.Errorf("isTodoLine(%q) = %v, want %v", line, got, want)
+		}
+	}
+}
