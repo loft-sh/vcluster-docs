@@ -1,0 +1,189 @@
+---
+title: Manage tenant resources with GitOps
+sidebar_label: Manage with GitOps
+sidebar_position: 4
+description: Apply a tenant's projects, users, and teams from Git with Argo CD or Flux, using an identity, labels, and names that the platform accepts.
+---
+
+import Flow, { Step } from "@site/src/components/Flow";
+import InterpolatedCodeBlock from "@site/src/components/InterpolatedCodeBlock";
+import PageVariables from "@site/src/components/PageVariables";
+
+When Argo CD or Flux applies Platform resources from Git, each write is checked
+twice. Kubernetes RBAC or the platform's permissions decide whether the sync
+identity may write the resource. Then the platform holds the write to the
+limits of the tenant that owns the resource. This page covers which identity
+to use, and the labels and names a tenant's manifests need. For the labels and
+name rules themselves, see the
+[tenant boundary reference](./tenant-boundary-reference.mdx).
+
+## Before you begin
+
+- Create the tenant and grant it the templates, control plane clusters, and
+  other inventory its projects use. A write inside a tenant's project is held
+  to that tenant's grants, whoever sends it. See
+  [Create and configure a tenant](./create-and-configure-tenants.mdx).
+- Connect your GitOps tool to the platform's management API. The
+  [GitOps end-to-end guide](../../integrations/gitops-cicd/gitops-end-to-end.mdx)
+  shows Argo CD applying `management.loft.sh` resources with its own service
+  account.
+- Know that ownership is fixed when a resource is created. Adding, changing,
+  or removing a resource's `tenant.vcluster.com/owner` label later is refused,
+  so put each resource in the right tenant from its first sync.
+
+## Choose the identity
+
+The identity your GitOps tool uses needs permission to write each resource. For
+tenant-owned resources, the platform also checks the owning tenant's limits.
+
+| Identity | Platform-owned resources | A tenant's resources |
+|----------|--------------------------|----------------------|
+| The tool's Kubernetes service account, or another control plane cluster identity | With the required RBAC permissions on the management API | Updates to existing cluster-scoped resources, and writes inside a tenant's project, with the required RBAC permissions. Not creates of cluster-scoped resources, such as projects |
+| A platform admin user's [access key](../../administer/authentication/access-keys.mdx) | Within that user's permissions | Creates and updates. Writes are held to what the tenant may do |
+| A tenant user's access key | No | Within that tenant and the user's permissions |
+
+A Kubernetes identity isn't a Platform user, but it doesn't need one to update
+a tenant's existing projects, users, or teams. Its RBAC permissions still
+apply. An update uses the stored resource's owner, and a write inside a
+project uses that project's tenant.
+
+A Kubernetes identity can't create a tenant-owned cluster-scoped resource. The
+platform refuses the owner label from it, and refuses a `<tenant>--` name
+without that label. Create a tenant's projects, users, and teams with an access
+key, then let the service account manage them.
+
+These writes can't exceed the tenant's grants or bypass restrictions on roles
+and resource kinds. A sync identity with access to several tenants is held to
+each resource's owning tenant, rather than to one tenant selected for the sync.
+
+If you choose an access key, create a dedicated user for the tool, as
+[Users and teams](../concepts/what-are-users-and-teams.mdx) recommends. A sync
+that creates resources for several tenants needs a platform admin user. A
+tenant user's key confines the sync to that tenant. Keep platform-owned
+manifests in a separate sync with a platform identity.
+
+## Write the manifests
+
+What the manifests carry depends on the identity that applies them. Customize
+the tenant name and project suffix for the examples on this page.
+
+<PageVariables TENANT="acme" PROJECT_SUFFIX="team-a" />
+
+**With a platform admin's access key,** add `tenant.vcluster.com/owner` to each
+cluster-scoped resource the tenant owns, such as its projects, users, and teams.
+Set its value to the tenant name. Name each one `<tenant>--<name>`. The prefix is
+required for every tenant-owned cluster-scoped create, including one a
+platform admin sends, and a tenant-prefixed name without the matching owner is
+refused.
+
+<InterpolatedCodeBlock
+  language="yaml"
+  title="project.yaml"
+  code={
+    "apiVersion: management.loft.sh/v1\n" +
+    "kind: Project\n" +
+    "metadata:\n" +
+    "  name: [[GLOBAL:TENANT]]--[[GLOBAL:PROJECT_SUFFIX]]\n" +
+    "  labels:\n" +
+    "    tenant.vcluster.com/owner: [[GLOBAL:TENANT]]\n" +
+    "spec:\n" +
+    "  displayName: Team A\n"
+  }
+/>
+
+Resources inside a tenant's project take the tenant from the project, so they
+don't need the label when they're created. The platform stamps it on them,
+though. A later write that replaces the whole object, such as `kubectl replace`
+or Argo CD's `Replace=true` sync option, must keep that label or it's refused.
+Client-side and server-side apply keep the live label.
+
+**With a tenant user's access key,** leave every `tenant.vcluster.com/` label
+out of the manifests. The platform sets the owner label itself and refuses one
+in a tenant's write. Start each cluster-scoped resource's name with
+`<tenant>--`. The platform hides these labels when the tenant reads, so the
+tool doesn't report them as drift.
+
+**With a Kubernetes identity,** keep the manifests of resources the tenant
+already owns as they are. Platform admins and Kubernetes identities can repeat
+an unchanged owner label when updating or patching an existing resource, but
+they can't change its tenant. Tenant identities can't send managed labels, even
+unchanged ones.
+
+## Set up a sync for a tenant
+
+These steps create a tenant's resources with a platform admin's access key and
+then hand ongoing updates to the tool.
+
+<Flow id="tenant-gitops-sync">
+  <Step>
+    Create a dedicated platform admin user for the GitOps tool, and issue it an
+    access key. See [Access keys](../../administer/authentication/access-keys.mdx).
+  </Step>
+  <Step>
+    Build a kubeconfig from the access key, as described in
+    [Manually create kube config](../../administer/authentication/access-keys.mdx#manually-create-kube-config).
+    Register it as an Argo CD cluster, or reference it from a Flux
+    Kustomization as a kubeconfig Secret.
+  </Step>
+  <Step>
+    Commit the tenant's manifests, written as in
+    [Write the manifests](#write-the-manifests), to the repository the tool
+    syncs.
+  </Step>
+  <Step>
+    Sync, and confirm the resources were created in the tenant. See
+    [Verify](#verify).
+  </Step>
+  <Step>
+    Optionally, move later syncs to the tool's Kubernetes service account. It
+    can update the tenant's existing projects, users, and teams with the
+    required RBAC permissions, but it can't create new ones.
+  </Step>
+</Flow>
+
+## Verify
+
+- **The tenant's view.** Sign in as the tenant admin, or
+  [switch to the tenant](../concepts/what-are-users-and-teams.mdx#switch-to-a-tenant-by-impersonation).
+  Confirm the synced projects are listed. See
+  [Verify the boundary](./create-and-configure-tenants.mdx#verify-the-boundary).
+- **The sync.** The Argo CD application reports Synced and Healthy, or the Flux
+  Kustomization reports Ready, with none of the errors above.
+- **The permissions.** Reapply an unchanged manifest, then sync an intended
+  update with the tool's actual identity. Confirm ownership stays unchanged.
+  In a test environment, confirm the same identity can't give one of the
+  tenant's teams a role the tenant couldn't grant itself.
+- **The ownership.** Use a platform admin's access-key kubeconfig to confirm the
+  project carries `tenant.vcluster.com/owner` with the tenant name. Tenant
+  users' reads hide this label, so their keys can't verify it.
+
+<InterpolatedCodeBlock
+  language="bash"
+  code={
+    "kubectl --kubeconfig [[VAR:PLATFORM_ADMIN_KUBECONFIG:platform-admin-kubeconfig.yaml]] get projects.management.loft.sh [[GLOBAL:TENANT]]--[[GLOBAL:PROJECT_SUFFIX]] --show-labels\n"
+  }
+/>
+
+The `LABELS` column includes `tenant.vcluster.com/owner=` followed by the tenant name.
+
+## Fix sync errors
+
+| Symptom in the sync | Cause | Fix |
+|---------------------|-------|-----|
+| `a resource's tenant cannot be changed` | The manifest added, changed, or removed the owner label on a resource that already exists | Revert the label. To give the resource to another tenant, recreate it there |
+| RBAC `forbidden` for the service account | The sync identity lacks permission for the resource or operation on `management.loft.sh` | Grant the required RBAC permissions to the sync identity |
+| `is maintained by the platform and cannot be set` | A tenant identity sent a `tenant.vcluster.com/` label, or a Kubernetes identity sent the owner label on a create | Remove the label from a tenant's manifest. Create the resource with a platform admin's access key instead of the Kubernetes identity |
+| `owner tenant does not exist` | The owner label on a new resource names a tenant that doesn't exist, often a typo | Correct the label to the tenant's name |
+| `must start with "acme--"` | A tenant-owned cluster-scoped create omitted the prefix, including one sent by a platform admin | Rename it with the prefix |
+| `the object must be owned by it` | A tenant-prefixed name has no matching owner, for example a Kubernetes identity's create | Create the resource with a platform admin's access key and the matching owner, or use a name outside tenant name prefixes for platform-owned inventory |
+| `not a user or team this tenant can see` | A tenant identity's manifest names a user or team that doesn't exist yet or belongs to another tenant. The name is in `spec.access`, `spec.owner`, or a team's `spec.users` | Apply the tenant's users and teams before the resources that name them. See [A tenant names only users and teams it can see](./tenant-boundary-reference.mdx#a-tenant-names-only-users-and-teams-it-can-see) |
+| `may not own instances of this resource` | The tenant can't create that kind. Its capability is off, the capability doesn't allow the tenant its own, or tenants never author that kind | Create the resource as the platform, or enable `allow.custom` where the capability offers it |
+
+For more on each refusal, see [Troubleshoot tenants](../troubleshoot/tenants.mdx).
+
+## Next steps
+
+- [Tenant boundary reference](./tenant-boundary-reference.mdx) covers every
+  label, default, and name rule this page uses.
+- [Troubleshoot tenants](../troubleshoot/tenants.mdx) covers the refusals in
+  more detail.
