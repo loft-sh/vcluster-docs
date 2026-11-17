@@ -284,14 +284,19 @@ const config = {
         beforeDefaultRemarkPlugins: [
           [remarkVersionTokens, { siteDir: __dirname }],
         ],
-        lastVersion: "0.37.0",
-        onlyIncludeVersions: ["current", "0.37.0", "0.36.0", "0.35.0"],
+        lastVersion: "0.38.0",
+        onlyIncludeVersions: ["current", "0.38.0", "0.37.0", "0.36.0", "0.35.0"],
         versions: {
           current: {
             label: "main 🚧",
           },
+          "0.38.0": {
+            label: "v0.38 Stable",
+            banner: "none",
+            badge: true,
+          },
           "0.37.0": {
-            label: "v0.37 Stable",
+            label: "v0.37 (LTS)",
             banner: "none",
             badge: true,
           },
@@ -321,14 +326,19 @@ const config = {
         beforeDefaultRemarkPlugins: [
           [remarkVersionTokens, { siteDir: __dirname }],
         ],
-        lastVersion: "4.12.0",
-        onlyIncludeVersions: ["current", "4.12.0", "4.11.0", "4.10.0", "4.9.0"],
+        lastVersion: "5.0.0",
+        onlyIncludeVersions: ["current", "5.0.0", "4.12.0", "4.11.0", "4.10.0", "4.9.0"],
         versions: {
           current: {
             label: "main 🚧",
           },
+          "5.0.0": {
+            label: "v5.0 Stable",
+            banner: "none",
+            badge: true,
+          },
           "4.12.0": {
-            label: "v4.12 Stable",
+            label: "v4.12 (LTS)",
             banner: "none",
             badge: true,
           },

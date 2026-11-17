@@ -5,14 +5,14 @@ export const DOCSEARCH_PRODUCTS = {
   vcluster: {
     pluginId: "vcluster",
     displayName: "vCluster",
-    stableVersion: "0.37.0",
-    stableLabel: "v0.37 Stable",
+    stableVersion: "0.38.0",
+    stableLabel: "v0.38 Stable",
   },
   platform: {
     pluginId: "platform",
     displayName: "Platform",
-    stableVersion: "4.12.0",
-    stableLabel: "v4.12 Stable",
+    stableVersion: "5.0.0",
+    stableLabel: "v5.0 Stable",
   },
   vnode: {
     pluginId: "vnode",
