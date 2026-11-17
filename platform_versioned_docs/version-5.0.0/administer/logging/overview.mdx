@@ -1,0 +1,105 @@
+---
+title: Logging
+sidebar_label: Overview
+sidebar_position: 1
+description: Understand platform audit logs, platform process logs, and workload log collection in vCluster Platform.
+---
+
+import Icon from '@site/src/components/Icon';
+
+vCluster Platform surfaces three distinct types of logs, each serving a different purpose and requiring different configuration.
+
+| Type | What it captures | Configure |
+|------|-----------------|-----------|
+| [Platform audit logs](#platform-audit-logs) | API requests that pass through the platform gateway, including who acted and when | [Audit Logging](../configure/platform-configs/audit.mdx) |
+| [Platform process logs](#platform-process-logs) | Operational output from the platform pod, including startup, controller activity, and errors | [Platform Process Logging](./platform-logging.mdx) |
+| [Workload logs](#workload-logs) | Output from applications running inside clusters | [Fleet Observability log collection](../../fleet-operations/observability/collect-pod-logs.mdx) or [Central HostPath Mapper](../../fleet-operations/logging/central-hostpath-mapper.mdx) |
+
+These three types are independent. Enabling audit logging doesn't affect process log verbosity. A separate infrastructure component handles workload log collection.
+
+## Platform audit logs
+
+The platform's API gateway records every request that passes through it. This covers requests from the UI, the CLI, and any API call routed through the platform proxy. Each log entry captures:
+
+- The requesting user (or service account), their groups, and source IP
+- The resource being accessed (type, name, namespace, cluster)
+- The HTTP verb (`get`, `list`, `create`, `update`, `delete`, `patch`)
+- Whether impersonation was in use
+- Timestamps and a unique audit ID
+
+The platform also records sign-in attempts through password, SSO, token exchange, and its OIDC provider, including failed attempts. See [Authentication events](../configure/platform-configs/audit-events.mdx#authentication-events).
+
+### What gets logged
+
+Four audit levels control the volume and detail of what the platform captures.
+
+| Level | Writes (create/update/delete/patch) | Reads (get/list/watch) | Request body | Response body |
+|-------|-------------------------------------|------------------------|:------------:|:-------------:|
+| 1 | Metadata only, but creates also log the request body | Not logged | Creates only | <Icon type="cross" /> |
+| 2 | Metadata only, but creates also log the request body | Metadata only | Creates only | <Icon type="cross" /> |
+| 3 | Logged with request body | Logged with request body | <Icon type="check" /> | <Icon type="cross" /> |
+| 4 | Logged with request and response | Logged with request and response | <Icon type="check" /> | <Icon type="check" /> |
+
+At all levels, a fixed set of built-in rules run before the level's own rules. Some requests are never logged, including internal access-review and token requests, and kubeconfig retrieval for a cluster. Sensitive `create` requests, such as access keys and cluster registration, stay at metadata level even when the configured level would otherwise capture the full payload. Long-running streaming requests, such as `pods/log` and `pods/exec`, also stay at metadata level regardless of the configured level. See [Default policy exclusions](../configure/platform-configs/audit-policy.mdx#default-policy-exclusions) for the full list of affected resources and why.
+
+### Configure audit logging
+
+See [Audit Logging](../configure/platform-configs/audit.mdx) for how to enable audit logging, choose a level, define a custom policy, and persist logs to a PVC or external database.
+
+## Platform process logs
+
+The platform pod writes operational logs to stdout. These cover initialization, controller reconciliation, API request handling, and runtime errors.
+
+The platform supports three log levels.
+
+| Level | What it captures | When to use |
+|-------|-----------------|-------------|
+| `info` | Startup sequences, controller events, handled requests | Default for all environments |
+| `debug` | Full operation context for every request and reconciliation loop | Temporarily, when diagnosing an issue |
+| `error` | Failures and warnings only | Stable production environments with low noise requirements |
+
+By default, logs use a human-readable console format. Switch to JSON format when feeding logs into an aggregation pipeline such as Elasticsearch or Grafana Loki.
+
+Access platform logs with:
+
+```bash
+kubectl logs -n vcluster-platform -l app=loft -f
+```
+
+See [Platform Process Logging](./platform-logging.mdx) for how to change log level and output format.
+
+## Workload logs
+
+For clusters on private nodes, Fleet Observability can collect pod logs and forward them to a logs backend through the observability gateway. The gateway stamps each record with the cluster's verified project and instance identity. See [Collect pod logs](../../fleet-operations/observability/collect-pod-logs.mdx).
+
+For your own log collection pipeline, standard log collectors such as Fluentd, the ELK stack, and Grafana Loki read container logs from the host filesystem at paths like:
+
+```
+/var/log/pods/<namespace>_<pod-name>_<uid>/<container>/
+```
+
+Clusters on shared nodes introduce a naming problem. When vCluster syncs pods to the control plane cluster, it rewrites their names. A pod named `web-6d4f9b` inside a cluster appears as `web-6d4f9b-x-default-x-my-vcluster` on the control plane cluster. Log collectors see only the physical name and cannot correlate entries back to the originating cluster workload.
+
+Clusters on private nodes don't have this problem, because their pods keep their own names on their own nodes. For clusters on shared nodes, the HostPath Mapper solves this by creating symlinks on each node that map physical pod paths to their virtual names. Log collectors follow the symlinks and see the names they expect.
+
+vCluster Platform offers two deployment options:
+
+- **Central HostPath Mapper**: A single DaemonSet on the control plane cluster handles path remapping for all clusters. Recommended for fleet deployments.
+- **Per-cluster HostPath Mapper**: A DaemonSet installed in each cluster's namespace. Better suited to small environments or where per-cluster isolation is needed.
+
+See [Central HostPath Mapper](../../fleet-operations/logging/central-hostpath-mapper.mdx) to set up the central option, and [Host path mapper](/docs/vcluster/configure/control-plane/components/host-path-mapper) in the vCluster docs for the per-cluster option.
+
+### Choose a log collection approach
+
+The right approach depends on where the cluster's pods run.
+
+| Cluster setup | Recommended approach | Why |
+|---------------|----------------------|-----|
+| Private nodes | Fleet Observability log collection | Each cluster's nodes run only its own pods, so a collector on those nodes reads only that cluster's logs. The HostPath Mapper isn't supported. |
+| vCluster Standalone | Your own collector, sending logs to the observability gateway | The gateway accepts logs from a Standalone cluster when the connector uses a `LoadBalancer` gateway the cluster can reach. Platform refuses Standalone clusters a credential for a `ClusterIP` gateway. You can [configure collectors manually](../../fleet-operations/observability/configure-collectors-manually.mdx). The HostPath Mapper isn't supported. |
+| The Docker driver | Your own collector on the cluster's nodes | You can [configure collectors manually](../../fleet-operations/observability/configure-collectors-manually.mdx). The HostPath Mapper isn't supported. |
+| Shared nodes | The HostPath Mapper with your own log collector | Pods from several clusters share each node, and their names are rewritten on the control plane cluster. |
+
+Fleet Observability log collection is for clusters on private nodes. On shared nodes without the HostPath Mapper, it finds no pod logs and collects nothing. Nothing fails, so the gap is easy to miss. See [Collect pod logs](../../fleet-operations/observability/collect-pod-logs.mdx).
+
+The HostPath Mapper still fits clusters on shared nodes when you already run Fluentd, the ELK stack, or Grafana Loki and those collectors read host log paths. It also covers other tools that read pod paths on the host, such as [Velero file-system backups](/docs/vcluster/operate/backup-restore/velero) and KubeVirt.

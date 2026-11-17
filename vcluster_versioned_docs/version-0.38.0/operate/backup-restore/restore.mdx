@@ -1,0 +1,372 @@
+---
+title: Restore snapshots
+description: Restore a cluster from an OCI, S3, Azure Blob, or container snapshot, clone or migrate it to a new cluster, and handle private node changes after restore.
+sidebar_class_name: host-nodes private-nodes
+sidebar_label: Restore snapshots
+sidebar_position: 2
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+import TenancySupport from '../../_fragments/tenancy-support.mdx';
+import InterpolatedCodeBlock from '@site/src/components/InterpolatedCodeBlock';
+
+<TenancySupport hostNodes="true" privateNodes="true" />
+
+There are multiple ways to back up and restore a cluster. <GlossaryTerm term="vcluster">vCluster</GlossaryTerm> provides a built-in method to create and restore snapshots using its CLI.
+
+A vCluster snapshot includes:
+
+- Backing store data (such as <GlossaryTerm term="etcd">etcd</GlossaryTerm> or SQLite)
+- vCluster Helm release information
+- vCluster configuration (for example, `vcluster.yaml`)
+
+:::info Extra steps for private nodes
+If the cluster uses private nodes and its nodes changed since the snapshot, follow the [additional steps for private nodes](#use-snapshots-with-private-nodes) after the restore.
+:::
+
+## Restore existing cluster from a snapshot
+
+Restoring from a snapshot pauses the vCluster, scales down all workload pods to 0, and launches a temporary restore pod. Once the restore completes, vCluster resumes and scales all workload pods back up. This process results in temporary downtime while the restore is in progress.
+
+:::warning Restore failures
+vCluster pauses the cluster and scales workload pods to 0 before the restore pod attempts to download the snapshot. An invalid snapshot URL or expired credential is therefore discovered after downtime begins. Before restoring, run [`vcluster snapshot get`](../../cli/vcluster_snapshot_get.md) with the same URL and credential options. Continue only if it reports the snapshot as saved. This check doesn't pause the cluster.
+
+If the restore fails for this or any other reason, the process stops. You must retry the restore to avoid leaving the <GlossaryTerm term="tenant-cluster">cluster</GlossaryTerm> in an inconsistent or broken state.
+:::
+
+Restore a cluster using [`vcluster restore`](../../cli/vcluster_restore.md) with the following commands. You can use any snapshot option and set the snapshot URL with different credentials. Whichever credentials you provide, vCluster never writes them into the restore pod's spec. It mounts them from a Kubernetes Secret through `secretKeyRef`, and deletes that Secret along with the pod once the restore finishes.
+
+### Restore clusters from OCI
+
+<Tabs
+defaultValue="local-credentials"
+values={[
+{label: 'Local credentials', value: 'local-credentials'},
+{label: 'URL credentials', value: 'url-credentials'},
+]}>
+
+<TabItem value="local-credentials">
+
+<InterpolatedCodeBlock
+code={`vcluster restore [[VAR:VCLUSTER_NAME:my-vcluster]] "oci://[[VAR:OCI_REGISTRY:ghcr.io]]/[[VAR:OCI_USER:my-user]]/[[VAR:OCI_REPO:my-repo]]:[[VAR:OCI_TAG:my-tag]]"`}
+language="bash"
+title="Restore from an OCI snapshot using local credentials"
+/>
+
+</TabItem>
+
+<TabItem value="url-credentials">
+
+<InterpolatedCodeBlock
+code={`export OCI_USERNAME=my-username
+export OCI_PASSWORD=$(echo -n "my-password" | base64)
+vcluster restore [[VAR:VCLUSTER_NAME:my-vcluster]] "oci://[[VAR:OCI_REGISTRY:ghcr.io]]/[[VAR:OCI_USER:my-user]]/[[VAR:OCI_REPO:my-repo]]:[[VAR:OCI_TAG:my-tag]]?username=$OCI_USERNAME&password=$OCI_PASSWORD&skip-client-credentials=true"`}
+language="bash"
+title="Restore from an OCI snapshot using URL credentials"
+/>
+
+</TabItem>
+</Tabs>
+
+### Restore clusters from S3
+
+<InterpolatedCodeBlock
+code={`vcluster restore [[VAR:VCLUSTER_NAME:my-vcluster]] "s3://[[VAR:BUCKET:my-s3-bucket]]/[[VAR:KEY:my-snapshot-key]]"`}
+language="bash"
+title="Restore from an S3 snapshot using local credentials"
+/>
+
+### Restore clusters from Azure Blob
+
+<Tabs
+defaultValue="azure-cli"
+values={[
+{label: 'Azure CLI', value: 'azure-cli'},
+{label: 'SAS token', value: 'sas-token'},
+{label: 'Storage account key', value: 'storage-key'},
+]}>
+
+<TabItem value="azure-cli">
+
+<InterpolatedCodeBlock
+code={`vcluster restore [[VAR:VCLUSTER_NAME:my-vcluster]] "https://[[VAR:STORAGE_ACCOUNT:myaccount]].blob.core.windows.net/[[VAR:CONTAINER:my-container]]/[[VAR:BLOB_PATH:my-snapshot.tar.gz]]" \\
+--azure-subscription-id [[VAR:SUBSCRIPTION_ID:my-subscription-id]] \\
+--azure-resource-group [[VAR:RESOURCE_GROUP:my-resource-group]]`}
+language="bash"
+title="Restore from an Azure Blob Storage snapshot using Azure CLI credentials"
+/>
+
+</TabItem>
+
+<TabItem value="sas-token">
+
+<InterpolatedCodeBlock
+code={`vcluster restore [[VAR:VCLUSTER_NAME:my-vcluster]] "https://[[VAR:STORAGE_ACCOUNT:myaccount]].blob.core.windows.net/[[VAR:CONTAINER:my-container]]/[[VAR:BLOB_PATH:my-snapshot.tar.gz]]?sv=2022-11-02&ss=b&srt=co&sp=rwlacuptfx&se=2027-01-01T00:00:00Z&sig=YOUR_SAS_SIGNATURE"`}
+language="bash"
+title="Restore from an Azure Blob Storage snapshot using a SAS token"
+/>
+
+</TabItem>
+
+<TabItem value="storage-key">
+
+<InterpolatedCodeBlock
+code={`export AZURE_STORAGE_KEY=my-storage-account-key
+vcluster restore [[VAR:VCLUSTER_NAME:my-vcluster]] "https://[[VAR:STORAGE_ACCOUNT:myaccount]].blob.core.windows.net/[[VAR:CONTAINER:my-container]]/[[VAR:BLOB_PATH:my-snapshot.tar.gz]]"`}
+language="bash"
+title="Restore from an Azure Blob Storage snapshot using a storage account key"
+/>
+
+</TabItem>
+</Tabs>
+
+### Restore clusters from container
+
+<InterpolatedCodeBlock
+code={`vcluster restore [[VAR:VCLUSTER_NAME:my-vcluster]] "container://[[VAR:PATH:/data/my-snapshot.tar.gz]]"`}
+language="bash"
+title="Restore from a local container snapshot"
+/>
+
+## Restore a standalone vCluster
+
+For standalone vCluster running as a systemd service, use the `--standalone` flag instead of a cluster name. This flag can't be used with `--driver docker`. The CLI automatically stops the vCluster service, restores the backing store data from the snapshot, and restarts the service.
+
+If the standalone instance runs vCluster Platform, the restore leaves node provider resources behind that you must clean up. Before you restore, read [Clean up node provider resources after an etcd restore](#clean-up-node-provider-resources-after-an-etcd-restore).
+
+<InterpolatedCodeBlock
+  code={`vcluster restore --standalone "container://[[VAR:SNAPSHOT_PATH:/var/lib/vcluster/my-snapshot.tar.gz]]"`}
+  language="bash"
+/>
+
+You can also restore from any external storage backend:
+
+<InterpolatedCodeBlock
+  code={`vcluster restore --standalone "oci://[[VAR:OCI_REGISTRY:ghcr.io]]/[[VAR:OCI_USER:my-user]]/[[VAR:OCI_REPO:my-repo]]:[[VAR:OCI_TAG:my-tag]]"`}
+  language="bash"
+/>
+
+:::warning Service account tokens invalidated with embedded etcd
+Restoring a standalone vCluster that uses the embedded etcd backing store can invalidate service account tokens for running system pods, such as CoreDNS, kube-proxy, and the konnectivity agent. The restored etcd data predates any tokens issued after the snapshot was taken, so the <GlossaryTerm term="api-server">API server</GlossaryTerm> rejects them on the UID check. `kubectl get pods` still reports these pods as `Running`, but in-pod DNS resolution stops working.
+
+To restore full capability, manually restart the vCluster <GlossaryTerm term="control-plane">control plane</GlossaryTerm> again after the automatic restart from `vcluster restore --standalone` completes:
+
+```bash
+systemctl restart vcluster
+```
+:::
+
+:::tip Cross-node recovery
+Restoring to a different machine leaves stale node details in etcd that require manual cleanup. To make the snapshot available on another node, use an external storage backend (OCI, S3, or Azure Blob Storage). Plan to manually remove stale node resources after restore.
+:::
+
+### Restore a standalone vCluster in HA mode
+
+Restoring a standalone vCluster configured with multiple etcd peers (HA mode) requires manual intervention. Shut down all nodes except the restore node, then run the restore on that node.
+
+The following steps assume a three-node setup where you run the restore on node A:
+
+1. Stop the vCluster service on all nodes except the restore node:
+
+   ```bash
+   # Run on nodes B and C
+   systemctl stop vcluster
+   ```
+
+2. Run the restore on node A:
+
+   <InterpolatedCodeBlock
+     code={`vcluster restore --standalone "[[VAR:SNAPSHOT_URL:snapshot-url]]"`}
+     language="bash"
+   />
+
+3. Delete the stale node objects for the stopped nodes from the restored cluster:
+
+   ```bash
+   kubectl delete node <node-B> <node-C>
+   ```
+
+4. On nodes B and C, move the old vCluster state aside so they rejoin cleanly:
+
+   ```bash
+   # Run on nodes B and C
+   mv /var/lib/vcluster /var/lib/vcluster-bcp
+   ```
+
+5. On node A, create a join token with [`vcluster token create`](../../cli/vcluster_token_create.md):
+
+   ```bash
+   vcluster token create --control-plane
+   ```
+
+6. Use the join script output to rejoin nodes B and C **one at a time**. Wait for each node to reach `Ready` before joining the next to rebuild etcd quorum sequentially.
+
+## Clean up node provider resources after an etcd restore
+
+An etcd restore of a control plane cluster that runs vCluster Platform doesn't roll back node provider state. The platform keeps node state, such as `NodeClaim` objects, in that etcd. External systems keep their own state, so after the restore it can differ from what etcd describes. Examples include Metal3 and Ironic, NICo, and cloud provider resources.
+
+This applies whether or not the control plane cluster is a standalone instance. For example:
+
+- `vcluster restore --standalone`, in single-node or HA mode, on a standalone instance that runs vCluster Platform.
+- A Velero or etcd snapshot restore of a control plane cluster that runs vCluster Platform.
+
+Restoring with [`vcluster platform backup` and `kubectl apply`](/docs/platform/administer/backup-restore/restore-platform) doesn't cause this, because that backup doesn't include `NodeClaim` objects or provider objects.
+
+The restored etcd data stays the source of truth. Controllers reconcile external infrastructure toward it. They reuse existing provider resources they can match and recreate missing resources where it's safe. Controllers never delete a provider resource that has no matching Kubernetes object, because they can't tell whether deleting it destroys workload data.
+
+You must find these orphaned resources and clean them up with each provider's own tooling. To find them, compare each provider's own inventory with the instances the platform shows after the restore. Instances created after the snapshot was taken are the most likely to be left behind:
+
+- **Metal3:** The machine shows `Available`, but Ironic still has the old deployment on it. The next instance on that machine starts from that deployment, including the previous instance's SSH key and data. Remove the deployment in Ironic before another instance uses the machine.
+- **NICo:** NICo keeps the instance running. The machine stays `Provisioned`, and you can't provision it again or delete it from the UI.
+
+## Clone a cluster to a new cluster
+
+You can use snapshots to clone an existing cluster and create a new cluster from that snapshot. When creating a new cluster from a snapshot, it also restores all workloads in the cluster.
+
+When you run [`vcluster create --restore`](../../cli/vcluster_create.md) without `-f`, `--values`, or `--set`, vCluster reads the Helm configuration from the snapshot before installing the cluster. If it can't access the snapshot, the command exits before the new cluster starts. Providing configuration through one of those flags skips this check because vCluster uses the supplied configuration instead.
+
+:::warning Restore failures
+If the restore fails while using `vcluster create`, vCluster automatically deletes the new cluster.
+:::
+
+<InterpolatedCodeBlock
+  code={`# Create a new cluster from an OCI snapshot (uses local credentials).
+vcluster create [[VAR:VCLUSTER_NAME:my-vcluster]] --restore oci://[[VAR:OCI_REGISTRY:ghcr.io]]/[[VAR:OCI_USER:my-user]]/[[VAR:OCI_REPO:my-repo]]:[[VAR:OCI_TAG:my-tag]]`}
+  language="bash"
+/>
+
+:::info New name or namespace updates certificates
+vCluster certificates change when you create a cluster with a new name or namespace. This is expected, as clusters shouldn't share certificates.
+:::
+
+## Migrate and override vCluster configuration options to create a new cluster
+
+Some configuration options can't change on an existing cluster. For example, you can't change the backing store type in place. See [Backing store](../../configure/control-plane/components/backing-store/overview.mdx) for details. To change these options, migrate the cluster by creating a new one from a snapshot with updated configuration.
+
+The one exception is restoring an embedded etcd snapshot onto a different backing store type, which doubles as a migration path. See [Migrate from embedded etcd to a different backing store](#migrate-from-embedded-etcd-to-a-different-backing-store).
+
+When creating a new cluster from a snapshot, it also restores all workloads in the cluster.
+
+:::warning Restore failures
+If the restore fails while using `vcluster create`, vCluster automatically deletes the new cluster.
+:::
+
+<InterpolatedCodeBlock
+  code={`# Upgrade an existing vCluster by restoring from a snapshot and applying a new vcluster.yaml.
+# Configuration options in the vcluster.yaml override the options from the snapshot.
+vcluster create [[VAR:VCLUSTER_NAME:my-vcluster]] --upgrade -f vcluster.yaml --restore oci://[[VAR:OCI_REGISTRY:ghcr.io]]/[[VAR:OCI_USER:my-user]]/[[VAR:OCI_REPO:my-repo]]:[[VAR:OCI_TAG:my-tag]]`}
+  language="bash"
+/>
+
+:::info New name or namespace updates certificates
+vCluster certificates change when you create a cluster with a new name or namespace. This is expected, as clusters shouldn't share certificates.
+:::
+
+### Migrate from embedded etcd to a different backing store
+
+Restoring an embedded etcd snapshot onto a cluster configured with a different backing store type converts the snapshot automatically. This lets you move a cluster off embedded etcd onto an embedded database, [external database](../../configure/control-plane/components/backing-store/database/external.mdx), or [deployed etcd](../../configure/control-plane/components/backing-store/etcd/deploy.mdx), using the same snapshot and restore workflow as any other migration.
+
+This migration path is separate from deployed etcd's own snapshot and restore support. Deployed etcd is a supported *target* for a converted embedded-etcd snapshot, but taking a snapshot of a cluster that already runs on deployed etcd, to back up or restore that same cluster, isn't validated. See [Back up and restore](../../configure/control-plane/components/backing-store/etcd/deploy.mdx#back-up-and-restore).
+
+vCluster can't change a cluster's backing store type in place. Restore this into a new cluster (a different name, namespace, or both) rather than the original one:
+
+<InterpolatedCodeBlock
+  code={`# Take a snapshot of the source cluster, which uses embedded etcd.
+vcluster snapshot create [[VAR:SOURCE_VCLUSTER_NAME:my-vcluster]] "oci://[[VAR:OCI_REGISTRY:ghcr.io]]/[[VAR:OCI_USER:my-user]]/[[VAR:OCI_REPO:my-repo]]:[[VAR:OCI_TAG:my-tag]]"
+
+# Restore it into a new cluster whose vcluster.yaml configures a different backing store.
+# vCluster detects the etcd snapshot and converts it before restoring.
+vcluster create [[VAR:NEW_VCLUSTER_NAME:my-vcluster-external-db]] --namespace [[VAR:NEW_NAMESPACE:vcluster-my-vcluster-external-db]] -f vcluster.yaml --restore oci://[[VAR:OCI_REGISTRY:ghcr.io]]/[[VAR:OCI_USER:my-user]]/[[VAR:OCI_REPO:my-repo]]:[[VAR:OCI_TAG:my-tag]]`}
+  language="bash"
+/>
+
+This guide covers migrating from embedded etcd only. Migrating in the other direction, such as from a database backing store to etcd, isn't documented or tested.
+
+## Limitations
+
+When taking snapshots and restoring clusters, there are limitations:
+
+**Sleeping clusters**
+
+- Snapshots require a running vCluster control plane and don't work with sleeping clusters.
+
+**Clusters using an external database**
+
+- Restoring onto an external database, whether configured with `dataSource` or `connector`, deletes the cluster's existing key/value records (through kine, key by key) before replaying the snapshot. vCluster doesn't back up or roll back the external database itself. Before running `vcluster restore`, the database owner or administrator must take a native database backup so that a native external database restore can be triggered if the restore fails.
+
+**Clusters using the embedded database**
+
+- Restore refuses to write into an embedded database (SQLite) that's still serving requests, so a running control plane can't corrupt the restored data. The restore fails with this error:
+
+  ```text
+  embedded database backing store is still serving requests at <endpoint>, refusing to restore into a running control plane: stop the vCluster control plane and any of its leftover processes, then retry
+  ```
+
+  Stop the control plane and any leftover processes, then retry the restore. On a standalone instance, the restore stops leftover control plane and database processes before it starts.
+
+**Clusters using deployed etcd**
+
+- Restoring a cluster that already runs on deployed etcd (`controlPlane.backingStore.etcd.deploy`) isn't supported. Restore etcd with its own tooling instead. See [Back up and restore](../../configure/control-plane/components/backing-store/etcd/deploy.mdx#back-up-and-restore). Deployed etcd is a supported target when migrating an embedded etcd snapshot onto a new cluster. See [Migrate from embedded etcd to a different backing store](#migrate-from-embedded-etcd-to-a-different-backing-store).
+
+**vcluster.yaml configuration**
+
+- Although the vcluster.yaml configuration is backed up, it isn't automatically restored. After restoring a cluster, you must manually reapply your vcluster.yaml configuration.
+
+**Standalone: service account tokens invalidated after restore**
+
+- Restoring a standalone vCluster that uses the embedded etcd backing store can invalidate service account tokens for system pods, breaking DNS resolution even though the affected pods report as `Running`. Manually restart the vCluster control plane after the restore completes. See [Restore a standalone vCluster](#restore-a-standalone-vcluster).
+
+**Standalone: restore to a new node**
+
+- If you restore a snapshot on a different node, the standalone instance's etcd contains node details from the original machine. You must manually clean up stale node resources after the restore. See [Use snapshots with private nodes](#use-snapshots-with-private-nodes).
+
+**Standalone: cluster workloads aren't restored**
+
+- A standalone snapshot only restores the standalone instance's own etcd data. Each cluster running on the standalone instance has its own etcd, so workloads deployed inside clusters aren't restored by a standalone snapshot.
+
+**Node provider state isn't rolled back**
+
+- Any etcd-level restore of a control plane cluster that runs vCluster Platform, standalone or not, doesn't roll back external systems that keep their own state. Examples include Metal3 and Ironic, NICo, and cloud provider resources. Provider resources with no matching Kubernetes object aren't deleted automatically, so you must find and clean them up. See [Clean up node provider resources after an etcd restore](#clean-up-node-provider-resources-after-an-etcd-restore).
+
+**Clusters managed through the Argo CD integration**
+
+- The `ArgoCDApplication` object itself is unaffected by a restore, since it lives outside the cluster's snapshot and restore boundary. The resources Argo CD deployed into the cluster are reverted along with everything else. If the application has `selfHeal: true`, Argo CD reapplies the Git revision after it detects the drift, undoing the restore for those resources. `prune: true` is also required to remove any restored resources no longer defined in Git. See [Restoring a cluster doesn't roll back what Argo CD manages](/docs/platform/integrations/gitops-cicd/argocd#argocdapplication-and-argocdapplicationtemplate) for details.
+
+## Use snapshots with private nodes
+
+The snapshot also includes node resources. Restoring to a different set of nodes requires manual steps for clusters using [private nodes](../../deploy/worker-nodes/private-nodes/overview.mdx). With [host nodes](../../deploy/worker-nodes/host-nodes/overview.mdx), vCluster automatically updates node information when nodes change between snapshot and restore.
+
+### Nodes removed between snapshot and restore
+
+When nodes exist in the snapshot but not in the current cluster, they still show up in `kubectl get nodes` after the restore. Delete each removed node from the restored cluster:
+
+<InterpolatedCodeBlock
+  code={`export NODE_NAME=[[VAR:NODE_NAME:my-node]]
+kubectl delete node $NODE_NAME`}
+  language="bash"
+/>
+
+### Nodes added between snapshot and restore
+
+When nodes joined the cluster after the snapshot, they don't exist in the restored cluster and aren't listed in `kubectl get nodes`. Rejoin each of these private nodes with the `--force-join` flag.
+
+Create a join token:
+
+<InterpolatedCodeBlock
+  code={`export VCLUSTER_NAME=[[VAR:VCLUSTER_NAME:my-vcluster]]
+
+# Connect to your vcluster
+vcluster connect $VCLUSTER_NAME
+
+# Create a token
+vcluster token create --expires=1h`}
+  language="bash"
+/>
+
+Append the `--force-join` flag to the join command from the output, then run it on the worker node:
+
+<InterpolatedCodeBlock
+  code={`curl -sfLk https://[[VAR:VCLUSTER_ENDPOINT:vcluster-endpoint]]/node/join?token=[[VAR:TOKEN:token]] | sh - -- --force-join`}
+  language="bash"
+/>

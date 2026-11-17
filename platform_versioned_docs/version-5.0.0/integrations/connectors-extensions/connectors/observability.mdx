@@ -1,0 +1,114 @@
+---
+title: Configure an observability connector
+sidebar_label: Observability
+sidebar_position: 5
+description: Manage observability connector settings through the Connector API and retrieve cluster writer credentials.
+---
+
+import InterpolatedCodeBlock from '@site/src/components/InterpolatedCodeBlock';
+
+An observability connector holds the endpoints and TLS Secret references that Platform uses for telemetry. Use the [observability quickstart](../../../fleet-operations/observability/quickstart.mdx) to install and connect the telemetry components.
+
+:::warning Revoking a grant doesn't revoke issued writer keys
+Connector grants control which observability connector a cluster can use. Revoking a grant stops Platform from issuing new writer keys for that connector, but a key issued before the revocation keeps writing. See [Retrieve cluster writer credentials](#retrieve-cluster-writer-credentials).
+:::
+
+## Manage the connector resource
+
+Use a connector-admin management API session with the `fleet-observability` license feature. Set `spec.observability` as the only payload section.
+
+The API maps existing observability Secrets to the same resource. Viewers and tenant sessions receive an empty `observability` marker instead of backend configuration. Connector admins receive the full settings.
+
+`fleetDefault` identifies the connector used for fleet observability. The first connector can become the fleet default automatically. Don't create a second default through direct Secret writes. Direct writers bypass the API's singleton checks.
+
+## Configure additional destinations
+
+`destinations` is a YAML string containing named OTLP destinations. Each entry selects metrics or logs with `signal`. This is the field as it appears under an existing connector's `spec.observability` configuration:
+
+<InterpolatedCodeBlock
+  language="yaml"
+  code={"spec:\n  observability:\n    # Raw YAML text, not a nested Connector API array.\n    destinations: |\n      - name: tenant-logs\n        signal: logs\n        endpoint: [[VAR:LOGS_ENDPOINT:https://logs.example.com/otlp]]\n        insecureSkipVerify: false\n        certSecretName: [[VAR:TLS_SECRET:logs-client-tls]]"}
+/>
+
+To set it, save the `destinations` text to a file and merge-patch it into the connector as a connector admin. This example uses `jq` to encode the file as a JSON string. A patch rewrites the whole `destinations` string:
+
+<InterpolatedCodeBlock
+  language="bash"
+  code={"kubectl patch connectors.management.loft.sh [[VAR:CONNECTOR:observability]] --type=merge -p \"$(jq -n --rawfile d [[VAR:DESTINATIONS_FILE:destinations.yaml]] '{spec:{observability:{destinations:$d}}}')\""}
+/>
+
+Confirm that the connector stored the new list:
+
+<InterpolatedCodeBlock
+  language="bash"
+  code={"kubectl get connectors.management.loft.sh [[VAR:CONNECTOR:observability]] -o jsonpath='{.spec.observability.destinations}'"}
+/>
+
+`certSecretName` names a `kubernetes.io/tls` Secret for mutual TLS. Omit it when the destination doesn't require a client certificate. Keep TLS verification enabled when using trusted certificates. See [Forward telemetry to additional destinations](../../../fleet-operations/observability/forward-telemetry.mdx) for destination limits and delivery behavior.
+
+Use the [Connector API reference](../../../api/resources/connector.mdx) for backend endpoints, certificate references, service settings, and gateway resource overrides.
+
+## Retrieve cluster writer credentials
+
+The Connector resource configures the backend. A cluster obtains its own writer credential through the `virtualclusterinstances/observabilityconnector` subresource. The response contains `status.endpoint`, `status.token`, and `status.caCert`.
+
+With `integrations.observability` enabled, Platform issues a scoped `metrics-writer` access key. The cluster integration writes the credential to the `metrics-writer` Secret consumed by collectors. See [Configure edge collectors](../../../fleet-operations/observability/configure-edge-collectors.mdx) for the Secret keys, namespace, and mounting configuration.
+
+Don't distribute the backend connector's credentials to collectors. See [Configure metrics access](../../../fleet-operations/observability/configure-metrics-access.mdx) for manual writer and reader provisioning.
+
+The cluster's `integrations.observability.connector` must name a connector its owning tenant can use. Admission refuses a reference to any other connector with `does not name a usable connector`, the same refusal used for database and Argo CD references. See [Validate connector use](./manage.mdx#validate-connector-use).
+
+Platform checks the grant again before it issues a writer key. If the tenant can no longer use the connector, the subresource returns 400 and issues no key. The cluster reports `ObservabilityConnectorUnresolved=False` with reason `ObservabilityConnectorUnusable`. A key issued before the grant was lost keeps writing.
+
+### Who can call the subresource
+
+The subresource accepts `create` on `virtualclusterinstances/observabilityconnector` in the `management.loft.sh` group, in the cluster's project namespace. The request body is empty. Platform reads the connector name from the instance's own rendered configuration, never from the request.
+
+Every cluster's Platform identity holds `create` on this subresource, but Platform answers a cluster only for its own instance. A request for any other instance returns 403 before Platform reads anything, so the refusal doesn't reveal whether that instance exists.
+
+The default project roles don't grant the subresource. A user with full management access, such as the `loft-management-admin` role, can call it. The response carries the cluster's live writer token, and the call creates the key if the cluster has none yet. Platform logs these requests at `Metadata` level only, so the token never reaches the audit log. See [Metadata-only for sensitive data](../../../administer/configure/platform-configs/audit-policy.mdx#metadata-only-for-sensitive-data).
+
+### Response fields
+
+| Field | Contents |
+|---|---|
+| `status.endpoint` | The OTLP/HTTP URL of the connector's write gateway, as reachable from this cluster's collector. For a `LoadBalancer` gateway, it's the load balancer address. For a `ClusterIP` gateway, it's the in-cluster Service name. |
+| `status.token` | The cluster's `metrics-writer` access key. It stays the same across calls. |
+| `status.caCert` | The PEM CA certificate for the endpoint. It's empty when the gateway certificate chains to a publicly trusted CA, so the collector uses the system trust store. |
+
+### Token lifetime and rotation
+
+The first call creates a `metrics-writer` AccessKey for the cluster, owned by the cluster's tenant. Every later call returns the same key, so calling the subresource never rotates the token. If a cluster has more than one key, Platform returns the oldest and logs `multiple metrics-writer accesskeys for vCluster, using oldest key`. Delete the extra keys.
+
+List the key for a cluster:
+
+<InterpolatedCodeBlock
+  language="bash"
+  code={"kubectl get accesskeys.storage.loft.sh -l platform.vcluster.com/metrics-writer=true,loft.sh/vcluster-instance-name=[[VAR:CLUSTER:my-vcluster]],loft.sh/vcluster-instance-namespace=[[VAR:PROJECT_NAMESPACE:p-default]]"}
+/>
+
+Platform doesn't reconcile the key after it issues it. The cluster requests its credential again every 10 minutes, and that request is what replaces a deleted key. To rotate the token, delete the AccessKey and let the cluster fetch a new one. See [Rotation](../../../fleet-operations/observability/configure-metrics-access.mdx#rotation) for the gap in metrics that rotation causes.
+
+Deleting the cluster deletes its key. Turning the integration off, or deleting the cluster's `metrics-writer` Secret, doesn't revoke the key. Delete the AccessKey to revoke it.
+
+### Failure responses
+
+The status code tells the cluster whether to retry. The message names the specific cause. Platform also reports the causes an admin has to fix as an `ObservabilityConnectorUnresolved` condition on the instance. See [A cluster gets no metrics-writer credential](../../../fleet-operations/observability/troubleshooting.mdx#a-cluster-gets-no-metrics-writer-credential).
+
+| Status | Cause | What the cluster does |
+|---|---|---|
+| 400 | The instance's connector reference or the connector itself needs a fix. The connector doesn't exist, isn't usable by the tenant, is misconfigured, or isn't reachable from this cluster. The instance names no connector, or has the integration turned off. | Logs the refusal as an error and asks again every 10 minutes. |
+| 403 | The license doesn't include Fleet Observability, or the caller isn't this instance's cluster. | Logs the refusal as an error with a suggested fix and asks again every 10 minutes. |
+| 404 | The instance doesn't exist or is being deleted. | Asks again every 10 minutes. |
+| 405 | Platform runs on embedded Kubernetes, which never builds an observability connector. | Fails to start if Platform returns this during startup. Otherwise, logs the refusal every 10 minutes. Turn the integration off for the cluster. |
+| 503 | The write gateway isn't ready yet. Its load balancer has no address, or its certificate Secret doesn't exist yet. Platform also returns 503 for an instance it hasn't rendered yet. | Asks again every 30 seconds. |
+
+A 500 response means a Platform-side read failed, and says nothing about the connector. The cluster asks again every 30 seconds.
+
+A failed request never removes a `metrics-writer` Secret the cluster already delivered. The collectors keep the last credential they received.
+
+## Delete a connector
+
+The gateway cleanup controller manages a finalizer on the backing Secret. API deletion can leave cleanup pending, particularly when an expired license prevents the controller from running. Keep gateway resources and the finalizer under controller management until cleanup completes.
+
+The controller runs only when the license includes `fleet-observability`, and never on a Platform running embedded Kubernetes. If cleanup stays pending after a license lapse, restore the license. Platform restarts itself when a licensed feature's status changes. If cleanup still doesn't run, restart Platform. Don't remove the finalizer by hand while the controller can still run, because that skips gateway cleanup.
