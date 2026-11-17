@@ -478,28 +478,41 @@ type ArgoProjectSpecMetadata struct {
 }
 
 type ArgoProjectRole struct {
-	// Name of the ArgoCD role to attach to the project.
+	// Name of the ArgoCD role to attach to the project. Required when creating or changing the ArgoCD configuration.
+	// Must not contain commas, double quotes, whitespace, or control characters.
 	Name string `json:"name,omitempty"`
 	// Description to add to the ArgoCD project.
 	// +optional
 	Description string `json:"description,omitempty"`
-	// Rules ist a list of policy rules to attach to the role.
+	// Rules is a list of policy rules to attach to the role.
 	Rules []ArgoProjectPolicyRule `json:"rules,omitempty"`
 	// Groups is a list of OIDC group names to bind to the role.
 	Groups []string `json:"groups,omitempty"`
 }
 
 type ArgoProjectPolicyRule struct {
-	// Action is one of "*", "get", "create", "update", "delete", "sync", or "override".
+	// Action is an ArgoCD action such as "*", "get", "create", "update", "delete", "sync", or "override".
+	// Required when creating or changing the ArgoCD configuration; there is no default.
+	// Must not contain commas, double quotes, whitespace, or control characters.
 	// +optional
 	Action string `json:"action,omitempty"`
 	// Application is the ArgoCD project/repository to apply the rule to.
 	// DEPRECATED: Wasn't used. Kind provides a more flexible way to specify the resource type.
 	// +optional
 	Application string `json:"application,omitempty"`
-	// Kind is the kind to apply the rule to
+	// Kind is the kind to apply the rule to. Defaults to "applications".
+	// Must not contain commas, double quotes, whitespace, or control characters.
 	// +optional
 	Kind string `json:"kind,omitempty"`
+	// Object is the complete ArgoCD RBAC object pattern, such as "loft-myproject/team-a/*".
+	// If omitted or empty, it defaults to "loft-<project-name>/*". The pattern must start
+	// with "loft-<project-name>/" followed by one application component or namespace/application.
+	// Each component must be non-empty and may contain only letters, digits, underscores, dots, hyphens, and "*".
+	// Commas, double quotes, whitespace, and control characters are not allowed.
+	// For applications outside the ArgoCD namespace, use "loft-<project-name>/<namespace>/<application>".
+	// DEPRECATED: Only available in 4.x releases; not carried into 5.0 and later.
+	// +optional
+	Object string `json:"object,omitempty"`
 	// Allow applies the "allow" permission to the rule, if allow is not set, the permission will
 	// always be set to "deny".
 	// +optional
