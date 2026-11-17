@@ -579,8 +579,17 @@ stable_routes_at_ref() {
 
         route="${route%.mdx}"
         route="${route%.md}"
+        # Docusaurus serves a folder's index page (index, README, or a file
+        # named after its folder) at the folder URL.
         route="${route%/index}"
-        echo "/docs/${product}/${route}"
+        route="${route%/README}"
+        [[ "$route" == "index" || "$route" == "README" ]] && route=""
+        if [[ "$route" == */* ]]; then
+            local parent="${route%/*}"
+            [[ "${parent##*/}" == "${route##*/}" ]] && route="$parent"
+        fi
+        local url="/docs/${product}/${route}"
+        echo "${url%/}"
     done | sort -u
 }
 
