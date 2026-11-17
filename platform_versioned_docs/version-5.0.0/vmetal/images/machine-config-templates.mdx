@@ -1,0 +1,208 @@
+---
+title: Machine Config Templates
+description: Create reusable MachineConfigTemplate resources that hold cloud-init or network-data Go templates, and reference them from node types and NodeClaims.
+sidebar_label: Machine config templates
+sidebar_position: 3
+---
+
+A `MachineConfigTemplate` is a reusable, cluster-scoped resource that holds a Go
+template for either a cloud-init (user data) document or a network-data document.
+A node provider renders the template when it provisions an instance, so you can
+define provisioning configuration once and reference it by name from any node
+type or `NodeClaim` instead of inlining it on each one. The platform ships with a few predefined templates that you can use as a starting point.
+
+A template defines a `cloudInitTemplate`, a `networkDataTemplate`, or both. A
+node provider renders the matching field when a property references the
+template; if that field is unset, provisioning fails.
+
+## Create a template
+
+A cloud-init template renders into a `cloud-config` document. The platform
+appends the vCluster join command and the resolved SSH keys to the rendered
+output before applying it to the instance.
+
+```yaml
+apiVersion: management.loft.sh/v1
+kind: MachineConfigTemplate
+metadata:
+  name: ubuntu-cloud-init
+spec:
+  displayName: "Ubuntu cloud-init"
+  cloudInitTemplate: |
+    #cloud-config
+    hostname: {{ .Values.NodeClaim.Name }}
+    users:
+      - name: ubuntu
+        sudo: ALL=(ALL) NOPASSWD:ALL
+        ssh_authorized_keys:
+        {{- range .Values.SSHKeys }}
+          - {{ . }}
+        {{- end }}
+    runcmd:
+      - echo "Provisioning {{ .Values.NodeClaim.Name }} in project {{ .Values.Project }}"
+```
+
+A network-data template renders into a cloud-init `network-config` document. The
+provider supplies the allocated IP and gateway for the instance as template
+variables.
+
+```yaml
+apiVersion: management.loft.sh/v1
+kind: MachineConfigTemplate
+metadata:
+  name: static-network
+spec:
+  displayName: "Static network"
+  networkDataTemplate: |
+    version: 2
+    ethernets:
+      enp1s0:
+        # AllocatedIP, PrefixLength, and Gateway are supplied during IP allocation.
+        addresses:
+          - {{ .Values.AllocatedIP }}/{{ .Values.PrefixLength }}
+        gateway4: {{ .Values.Gateway }}
+        nameservers:
+          addresses: [8.8.8.8, 8.8.4.4]
+```
+
+### Fields
+
+| Field | Description |
+|---|---|
+| `spec.displayName` | Human-readable name shown in the UI. |
+| `spec.cloudInitTemplate` | Go template that renders a `cloud-config` document. |
+| `spec.networkDataTemplate` | Go template that renders a cloud-init `network-config` document. |
+| `spec.owner` | Optional user or team that owns this resource. |
+| `spec.access` | Optional access control list. |
+
+## Template syntax
+
+Templates use Go [`text/template`](https://pkg.go.dev/text/template) syntax with
+the [slim-sprig](https://github.com/go-task/slim-sprig) function library, except
+`env`, `expandenv`, and `getHostByName`. Those functions would read the
+platform's environment or reach the network, so a template can't call them. The
+root object is `.Values`. The available fields depend on the template kind and the
+node provider that renders it.
+
+### Cloud-init templates
+
+| Variable | Description |
+|---|---|
+| `.Values.NodeClaim` | The `NodeClaim` that represents the instance request. |
+| `.Values.Project` | The project the instance belongs to. |
+| `.Values.Properties` | Merged properties from the NodeProvider, NodeType, NetworkEnvironment, and NodeClaim. |
+| `.Values.SSHKeys` | List of SSH public keys (strings) resolved from the `vcluster.com/ssh-keys` property. |
+
+The Metal3 provider additionally exposes `.Values.BareMetalHost` (the selected
+`BareMetalHost`), `.Values.AllocatedIP`, `.Values.PrefixLength`, and
+`.Values.Gateway`.
+
+### Network-data templates
+
+| Variable | Description |
+|---|---|
+| `.Values.NodeClaim` | The `NodeClaim` that represents the instance request. |
+| `.Values.Project` | The project the instance belongs to. |
+| `.Values.Properties` | Merged properties from the NodeProvider, NodeType, NetworkEnvironment, and NodeClaim. |
+| `.Values.AllocatedIP` | IP allocated for the instance from the configured network. |
+| `.Values.PrefixLength` | Network prefix length for the allocated IP. Exposed by the KubeVirt and Metal3 providers. |
+| `.Values.Gateway` | Default gateway for the allocated network. |
+
+The Metal3 provider additionally exposes `.Values.BareMetalHost` (the selected
+`BareMetalHost`).
+
+## Reference a template
+
+Reference a MachineConfigTemplate by name from the properties of a node type
+(applies to every instance of that type) or directly on a `NodeClaim`.
+
+| Property | Renders |
+|---|---|
+| `vcluster.com/user-data-template-config` | The referenced template's `cloudInitTemplate`. |
+| `vcluster.com/network-data-template-config` | The referenced template's `networkDataTemplate`. |
+
+```yaml
+properties:
+  vcluster.com/user-data-template-config: ubuntu-cloud-init
+  vcluster.com/network-data-template-config: static-network
+```
+
+The referenced template must define the matching field. A template referenced by
+`vcluster.com/user-data-template-config` must set `cloudInitTemplate`, and one
+referenced by `vcluster.com/network-data-template-config` must set
+`networkDataTemplate`.
+
+### Tenant access to templates
+
+When a tenant owns the `NodeClaim`, these properties resolve only to templates
+that tenant can read. The [Tenant](../../api/resources/tenant.mdx) must set
+`spec.templates.enabled` to `true`. Without it, the tenant can't read any
+template, not even one it owns. With it, the tenant can read:
+
+- Templates that belong to the tenant.
+- Platform templates whose labels match `spec.templates.allow.byLabels`. An
+  empty `byLabels: {}` matches every platform template.
+
+This applies to the predefined templates the platform ships, too. They carry no
+labels, so a tenant's instance can use one only when the Tenant sets
+`byLabels: {}` or you add a label that its selector matches. It also applies wherever the
+property is set, whether on the `NodeClaim`, its node type, its node provider, or
+its network environment.
+
+A reference the tenant can't read fails as if the template doesn't exist. When
+you create a `NodeClaim` through the management API, it checks references on
+the claim, its node type, and its node provider. It refuses an inaccessible reference with
+`machine config template "<name>" not found`. If the reference comes from the
+node provider, the message starts with
+`node provider "<name>" references a resource that cannot be used` instead, so
+it doesn't reveal what the provider references.
+
+A NodePool gets the same check when you create it or change its template. It
+covers references in the pool's template and its node provider. References that
+a node type or network environment adds, and those of claims the platform
+creates itself, such as cluster control plane claims, are checked during
+provisioning. If the tenant can't use a template, provisioning can't complete.
+
+The following example grants every template labeled `machine-config: shared`:
+
+```yaml
+apiVersion: management.loft.sh/v1
+kind: Tenant
+metadata:
+  name: acme
+spec:
+  templates:
+    enabled: true
+    allow:
+      byLabels:
+        machine-config: shared
+```
+
+The templates capability covers several template kinds with one selector. The
+same labels also grant that tenant any matching VirtualClusterTemplate, App,
+StackTemplate, or ArgoCDApplicationTemplate, so choose labels that select only
+what you mean to share.
+
+## Access control
+
+MachineConfigTemplate resources are cluster-scoped. Use the `spec.owner` and
+`spec.access` fields to control who can use or modify them:
+
+```yaml
+apiVersion: management.loft.sh/v1
+kind: MachineConfigTemplate
+metadata:
+  name: ubuntu-cloud-init
+spec:
+  displayName: "Ubuntu cloud-init"
+  cloudInitTemplate: |
+    #cloud-config
+    hostname: {{ .Values.NodeClaim.Name }}
+  owner:
+    user: admin
+  access:
+    - users:
+        - "*"
+      verbs:
+        - get
+```

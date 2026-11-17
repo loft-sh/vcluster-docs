@@ -550,6 +550,33 @@ test_stable_cutover_preserves_matching_routes() {
     cleanup "$dir"
 }; test_stable_cutover_preserves_matching_routes
 
+test_stable_cutover_collapses_folder_index_pages() {
+    local dir; dir="$(setup_test_repo)"; cd "$dir"
+    mkdir -p vcluster_versioned_docs/version-0.37.0/security
+    mkdir -p platform_versioned_docs/version-4.12.0/administer/troubleshooting
+    echo "# Old security" > vcluster_versioned_docs/version-0.37.0/security/README.mdx
+    echo "# Old troubleshooting" > platform_versioned_docs/version-4.12.0/administer/troubleshooting/troubleshooting.mdx
+    write_docusaurus_config "0.37.0" "4.12.0"
+    create_netlify_toml; seal_initial_state
+
+    # The vCluster page moves but keeps its URL by slug; the Platform folder
+    # page is gone, so its folder URL (not .../troubleshooting/troubleshooting)
+    # is the route that needs a redirect.
+    mkdir -p vcluster_versioned_docs/version-0.38.0/deploy/security
+    mkdir -p platform_versioned_docs/version-4.13.0/administer
+    printf -- '---\nslug: /security\n---\n# New security\n' > vcluster_versioned_docs/version-0.38.0/deploy/security/README.mdx
+    echo "# Placeholder" > platform_versioned_docs/version-4.13.0/administer/other.mdx
+    write_docusaurus_config "0.38.0" "4.13.0"
+    commit_all "release cutover moving folder index pages"
+
+    local out; out=$(run_script_rc pr); local ec=$?
+    assert_exit 1 "$ec" "stable cutover with a removed folder index page -> exit 1"
+    assert_contains "$out" "All vcluster 0.37.0 unversioned routes remain in 0.38.0" "README route collapses to the folder URL"
+    assert_contains "$out" "stable cutover: /docs/platform/administer/troubleshooting" "folder-named page reports the folder URL"
+    assert_not_contains "$out" "/docs/platform/administer/troubleshooting/troubleshooting" "never reports the file path for a folder-named page"
+    cleanup "$dir"
+}; test_stable_cutover_collapses_folder_index_pages
+
 # =========================================================================
 echo -e "\n${BOLD}--- Platform-UI-link validation ---${NC}"
 # =========================================================================

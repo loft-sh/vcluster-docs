@@ -226,13 +226,6 @@ const config = {
             // The plugin compiles each entry to an anchored micromatch glob, so
             // an exact path excludes only that route and keeps its sub-pages.
             // A trailing `$` is a literal character and matches nothing.
-            // Aggregate config reference renders to ~380K, above the 100K
-            // agent truncation limit. Sub-pages are indexed individually.
-            // Retired in 0.38 (DOC-1556); remove this entry and the next one at
-            // the 0.38 cutover.
-            '/docs/vcluster/configure/vcluster-yaml',
-            // Aggregate sync reference in the released docs renders to ~161K.
-            '/docs/vcluster/configure/vcluster-yaml/sync',
             // The sync section of the vcluster.yaml reference renders to ~176K;
             // the Configure > Resource synchronization task pages are indexed.
             '/docs/vcluster/reference/vcluster-yaml/sync',
@@ -291,14 +284,19 @@ const config = {
         beforeDefaultRemarkPlugins: [
           [remarkVersionTokens, { siteDir: __dirname }],
         ],
-        lastVersion: "0.37.0",
-        onlyIncludeVersions: ["current", "0.37.0", "0.36.0", "0.35.0"],
+        lastVersion: "0.38.0",
+        onlyIncludeVersions: ["current", "0.38.0", "0.37.0", "0.36.0", "0.35.0"],
         versions: {
           current: {
             label: "main 🚧",
           },
+          "0.38.0": {
+            label: "v0.38 Stable",
+            banner: "none",
+            badge: true,
+          },
           "0.37.0": {
-            label: "v0.37 Stable",
+            label: "v0.37 (LTS)",
             banner: "none",
             badge: true,
           },
@@ -328,14 +326,19 @@ const config = {
         beforeDefaultRemarkPlugins: [
           [remarkVersionTokens, { siteDir: __dirname }],
         ],
-        lastVersion: "4.12.0",
-        onlyIncludeVersions: ["current", "4.12.0", "4.11.0", "4.10.0", "4.9.0"],
+        lastVersion: "5.0.0",
+        onlyIncludeVersions: ["current", "5.0.0", "4.12.0", "4.11.0", "4.10.0", "4.9.0"],
         versions: {
           current: {
             label: "main 🚧",
           },
+          "5.0.0": {
+            label: "v5.0 Stable",
+            banner: "none",
+            badge: true,
+          },
           "4.12.0": {
-            label: "v4.12 Stable",
+            label: "v4.12 (LTS)",
             banner: "none",
             badge: true,
           },

@@ -1,0 +1,329 @@
+---
+title: Connect to Argo CD
+description: Connect vCluster Platform to a self-hosted Argo CD server with a connector that registers clusters and control plane clusters with Argo CD automatically.
+sidebar_label: Connect to Argo CD
+sidebar_position: 2
+---
+
+import InterpolatedCodeBlock from '@site/src/components/InterpolatedCodeBlock';
+
+import Tabs from "@theme/Tabs";
+import TabItem from "@theme/TabItem";
+import Flow, { Step } from "@site/src/components/Flow";
+import NavStep from "@site/src/components/NavStep";
+import Button from "@site/src/components/Button";
+import Label from "@site/src/components/Label";
+
+This guide connects vCluster Platform to a self-hosted Argo CD server. At the end you will have a connector that registers clusters and control plane clusters with Argo CD automatically.
+
+For Akuity-managed Argo CD, see [Connect to Akuity](./connect-akuity.mdx) instead.
+
+## Prerequisites
+
+- vCluster Platform running with admin access
+- A self-hosted Argo CD server reachable from the Platform namespace
+
+### Argo CD API token permissions
+
+The API token you provide in the connector must have the following RBAC permissions. Create a dedicated role in your Argo CD `argocd-rbac-cm` ConfigMap and generate a token for it:
+
+```yaml
+policy.csv: |
+  p, role:vcluster-platform, clusters, get, *, allow
+  p, role:vcluster-platform, clusters, create, *, allow
+  p, role:vcluster-platform, clusters, update, *, allow
+  p, role:vcluster-platform, clusters, delete, *, allow
+  p, role:vcluster-platform, applications, get, */*, allow
+  p, role:vcluster-platform, applications, create, */*, allow
+  p, role:vcluster-platform, applications, update, */*, allow
+  p, role:vcluster-platform, applications, delete, */*, allow
+  p, role:vcluster-platform, applications, sync, */*, allow
+```
+
+| Resource | Actions | Why |
+|----------|---------|-----|
+| `clusters` | `get`, `create`, `update`, `delete` | Register and deregister clusters and control plane clusters |
+| `applications` | `get`, `create`, `update`, `delete`, `sync` | Create and sync Argo CD Applications across all projects (`*/*`). `sync` is required to stop in-progress sync operations when deleting a cluster with installed apps |
+
+## Step 1: Create a connector
+
+<Tabs
+  defaultValue="ui"
+  values={[
+    { label: "Platform UI", value: "ui" },
+    { label: "Connector API", value: "api" },
+    { label: "Backing Secret", value: "yaml" },
+  ]}
+>
+  <TabItem value="ui">
+
+<Flow>
+  <Step>
+    Go to <NavStep>Secrets & Credentials > Connectors</NavStep> and select the <Label>Argo CD</Label> tab.
+  </Step>
+  <Step>
+    Click <Button>Connect Argo CD</Button>.
+  </Step>
+  <Step>
+    In the <Label>Display name</Label> field, enter a human-readable name for the connector.
+    The <Label>Argo CD Connector ID</Label> is auto-generated from the display name and is used to reference this connector from clusters.
+  </Step>
+  <Step>
+    In the <Label>Server URL</Label> field, enter the URL of your Argo CD server.
+  </Step>
+  <Step>
+    If Argo CD is installed in a namespace other than `argocd`, update the <Label>Argo CD Namespace</Label> field.
+  </Step>
+  <Step>
+    Select an authentication method and fill in the credentials:
+    - <Label>Authenticate with Argo CD API token</Label>: paste your token in the <Label>Argo CD API Token</Label> field.
+    - <Label>Authenticate with username / password</Label>: fill in <Label>Username</Label> and <Label>Password</Label>.
+  </Step>
+  <Step>
+    Click <Button>Connect Argo CD</Button>.
+  </Step>
+</Flow>
+
+  </TabItem>
+  <TabItem value="api">
+
+Use a Platform management API kubeconfig and save this manifest as `argocd-connector.yaml`. Use the credentials described in the prerequisites:
+
+<InterpolatedCodeBlock
+  language="yaml"
+  code={"apiVersion: management.loft.sh/v1\nkind: Connector\nmetadata:\n  name: argocd-main\nspec:\n  # Select exactly one Argo CD flavor.\n  argoCd:\n    selfHosted:\n      server: [[VAR:ARGOCD_URL:https://argocd.example.com]]\n      namespace: argocd\n      token: \"[[VAR:ARGOCD_TOKEN:replace-with-argocd-token]]\"\n"}
+/>
+
+Create the connector:
+
+```bash
+kubectl create -f argocd-connector.yaml
+kubectl get connectors.management.loft.sh argocd-main -o yaml
+```
+
+For basic authentication, replace `token` with `username` and `password`. Don't set both authentication methods. The API defaults the namespace to `argocd` on create.
+
+  </TabItem>
+  <TabItem value="yaml">
+
+Argo CD supports two authentication methods. If `token` is set, the controller uses bearer token authentication. Otherwise it falls back to `username` and `password`. Apply the Secret with `kubectl apply`.
+
+<Tabs
+  defaultValue="token"
+  values={[
+    { label: "Token", value: "token" },
+    { label: "Basic auth", value: "basic" },
+  ]}
+>
+  <TabItem value="token">
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: argocd-main
+  namespace: loft
+  labels:
+    loft.sh/connector-type: argocd
+type: Opaque
+stringData:
+  server: "https://argocd.example.com"
+  token: "<argocd-api-token>"
+  namespace: "argocd"
+  insecure: "false"
+```
+
+  </TabItem>
+  <TabItem value="basic">
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: argocd-main
+  namespace: loft
+  labels:
+    loft.sh/connector-type: argocd
+type: Opaque
+stringData:
+  server: "https://argocd.example.com"
+  username: "<argocd-username>"
+  password: "<argocd-password>"
+  namespace: "argocd"
+  insecure: "false"
+```
+
+  </TabItem>
+</Tabs>
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `server` | Yes | Full URL of the Argo CD API server |
+| `token` | If set, bearer token authentication is used | Argo CD API bearer token |
+| `username` | Required when `token` is not set | Argo CD username |
+| `password` | Required when `token` is not set | Argo CD password |
+| `namespace` | No | Namespace where Argo CD is installed. Defaults to `argocd` |
+| `insecure` | No | Set to `"true"` to skip TLS verification. Defaults to `"false"` |
+| `caData` | No | Base64-encoded CA certificate for custom TLS verification |
+
+  </TabItem>
+</Tabs>
+
+Whichever way you create the connector, [grant connector access](../../connectors-extensions/connectors/manage.mdx#grant-use-to-a-tenant) before a tenant references it. Template access alone doesn't grant connector use.
+
+## Step 2: Enable the connector on a cluster
+
+### On a cluster
+
+Add the `integrations.argoCD` block to the cluster's `vcluster.yaml`. The `connector` field references the connector name from [Step 1](#step-1-create-a-connector). Every creation path uses the same name.
+
+```yaml
+integrations:
+  argoCD:
+    enabled: true
+    connector: argocd-main
+```
+
+The connector can also be set directly in the VirtualClusterInstance manifest:
+
+```yaml
+apiVersion: management.loft.sh/v1
+kind: VirtualClusterInstance
+metadata:
+  name: app-dev
+  namespace: p-team-a
+spec:
+  template:
+    metadata:
+      name: vcluster
+    helmRelease:
+      values: |
+        integrations:
+          argoCD:
+            enabled: true
+            connector: argocd-main
+```
+
+When the VirtualClusterInstance reconciles, Platform registers the cluster with Argo CD using the Platform proxy as the API server endpoint and a scoped access key as the bearer token.
+
+### On a control plane cluster
+
+Connecting a cluster to Platform creates a `Cluster` object for it. Add `spec.argoCD` to that existing object instead of applying a new manifest.
+
+Find the object's name:
+
+```sh
+kubectl get clusters.management.loft.sh
+```
+
+When Platform runs in the same cluster it manages, that cluster's object is typically named `loft-cluster`.
+
+Patch it in place:
+
+```sh
+kubectl patch clusters.management.loft.sh <cluster-name> --type merge \
+  -p '{"spec":{"argoCD":{"enabled":true,"connector":"argocd-main"}}}'
+```
+
+If you manage the object through GitOps, add `argoCD` alongside its existing fields instead:
+
+```yaml
+apiVersion: management.loft.sh/v1
+kind: Cluster
+metadata:
+  name: my-cluster
+spec:
+  # existing connection method: spec.local, spec.networkPeer, or spec.config
+  argoCD:
+    enabled: true
+    connector: argocd-main
+```
+
+A `Cluster` manifest fails validation unless it targets an existing object or already sets one of `spec.local`, `spec.networkPeer`, or `spec.config`. Applying only `spec.argoCD` on its own returns `spec.config: Required value: spec.config or spec.local or spec.networkPeer is required`.
+
+:::warning Disabling the integration
+Disabling the integration removes the cluster from Argo CD and deletes every `ArgoCDApplication` object Platform generated for it from `deploy.argoCD.applications`, including ones with `target: host`. This is a cascading delete. Argo CD also removes the Kubernetes resources those Applications were managing, not just the Application registration. This applies whether the integration is configured using `vcluster.yaml`, a VirtualClusterInstance manifest, or a Cluster object. Standalone `ArgoCDApplication` objects you created directly, including ones using `spec.destination.cluster`, keep their CR when you disable the integration alone. Once the destination's connector stops resolving, Platform still deletes the standalone object's remote Argo CD Application the same way, cascading to the workloads it managed, and marks the CR's `Synced` condition `False` until the cluster registers again. Re-enabling the integration reconciles it again; you don't have to recreate it. Deleting the cluster itself deletes every `ArgoCDApplication` targeting it, whether standalone or not, along with the workloads those applications managed.
+:::
+
+The Platform UI keeps these two settings in order. The guided `vcluster.yaml` editor only shows the Applications section once the integration is enabled with a connector, and disabling the integration through the UI prompts you to confirm removing any configured applications, stripping them from `deploy.argoCD.applications` as part of the disable.
+
+Editing `vcluster.yaml` directly doesn't enforce that order. Entries in `deploy.argoCD.applications` stay inert until the integration is enabled with a connector, and disabling directly doesn't remove them from the file. They just stop producing `ArgoCDApplication` objects until you re-enable the integration.
+
+## Label registered clusters for ApplicationSets {#cluster-labels}
+
+Platform labels every cluster it registers in Argo CD, so an Argo CD ApplicationSet [cluster generator](https://argo-cd.readthedocs.io/en/stable/operator-manual/applicationset/Generators-Cluster/) can select it:
+
+| Registered from | Labels Platform sets |
+|-----------------|----------------------|
+| Cluster | `loft.sh/project` (the Platform project name), `loft.sh/vcluster-instance-name`, `loft.sh/vcluster-instance-namespace` |
+| Control plane cluster | `loft.sh/cluster` (the `Cluster` object name) |
+
+To select clusters by your own criteria, such as environment or region, add labels and annotations under `cluster.metadata`. On a cluster, set them in `vcluster.yaml`:
+
+```yaml title="vcluster.yaml"
+integrations:
+  argoCD:
+    enabled: true
+    connector: argocd-main
+    cluster:
+      metadata:
+        labels:
+          env: staging
+          region: eu-west
+        annotations:
+          team: payments
+```
+
+On a control plane cluster, set the same block under `spec.argoCD` in the `Cluster` object:
+
+```sh
+kubectl patch clusters.management.loft.sh <cluster-name> --type merge \
+  -p '{"spec":{"argoCD":{"cluster":{"metadata":{"labels":{"env":"staging"}}}}}}'
+```
+
+These rules apply to the metadata you set:
+
+- Platform applies its own labels last, so a label you set with one of the keys in the table is overwritten.
+- Label keys, label values, and annotation keys must be valid Kubernetes metadata, or Platform rejects the change.
+- When you remove a label or annotation from the configuration, Platform removes it from the Argo CD cluster on the next reconcile. Akuity is the exception. See [Connect to Akuity](./connect-akuity.mdx#cluster-labels).
+
+To confirm the labels arrived, list the cluster Secrets in the namespace where Argo CD runs:
+
+```sh
+kubectl get secret -n argocd -l argocd.argoproj.io/secret-type=cluster --show-labels
+```
+
+Then create an ApplicationSet in Argo CD that selects on those labels. Platform doesn't create or manage ApplicationSets, so apply it to the Argo CD instance directly:
+
+```yaml title="applicationset.yaml"
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: guestbook
+  namespace: argocd
+spec:
+  goTemplate: true
+  generators:
+    - clusters:
+        selector:
+          matchLabels:
+            env: staging
+  template:
+    metadata:
+      name: 'guestbook-{{.name}}'
+    spec:
+      project: default
+      source:
+        repoURL: https://github.com/argoproj/argocd-example-apps.git
+        targetRevision: HEAD
+        path: guestbook
+      destination:
+        server: '{{.server}}'
+        namespace: guestbook
+```
+
+Applications that an ApplicationSet generates aren't `ArgoCDApplication` objects, so Platform doesn't track or delete them. When Platform deregisters a cluster, the generator stops matching it. By default, Argo CD then deletes the Application generated for that cluster. To keep it, set the ApplicationSet's `syncPolicy.applicationsSync` to `create-only` or `create-update`. A `--policy` flag on the ApplicationSet controller takes precedence over that field. To keep the deployed resources when Argo CD deletes the Application, set `syncPolicy.preserveResourcesOnDeletion: true`.
+
+## Next step
+
+With the connector enabled, you can declare Argo CD Applications in your cluster or control plane cluster configuration. See [Deploy applications](./deploy-applications.mdx).

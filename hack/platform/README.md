@@ -23,9 +23,10 @@ DEVOPS-1693 targets `next`, where the redesigned 5.0 docs live. A
 `next` before classifying a Platform 5.x version and use `next` as the sync PR
 base. The routing change must also land on `main` for real release dispatches.
 
-The workflow sets `PLATFORM_V5_DOCS_BRANCH=next`. Remove that flag when the
-5.0 docs move to `main` as part of DOC-1761. Other events and Platform majors
-continue to target `main`.
+The workflow set `PLATFORM_V5_DOCS_BRANCH=next` until the 5.0 docs moved to
+`main` (DOC-1854). With the flag unset, `resolve-inputs.sh` defaults to `main`
+for every event and Platform major. Set it again only to route a future major
+to `next` before its cutover.
 
 | Stage | Trigger and reads | Mutation | Failure handling and evidence |
 |---|---|---|---|

@@ -219,6 +219,13 @@ func isOptional(property *jsonschema.Schema) bool {
 	return false
 }
 
+// isTodoLine reports whether a description line is an upstream maintainer
+// note, such as "TODO: ..." or "TODO(name): ...".
+func isTodoLine(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	return strings.HasPrefix(trimmed, "TODO:") || strings.HasPrefix(trimmed, "TODO(")
+}
+
 func hasOptionalMarker(description string) bool {
 	for _, line := range strings.Split(description, "\n") {
 		if strings.TrimSpace(line) == "+optional" {
@@ -751,6 +758,11 @@ func renderField(
 			required = false
 		}
 		if strings.HasPrefix(strings.TrimSpace(line), "+") {
+			continue
+		}
+		// Upstream Go doc comments carry maintainer notes such as
+		// "TODO: Drop kubebuilder:default ...". They aren't user docs.
+		if isTodoLine(line) {
 			continue
 		}
 		newLines = append(newLines, line)
