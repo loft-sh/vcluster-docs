@@ -2,8 +2,8 @@
  * Docusaurus plugin: generate an Open Graph title card for every docs page.
  *
  * After the static build, this reads each page's title, renders a 1200x630
- * PNG in the style of Design's "Open Graph vCluster B" (dark) component, and
- * points the page's og:image and twitter:image at it.
+ * JPEG on Design's docs share card background, and points the page's
+ * og:image and twitter:image at it.
  *
  * - Pages that set their own `image:` frontmatter keep it. Only pages still
  *   using the site default (themeConfig.image) get a generated card.
@@ -28,42 +28,46 @@ const HEIGHT = 630;
 // Bump when the card layout changes. It's part of each card's file name, so
 // a new layout gets new URLs and LinkedIn and other sites don't keep serving
 // their cached copies of the old cards.
-const TEMPLATE_VERSION = 2;
+const TEMPLATE_VERSION = 3;
 
 async function loadAssets() {
   const fontDir = path.dirname(require.resolve('@fontsource/inter/package.json'));
-  const [bold, logo] = await Promise.all([
-    fs.readFile(path.join(fontDir, 'files/inter-latin-700-normal.woff')),
-    fs.readFile(path.join(__dirname, 'logo.svg')),
+  const font = (weight) => fs.readFile(path.join(fontDir, `files/inter-latin-${weight}-normal.woff`));
+  const [medium, semibold, background] = await Promise.all([
+    font(500),
+    font(600),
+    fs.readFile(path.join(__dirname, 'background.jpg')),
   ]);
-  const dataUri = (buf) => `data:image/svg+xml;base64,${buf.toString('base64')}`;
   return {
-    fonts: [{ name: 'Inter', data: bold, weight: 700, style: 'normal' }],
-    logo: dataUri(logo),
+    fonts: [
+      { name: 'Inter', data: medium, weight: 500, style: 'normal' },
+      { name: 'Inter', data: semibold, weight: 600, style: 'normal' },
+    ],
+    background: `data:image/jpeg;base64,${background.toString('base64')}`,
   };
 }
 
 const el = (type, style, children, props = {}) => ({ type, props: { style, children, ...props } });
 
-// Layout follows Open Graph vCluster B (dark): Black-100 background, the
-// vCluster logo, and a #373C50 rule. The page title replaces the static
-// subtitle, with the product as an orange eyebrow above it. The component's
-// line pattern is left out at Design's request (2026-11-10).
+// Layout follows Design's docs share card (2026-11-12): a full-bleed
+// background with the vCluster logo built in, the product as an orange
+// eyebrow, and the page title below it. The text column stops short of the
+// artwork on the right, so long titles wrap instead of covering it.
 function card({ eyebrow, title }, assets) {
   return el('div', {
     width: WIDTH, height: HEIGHT, display: 'flex', position: 'relative',
     backgroundColor: '#050B24', fontFamily: 'Inter',
   }, [
+    el('img', { position: 'absolute', left: 0, top: 0, width: WIDTH, height: HEIGHT }, undefined,
+      { src: assets.background, width: WIDTH, height: HEIGHT }),
     el('div', {
-      position: 'absolute', left: 96, top: 72, width: 880,
+      position: 'absolute', left: 92, top: 228, width: 700,
       display: 'flex', flexDirection: 'column',
     }, [
-      el('img', { width: 315, height: 80 }, undefined, { src: assets.logo, width: 315, height: 80 }),
-      el('div', { marginTop: 48, width: 681, height: 4, backgroundColor: '#373C50' }),
-      el('div', { marginTop: 48, color: '#FF6600', fontSize: 30, fontWeight: 700 }, eyebrow),
+      el('div', { color: '#FF6600', fontSize: 28, fontWeight: 500 }, eyebrow),
       el('div', {
-        marginTop: 16, color: '#FFFFFF', fontSize: 60, fontWeight: 700,
-        lineHeight: 1.15, letterSpacing: -1, display: 'flex',
+        marginTop: 20, color: '#FFFFFF', fontSize: 56, fontWeight: 600,
+        lineHeight: 1.15, letterSpacing: -0.5, display: 'flex',
       }, title),
     ]),
   ]);
@@ -88,9 +92,9 @@ function readMeta(html) {
 }
 
 function eyebrowFor(route) {
-  if (route.startsWith('platform/')) return 'vCluster Platform docs';
-  if (route.startsWith('vcluster/')) return 'vCluster docs';
-  return 'vCluster Labs docs';
+  if (route.startsWith('platform/')) return 'vCluster Platform Docs';
+  if (route.startsWith('vcluster/')) return 'vCluster Docs';
+  return 'vCluster Labs Docs';
 }
 
 function cleanTitle(raw) {
@@ -135,6 +139,9 @@ module.exports = function ogTitleCards(context, options = {}) {
 
       const satori = require('satori').default ?? require('satori');
       const { Resvg } = require('@resvg/resvg-js');
+      const sharp = require('sharp');
+      // No libvips operation cache: each card is converted once.
+      sharp.cache(false);
       const assets = await loadAssets();
       await fs.mkdir(path.join(outDir, outSubdir), { recursive: true });
 
@@ -151,11 +158,14 @@ module.exports = function ogTitleCards(context, options = {}) {
           rendered.set(key, (async () => {
             const svg = await satori(card(info, assets), { width: WIDTH, height: HEIGHT, fonts: assets.fonts });
             const png = new Resvg(svg, { fitTo: { mode: 'width', value: WIDTH } }).render().asPng();
-            await fs.writeFile(path.join(outDir, outSubdir, `${key}.png`), png);
+            // The photographic background makes PNG cards about 740 KB each.
+            // JPEG keeps them near 150 KB with no visible difference.
+            const jpeg = await sharp(png).jpeg({ quality: 80, mozjpeg: true }).toBuffer();
+            await fs.writeFile(path.join(outDir, outSubdir, `${key}.jpg`), jpeg);
           })());
         }
         await rendered.get(key);
-        return `${cardBase}${key}.png`;
+        return `${cardBase}${key}.jpg`;
       }
 
       async function processFile(file) {
