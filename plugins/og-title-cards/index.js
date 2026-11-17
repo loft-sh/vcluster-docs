@@ -49,10 +49,11 @@ async function loadAssets() {
 
 const el = (type, style, children, props = {}) => ({ type, props: { style, children, ...props } });
 
-// Layout follows Design's docs share card (2026-11-12): a full-bleed
+// Layout follows Design's docs share card (2026-11-17): a full-bleed
 // background with the vCluster logo built in, the product as an orange
-// eyebrow, and the page title below it. The text column stops short of the
-// artwork on the right, so long titles wrap instead of covering it.
+// eyebrow, and the page title below it. The background is a 2x export
+// flattened onto #050B24 and scaled to 1200x630. Its open area is wide
+// enough that a 90-character title fits in three lines.
 function card({ eyebrow, title }, assets) {
   return el('div', {
     width: WIDTH, height: HEIGHT, display: 'flex', position: 'relative',
@@ -61,7 +62,7 @@ function card({ eyebrow, title }, assets) {
     el('img', { position: 'absolute', left: 0, top: 0, width: WIDTH, height: HEIGHT }, undefined,
       { src: assets.background, width: WIDTH, height: HEIGHT }),
     el('div', {
-      position: 'absolute', left: 92, top: 228, width: 700,
+      position: 'absolute', left: 92, top: 228, width: 960,
       display: 'flex', flexDirection: 'column',
     }, [
       el('div', { color: '#FF6600', fontSize: 28, fontWeight: 500 }, eyebrow),
@@ -158,8 +159,8 @@ module.exports = function ogTitleCards(context, options = {}) {
           rendered.set(key, (async () => {
             const svg = await satori(card(info, assets), { width: WIDTH, height: HEIGHT, fonts: assets.fonts });
             const png = new Resvg(svg, { fitTo: { mode: 'width', value: WIDTH } }).render().asPng();
-            // The photographic background makes PNG cards about 740 KB each.
-            // JPEG keeps them near 150 KB with no visible difference.
+            // The background's gradient and glow make PNG cards 170-300 KB.
+            // JPEG keeps them at 20-45 KB with no visible difference.
             const jpeg = await sharp(png).jpeg({ quality: 80, mozjpeg: true }).toBuffer();
             await fs.writeFile(path.join(outDir, outSubdir, `${key}.jpg`), jpeg);
           })());
