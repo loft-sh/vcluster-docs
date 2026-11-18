@@ -16,7 +16,7 @@ import styles from './styles.module.css';
 const sections = [
   {label: 'Docs overview', to: '/', id: 'overview', icon: 'home'},
   {label: 'vCluster', to: '/vcluster/', id: 'vcluster'},
-  {label: 'vMetal', to: '/platform/next/vmetal/overview', id: 'vmetal'},
+  {label: 'vMetal', to: '/platform/vmetal/overview', id: 'vmetal'},
   {label: 'Platform', to: '/platform/', id: 'platform'},
 ];
 
