@@ -490,17 +490,17 @@ const config = {
         theme: vClusterTheme,
         additionalLanguages: ["bash", "hcl"],
       },
-      // Disabled for the 0.37 / 4.12 release (DOC-1602, DOC-1696): no marketing
-      // changelog is being published alongside this release. Restore with the
-      // content below once that changelog is live.
-      // announcementBar: {
-      //   id: "vcluster-0-37-platform-4-12-release",
-      //   content:
-      //     '🚀 <strong>New releases: <a href="https://www.vcluster.com/releases/en/changelog?hideLogo=true&hideMenu=true&theme=dark&embed=true&c=vCluster" target="_blank">vCluster Platform 4.12 and vCluster 0.37</a></strong>',
-      //   backgroundColor: "#050b24",
-      //   textColor: "#ffffff",
-      //   isCloseable: true,
-      // },
+      // Release announcement for Platform 5.0 and vCluster 0.38 (DOC-1854).
+      // Change the id with each release, so readers who closed the previous
+      // bar see the new one.
+      announcementBar: {
+        id: "vcluster-0-38-platform-5-0-release",
+        content:
+          '<strong>New releases: <a href="https://www.vcluster.com/releases" target="_blank">vCluster Platform v5.0 and vCluster v0.38</a></strong>',
+        backgroundColor: "#050b24",
+        textColor: "#ffffff",
+        isCloseable: true,
+      },
     }
   ),
 
