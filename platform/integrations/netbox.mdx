@@ -1,0 +1,176 @@
+---
+title: NetBox with vCluster Platform
+sidebar_label: NetBox
+sidebar_position: 0.6
+description: Import servers you record in NetBox as machines, select capacity by NetBox site, rack, and role, and offer it to tenants through vCluster Platform.
+---
+
+import NetboxIntegrationMap from '@site/static/media/diagrams/netbox-platform-integration.svg';
+
+Turn the servers you already record in NetBox into capacity your tenants can use.
+vCluster Platform reads your NetBox inventory and imports the servers you mark for it.
+Then it makes them available to tenants, projects, and clusters through the same workflows as every other cluster type.
+
+NetBox stays the source of truth. vCluster Platform turns NetBox records into capacity tenants can request.
+
+## What NetBox is
+
+[NetBox](https://netboxlabs.com/docs/netbox/) is a network source of truth for infrastructure and network configuration.
+It combines IP address management (IPAM) and data center infrastructure management (DCIM) in one data model.
+Teams model sites, racks, servers, network devices, cabling, interfaces, IP space, and tenancy.
+Automation systems read the model through REST and GraphQL APIs and update it through the REST API.
+
+[NetBox Cloud](https://netboxlabs.com/netbox-cloud/) is NetBox Labs' commercial, fully managed service.
+It adds automated backups, managed upgrades, plugin management, and support, so teams can focus on infrastructure operations.
+Additional capabilities, including development and staging environments, depend on the [plan](https://netboxlabs.com/pricing/).
+
+[NetBox Community](https://netboxlabs.com/docs/netbox/) is the free, open source edition that teams deploy and manage on their own infrastructure.
+
+## Why it matters for an AI cloud
+
+An AI cloud needs a consistent model of its infrastructure, from GPU servers and network hardware to IP space and network configuration.
+NetBox provides that shared record for the systems that discover infrastructure, configure networks, and provision services.
+
+The current vCluster Platform integration connects the server inventory in that wider model to tenant capacity.
+Platform imports tagged devices through the Metal3 node provider, using their placement, hardware, and provisioning details.
+
+Operators can use the server records they maintain in NetBox instead of copying them into Platform by hand.
+Keeping those records connected reduces inventory drift that can cause failed provisioning or leave capacity unavailable.
+
+With the integration, NetBox becomes the starting point for tenant capacity:
+
+- **Tag a server in NetBox**, and Platform imports it as a machine with its site, rack, role, and hardware.
+- **Node types select machines by NetBox data**, so a `gpu-compute` role in NetBox becomes a node type tenants can request.
+- **Tenants get dedicated capacity.** Each tenant's cluster can run on private nodes, so imported servers aren't shared between tenants.
+- **NetBox stays current in Platform.** Changes to a device's site, role, status, or tenancy update its machine labels on the next sync, and node types can select on them.
+
+## How the pieces fit
+
+<figure>
+  <NetboxIntegrationMap style={{width: '100%', height: 'auto'}} role="img" aria-label="vCluster Platform reads tagged devices from NetBox through a read-only NetBox connector. A node provider syncs them every minute into labeled machines. Node types turn the machines into capacity that tenants receive through grants, and projects use it to create clusters on private nodes." />
+  <figcaption>Platform reads tagged devices from NetBox, imports them as labeled machines, and turns them into capacity for tenants, projects, and clusters.</figcaption>
+</figure>
+
+A platform admin connects NetBox once and grants the connection to the tenants that need it.
+A node provider reads the tagged devices and keeps them in sync.
+Node types turn the imported machines into capacity that tenant and project policies control.
+
+## Start with the outcome you need
+
+| Outcome | What you do |
+| --- | --- |
+| [Connect NetBox to Platform](#connect-netbox-to-vcluster-platform) | Create a NetBox connector with a read-only API token and grant it to tenants. |
+| [Model servers for import](#model-servers-in-netbox) | Tag devices and record the BMC, boot interface, and hardware details Platform needs. |
+| [Select capacity by NetBox data](#turn-inventory-into-tenant-capacity) | Build node types that select on site, rack, role, device type, or manufacturer. |
+| [Keep NetBox authoritative](#what-platform-reads-and-how-it-uses-it) | Update devices in NetBox and select on the resulting labels in Platform. |
+
+## Connect NetBox to vCluster Platform
+
+The integration requires vCluster Platform v5.0 or later, the Metal3 node provider, and a license that includes Metal3.
+
+A platform admin creates a **NetBox connector** with the NetBox URL and an API token.
+The token needs read access to the devices, interfaces, IP addresses, MAC addresses, modules, module types, and tags the import should see.
+A read-only token is sufficient for the inventory import described here.
+
+The connector is stored once and granted to tenants.
+A node provider can use a NetBox connector only if its owning tenant has a grant for it.
+If a grant is revoked, the sync for that node provider stops. Machines it already imported stay in the inventory.
+
+The Metal3 node provider references the connector and drives the import.
+For setup steps, see [Connect to NetBox](./connectors-extensions/connectors/netbox.mdx) and the [Metal3 node provider](../vmetal/drivers/bare-metal/metal3/overview.mdx).
+
+## Model servers in NetBox
+
+Platform imports every device that carries the import tag.
+To be provisionable, a device also needs a BMC address, a BMC login, a boot MAC, and a serial number.
+Module records are optional, but they let node types and tenants see the hardware.
+
+| Detail | Where it comes from in NetBox |
+| --- | --- |
+| The import tag (required to import) | A tag on the device. The default slug is `vcluster-sync`, and each node provider can choose its own. |
+| BMC address | The device's out-of-band IP, or the IP on its management interface. A template turns it into the Redfish address to dial. |
+| BMC login | Device custom fields, named `bmc_username` and `bmc_password` by default. You can point Platform at the field names you already use. |
+| Boot MAC | The device's interfaces or MAC address objects. |
+| Serial number | The device's serial field. |
+| Hardware (recommended) | Installed modules, such as GPU, CPU, NIC, and storage modules. |
+
+A few details make imports smoother:
+
+- **Create the tag first.** If the tag doesn't exist in NetBox, the sync reports a specific error that tells you to create it.
+- **Match the Redfish address to your BMC vendor.** The default template works for Lenovo, HPE, and Supermicro BMCs. Dell iDRAC needs the `idrac-redfish://` scheme and its own system path, which you set in the node provider.
+- **Record GPUs as modules.** Platform reads module type profiles when they're set, and otherwise recognizes GPUs by bay name and NICs by model. A GPU baseboard isn't counted as a GPU.
+- **Keep credentials out of view.** Platform reads the BMC password from NetBox but never serves it back through its API. You can also keep BMC credentials in Kubernetes Secrets instead of NetBox.
+
+Platform doesn't guess at what NetBox leaves out.
+If a quantity isn't recorded, the machine shows it as unset rather than inferring it from a model name.
+
+## What Platform reads and how it uses it
+
+Platform re-reads NetBox every minute. Each imported machine carries labels derived from its NetBox device:
+
+| Label | Value from NetBox |
+| --- | --- |
+| `netbox.vcluster.com/site` | Site slug |
+| `netbox.vcluster.com/location` | Location slug |
+| `netbox.vcluster.com/rack` | Rack name |
+| `netbox.vcluster.com/role` | Device role slug, such as `gpu-compute` |
+| `netbox.vcluster.com/device-type` | Device type slug |
+| `netbox.vcluster.com/manufacturer` | Manufacturer slug |
+| `netbox.vcluster.com/status` | NetBox status, unchanged |
+| `netbox.vcluster.com/availability` | A summary of NetBox status and tenancy |
+| `netbox.vcluster.com/provisionable` | `true` when the device has everything provisioning needs |
+| `netbox.vcluster.com/connector` | The connector the device was read from |
+
+**Status and tenancy are recorded, not enforced.**
+The `status` and `availability` labels reflect the device in NetBox.
+Neither one stops a machine from being provisioned on its own.
+To keep servers you mark offline in NetBox out of service, have node types select on the `netbox.vcluster.com/status` label with the value `active`.
+
+**Imports survive renames.** Platform tracks each device by its NetBox ID, not its name.
+After a rename, the machine keeps its original name.
+Its annotations record the new NetBox name and keep a link back to the device page.
+
+**Removing the tag never pulls a server out from under a tenant.**
+If the machine is free, Platform removes it from the inventory.
+If it's provisioned or claimed, Platform keeps it and marks it orphaned.
+An operator then decides whether to release or reclaim the server.
+
+**Check what imported.** Run the following command against the Platform API to find devices that are missing details:
+
+```bash
+kubectl get machines -l netbox.vcluster.com/provisionable=false
+```
+
+Each of these machines stays pending, and its `Registered` condition lists what NetBox is missing.
+
+For how machines move through their lifecycle, see [Machine inventory](../vmetal/concepts/machine-inventory.mdx).
+
+## Turn inventory into tenant capacity
+
+Imported machines become tenant capacity the same way as every other machine in Platform:
+
+1. **Define node types that select on NetBox labels.** For example, select `netbox.vcluster.com/role=gpu-compute` and one `netbox.vcluster.com/site` to offer a GPU node type at that site.
+2. **Assign capacity to tenants.** Reserve specific machines for a tenant, or let tenants draw from shared capacity within their quotas.
+3. **Give each cluster its own workers.** For tenants with Kubernetes access or the ability to run arbitrary workloads, use private nodes. Each cluster then runs on dedicated servers.
+4. **Let projects request clusters.** Project users create clusters from the node types their tenant can use.
+
+See [Node providers and node types](../vmetal/concepts/machine-types-and-nodetypes.mdx) for selectors and tenant assignment.
+
+## Where the integration is going
+
+Today the integration imports inventory for the Metal3 node provider.
+vCluster Labs is working with providers to extend NetBox as the source of truth across more of the machine lifecycle.
+That includes onboarding servers from NetBox into sites managed by NVIDIA Infra Controller (NICo).
+It also includes closer two-way alignment between NetBox and Platform.
+
+Each capability will be documented when it ships.
+For NVIDIA hardware provisioning available today, see [NVIDIA DSX OS with vCluster Platform](./nvidia-dsx-os.mdx).
+
+## Related docs
+
+- [Connect to NetBox](./connectors-extensions/connectors/netbox.mdx)
+- [Metal3 node provider](../vmetal/drivers/bare-metal/metal3/overview.mdx)
+- [Machine inventory](../vmetal/concepts/machine-inventory.mdx)
+- [Node providers and node types](../vmetal/concepts/machine-types-and-nodetypes.mdx)
+- [NVIDIA DSX OS with vCluster Platform](./nvidia-dsx-os.mdx)
+- [NetBox documentation](https://netboxlabs.com/docs/netbox/)
