@@ -1,8 +1,9 @@
 package util
 
 type CreateValues struct {
-	Name        string
-	ExampleName string
+	Name         string
+	ExampleName  string
+	GenerateName string
 
 	Resource string
 
@@ -23,7 +24,7 @@ Create a file ` + "`object.yaml`" + ` with the following contents:
 {{ .YAMLObject }}
 ` + "```" + `
 
-Run the following curl command to create a new ` + myObjectInNamespace + `:
+Run the following curl command to create a new {{ if .GenerateName }}{{ .Name }}. The server generates its name from the ` + "`{{ .GenerateName }}`" + ` prefix{{ else }}` + myObjectInNamespace + `{{ end }}:
 ` + "```bash" + `
 curl -s -X POST --insecure \
      "https://$LOFT_DOMAIN/kubernetes/management/apis/management.loft.sh/v1/` + curlNamespace + `{{ .Resource }}" \
@@ -39,7 +40,7 @@ Create a file ` + "`object.yaml`" + ` with the following contents:
 {{ .YAMLObject }}
 ` + "```" + `
 
-Then create the ` + myObjectInNamespace + ` with:
+Then create the {{ if .GenerateName }}{{ .Name }} with the following command. The server generates its name from the ` + "`{{ .GenerateName }}`" + ` prefix{{ else }}` + myObjectInNamespace + ` with{{ end }}:
 ` + "```bash" + `
 kubectl create -f object.yaml` + kubectlNamespace + `
 ` + "```" + `

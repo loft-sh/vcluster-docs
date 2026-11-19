@@ -10,7 +10,7 @@ const path = require('path');
 const compatibilityData = require('../../static/api/k8s-compatibility.json');
 
 const BASE_URL = process.env.TEST_BASE_URL || 'https://www.vcluster.com';
-const MATRIX_PATH = '/docs/vcluster/next/manage/upgrade/supported_versions#kubernetes-compatibility-matrix';
+const MATRIX_PATH = '/docs/vcluster/reference/lifecycle-policy#kubernetes-compatibility-matrix';
 const SCREENSHOTS_DIR = path.join(__dirname, '..', 'screenshots');
 
 // Match the component's CSS module class, not the header wording, so a

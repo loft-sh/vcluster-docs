@@ -226,11 +226,9 @@ const config = {
             // The plugin compiles each entry to an anchored micromatch glob, so
             // an exact path excludes only that route and keeps its sub-pages.
             // A trailing `$` is a literal character and matches nothing.
-            // Aggregate config reference renders to ~380K, above the 100K
-            // agent truncation limit. Sub-pages are indexed individually.
-            '/docs/vcluster/configure/vcluster-yaml',
-            // Aggregate sync reference renders to ~161K; sub-pages are indexed.
-            '/docs/vcluster/configure/vcluster-yaml/sync',
+            // The sync section of the vcluster.yaml reference renders to ~176K;
+            // the Configure > Resource synchronization task pages are indexed.
+            '/docs/vcluster/reference/vcluster-yaml/sync',
             // Platform API reference renders to ~116K; no sub-pages exist.
             // Silent truncation on a dense API reference causes incorrect answers.
             '/docs/platform/api/resources/project/templates',
@@ -286,14 +284,19 @@ const config = {
         beforeDefaultRemarkPlugins: [
           [remarkVersionTokens, { siteDir: __dirname }],
         ],
-        lastVersion: "0.37.0",
-        onlyIncludeVersions: ["current", "0.37.0", "0.36.0", "0.35.0"],
+        lastVersion: "0.38.0",
+        onlyIncludeVersions: ["current", "0.38.0", "0.37.0", "0.36.0", "0.35.0"],
         versions: {
           current: {
             label: "main 🚧",
           },
+          "0.38.0": {
+            label: "v0.38 Stable",
+            banner: "none",
+            badge: true,
+          },
           "0.37.0": {
-            label: "v0.37 Stable",
+            label: "v0.37 (LTS)",
             banner: "none",
             badge: true,
           },
@@ -323,14 +326,19 @@ const config = {
         beforeDefaultRemarkPlugins: [
           [remarkVersionTokens, { siteDir: __dirname }],
         ],
-        lastVersion: "4.12.0",
-        onlyIncludeVersions: ["current", "4.12.0", "4.11.0", "4.10.0", "4.9.0"],
+        lastVersion: "5.0.0",
+        onlyIncludeVersions: ["current", "5.0.0", "4.12.0", "4.11.0", "4.10.0", "4.9.0"],
         versions: {
           current: {
             label: "main 🚧",
           },
+          "5.0.0": {
+            label: "v5.0 Stable",
+            banner: "none",
+            badge: true,
+          },
           "4.12.0": {
-            label: "v4.12 Stable",
+            label: "v4.12 (LTS)",
             banner: "none",
             badge: true,
           },
@@ -423,30 +431,6 @@ const config = {
           height: 36,
         },
         items: [
-          // Product tabs
-          {
-            to: "/vcluster/",
-            position: "left",
-            label: "vCluster",
-          },
-          {
-            to: "/platform/",
-            position: "left",
-            label: "vCluster Platform",
-          },
-          {
-            href: "https://www.vnode.com/docs",
-            label: "vNode",
-            position: "left",
-            target: "_blank",
-          },
-          {
-            href: "https://www.vmetal.ai/docs",
-            label: "vMetal",
-            position: "left",
-            target: "_blank",
-          },
-          // Right-side items
           {
             href: "https://www.vcluster.com/blog",
             label: "Blog",
@@ -481,7 +465,7 @@ const config = {
         contextualSearch: true,
         searchPagePath: "search",
         externalUrlRegex:
-          "(?:loft\\.sh|platform-v4-[0-9]--vcluster-docs-site\\.netlify\\.app|vnode\\.com|vmetal\\.ai)",
+          "(?:loft\\.sh|platform-v4-[0-9]--vcluster-docs-site\\.netlify\\.app)",
       },
       footer: {
         style: "light",
@@ -506,17 +490,17 @@ const config = {
         theme: vClusterTheme,
         additionalLanguages: ["bash", "hcl"],
       },
-      // Disabled for the 0.37 / 4.12 release (DOC-1602, DOC-1696): no marketing
-      // changelog is being published alongside this release. Restore with the
-      // content below once that changelog is live.
-      // announcementBar: {
-      //   id: "vcluster-0-37-platform-4-12-release",
-      //   content:
-      //     '🚀 <strong>New releases: <a href="https://www.vcluster.com/releases/en/changelog?hideLogo=true&hideMenu=true&theme=dark&embed=true&c=vCluster" target="_blank">vCluster Platform 4.12 and vCluster 0.37</a></strong>',
-      //   backgroundColor: "#050b24",
-      //   textColor: "#ffffff",
-      //   isCloseable: true,
-      // },
+      // Release announcement for Platform 5.0 and vCluster 0.38 (DOC-1854).
+      // Change the id with each release, so readers who closed the previous
+      // bar see the new one.
+      announcementBar: {
+        id: "vcluster-0-38-platform-5-0-release",
+        content:
+          '<strong>New releases: <a href="https://www.vcluster.com/releases" target="_blank">vCluster Platform v5.0 and vCluster v0.38</a></strong>',
+        backgroundColor: "#050b24",
+        textColor: "#ffffff",
+        isCloseable: true,
+      },
     }
   ),
 

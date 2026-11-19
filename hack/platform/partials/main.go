@@ -13,8 +13,8 @@ import (
 
 	"github.com/loft-sh/vcluster-docs/hack/platform/util"
 
-	managementv1 "github.com/loft-sh/api/v4/pkg/apis/management/v1"
-	storagev1 "github.com/loft-sh/api/v4/pkg/apis/storage/v1"
+	managementv1 "github.com/loft-sh/api/v5/pkg/apis/management/v1"
+	storagev1 "github.com/loft-sh/api/v5/pkg/apis/storage/v1"
 	argoapplicationsv1alpha1 "github.com/loft-sh/external-types/argoproj/argo-cd/v2/pkg/apis/application/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
@@ -45,7 +45,7 @@ func main() {
 	util.GenerateSection(&managementv1.ConfigStatus{}, true, path.Join(util.BasePath, "config/status_reference.mdx"))
 	util.GenerateSection(&managementv1.AuditPolicy{}, true, path.Join(util.BasePath, "config/status/audit/policy.mdx"))
 	util.GenerateSection(&managementv1.Audit{}, true, path.Join(util.BasePath, "config/status/audit.mdx"))
-	// RancherIntegrationSpec was removed from loft-sh/api/v4 in v4.9.0 — the
+	// RancherIntegrationSpec was removed from the v4 API in v4.9.0. The
 	// legacy in-tree Rancher integration is replaced by the standalone
 	// vCluster Rancher operator (see /docs/platform/integrations/rancher and
 	// the migration guide). The previously-generated rancher.mdx is only
@@ -436,28 +436,8 @@ spec:
 		SubResourceCreateDescription: "Move a space into another project using this API.",
 	})
 
-	// ProjectMigrateSpaceInstnace
-	util.GenerateObjectOverview(&util.ObjectInformation{
-		Title:       "Move vCluster To Other Project",
-		Description: "This API can be used to move a virtual cluster from one project to another.",
-		File:        path.Join(util.BaseResourcesPath, "project/migratevirtualclusterinstance.mdx"),
-		Name:        "Move Virtual Cluster To Other Project",
-		Resource:    "projects",
-		SubResource: "migratevirtualclusterinstance",
-		Object: &managementv1.ProjectMigrateVirtualClusterInstance{
-			TypeMeta: metav1.TypeMeta{
-				Kind:       "ProjectMigrateVirtualClusterInstance",
-				APIVersion: managementv1.SchemeGroupVersion.String(),
-			},
-			ObjectMeta: metav1.ObjectMeta{},
-			SourceVirtualClusterInstance: managementv1.ProjectMigrateVirtualClusterInstanceSource{
-				Name:      "my-virtual-cluster",
-				Namespace: "loft-p-my-other-project",
-			},
-		},
-		SubResourceCreate:            true,
-		SubResourceCreateDescription: "Move a virtual cluster into another project using this API.",
-	})
+	// ProjectMigrateVirtualClusterInstance was removed in Platform 5.0.
+	// Its 4.x API reference remains in the versioned documentation.
 
 	// ProjectMembers
 	util.GenerateObjectOverview(&util.ObjectInformation{
@@ -616,7 +596,7 @@ spec:
 		Title:       "App Instance",
 		Name:        "AppInstance",
 		Resource:    "appinstances",
-		Description: "AppInstance deploys an App into a tenant cluster, space, or connected cluster, and reports the resulting Helm release status. It replaces the Task and HelmRelease resources removed in Platform 4.12. See [What are Apps](../../understand/what-are-apps.mdx) for the concept, [Upgrade to Platform 4.12](../../maintenance/upgrade-migrate/upgrade.mdx#upgrade-to-4-12) for migrating an existing app deployment, and [Retrieve App Instance Logs](appinstancelog.mdx) for the log subresource.",
+		Description: "AppInstance deploys an App into a cluster, space, or connected cluster, and reports the resulting Helm release status. It replaces the Task and HelmRelease resources removed in Platform 4.12. See [What are Apps](../../tenants/templates/what-are-apps.mdx) for the concept, [Upgrade to Platform 4.12](../../administer/upgrade-migrate/upgrade.mdx#upgrade-to-4-12) for migrating an existing app deployment, and [Retrieve App Instance Logs](appinstancelog.mdx) for the log subresource.",
 		File:        path.Join(util.BaseResourcesPath, "appinstance.mdx"),
 		Object: &managementv1.AppInstance{
 			TypeMeta: metav1.TypeMeta{
@@ -678,7 +658,7 @@ spec:
 		Title:       "Stack Template",
 		Name:        "StackTemplate",
 		Resource:    "stacktemplates",
-		Description: "StackTemplate is a reusable, parameterized task graph that a StackInstance deploys to a tenant cluster or control plane cluster. See [What are Stacks](../../understand/what-are-stacks.mdx) for the concept and [Create a Stack template](../../administer/templates/create-stack-templates.mdx) for the full task, parameter, and output syntax.",
+		Description: "StackTemplate is a reusable, parameterized task graph that a StackInstance deploys to a cluster or control plane cluster. See [What are Stacks](../../tenants/templates/what-are-stacks.mdx) for the concept and [Create a Stack template](../../tenants/templates/create-stack-templates.mdx) for the full task, parameter, and output syntax.",
 		File:        path.Join(util.BaseResourcesPath, "stacktemplate.mdx"),
 		Object: &managementv1.StackTemplate{
 			TypeMeta: metav1.TypeMeta{
@@ -723,7 +703,7 @@ spec:
 		Title:       "Stack Instance",
 		Name:        "StackInstance",
 		Resource:    "stackinstances",
-		Description: "StackInstance deploys one inline or referenced task graph to a tenant cluster or control plane cluster and reports aggregate and per-task status. See [What are Stacks](../../understand/what-are-stacks.mdx) for the concept and [Use a Stack](../../use-platform/apps/use-stacks.mdx) for the installation and monitoring workflow.",
+		Description: "StackInstance deploys one inline or referenced task graph to a cluster or control plane cluster and reports aggregate and per-task status. See [What are Stacks](../../tenants/templates/what-are-stacks.mdx) for the concept and [Use a Stack](../../use-platform/apps/use-stacks.mdx) for the installation and monitoring workflow.",
 		File:        path.Join(util.BaseResourcesPath, "stackinstance.mdx"),
 		Object: &managementv1.StackInstance{
 			TypeMeta: metav1.TypeMeta{
@@ -761,7 +741,7 @@ spec:
 		SubResourceParentName: "StackInstance",
 		Resource:              "stackinstances",
 		SubResource:           "outputs",
-		Description:           "Retrieve the outputs a StackTemplate publishes for a StackInstance. Reading this subresource requires separate `get` permission on `stackinstances/outputs`. See [Stack permissions](../../administer/users-permissions/permissions/stacks.mdx#permission-map) and [What are Stacks](../../understand/what-are-stacks.mdx) for the output-capture concept.",
+		Description:           "Retrieve the outputs a StackTemplate publishes for a StackInstance. Reading this subresource requires separate `get` permission on `stackinstances/outputs`. See [Stack permissions](../../tenants/users-permissions/permissions/stacks.mdx#permission-map) and [What are Stacks](../../tenants/templates/what-are-stacks.mdx) for the output-capture concept.",
 		File:                  path.Join(util.BaseResourcesPath, "stackinstanceoutputs.mdx"),
 		Object: &managementv1.StackInstanceOutputs{
 			TypeMeta: metav1.TypeMeta{
@@ -1000,35 +980,6 @@ spec:
 		Delete:   true,
 	})
 
-	// SharedSecret
-	util.GenerateObjectOverview(&util.ObjectInformation{
-		Name:        "Global Secret",
-		Resource:    "sharedsecrets",
-		Description: "Global Secrets can be used to share sensitive information across users, teams and connected clusters. You can either access shared secrets through the Loft CLI or sync them directly to a project secret.",
-		File:        path.Join(util.BaseResourcesPath, "sharedsecret.mdx"),
-		Object: &storagev1.SharedSecret{
-			TypeMeta: metav1.TypeMeta{
-				Kind:       "SharedSecret",
-				APIVersion: managementv1.SchemeGroupVersion.String(),
-			},
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "my-global-secret",
-				Namespace: "loft",
-			},
-			Spec: storagev1.SharedSecretSpec{
-				DisplayName: "My Global Secret",
-				Description: "Secret Data is base64 encoded.",
-				Data: map[string][]byte{
-					"password": []byte("password"),
-				},
-			},
-		},
-		Create:   true,
-		Retrieve: true,
-		Update:   true,
-		Delete:   true,
-	})
-
 	// OwnedAccessKey
 	util.GenerateObjectOverview(&util.ObjectInformation{
 		Name:        "Owned Access Key",
@@ -1211,7 +1162,6 @@ spec:
 			"| `projects` | Projects |\n" +
 			"| `projectsecrets` | Project-scoped secrets |\n" +
 			"| `selves` | Current user information |\n" +
-			"| `sharedsecrets` | Shared secrets |\n" +
 			"| `spaceinstances` | Space instances |\n" +
 			"| `spacetemplates` | Space templates |\n" +
 			"| `stackinstances` | Project-scoped Stack instances |\n" +
@@ -1269,6 +1219,158 @@ spec:
 			Status: managementv1.ClusterRoleTemplateStatus{},
 		},
 		Create: true,
+	})
+
+	// Connector
+	util.GenerateObjectOverview(&util.ObjectInformation{
+		Title:       "Connector",
+		Name:        "Connector",
+		Resource:    "connectors",
+		Description: "A connector configures a platform integration, such as a shared database, Argo CD, or observability. Connectors are cluster-scoped. Callers who can update a connector see its full spec. All other callers, including connector viewers and tenants, see a redacted view without credentials or connection details. Tenants see only the connectors assigned to them and cannot change them. Watch isn't supported.",
+		File:        path.Join(util.BaseResourcesPath, "connector.mdx"),
+		Object: &managementv1.Connector{
+			TypeMeta:   metav1.TypeMeta{Kind: "Connector", APIVersion: managementv1.SchemeGroupVersion.String()},
+			ObjectMeta: metav1.ObjectMeta{Name: "shared-postgres"},
+			Spec: managementv1.ConnectorSpec{
+				DisplayName: "Shared PostgreSQL",
+				SharedDatabase: &managementv1.ConnectorSharedDatabaseSpec{
+					Dialect:  managementv1.SharedDatabaseDialectPostgres,
+					Endpoint: "postgres.example.com",
+					Port:     "5432",
+					User:     "platform",
+					Password: "replace-with-database-password",
+				},
+			},
+		},
+		Create: true, Retrieve: true, Update: true, Delete: true,
+	})
+
+	// Machine is inventory maintained by the provider. Create and delete are refused, and
+	// spec and status are frozen, but labels and annotations can be edited (tenant assignment).
+	util.GenerateObjectOverview(&util.ObjectInformation{
+		Title:                     "Machine",
+		Name:                      "Machine",
+		Resource:                  "machines",
+		Description:               "A machine mirrors one physical machine in a bare metal provider's inventory, such as Metal3, NICo, or NetBox through Metal3. The platform inventory sync creates, updates, and deletes machines.",
+		ExtraContentBeforeExample: "Through this API you can read machines and edit their labels and annotations, for example to assign a machine to a tenant. Creating and deleting machines is refused, and spec, status, and platform-owned labels can't be changed.\n",
+		File:                      path.Join(util.BaseResourcesPath, "machine.mdx"),
+		Object: &managementv1.Machine{
+			TypeMeta:   metav1.TypeMeta{Kind: "Machine", APIVersion: managementv1.SchemeGroupVersion.String()},
+			ObjectMeta: metav1.ObjectMeta{Name: "metal3.worker-01"},
+			Spec: managementv1.MachineSpec{MachineSpec: storagev1.MachineSpec{
+				DisplayName: "worker-01",
+				ProviderRef: "metal3",
+			}},
+			Status: managementv1.MachineStatus{MachineStatus: storagev1.MachineStatus{
+				Phase:      storagev1.MachinePhaseAvailable,
+				PowerState: storagev1.MachinePowerStateOff,
+			}},
+		},
+		Retrieve: true, Update: true,
+	})
+
+	// NetworkEnvironment
+	util.GenerateObjectOverview(&util.ObjectInformation{
+		Title:       "Network Environment",
+		Name:        "NetworkEnvironment",
+		Resource:    "networkenvironments",
+		Description: "A network environment defines network settings for nodes provisioned through a NodeProvider. Platform admins create network environments and assign each one to a tenant or the platform. Tenants can't create them. The provider reference is required at creation and can't be changed.",
+		File:        path.Join(util.BaseResourcesPath, "networkenvironment.mdx"),
+		Object: &managementv1.NetworkEnvironment{
+			TypeMeta:   metav1.TypeMeta{Kind: "NetworkEnvironment", APIVersion: managementv1.SchemeGroupVersion.String()},
+			ObjectMeta: metav1.ObjectMeta{Name: "development"},
+			Spec: managementv1.NetworkEnvironmentSpec{NetworkEnvironmentSpec: storagev1.NetworkEnvironmentSpec{
+				DisplayName: "Development",
+				ProviderRef: "my-node-provider",
+			}},
+		},
+		Create: true, Retrieve: true, Update: true, Delete: true,
+	})
+
+	// Tenant
+	util.GenerateObjectOverview(&util.ObjectInformation{
+		Title:       "Tenant",
+		Name:        "Tenant",
+		Resource:    "tenants",
+		Description: "A Tenant defines which platform resources a tenant may use, such as control plane clusters, node types, templates, and connectors. Access to tenants is governed by RBAC on the tenants resource. The config subresource stores the tenant's configuration.",
+		File:        path.Join(util.BaseResourcesPath, "tenant.mdx"),
+		Object: &managementv1.Tenant{
+			TypeMeta:   metav1.TypeMeta{Kind: "Tenant", APIVersion: managementv1.SchemeGroupVersion.String()},
+			ObjectMeta: metav1.ObjectMeta{Name: "development"},
+			Spec: managementv1.TenantSpec{TenantSpec: storagev1.TenantSpec{
+				DisplayName: "Development",
+				NodeTypes: &storagev1.TenantNodeTypes{
+					Enabled: true,
+					Allow:   &storagev1.TenantNodeTypeAllow{ByName: []string{"my-provider.standard"}},
+				},
+			}},
+		},
+		Create: true, Retrieve: true, Update: true, Delete: true,
+	})
+
+	// TenantConfig uses GET and POST on tenants/{name}/config; POST replaces the config.
+	util.GenerateObjectOverview(&util.ObjectInformation{
+		Title:                 "Tenant Configuration",
+		Name:                  "TenantConfig",
+		Resource:              "tenants",
+		SubResource:           "config",
+		SubResourceParentName: "Tenant",
+		Description:           "Read or replace a tenant's configuration. A write replaces the entire configuration. Changing the hostname list also requires update permission on the tenant. Requires the Multi-Tenancy license.",
+		File:                  path.Join(util.BaseResourcesPath, "tenant/config.mdx"),
+		Object: &managementv1.TenantConfig{
+			TypeMeta:   metav1.TypeMeta{Kind: "TenantConfig", APIVersion: managementv1.SchemeGroupVersion.String()},
+			ObjectMeta: metav1.ObjectMeta{Name: "development"},
+			Spec: managementv1.TenantConfigSpec{
+				Hostnames: []storagev1.TenantHostnameBinding{{Hostname: "development.example.com"}},
+			},
+		},
+		SubResourceGet:               true,
+		SubResourceCreate:            true,
+		SubResourceGetDescription:    "Retrieve the tenant's current configuration.",
+		SubResourceCreateDescription: "Replace the tenant's entire configuration. Include all settings that should remain configured.",
+	})
+
+	// NodeType
+	util.GenerateObjectOverview(&util.ObjectInformation{
+		Title:       "Node Type",
+		Name:        "NodeType",
+		Resource:    "nodetypes",
+		Description: "A NodeType describes the resources and scheduling properties of a node offered by a NodeProvider.",
+		File:        path.Join(util.BaseResourcesPath, "nodetype.mdx"),
+		Object: &managementv1.NodeType{
+			TypeMeta:   metav1.TypeMeta{Kind: "NodeType", APIVersion: managementv1.SchemeGroupVersion.String()},
+			ObjectMeta: metav1.ObjectMeta{Name: "my-provider.standard"},
+			Spec: managementv1.NodeTypeSpec{NodeTypeSpec: storagev1.NodeTypeSpec{
+				ProviderRef: "my-provider",
+				DisplayName: "Standard",
+				Resources: corev1.ResourceList{
+					corev1.ResourceCPU:    resource.MustParse("8"),
+					corev1.ResourceMemory: resource.MustParse("32Gi"),
+				},
+				MachineAllocationPolicy: storagev1.MachineAllocationPolicyAssigned,
+			}},
+		},
+		Create: true, Retrieve: true, Update: true, Delete: true,
+	})
+
+	// OIDCClient
+	util.GenerateObjectOverview(&util.ObjectInformation{
+		Title:       "OIDC Client",
+		Name:        "OIDCClient",
+		Resource:    "oidcclients",
+		Description: "An OIDCClient configures an application that uses the platform as an OIDC provider.",
+		File:        path.Join(util.BaseResourcesPath, "oidcclient.mdx"),
+		Object: &managementv1.OIDCClient{
+			TypeMeta:   metav1.TypeMeta{Kind: "OIDCClient", APIVersion: managementv1.SchemeGroupVersion.String()},
+			ObjectMeta: metav1.ObjectMeta{Name: "build-service"},
+			Spec: managementv1.OIDCClientSpec{
+				Name:         "Build service",
+				ClientID:     "build-service",
+				ClientSecret: "replace-with-client-secret",
+				RedirectURIs: []string{"https://example.com/callback"},
+			},
+		},
+		Create: true, Retrieve: true, Update: true, Delete: true,
 	})
 
 	// NodeProvider
@@ -1385,14 +1487,18 @@ users:
 		Name:        "SSHKey",
 		Resource:    "sshkeys",
 		Description: "SSHKey holds a public SSH key that can be attached to auto-provisioned or manually joined nodes.",
+		ExtraContentBeforeExample: "The server generates SSHKey names. Create a key with `metadata.generateName`. A request that sets `metadata.name` is refused, so `kubectl apply` can't create one. " +
+			"After creation, only `spec.displayName`, `spec.description`, and metadata can change. To replace a public key, create a new key. " +
+			"See [SSH keys](../../vmetal/images/ssh-keys.mdx).\n",
 		File:        path.Join(util.BaseResourcesPath, "sshkey.mdx"),
+		ExampleName: "my-ssh-key-x7k2p",
 		Object: &managementv1.SSHKey{
 			TypeMeta: metav1.TypeMeta{
 				Kind:       "SSHKey",
 				APIVersion: managementv1.SchemeGroupVersion.String(),
 			},
 			ObjectMeta: metav1.ObjectMeta{
-				Name: "my-ssh-key",
+				GenerateName: "my-ssh-key-",
 			},
 			Spec: managementv1.SSHKeySpec{
 				SSHKeySpec: storagev1.SSHKeySpec{
@@ -1513,6 +1619,48 @@ users:
 		},
 		Project:  true,
 		Retrieve: true,
+		Delete:   true,
+	})
+
+	// NodePool - authored by platform, tenant, or project admins to keep nodes for one
+	// private nodes cluster, so all four operations are served.
+	util.GenerateObjectOverview(&util.ObjectInformation{
+		Title:       "Node Pool",
+		Name:        "NodePool",
+		Resource:    "nodepools",
+		Description: "A NodePool keeps a set of nodes for one cluster that uses private nodes, all built from one template. A static pool keeps a fixed number of nodes that the platform creates. A dynamic pool hands scaling to Karpenter inside the cluster.",
+		File:        path.Join(util.BaseResourcesPath, "nodepool.mdx"),
+		Object: &managementv1.NodePool{
+			TypeMeta: metav1.TypeMeta{
+				Kind:       "NodePool",
+				APIVersion: managementv1.SchemeGroupVersion.String(),
+			},
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "compute",
+				Namespace: "p-my-project",
+			},
+			Spec: managementv1.NodePoolSpec{
+				NodePoolSpec: storagev1.NodePoolSpec{
+					VClusterRef: "my-cluster",
+					Static:      &storagev1.NodePoolStatic{Replicas: 3},
+					Template: storagev1.NodePoolTemplate{
+						ProviderRef: "my-provider",
+						Requirements: []corev1.NodeSelectorRequirement{{
+							Key:      "vcluster.com/node-type",
+							Operator: corev1.NodeSelectorOpIn,
+							Values:   []string{"my-provider.standard"},
+						}},
+						NodeLabels: map[string]string{
+							"workload.example.com/tier": "compute",
+						},
+					},
+				},
+			},
+		},
+		Project:  true,
+		Create:   true,
+		Retrieve: true,
+		Update:   true,
 		Delete:   true,
 	})
 

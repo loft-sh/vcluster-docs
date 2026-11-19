@@ -2,7 +2,7 @@
 # Detect drift between the licensing values stated in the docs and the Go
 # constants they came from.
 #
-# platform/understand/licensing.mdx publishes exact refresh intervals, grace
+# platform/reference/licensing.mdx publishes exact refresh intervals, grace
 # periods, cache lifetimes, Secret names, and environment variable names. Those
 # live in loft-enterprise and vcluster-pro, neither of which is a dependency of
 # this repo, so nothing in the normal build can notice when one changes. This

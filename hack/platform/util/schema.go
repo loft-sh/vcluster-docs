@@ -44,6 +44,9 @@ type ObjectInformation struct {
 	File        string
 
 	Object client.Object
+	// ExampleName names the example in retrieve, update, and delete commands when Object sets
+	// only metadata.generateName, since the server generates the real name at create.
+	ExampleName string
 
 	// ExtraImports is rendered with the import block at the top of the overview file.
 	ExtraImports string
@@ -98,27 +101,27 @@ func generateSchema(configInstance interface{}) *jsonschema.Schema {
 		commentMap = map[string]string{}
 
 		runInDir("vendor", func() {
-			err := jsonschema.ExtractGoComments("", "github.com/loft-sh/api/v4/pkg/apis/management/v1", commentMap)
+			err := jsonschema.ExtractGoComments("", "github.com/loft-sh/api/v5/pkg/apis/management/v1", commentMap)
 			if err != nil {
 				panic(err)
 			}
 
-			err = jsonschema.ExtractGoComments("", "github.com/loft-sh/api/v4/pkg/apis/storage/v1", commentMap)
+			err = jsonschema.ExtractGoComments("", "github.com/loft-sh/api/v5/pkg/apis/storage/v1", commentMap)
 			if err != nil {
 				panic(err)
 			}
 
-			err = jsonschema.ExtractGoComments("", "github.com/loft-sh/api/v4/pkg/apis/ui/v1", commentMap)
+			err = jsonschema.ExtractGoComments("", "github.com/loft-sh/api/v5/pkg/apis/ui/v1", commentMap)
 			if err != nil {
 				panic(err)
 			}
 
-			err = jsonschema.ExtractGoComments("", "github.com/loft-sh/agentapi/v4/pkg/apis/loft/cluster/v1", commentMap)
+			err = jsonschema.ExtractGoComments("", "github.com/loft-sh/agentapi/v5/pkg/apis/loft/cluster/v1", commentMap)
 			if err != nil {
 				panic(err)
 			}
 
-			err = jsonschema.ExtractGoComments("", "github.com/loft-sh/agentapi/v4/pkg/apis/loft/storage/v1", commentMap)
+			err = jsonschema.ExtractGoComments("", "github.com/loft-sh/agentapi/v5/pkg/apis/loft/storage/v1", commentMap)
 			if err != nil {
 				panic(err)
 			}
@@ -214,6 +217,13 @@ func isOptional(property *jsonschema.Schema) bool {
 	}
 
 	return false
+}
+
+// isTodoLine reports whether a description line is an upstream maintainer
+// note, such as "TODO: ..." or "TODO(name): ...".
+func isTodoLine(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	return strings.HasPrefix(trimmed, "TODO:") || strings.HasPrefix(trimmed, "TODO(")
 }
 
 func hasOptionalMarker(description string) bool {
@@ -323,6 +333,8 @@ func GenerateObjectOverview(information *ObjectInformation) {
 	exampleName := "my-object"
 	if information.Object.GetName() != "" {
 		exampleName = information.Object.GetName()
+	} else if information.ExampleName != "" {
+		exampleName = information.ExampleName
 	}
 
 	basePath := path.Join(BasePath, information.Resource) + "/"
@@ -357,12 +369,13 @@ func GenerateObjectOverview(information *ObjectInformation) {
 	// create "Create Object" partial
 	if information.Create {
 		writeTemplate(TemplateCreateObject, path.Join(basePath, "create.mdx"), CreateValues{
-			Name:        information.Name,
-			ExampleName: exampleName,
-			Resource:    information.Resource,
-			Project:     information.Project,
-			Namespace:   namespace,
-			YAMLObject:  string(out),
+			Name:         information.Name,
+			ExampleName:  exampleName,
+			GenerateName: information.Object.GetGenerateName(),
+			Resource:     information.Resource,
+			Project:      information.Project,
+			Namespace:    namespace,
+			YAMLObject:   string(out),
 		})
 	}
 
@@ -373,6 +386,9 @@ func GenerateObjectOverview(information *ObjectInformation) {
 		updateObject.SetGeneration(12)
 		updateObject.SetUID("af5f9f0f-8ab9-4b4b-a595-a95a5921f3c2")
 		updateObject.SetResourceVersion("66325905")
+		if updateObject.GetName() == "" {
+			updateObject.SetName(exampleName)
+		}
 		out, _ := yaml.Marshal(updateObject)
 		writeTemplate(TemplateUpdateObject, path.Join(basePath, "update.mdx"), UpdateValues{
 			Name:        information.Name,
@@ -742,6 +758,11 @@ func renderField(
 			required = false
 		}
 		if strings.HasPrefix(strings.TrimSpace(line), "+") {
+			continue
+		}
+		// Upstream Go doc comments carry maintainer notes such as
+		// "TODO: Drop kubebuilder:default ...". They aren't user docs.
+		if isTodoLine(line) {
 			continue
 		}
 		newLines = append(newLines, line)

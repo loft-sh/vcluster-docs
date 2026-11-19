@@ -60,9 +60,10 @@ function urlToFilePath(docsUrl) {
   // Strip anchor (e.g., #isolatedcontrolplane)
   let filePath = docsUrl.split('#')[0];
 
-  // Remove leading /docs/ and trailing slash
+  // Remove leading /docs/, any version segment (/next/ or /0.38/), and trailing slash
   filePath = filePath
     .replace(/^\/docs\//, '')
+    .replace(/^(vcluster|platform)\/(next|[\d.]+)\//, '$1/')
     .replace(/\/$/, '');
 
   // Add .mdx extension

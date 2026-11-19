@@ -2,7 +2,7 @@
 # check-redirects.sh — Validate and fix netlify.toml redirects.
 #
 # Modes:
-#   pr (default):  Check deleted/renamed files have redirects + validate platform-ui-links.
+#   pr (default):  Check current and stable route changes + validate platform-ui-links.
 #   --fix:         Auto-generate missing redirects for moved/deleted files in netlify.toml.
 #   --audit:       Validate ALL redirect targets against the file tree.
 #
@@ -68,6 +68,52 @@ for m in re.finditer(pattern, content, re.DOTALL):
 }
 
 # --------------------------------------------------------------------------
+# Read the configured stable version for a docs plugin.
+# --------------------------------------------------------------------------
+get_stable_version() {
+    local product="$1"
+    local ref="${2:-}"
+    local config=""
+
+    if [[ -n "$ref" ]]; then
+        config="$(git show "${ref}:docusaurus.config.js" 2>/dev/null || true)"
+    elif [[ -f "${REPO_ROOT}/docusaurus.config.js" ]]; then
+        config="$(<"${REPO_ROOT}/docusaurus.config.js")"
+    fi
+
+    awk -v id="$product" '
+        $0 ~ ("id: \"" id "\"") { in_plugin = 1 }
+        in_plugin && /lastVersion:/ {
+            line = $0
+            sub(/^.*lastVersion:[[:space:]]*"/, "", line)
+            sub(/".*$/, "", line)
+            print line
+            exit
+        }
+    ' <<<"$config"
+}
+
+# --------------------------------------------------------------------------
+# Routes served by root docs pages in the working tree. Root pages often set a
+# flat `slug:` (docs/services/foo.mdx serves /docs/foo), so a route can't be
+# derived from its URL alone. Built once, on first use.
+# --------------------------------------------------------------------------
+ROOT_ROUTES=""
+ROOT_ROUTES_BUILT=0
+root_route_exists() {
+    local url="$1"
+    if [[ "$ROOT_ROUTES_BUILT" -eq 0 ]]; then
+        local f
+        while IFS= read -r f; do
+            [[ -z "$f" || "$f" == */_* ]] && continue
+            ROOT_ROUTES="${ROOT_ROUTES}$(file_to_url "$f")"$'\n'
+        done < <(cd "$REPO_ROOT" && find docs \( -name '*.mdx' -o -name '*.md' \) -type f 2>/dev/null)
+        ROOT_ROUTES_BUILT=1
+    fi
+    grep -qxF "$url" <<<"$ROOT_ROUTES"
+}
+
+# --------------------------------------------------------------------------
 # Check if a URL path resolves to an actual file
 # --------------------------------------------------------------------------
 url_resolves() {
@@ -80,32 +126,57 @@ url_resolves() {
     url="${url%/}"
 
     local rel="${url#/docs/}"
+    [[ "$url" == "/docs" ]] && rel=""
 
     # /next/ = current source
+    local is_current=0
     case "$rel" in
-        vcluster/next/*) rel="vcluster/${rel#vcluster/next/}" ;;
-        platform/next/*) rel="platform/${rel#platform/next/}" ;;
+        vcluster/next/*) rel="vcluster/${rel#vcluster/next/}"; is_current=1 ;;
+        platform/next/*) rel="platform/${rel#platform/next/}"; is_current=1 ;;
     esac
 
-    # Versioned paths -> versioned_docs folders
+    # Versioned and unversioned stable paths -> versioned_docs folders
     local versioned_rel=""
-    case "$rel" in
-        vcluster/[0-9]*.*)
-            local ver="${rel#vcluster/}"
-            ver="${ver%%/*}"
-            local rest="${rel#vcluster/${ver}/}"
-            versioned_rel="vcluster_versioned_docs/version-${ver}/${rest}"
-            ;;
-        platform/[0-9]*.*)
-            local ver="${rel#platform/}"
-            ver="${ver%%/*}"
-            local rest="${rel#platform/${ver}/}"
-            versioned_rel="platform_versioned_docs/version-${ver}/${rest}"
-            ;;
-    esac
+    if [[ "$is_current" -eq 0 ]]; then
+        case "$rel" in
+            vcluster/[0-9]*.*)
+                local ver="${rel#vcluster/}"
+                ver="${ver%%/*}"
+                local rest="${rel#vcluster/${ver}/}"
+                versioned_rel="vcluster_versioned_docs/version-${ver}/${rest}"
+                ;;
+            platform/[0-9]*.*)
+                local ver="${rel#platform/}"
+                ver="${ver%%/*}"
+                local rest="${rel#platform/${ver}/}"
+                versioned_rel="platform_versioned_docs/version-${ver}/${rest}"
+                ;;
+            vcluster/*|platform/*)
+                local product="${rel%%/*}"
+                local rest="${rel#*/}"
+                local stable_version=""
+                stable_version="$(get_stable_version "$product")"
+                if [[ -n "$stable_version" && "$stable_version" != "current" ]]; then
+                    versioned_rel="${product}_versioned_docs/version-${stable_version}/${rest}"
+                fi
+                ;;
+        esac
+    fi
 
     local paths_to_check=("$rel")
     [[ -n "$versioned_rel" ]] && paths_to_check=("$versioned_rel")
+
+    # Root docs component (routeBasePath "/"): ROOT_ROUTES lists every route
+    # it serves, slugs included, so trust it rather than the folder checks
+    # below. A folder without a landing page isn't served.
+    case "$rel" in
+        vcluster|platform|vcluster/*|platform/*) ;;
+        *)
+            root_route_exists "$url" && return 0
+            [[ "$rel" == category/* || -f "${REPO_ROOT}/static/${rel}" ]] && return 0
+            return 1
+            ;;
+    esac
 
     for base in "${paths_to_check[@]}"; do
         local full="${REPO_ROOT}/${base}"
@@ -139,6 +210,8 @@ has_redirect_coverage() {
 
     while IFS= read -r pattern; do
         [[ "$pattern" != *"*"* ]] && continue
+        # The branded 404 catch-all is not redirect coverage.
+        [[ "$pattern" == "/*" ]] && continue
         if [[ "$pattern" == *'/*' && "$pattern" != *'*'*'*' ]]; then
             local prefix="${pattern%\*}"
             if [[ "$url" == "${prefix}"* ]]; then
@@ -150,13 +223,93 @@ has_redirect_coverage() {
     return 1
 }
 
-file_to_url() {
+redirect_target_for_url() {
     local url="$1"
+
+    while IFS=$'\t' read -r pattern target; do
+        if [[ "$pattern" == "$url" ]]; then
+            echo "$target"
+            return 0
+        fi
+        [[ "$pattern" == "/*" ]] && continue
+        if [[ "$pattern" == */\* ]]; then
+            local prefix="${pattern%\*}"
+            if [[ "$url" == "${prefix}"* ]]; then
+                local splat="${url#${prefix}}"
+                target="${target//:splat/${splat}}"
+                echo "$target"
+                return 0
+            fi
+        fi
+    done < <(parse_redirects)
+
+    return 1
+}
+
+# file_slug PATH: print the page's `slug:` frontmatter, read from the working
+# tree or, for deleted and renamed files, from the base ref.
+file_slug() {
+    local path="$1" content=""
+    if [[ -f "$path" ]]; then
+        content="$(cat "$path")"
+    else
+        local ref
+        ref="$(get_base_ref 2>/dev/null)"
+        [[ -n "$ref" ]] && content="$(git show "${ref}:${path}" 2>/dev/null)"
+    fi
+    printf '%s\n' "$content" | awk 'NR==1 && $0!="---"{exit} NR>1 && $0=="---"{exit} /^slug:/{sub(/^slug:[ \t]*/,""); gsub(/["\x27]/,""); print; exit}'
+}
+
+# url_still_served PATH URL: true when a current file in the same product
+# serves URL through a matching `slug:`. Git reports a heavily rewritten move
+# as a delete plus an add, so the rename check never sees it.
+url_still_served() {
+    local path="$1" url="$2" slug product candidate
+    slug="$(file_slug "$path")"
+    [[ -z "$slug" ]] && return 1
+    product="${path%%/*}"
+    while IFS= read -r candidate; do
+        [[ -z "$candidate" || "$candidate" == "$path" ]] && continue
+        [[ "$(file_to_url "$candidate")" == "$url" ]] && return 0
+    done < <(git grep -lE "^slug:[[:space:]]*[\"']?${slug}[\"']?[[:space:]]*$" -- "${product}/*.md" "${product}/*.mdx" 2>/dev/null)
+    return 1
+}
+
+file_to_url() {
+    local url="$1" slug
+    slug="$(file_slug "$1")"
+    if [[ -n "$slug" ]]; then
+        case "$url" in
+            vcluster/*|platform/*) echo "/docs/${url%%/*}/next${slug%/}" ;;
+            *) echo "/docs${slug%/}" ;;
+        esac
+        return
+    fi
     url="${url%.mdx}"
     url="${url%.md}"
     url="${url%/index}"
-    echo "/docs/${url}"
+    url="${url%/README}"
+    # Docusaurus also serves <folder>/<folder>.mdx at the folder URL.
+    [[ "${url%/*}" == */"${url##*/}" ]] && url="${url%/*}"
+    case "$url" in
+        vcluster/*|platform/*)
+            local product="${url%%/*}"
+            echo "/docs/${product}/next/${url#*/}"
+            ;;
+        docs) echo "/docs" ;;
+        # Root docs plugin (routeBasePath "/"): docs/<path> -> /docs/<path>
+        docs/*) echo "/docs/${url#docs/}" ;;
+        *) echo "/docs/${url}" ;;
+    esac
 }
+
+# Page sources for every docs plugin. Without glob magic, `*` in a git
+# pathspec also matches `/`, so these cover top-level and nested pages.
+DOC_PATHSPECS=(
+    'vcluster/*.mdx' 'vcluster/*.md'
+    'platform/*.mdx' 'platform/*.md'
+    'docs/*.mdx' 'docs/*.md'
+)
 
 get_base_ref() {
     local base_ref="${GITHUB_BASE_REF:-main}"
@@ -181,8 +334,7 @@ detect_changes() {
     fi
 
     DELETED_FILES="$(git diff --name-status --diff-filter=D "${base_ref}"...HEAD -- \
-        'vcluster/**/*.mdx' 'vcluster/**/*.md' \
-        'platform/**/*.mdx' 'platform/**/*.md' 2>/dev/null | \
+        "${DOC_PATHSPECS[@]}" 2>/dev/null | \
         awk '{print $2}' | \
         grep -v '/_' || true)"
 
@@ -190,18 +342,18 @@ detect_changes() {
     RENAMED_NEW=""
     local rename_lines
     rename_lines="$(git diff --name-status -M50 --diff-filter=R "${base_ref}"...HEAD -- \
-        'vcluster/**/*.mdx' 'vcluster/**/*.md' \
-        'platform/**/*.mdx' 'platform/**/*.md' 2>/dev/null || true)"
+        "${DOC_PATHSPECS[@]}" 2>/dev/null || true)"
 
     while IFS=$'\t' read -r status old_path new_path; do
         [[ -z "$status" ]] && continue
+        # Partials and fragments live under _-prefixed folders and have no URL.
+        [[ "$old_path" == */_* ]] && continue
         RENAMED_OLD="${RENAMED_OLD}${old_path}"$'\n'
         RENAMED_NEW="${RENAMED_NEW}${new_path}"$'\n'
     done <<<"$rename_lines"
 
     ADDED_FILES="$(git diff --name-status --diff-filter=A "${base_ref}"...HEAD -- \
-        'vcluster/**/*.mdx' 'vcluster/**/*.md' \
-        'platform/**/*.mdx' 'platform/**/*.md' 2>/dev/null | \
+        "${DOC_PATHSPECS[@]}" 2>/dev/null | \
         awk '{print $2}' | \
         grep -v '/_' || true)"
 
@@ -259,11 +411,7 @@ append_redirect() {
 guess_destination() {
     local filepath="$1"
     local base_ref="$2"
-    local url
-    url="$(file_to_url "$filepath")"
     local dir="${filepath%/*}"
-    local parent_url="${url%/*}"
-    local parent_path="${parent_url#/docs/}"
 
     # Match by sidebar_position: find the added file in the same dir with the same position
     local pos
@@ -287,17 +435,23 @@ guess_destination() {
         return
     fi
 
-    if [[ -f "${REPO_ROOT}/${parent_path}/index.mdx" ]] || \
-       [[ -f "${REPO_ROOT}/${parent_path}/_category_.json" ]] || \
-       [[ -d "${REPO_ROOT}/${parent_path}" ]]; then
-        echo "${parent_url}"
-        return
-    fi
+    # The section's own landing page (index, README, or <folder>.mdx, which
+    # Docusaurus serves at the folder URL), when the folder has one. A folder alone
+    # isn't served: a _category_.json without a `link` has no URL. file_to_url
+    # gives the page's real route, so an overview without a slug maps to
+    # .../overview rather than the folder URL.
+    local index
+    for index in index.mdx index.md README.mdx README.md "${dir##*/}.mdx" "${dir##*/}.md" overview.mdx overview.md; do
+        if [[ -f "${REPO_ROOT}/${dir}/${index}" ]]; then
+            file_to_url "${dir}/${index}"
+            return
+        fi
+    done
 
     case "$filepath" in
-        vcluster/*) echo "/docs/vcluster" ;;
-        platform/*) echo "/docs/platform" ;;
-        *) echo "/docs/vcluster" ;;
+        vcluster/*) echo "/docs/vcluster/next" ;;
+        platform/*) echo "/docs/platform/next" ;;
+        *) echo "/docs" ;;
     esac
 }
 
@@ -319,6 +473,8 @@ check_pr_deletions() {
 
         if has_redirect_coverage "$url"; then
             ok "Redirect exists for deleted: $filepath"
+        elif url_still_served "$filepath" "$url"; then
+            ok "URL still served after delete: $filepath"
         else
             missing=$((missing + 1))
             error "No redirect for deleted file: $filepath"
@@ -333,9 +489,13 @@ check_pr_deletions() {
     local i=0
     while IFS= read -r old_path; do
         [[ -z "$old_path" ]] && continue
-        local url
+        local url new_path new_url
         url="$(file_to_url "$old_path")"
-        if has_redirect_coverage "$url"; then
+        new_path="$(echo "$RENAMED_NEW" | sed -n "$((i + 1))p")"
+        new_url="$(file_to_url "$new_path")"
+        if [[ -n "$new_path" && "$url" == "$new_url" ]]; then
+            ok "URL unchanged for renamed: $old_path -> $new_path"
+        elif has_redirect_coverage "$url"; then
             ok "Redirect exists for renamed: $old_path"
         else
             error "No redirect for renamed file: $old_path"
@@ -388,11 +548,142 @@ check_platform_ui_targets() {
     fi
 }
 
+stable_routes_at_ref() {
+    local product="$1"
+    local version="$2"
+    local ref="$3"
+    local prefix="${product}_versioned_docs/version-${version}/"
+
+    git ls-tree -r --name-only "$ref" -- "${prefix%/}" 2>/dev/null | while IFS= read -r filepath; do
+        [[ "$filepath" != *.md && "$filepath" != *.mdx ]] && continue
+        local route="${filepath#${prefix}}"
+        [[ "$route" =~ (^|/)_ ]] && continue
+
+        local slug=""
+        slug="$(git show "${ref}:${filepath}" 2>/dev/null | awk '
+            NR == 1 && $0 == "---" { in_frontmatter = 1; next }
+            in_frontmatter && $0 == "---" { exit }
+            in_frontmatter && /^slug:[[:space:]]*/ {
+                line = $0
+                sub(/^slug:[[:space:]]*/, "", line)
+                gsub(/["\047]/, "", line)
+                print line
+                exit
+            }
+        ')"
+        if [[ -n "$slug" ]]; then
+            local url="/docs/${product}/${slug#/}"
+            echo "${url%/}"
+            continue
+        fi
+
+        route="${route%.mdx}"
+        route="${route%.md}"
+        # Docusaurus serves a folder's index page (index, README, or a file
+        # named after its folder) at the folder URL.
+        route="${route%/index}"
+        route="${route%/README}"
+        [[ "$route" == "index" || "$route" == "README" ]] && route=""
+        if [[ "$route" == */* ]]; then
+            local parent="${route%/*}"
+            [[ "${parent##*/}" == "${route##*/}" ]] && route="$parent"
+        fi
+        local url="/docs/${product}/${route}"
+        echo "${url%/}"
+    done | sort -u
+}
+
 # --------------------------------------------------------------------------
-# CHECK C: All redirect targets resolve (audit mode)
+# CHECK C: Stable-version cutovers preserve unversioned routes
+# --------------------------------------------------------------------------
+check_stable_cutovers() {
+    header "Check C: Stable-version cutovers preserve unversioned routes"
+    local base_ref base_commit
+    base_ref="$(get_base_ref)"
+    if [[ -z "$base_ref" ]]; then
+        warn "Cannot find base ref. Skipping stable-version cutover check."
+        return
+    fi
+    base_commit="$(git merge-base "$base_ref" HEAD 2>/dev/null || true)"
+    if [[ -z "$base_commit" ]]; then
+        warn "Cannot find merge base with ${base_ref}. Skipping stable-version cutover check."
+        return
+    fi
+
+    local product
+    for product in vcluster platform; do
+        local old_version new_version
+        old_version="$(get_stable_version "$product" "$base_commit")"
+        new_version="$(get_stable_version "$product")"
+
+        if [[ -z "$old_version" || -z "$new_version" ]]; then
+            info "No comparable stable-version configuration for ${product}."
+            continue
+        fi
+        if [[ "$old_version" == "$new_version" ]]; then
+            ok "${product} stable version is unchanged (${new_version})."
+            continue
+        fi
+        if [[ "$old_version" == "current" || "$new_version" == "current" ]]; then
+            warn "Cannot compare ${product} cutover involving the current source (${old_version} -> ${new_version})."
+            continue
+        fi
+
+        info "${product} stable version changed: ${old_version} -> ${new_version}"
+        local old_routes new_routes removed_routes
+        old_routes="$(stable_routes_at_ref "$product" "$old_version" "$base_commit")"
+        new_routes="$(stable_routes_at_ref "$product" "$new_version" HEAD)"
+
+        if [[ -z "$old_routes" ]]; then
+            error "Cannot enumerate ${product} ${old_version} stable routes from the PR base."
+            continue
+        fi
+        if [[ -z "$new_routes" ]]; then
+            error "Cannot enumerate ${product} ${new_version} stable routes from HEAD."
+            continue
+        fi
+
+        removed_routes="$(comm -23 <(printf '%s\n' "$old_routes") <(printf '%s\n' "$new_routes"))"
+        if [[ -z "$removed_routes" ]]; then
+            ok "All ${product} ${old_version} unversioned routes remain in ${new_version}."
+            continue
+        fi
+
+        local missing=0 total=0
+        while IFS= read -r url; do
+            [[ -z "$url" ]] && continue
+            total=$((total + 1))
+            if is_allowlisted "$url"; then
+                ok "Former stable route is allowlisted: ${url}"
+                continue
+            fi
+
+            local target=""
+            target="$(redirect_target_for_url "$url" || true)"
+            if [[ -z "$target" ]]; then
+                missing=$((missing + 1))
+                error "No unversioned redirect for route removed during ${product} stable cutover: ${url}"
+                info "Add a redirect from this unversioned URL to its ${new_version} replacement."
+            elif url_resolves "$target"; then
+                ok "Unversioned redirect exists for former stable route: ${url} -> ${target}"
+            else
+                missing=$((missing + 1))
+                error "Broken unversioned redirect for route removed during ${product} stable cutover: ${url}"
+                info "Target does not resolve in ${new_version}: ${target}"
+            fi
+        done <<<"$removed_routes"
+
+        if [[ "$missing" -eq 0 ]]; then
+            ok "All ${total} removed ${product} stable routes have unversioned redirects."
+        fi
+    done
+}
+
+# --------------------------------------------------------------------------
+# AUDIT: All redirect targets resolve
 # --------------------------------------------------------------------------
 check_all_targets() {
-    header "Check C: All redirect targets resolve"
+    header "Audit: All redirect targets resolve"
     local count=0 broken=0 ui_broken=0 other_broken=0
 
     while IFS=$'\t' read -r from_url to_url; do
@@ -475,7 +766,9 @@ fix_redirects() {
         old_url="$(file_to_url "$old_path")"
         new_url="$(file_to_url "$new_path")"
 
-        if has_redirect_coverage "$old_url"; then
+        if [[ "$old_url" == "$new_url" ]]; then
+            ok "URL unchanged for renamed: $old_path -> $new_path"
+        elif has_redirect_coverage "$old_url"; then
             ok "Already covered: $old_path"
         else
             append_redirect "$old_url" "$new_url" "Renamed: $old_path -> $new_path"
@@ -491,6 +784,8 @@ fix_redirects() {
 
         if has_redirect_coverage "$url"; then
             ok "Already covered: $filepath"
+        elif url_still_served "$filepath" "$url"; then
+            ok "URL still served after delete: $filepath"
         else
             local dest base_ref
             base_ref="$(get_base_ref)"
@@ -533,6 +828,7 @@ case "$MODE" in
     pr)
         check_pr_deletions
         check_platform_ui_targets
+        check_stable_cutovers
         check_chains
         ;;
     --fix|fix)
@@ -547,7 +843,7 @@ case "$MODE" in
     *)
         echo "Usage: $0 [pr|--fix|--audit]"
         echo ""
-        echo "  pr       Check PR for missing redirects (default, used in CI)"
+        echo "  pr       Check PR for current and stable route redirects (default, used in CI)"
         echo "  --fix    Auto-generate missing redirects for moved/deleted files"
         echo "  --audit  Validate ALL redirect targets against the file tree"
         exit 1

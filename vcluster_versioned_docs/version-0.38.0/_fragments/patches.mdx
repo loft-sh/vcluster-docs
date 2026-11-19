@@ -1,0 +1,166 @@
+import CodeBlock from '@theme/CodeBlock';
+
+Patches override the default resource syncing rules in your `vcluster.yaml` configurations.
+
+By default, vCluster [syncs specific resources](../configure/sync/overview.mdx) between clusters and the control plane cluster. To modify the sync behavior, you can use patches to specify which fields to edit, exclude, or override during syncing.
+
+For example, vCluster can mirror resources from the cluster to the control plane cluster—any changes made in the cluster are automatically applied to the control plane cluster. The same applies in the other direction if syncing is set up from the control plane cluster to the cluster.
+
+vCluster supports two patch types:
+
+- [JavaScript expression patch](#javascript-expression-patch): Uses JavaScript ES6 expressions to dynamically modify fields during syncing. You can define how a field changes when syncing from a cluster to the control plane cluster, or from the control plane cluster to a cluster.
+- [Reference patch](#reference-patch): Modifies specific fields within a resource to point to different resources. If the referenced resource exists in the control plane cluster, vCluster automatically imports it into the cluster. If the referenced resource exists in the cluster and syncing is configured, vCluster can import it into the control plane cluster.
+
+:::info Using wildcards in patches
+You can apply a wildcard, using an asterisk (`*`) in a specified path, to modify all elements of an array or object.
+For instance, `spec.containers[*].name` selects the `name` field of every container in the `spec.containers` array, and `spec.containers[*].volumeMounts[*]` selects all `volumeMounts` for each container.
+When using the asterisk (`*`) notation, vCluster applies changes individually to every element that matches the path.
+:::
+
+### JavaScript expression patch
+
+A JavaScript expression patch allows you to use JavaScript ES6 expressions to change specific fields when syncing between clusters and the control plane cluster.
+This is useful when modifying resource configurations to align with differing environments or naming conventions between clusters. If your clusters use different container name prefixes, a JavaScript expression patch can automatically update them.
+
+:::note JavaScript Runtime
+vCluster uses [Goja](https://github.com/dop251/goja), a pure Go implementation of ECMAScript, to evaluate JavaScript expressions. This provides a secure, sandboxed environment for executing your patch expressions.
+Refer to [Goja's](https://pkg.go.dev/github.com/dop251/goja) documentation for details on supported JavaScript features and limitations.
+:::
+
+You can define a path for <code>{props.path}</code> field in `vcluster.yaml` using the following configuration:
+
+<CodeBlock language="yaml">
+{`sync:
+  ${props.direction}:
+    ${props.resource}:
+      enabled: true
+      patches:
+      - path: ${props.path}
+        expression: '"my-prefix-"+value'
+        # optional reverseExpression to reverse the change from the control plane cluster
+        # reverseExpression: 'value.slice("my-prefix-".length)'`}
+</CodeBlock>
+
+In the example:
+
+- The path targets the <code>{props.path}</code> field to override when syncing to the control plane cluster. The `*` wildcard applies the patch to each matching value individually.
+- `"'my-prefix-' + value"` defines a JavaScript expression that prepends `"my-prefix-"` to the <code>{props.path}</code> field in the control plane cluster.
+
+:::note Reverse sync
+You can use the `reverseExpression` field to define how to revert changes when syncing from the control plane cluster back to the cluster.
+For example, add `reverseExpression: 'value.slice("my-prefix-".length)'` to `vcluster.yaml` to remove the `"my-prefix-"` prefix when syncing back from the control plane cluster to the cluster in the previous example.
+:::
+
+To replace value with a hardcoded one, put the desired value in the quotation marks:
+<CodeBlock language="yaml">
+  {`sync:
+  ${props.direction}:
+    ${props.resource}:
+      enabled: true
+      patches:
+      - path: ${props.path}
+        expression: '"my-value"'
+`}
+</CodeBlock>
+
+:::note JavaScript expressions
+The JavaScript expression patch supports a limited set of JavaScript features. For example, it does not support `import` statements or other Node.js-specific features. You can use standard JavaScript expressions, functions, and operators.
+The expression is evaluated in a sandboxed environment, so it cannot access external resources or the host system.
+Also, the JavaScript expression must be a valid ES6 expression. This means it should not contain any statements, only expressions that return a value.
+
+A common use is to use ternary operators to conditionally modify values based on their existence or other criteria.
+Another common use is the `optional chaining operator` like in: `value.myfield?.anotherfield || "default-value"`.
+
+**Additional functions available:**
+- `atob(encodedData)`: Decodes a base64-encoded string and returns the decoded string. Ex: `atob("bXktdmFsdWU=")` returns `my-value`.
+- `btoa(stringToEncode)`: Encodes a string in base64 and returns the encoded string. Ex: `btoa("my-value")` returns `bXktdmFsdWU=`.
+- `virtualToHostDNS(virtualSvc)`: Translates a virtual service to its corresponding host FQDN. The domain must follow the format `<name>.<namespace>.svc[.<cluster-domain>]`.
+  Ex: `virtualToHostDNS(nginx.default.svc.cluster.local)` returns `nginx-x-default-x-vcluster.vcluster-ns.svc.cluster.local`.
+
+These functions are useful for encoding/decoding values or translating services when syncing between clusters, but be sure a value exists before operating on it:
+<CodeBlock language="yaml">
+  {`sync:
+    toHost:
+      ${props.resource}:
+        enabled: true
+        patches:
+        - path: metadata.annotations["encoded-value"]
+          expression: 'btoa(value)'
+        - path: metadata.annotations["decoded-value"]
+          expression: 'atob(value)'
+        - path: metadata.annotations["referenced-service"]
+          expression: 'virtualToHostDNS(value)'`}
+</CodeBlock>
+:::
+
+There are two kinds of expression categories in the configuration:
+- `expression` — Specifies the synchronization rules from clusters to the control plane cluster.
+Use this to control which resources, fields, or attributes in the clusters are reflected in the control plane cluster.
+- `reverseExpression` — Specifies the synchronization rules from the control plane cluster to the clusters.
+Use this to control how updates or resources in the control plane cluster are propagated back to the clusters.
+:::warning
+If `expression` is not defined, no patches will be applied during synchronization from the clusters to the control plane cluster.
+Likewise, if `reverseExpression` is not defined, no patches will be applied during synchronization from the control plane cluster back to the clusters.
+
+For example, when `expression` is used to apply patches and modify an object in a cluster, the corresponding `reverseExpression` should
+ also be defined. This ensures that when the modified object is synchronized from the control plane cluster back to the clusters,
+  the `reverseExpression` patches can transform it back to its original form.
+
+To prevent unintended modifications of the synced objects in either direction, define both `expression` and `reverseExpression`,
+ and ensure that the patches in each logically cancel out the changes introduced by the other.
+
+```yaml title="Use expression and reverseExpression together"
+sync:
+  toHost:
+    <resource>:
+      enabled: true
+      patches:
+      - path: metadata.annotations["encoded-value"]
+        expression: 'btoa(value)'
+        reverseExpression: 'atob(value)'
+```
+:::
+
+#### Context variable
+
+The context variable is an object supported in JavaScript expression patches, that provides access to cluster data during syncing. The context object includes the following properties:
+
+* `context.vcluster.name`: Name of the cluster.
+* `context.vcluster.namespace`: Namespace of the cluster.
+* `context.vcluster.config`: Configuration of the cluster, basically `vcluster.yaml` merged with the defaults.
+* `context.hostObject`: Host object (`null` if not available).
+* `context.virtualObject`: Virtual object (`null` if not available).
+* `context.path`: Matched path on the object, useful when using wildcard path selectors (`*`).
+
+### Reference patch
+
+A reference patch links a field in one resource to another resource. During syncing, vCluster updates the reference and imports the linked resource from the cluster to the control plane cluster or from the control plane cluster to the cluster, depending on the sync direction and whether the resource exists.
+
+You can use reference patches to share resources, such as `Secrets` or `ConfigMaps`, between clusters without manually recreating or duplicating them.
+
+For example, if the control plane cluster contains a secret named `"my-example-secret"`, vCluster automatically imports it into the cluster.
+
+Workloads in the cluster can then use the secret without manual syncing.
+
+You can sync between the cluster and the control plane cluster by treating a field value as a Secret reference:
+
+<CodeBlock language="yaml">
+{`sync:
+  toHost:
+    ${props.resource}:
+      enabled: true
+      patches:
+      - path: metadata.annotations["my-secret-ref"]
+        reference:
+          apiVersion: v1
+          kind: Secret`}
+</CodeBlock>
+
+In the example:
+
+- The patch treats `metadata.annotations["my-secret-ref"]` as the name of a Secret reference.
+- vCluster rewrites the field to the corresponding Secret name in the target cluster and syncs or imports the referenced Secret when the resource is configured for syncing.
+
+:::note Reference Patches with Namespace Syncing
+If you have enabled syncing namespaces, reference patches are only required if the namespace is part of the patch. You can use the `namespacePath` option to specify the path of the namespace of the reference.
+:::

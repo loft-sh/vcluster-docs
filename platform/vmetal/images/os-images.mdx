@@ -1,0 +1,221 @@
+---
+title: OS Images
+description: Define OSImage resources once for Metal3, KubeVirt, and NICo, use them from node types and instances, resolve image problems, and grant them to tenants.
+sidebar_label: OS images
+sidebar_position: 2
+---
+
+import InterpolatedCodeBlock from '@site/src/components/InterpolatedCodeBlock';
+import PageVariables from '@site/src/components/PageVariables';
+import Button from '@site/src/components/Button';
+import Label from '@site/src/components/Label';
+import NavStep from '@site/src/components/NavStep';
+
+<PageVariables
+  IMAGE_URL="https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img"
+  IMAGE_CHECKSUM="e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  CHECKSUM_TYPE="sha256"
+  KUBEVIRT_ROOT_DISK_SIZE="20Gi"
+/>
+
+An `OSImage` resource contains the information that a node provider needs to install an operating system on an instance, stored as a reusable reference. Instead of specifying image URLs and checksums directly on every node type or instance, you define them once in an OSImage and reference it by name.
+
+:::note OS images inside a tenant
+A [tenant](../../tenants/concepts/what-are-tenants.mdx) reaches the platform's OS images where
+its capability grants them by label or by name. A platform admin can also assign an image to it or
+share one with every tenant. The tenant can upload its own only where the capability allows
+it. With
+the capability disabled, the tenant sees no OS images at all. See
+[Grant object access](../../tenants/manage-tenants/create-and-configure-tenants.mdx#grant-object-access).
+:::
+
+## Create an OSImage
+
+<InterpolatedCodeBlock
+  code={'apiVersion: management.loft.sh/v1\nkind: OSImage\nmetadata:\n  name: ubuntu-noble\nspec:\n  displayName: "Ubuntu Noble (24.04 LTS)"\n  description: "Ubuntu Noble (24.04) server cloud image for bare metal provisioning"\n  properties:\n    metal3.vcluster.com/image-url: "[[GLOBAL:IMAGE_URL]]"\n    metal3.vcluster.com/image-checksum: "[[GLOBAL:IMAGE_CHECKSUM]]"\n    metal3.vcluster.com/image-checksum-type: "[[GLOBAL:CHECKSUM_TYPE]]"'}
+  language="yaml"
+/>
+
+### Fields
+
+| Field | Description |
+|---|---|
+| `spec.displayName` | Human-readable name shown in the UI. |
+| `spec.description` | Optional description of the image. |
+| `spec.properties` | Key-value pairs with provider-specific image configuration. |
+| `spec.owner` | Optional user or team that owns this resource. |
+| `spec.access` | Optional access control list. |
+| `spec.connectorRef` | Optional [OS image store](./os-image-store.mdx) that holds the image file. See [Upload OS images](./upload-os-images.mdx). |
+| `spec.format` | Format of the uploaded file. Must be `qcow2` before you upload. You can't change it after you set it. |
+
+### Create or edit an image in the platform UI
+
+In the sidebar, click <NavStep>Operating System</NavStep>. Platform admins also click the <Label>Images</Label> tab. Tenant users go straight to the image list, because <Label>Images</Label> is their only tab. Click <Button>Create OS Image</Button>, or click an existing image to edit it.
+
+The image opens in a side panel with the same fields as the manifest. Its YAML editor shows the whole `OSImage` and stays in sync with the form, so a change in either location is reflected in the other. Both the form and the YAML editor are read-only while the panel saves the image or uploads a file. A large image file can take several minutes to upload.
+
+The <Label>Management Access</Label> section sets `spec.access`. It also shows the image's owner, which you can't change there. The platform sets `spec.owner` to the user who creates the image, and the owner always has full control over it. Each `spec.access` rule grants users or teams one or more of <Label>view</Label>, <Label>create</Label>, <Label>update</Label>, and <Label>delete</Label>, or <Label>All</Label>. In YAML, <Label>view</Label> is the `get` verb. See [Access control](#access-control).
+
+## Provider-specific properties
+
+OS images are a generic concept. The properties they carry depend on which node provider consumes them.
+
+An OSImage accepts only image properties. These are the provider properties that describe the image source and root disk, plus the platform's own image tags. The API refuses any other key, such as a network or node type property, with `is not an image property`. A Tenant can allow its users to create OSImages, so this keeps an image from changing what a `NodeClaim` attaches to.
+
+The accepted properties are:
+
+- Metal3: `metal3.vcluster.com/image-url`, `metal3.vcluster.com/image-checksum`, `metal3.vcluster.com/image-checksum-type`
+- KubeVirt: `kubevirt.vcluster.com/image-url`, `kubevirt.vcluster.com/image-datasource`, `kubevirt.vcluster.com/image-checksum`, `kubevirt.vcluster.com/root-disk-size`, `kubevirt.vcluster.com/image-datavolume-template`, `kubevirt.vcluster.com/root-disk-template`
+- NICo: `nico.vcluster.com/os-image-id`, `nico.vcluster.com/os-image-url`, `nico.vcluster.com/os-image-sha`, `nico.vcluster.com/os-image-disk`, `nico.vcluster.com/os-image-rootfs-id`, `nico.vcluster.com/os-image-rootfs-label`
+- Platform tags: `machines.vcluster.com/os-image-type`, `machines.vcluster.com/os-image-certified`, `machines.vcluster.com/os-image-icon`
+
+The check runs on every create and update. An OSImage created before the check existed can still carry another key. You can't edit that image until you remove the key.
+
+For [uploaded images](./upload-os-images.mdx), the platform supplies the image source and checksum from the uploaded file. Don't set the provider's source or checksum properties alongside `spec.connectorRef`. Other provider properties, such as the KubeVirt root disk size, still apply.
+
+### Metal3
+
+For the [Metal3 node provider](../drivers/bare-metal/metal3/overview.mdx), images hosted at an external URL use these properties:
+
+| Property | Description |
+|---|---|
+| `metal3.vcluster.com/image-url` | Required URL of the OS image. |
+| `metal3.vcluster.com/image-checksum` | Required checksum for image verification. |
+| `metal3.vcluster.com/image-checksum-type` | Checksum algorithm: `md5`, `sha256`, `sha512`, or `auto`. Optional. If omitted, Metal3 uses `md5`. Use `auto` to detect the algorithm from the checksum. |
+
+### KubeVirt
+
+For the [KubeVirt node provider](../drivers/virtual-machines/kubevirt.mdx), an OS image defines the source and size of a VM's root disk.
+The provider adds a Containerized Data Importer (CDI) `DataVolume` template to the generated VM.
+
+| Property | Description |
+|---|---|
+| `machines.vcluster.com/os-image-type` | Classifies the image for provider filtering in the platform UI. Set this property to `kubevirt`. |
+| `kubevirt.vcluster.com/image-url` | HTTP, HTTPS, or `docker://` image source. For images without `spec.connectorRef`, configure either this property or `kubevirt.vcluster.com/image-datasource`. |
+| `kubevirt.vcluster.com/image-checksum` | Optional checksum for an HTTP or HTTPS source. CDI receives the value unchanged. Include the algorithm prefix, for example `sha256:<digest>`. The provider ignores this property for `docker://` and CDI `DataSource` sources. |
+| `kubevirt.vcluster.com/image-datasource` | CDI `DataSource` in `<name>` or `<namespace>/<name>` format. A name without a namespace resolves in the VM namespace. |
+| `kubevirt.vcluster.com/root-disk-size` | Storage request for the root disk, expressed as a Kubernetes quantity such as `20Gi`. Required for every KubeVirt image source. |
+
+Configure one source for each image. If both `image-url` and `image-datasource` are present, the provider uses the `DataSource`.
+It discards the URL and checksum.
+
+#### Container registry image source
+
+Use a `docker://` URL to import an image from a container registry.
+A checksum doesn't apply to this source type.
+
+<InterpolatedCodeBlock
+  code={'apiVersion: management.loft.sh/v1\nkind: OSImage\nmetadata:\n  name: [[VAR:OS_IMAGE_NAME:ubuntu-container-disk]]\nspec:\n  displayName: "Ubuntu container disk"\n  properties:\n    # Show this image for KubeVirt providers in the platform UI.\n    machines.vcluster.com/os-image-type: kubevirt\n    # Import the root disk from this container registry image.\n    kubevirt.vcluster.com/image-url: "[[VAR:IMAGE_URL:docker://quay.io/containerdisks/ubuntu:22.04]]"\n    # Request this amount of storage for the root disk.\n    kubevirt.vcluster.com/root-disk-size: "[[GLOBAL:KUBEVIRT_ROOT_DISK_SIZE]]"'}
+  language="yaml"
+  title="kubevirt-registry-os-image.yaml"
+/>
+
+The provider creates a registry-backed `DataVolume` template and requests the configured root disk size.
+
+#### Import from a web address
+
+Use an HTTP or HTTPS source to let CDI import a disk image.
+The checksum is optional and applies only to this source type.
+
+<InterpolatedCodeBlock
+  code={'apiVersion: management.loft.sh/v1\nkind: OSImage\nmetadata:\n  name: [[VAR:OS_IMAGE_NAME:ubuntu-noble-http]]\nspec:\n  displayName: "Ubuntu Noble from HTTP"\n  properties:\n    # Show this image for KubeVirt providers in the platform UI.\n    machines.vcluster.com/os-image-type: kubevirt\n    # Import the root disk from this web address.\n    kubevirt.vcluster.com/image-url: "[[VAR:IMAGE_URL:https://example.com/images/ubuntu-noble.qcow2]]"\n    # Validate the downloaded image with its published checksum.\n    kubevirt.vcluster.com/image-checksum: "[[VAR:IMAGE_CHECKSUM:sha256:abc123]]"\n    # Request this amount of storage for the root disk.\n    kubevirt.vcluster.com/root-disk-size: "[[GLOBAL:KUBEVIRT_ROOT_DISK_SIZE]]"'}
+  language="yaml"
+  title="kubevirt-http-os-image.yaml"
+/>
+
+The provider creates an HTTP-backed `DataVolume` template and passes the checksum to CDI.
+Replace the example checksum with the checksum published for your image.
+If you omit the checksum property, CDI imports the image without checksum validation.
+
+#### Use a CDI data source
+
+Use a CDI `DataSource` when the source image already exists in the KubeVirt environment.
+Specify `<namespace>/<name>` to reference a `DataSource` outside the VM namespace.
+
+<InterpolatedCodeBlock
+  code={'apiVersion: management.loft.sh/v1\nkind: OSImage\nmetadata:\n  name: [[VAR:OS_IMAGE_NAME:ubuntu-noble-datasource]]\nspec:\n  displayName: "Ubuntu Noble DataSource"\n  properties:\n    # Show this image for KubeVirt providers in the platform UI.\n    machines.vcluster.com/os-image-type: kubevirt\n    # Reference an existing CDI DataSource by namespace and name.\n    kubevirt.vcluster.com/image-datasource: "[[VAR:DATA_SOURCE:os-images/ubuntu-noble]]"\n    # Request this amount of storage for the root disk.\n    kubevirt.vcluster.com/root-disk-size: "[[GLOBAL:KUBEVIRT_ROOT_DISK_SIZE]]"'}
+  language="yaml"
+  title="kubevirt-datasource-os-image.yaml"
+/>
+
+The provider creates a `DataVolume` template whose `sourceRef` points to the specified CDI `DataSource`.
+
+For advanced disk and `DataVolume` customization, see the [KubeVirt image configuration properties](../drivers/virtual-machines/kubevirt.mdx#image-configuration).
+
+### NICo
+
+For the [NICo driver](../drivers/bare-metal/nico/overview.mdx#prepare-an-operating-system-image), set `machines.vcluster.com/os-image-type` to `nico`.
+An image-based definition requires `nico.vcluster.com/os-image-url` and `nico.vcluster.com/os-image-sha`, set to the image checksum as a hexadecimal digest. An uploaded image supplies both itself. NICo requires exactly one root filesystem UUID or label. The platform rejects a claim whose OSImage doesn't meet these requirements.
+Use `nico.vcluster.com/os-image-disk` to select the target disk.
+
+At first use, the driver creates or finds the corresponding operating system in the consuming NICo tenant.
+Alternatively, set `nico.vcluster.com/os-image-id` on the OSImage to use an existing NICo operating system.
+See the [NICo image configuration](../drivers/bare-metal/nico/overview.mdx#prepare-an-operating-system-image) for the complete example, required NICo settings, and disk overwrite precautions.
+
+## Use an OSImage
+
+Reference an OSImage by name with the `vcluster.com/os-image` property. Set it on the node provider, the node type, the network environment, or the `NodeClaim`.
+
+```yaml
+properties:
+  vcluster.com/os-image: ubuntu-noble
+```
+
+The Metal3, KubeVirt, NICo, and external platform drivers read image settings from the OSImage that `vcluster.com/os-image` references. They ignore image properties set on a node provider, node type, or network environment. The exception is `kubevirt.vcluster.com/root-disk-size`. It depends on the workload rather than on the image, so a value set on any of those objects, or on the `NodeClaim`, overrides the OSImage's value.
+
+Set `vcluster.com/os-image` on every Metal3, NICo, and external platform instance. A NICo or external platform instance without one fails with the reason `InvalidConfiguration`. A KubeVirt instance can run without one when its VM template brings its own root disk.
+
+When you create a `NodeClaim` through the management API, the platform checks whether its tenant can use the referenced OSImage. This includes references inherited from the node type or node provider. An OSImage the tenant can't use is refused like a missing one, with `os image "<name>" not found`. For a reference inherited from the node provider, the message starts with `node provider "<name>" references a resource that cannot be used` instead.
+
+A NodePool gets the same check when you create it or change its template. It covers references in the pool's template and its node provider. References that a node type or network environment adds, and those of claims the platform creates itself, such as cluster control plane claims, are checked during provisioning. If the tenant can't use the image, provisioning can't complete.
+
+On node providers that don't [support the property](#provider-specific-properties), it has no effect.
+
+## Resolve image problems
+
+Inspect the referenced image when a KubeVirt instance doesn't provision:
+
+<InterpolatedCodeBlock
+  code={'kubectl get osimage [[VAR:OS_IMAGE_NAME:ubuntu-noble-http]] -o yaml'}
+  language="bash"
+/>
+
+| Problem | Resolution |
+|---|---|
+| The provider reports `failed to get OSImage` | The value of `vcluster.com/os-image` doesn't match an existing cluster-scoped `OSImage`. List the images with `kubectl get osimages`, then correct the reference. |
+| The image is missing from KubeVirt image selection in the platform UI | Check `machines.vcluster.com/os-image-type`. Set it to `kubevirt`. A missing or different value classifies the image as another provider type or as custom. |
+| The image defines both `image-url` and `image-datasource` | Remove the source that you don't intend to use. The provider gives `image-datasource` precedence and ignores `image-url` and `image-checksum`. |
+| Provisioning reports that `kubevirt.vcluster.com/root-disk-size` is required | Add the property to the OS image, or to the node provider, node type, network environment, or `NodeClaim`. Use a valid Kubernetes storage quantity such as `20Gi`. |
+| Provisioning reports an unsupported image URL scheme | Use a URL beginning with `http://`, `https://`, or `docker://`. |
+| Creating or updating the image fails with `is not an image property` | The image carries a key that isn't an [accepted image property](#provider-specific-properties). Remove the key from the image. If provisioning needs it, set it on the node type or node provider instead. |
+
+## Access control
+
+OSImage resources are cluster-scoped. Use the `spec.owner` and `spec.access` fields to control who can use or modify them:
+
+<InterpolatedCodeBlock
+  code={'apiVersion: management.loft.sh/v1\nkind: OSImage\nmetadata:\n  name: ubuntu-noble\nspec:\n  displayName: "Ubuntu Noble (24.04 LTS)"\n  properties:\n    metal3.vcluster.com/image-url: "[[GLOBAL:IMAGE_URL]]"\n    metal3.vcluster.com/image-checksum: "[[GLOBAL:IMAGE_CHECKSUM]]"\n    metal3.vcluster.com/image-checksum-type: "[[GLOBAL:CHECKSUM_TYPE]]"\n  owner:\n    user: admin\n  access:\n    - users:\n        - "*"\n      verbs:\n        - get'}
+  language="yaml"
+/>
+
+### Grant images by name or label
+
+For tenant users, the tenant's boundary applies before `spec.access`. A tenant sees an admin-owned image only when the `osImages` capability on its `Tenant` grants it, by label or by name. `spec.access` can't widen that boundary. See [What each capability offers](../../tenants/manage-tenants/create-and-configure-tenants.mdx#what-each-capability-offers) and [Capability-governed resources](../../tenants/manage-tenants/tenant-boundary-reference.mdx#capability-governed-resources).
+
+Grant images by name when you want an exact list:
+
+```yaml title="tenant.yaml"
+spec:
+  osImages:
+    enabled: true
+    allow:
+      byName:
+        - ubuntu-noble
+        - ubuntu-noble-http
+```
+
+Grant by label instead when the set changes over time. A capability accepts either `byName` or a non-empty `byLabels` but not both.
+
+In the platform UI, open the tenant and find <Label>OS Images</Label> in the <Label>Object Access</Label> section. Click <Button>Selected</Button>, then check the images to grant them by name. Click <Button>Match by label</Button> to grant by label instead, and <Button>Select Manually</Button> to switch back. Switching modes clears the current selection. <Button>All</Button> grants every admin-owned OS image and clears both lists.
+
+A grant lets the tenant read the image. It doesn't let the tenant change it or upload a file to it. To let a tenant manage its own images, set `allow.custom.enabled: true`. Images the tenant creates are named `<tenant>--<name>` and belong to the tenant.

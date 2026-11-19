@@ -52,7 +52,16 @@ If in doubt, don't change it. Broken paths break the build.
 ## Versioned docs
 
 Do NOT modify `vcluster_versioned_docs/version-*/` or `platform_versioned_docs/version-*/`
-folders. Changes are backported automatically using a CI process.
+folders unless the user explicitly approves the edit. Changes reach released
+versions through `backport-vX.XX` labels, which copy each changed file to the
+same path in that version's folder.
+
+That copy only works when the page has the same path in the older version. The
+Platform 5.0 and vCluster 0.38 restructure moved most pages, so a page's current
+path often doesn't exist in Platform 4.12 or earlier, or vCluster 0.37 or
+earlier. For those pages, don't add a backport label. Make the change by hand
+at each older version's own path, with explicit approval. See "Backport changes
+to released versions" in CONTRIBUTING.md.
 
 ## Link resolution
 
@@ -238,7 +247,8 @@ Note: Claude Code reads this file automatically (local and CI).
 
 Start new pages from the template for their type in
 `.claude/skills/vcluster-docs-writer/references/templates/`: feature, task,
-and troubleshooting. They apply `references/style-guide.md` to those page
+troubleshooting, reference, and section overview. Its README maps each kind of information to the
+page type where it belongs. The templates apply `references/style-guide.md` to those page
 types, and the style guide wins where they disagree.
 
 ## Repositioning terminology (active project)

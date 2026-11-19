@@ -96,6 +96,8 @@ const (
 
 	Netris FeatureName = "netris" // Netris
 
+	Aviz FeatureName = "aviz" // Aviz
+
 	KubeVip FeatureName = "kube-vip" // Kube-vip Integration
 
 	Metal3 FeatureName = "metal3" // Metal3 Integration
@@ -125,6 +127,8 @@ const (
 	AutoNodesMetal3 FeatureName = "auto-nodes-metal3" // Metal3 Node Provider
 
 	AutoNodesNICo FeatureName = "auto-nodes-nico" // NICo Node Provider
+
+	AutoNodesExternalPlatform FeatureName = "auto-nodes-external-platform" // External Platform Node Provider
 
 	VirtualClusterProDistroGenericSync FeatureName = "vcp-distro-generic-sync" // Generic Sync
 
@@ -208,6 +212,7 @@ func GetFeatures() []FeatureName {
 		VirtualClusterProDistroFips,
 		VNodeRuntime,
 		Netris,
+		Aviz,
 		KubeVip,
 		Metal3,
 		VmManagement,
@@ -223,6 +228,7 @@ func GetFeatures() []FeatureName {
 		AutoNodesClusterapi,
 		AutoNodesMetal3,
 		AutoNodesNICo,
+		AutoNodesExternalPlatform,
 		VirtualClusterProDistroGenericSync,
 		VirtualClusterProDistroSyncPatches,
 		VirtualClusterProDistroTranslatePatches,
@@ -475,6 +481,11 @@ func GetAllFeatures() []*Feature {
 			Module:      "bare-metal",
 		},
 		{
+			DisplayName: "Aviz",
+			Name:        "aviz",
+			Module:      "bare-metal",
+		},
+		{
 			DisplayName: "Kube-vip Integration",
 			Name:        "kube-vip",
 			Module:      "bare-metal",
@@ -547,6 +558,11 @@ func GetAllFeatures() []*Feature {
 		{
 			DisplayName: "NICo Node Provider",
 			Name:        "auto-nodes-nico",
+			Module:      "auto-nodes",
+		},
+		{
+			DisplayName: "External Platform Node Provider",
+			Name:        "auto-nodes-external-platform",
 			Module:      "auto-nodes",
 		},
 		{

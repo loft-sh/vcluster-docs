@@ -3,7 +3,7 @@
 Detects drift between the licensing values published in the docs and the Go
 constants they were read from.
 
-[platform/understand/licensing.mdx](../../platform/understand/licensing.mdx)
+[platform/reference/licensing.mdx](../../platform/reference/licensing.mdx)
 states exact refresh intervals, grace periods, cache lifetimes, Secret names,
 and environment variable names. Those values live in `loft-sh/loft-enterprise`
 and `loft-sh/vcluster-pro`. Neither repo is a dependency of the docs build, so

@@ -1,0 +1,379 @@
+---
+title: Troubleshooting Fleet Observability
+sidebar_label: Troubleshooting
+sidebar_position: 14
+description: Diagnose common Fleet Observability problems with the gateway, connector Secret, access keys, collectors, query proxy, TLS, and missing metrics or logs.
+---
+
+Use this page to diagnose the Fleet Observability path from edge collectors through the
+observability gateway and into your metrics backend.
+
+## Gateway resources aren't created
+
+Check the connector Secret:
+
+```bash
+kubectl get secret -n vcluster-platform fleet-observability -o yaml
+```
+
+Verify:
+
+- The Secret is in the Platform namespace.
+- `metadata.labels["loft.sh/connector-type"]` is `observability`.
+- The fleet connector has the `platform.vcluster.com/fleet-observability-connector` label set to `"true"`.
+- `metricsBackendOtlpEndpoint` and `metricsBackendPromQLEndpoint` are set.
+
+The gateway isn't reconciled until both backend endpoints are present.
+
+## Multiple fleet connectors
+
+Only one connector can carry the fleet label:
+
+```yaml
+platform.vcluster.com/fleet-observability-connector: "true"
+```
+
+If multiple connector Secrets have this label, Platform still creates per-connector
+gateway resources, but it doesn't publish the fleet-wide platform admin Grafana
+datasource. Remove the fleet label from all but one connector.
+
+## Collectors don't start
+
+If the collector pods crash with `unable to read the file file:/etc/otel/metrics-writer/<key>`,
+the `metrics-writer` Secret in the collector namespace is missing, or lacks the named key. The
+Secret must carry `endpoint`, `token`, and `ca.crt`, where `ca.crt` can be empty.
+
+For a cluster, its control plane delivers the Secret:
+
+- Check that `integrations.observability.enabled` is `true` and
+  `integrations.observability.connector` names an observability connector that the tenant
+  owning the cluster's project is allowed to use.
+- Check the `ObservabilityConnectorUnresolved` and `ObservabilityUnsupported` conditions on
+  the VirtualClusterInstance. They report why Platform refuses to issue a key, such as a
+  missing connector or a gateway the cluster can't reach. See
+  [A cluster gets no metrics-writer credential](#a-cluster-gets-no-metrics-writer-credential).
+- Check the cluster's control plane logs for `observability-metricswriter`. If they report
+  that the Secret `already exists and was not delivered by this integration`, a Secret you
+  created yourself blocks delivery. Delete it so the cluster can deliver its own.
+
+For a control plane cluster, create the Secret yourself, as described in
+[Create the Secret for a control plane cluster](./configure-edge-collectors.mdx#create-the-secret-for-a-control-plane-cluster).
+
+### A cluster gets no metrics-writer credential
+
+A cluster that delivers metrics through a connector requests its `metrics-writer`
+credential from Platform. When Platform can't resolve that connector into a write endpoint the
+cluster's collector could reach, it refuses the request. No credential Secret is
+delivered, and the cluster logs the reason on every resync. See
+[Failure responses](../../integrations/connectors-extensions/connectors/observability.mdx#failure-responses)
+for what each status code means and how often the cluster asks again.
+
+Platform reports the same finding as an `ObservabilityConnectorUnresolved` condition on the
+cluster's instance, which is where the admin who owns the connector can see it:
+
+```bash
+kubectl -n p-my-project get virtualclusterinstance my-vcluster \
+  -o jsonpath='{range .status.conditions[?(@.type=="ObservabilityConnectorUnresolved")]}{.reason}{": "}{.message}{"\n"}{end}'
+```
+
+| Reason | Likely cause | Fix |
+|---|---|---|
+| `WriteGatewayInternalOnly` | The connector's gateway Service is `ClusterIP`, and this cluster's collector doesn't run on the Platform cluster. | Set `serviceType: LoadBalancer` on the connector Secret. See [Expose the gateway with a LoadBalancer](./gateway-networking-tls.mdx#expose-the-gateway-with-a-loadbalancer). |
+| `ObservabilityConnectorUnusable` | The connector named on the cluster doesn't exist, isn't an observability connector, or isn't granted to the tenant that owns the cluster's project. Platform gives one reason for all three, so the condition doesn't reveal which connectors exist. | Create the connector or correct the name on the cluster. If the connector exists, [grant it to the tenant](../../tenants/manage-tenants/create-and-configure-tenants.mdx#grant-object-access). |
+| `ObservabilityConnectorNotFound` | The connector is being deleted, or its Secret was deleted after Platform checked the grant. | Wait for the deletion to finish and name another connector on the cluster, or recreate the connector. |
+| `ObservabilityConnectorMisconfigured` | The connector exists, but its settings can never yield a usable gateway. | See [Gateway resources aren't created](#gateway-resources-arent-created). |
+| `ObservabilityNotConfiguredOnInstance` | The cluster enables observability without naming a connector. | Name a connector on the cluster, or disable the integration. |
+
+The condition carries only causes an admin has to fix. A connector is shared across
+clusters, so causes that clear on their own are left off the condition. One example is a
+gateway still waiting for its LoadBalancer address. Leaving them off keeps the condition from
+flapping on every cluster using that connector. Those causes appear only in the requesting
+cluster's own log. An absent condition therefore means either that the connector resolves or
+that it's still coming up.
+
+## A cluster shows no observability data
+
+The cluster receives its collector credential automatically only when it sets
+`integrations.observability.enabled: true`. The integration is off by default. Check the
+setting in the cluster's resolved configuration before you troubleshoot automatic credential delivery.
+
+A cluster with the integration turned off appears as follows:
+
+- **No Observability tab.** The cluster's page in the Platform UI shows the tab only when the
+  integration is on. The tab also requires an admin user, a license that includes Fleet
+  Observability, and at least one fleet observability connector.
+- **No per-cluster Grafana datasource.** Platform creates the datasource only for a cluster that
+  names a resolvable connector. When you turn the integration off, Platform removes the
+  datasource it created earlier.
+- **No conditions.** Platform doesn't set `ObservabilityConnectorUnresolved` or
+  `ObservabilityUnsupported`, because a cluster with the integration off isn't a fault.
+- **No credential request.** The cluster doesn't request a `metrics-writer` credential. A request made
+  for it anyway returns 400 with `virtual cluster instance does not have an observability
+  connector configured`, followed by the instance's namespace and name.
+- **No automatic Secret delivery.** The integration doesn't deliver a `metrics-writer` Secret.
+  Collectors can't start if their configured Secret is absent, as described in
+  [Collectors don't start](#collectors-dont-start). A Secret you created manually remains,
+  and collectors can keep using it while its credential is valid.
+
+You can turn the integration off on a cluster that had it on. The cluster's control plane then
+deletes the `metrics-writer` Secret it delivered, the next time it starts. Platform doesn't
+delete the cluster's `metrics-writer` AccessKey, so the token stays valid. Delete the key to
+revoke it. See
+[Token lifetime and rotation](../../integrations/connectors-extensions/connectors/observability.mdx#token-lifetime-and-rotation).
+
+## Collector writes are rejected
+
+Check the collector exporter configuration:
+
+- The `Authorization` header uses a valid bearer token.
+- The token is a `metrics-writer` access key.
+- The request includes either `X-Vcluster-Platform-Cluster` or the
+  `X-Vcluster-Platform-Project` and `X-Vcluster-Platform-Instance` pair.
+- The header values match the key scope.
+
+Check gateway logs:
+
+```bash
+kubectl logs -n vcluster-platform deploy/gateway-fleet-observability -c otel-gateway
+```
+
+Common causes:
+
+| Symptom | Likely cause |
+|---|---|
+| Missing bearer token | Collector didn't set the `Authorization` header. |
+| Scope denied | Key scope doesn't include the requested cluster or control plane cluster. |
+| Ambiguous scope | Request included both cluster and tenant scope, or multiple values for one scope header. |
+| Headerless write rejected | The key has zero or multiple concrete tenant scopes, so scope can't be derived. |
+
+## Gateway ignores connector changes
+
+The gateway keeps running with its last valid configuration when the connector Secret is
+invalid. Check the Platform logs:
+
+```bash
+kubectl logs -n vcluster-platform -l app=loft -c manager --tail=-1 | grep 'connector config invalid'
+```
+
+A `connector config invalid, skipping until the secret is updated` message names the
+problem. A malformed `destinations` list is a common cause, for example an unknown field,
+a duplicate name, a `signal` other than `metrics` or `logs`, or a quoted
+`insecureSkipVerify: "true"`. The list also fails with more than 16 entries or when it's
+larger than 4 KiB. See
+[Forward telemetry to additional destinations](./forward-telemetry.mdx)
+for the field rules, then correct the Secret.
+
+## A destination receives no data
+
+Check the gateway logs for export errors that name the destination's exporter,
+`otlp_http/dest-<name>`:
+
+```bash
+kubectl logs -n vcluster-platform deploy/gateway-fleet-observability -c otel-gateway \
+  | grep 'dest-'
+```
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| Gateway pod stuck in `ContainerCreating` after you add a destination | The `certSecretName` Secret doesn't exist in the Platform namespace, or lacks `ca.crt` while TLS verification is on. | Create the Secret with `tls.crt`, `tls.key`, and `ca.crt`. |
+| TLS or certificate errors for `dest-<name>` | The destination's certificate isn't trusted by the `ca.crt` in `certSecretName`, or by the system trust store when `certSecretName` is unset. | Add the issuing CA to the `certSecretName` Secret. |
+| `404` or similar responses for `dest-<name>` | `endpoint` includes the signal path, so the gateway sends to a doubled path such as `/v1/logs/v1/logs`. | Set the base URL only. The gateway appends `/v1/metrics` or `/v1/logs`. |
+| Dropped data after an outage | The destination was unreachable for longer than the 30-second retry window, or its queue filled. | See [Unavailable destinations](./forward-telemetry.mdx#unavailable-destinations). |
+
+The gateway doesn't resend dropped data, so a destination misses the telemetry from the
+time it was unavailable.
+
+## Pod logs don't arrive
+
+Work through the path in order:
+
+1. Check that the connector has at least one destination with `signal: logs`. Without one,
+   the gateway has no logs pipeline and rejects incoming logs. The `otel-daemon` logs then
+   show export errors.
+1. Check that the cluster's `cluster-collector` application sets `collectLogs: "true"`, and
+   that the `otel-daemon` pods restarted after the change.
+1. Check that an `otel-daemon` pod runs on each node whose pod logs you expect. The
+   DaemonSet tolerates every taint, so a missing pod usually points to a scheduling or
+   resource problem on that node.
+1. Check that the logs destination accepts the writes. See
+   [A destination receives no data](#a-destination-receives-no-data).
+
+If the cluster runs on shared nodes without the HostPath Mapper, `otel-daemon` finds no
+pod logs and sends nothing, and it keeps running. The HostPath Mapper can make those logs
+available, but use Fleet Observability log collection only on private nodes for Platform v5.0. See
+[Collect pod logs](./collect-pod-logs.mdx).
+
+## Queries are rejected
+
+Check query-proxy logs:
+
+```bash
+kubectl logs -n vcluster-platform deploy/gateway-fleet-observability -c query-proxy
+```
+
+Common causes:
+
+| Symptom | Likely cause |
+|---|---|
+| HTTP `400` | Missing scope for a non-admin user, invalid scope matcher, or malformed PromQL. |
+| HTTP `403` | The user or key is authenticated but not authorized for the requested metrics scope. |
+| Query succeeds for admins only | The datasource is using the unscoped fleet-admin path. Add tenant or cluster scope headers for non-admin users. |
+| Regex query rejected | Scope-controlling labels only allow equality or literal alternation regular expression matchers. |
+
+## Platform labels are missing
+
+If metrics arrive without `vcluster_platform_*` labels:
+
+- Confirm the metrics went through the Write Gateway. Direct writes to the backend
+  don't get platform labels.
+- Confirm the collector used a valid metrics writer key and scope headers.
+- Confirm the backend stores labels from OTLP datapoint attributes.
+- Check whether the metric is expected to have tenant labels or only cluster labels.
+
+The Write Gateway strips caller-supplied platform labels and then stamps authenticated
+values. Empty authenticated values are dropped.
+
+## Backend TLS failures
+
+If gateway pods start but can't write or query the backend:
+
+- Verify `metricsBackendOtlpEndpoint` and `metricsBackendPromQLEndpoint`.
+- Set `metricsBackendServerName` when the backend certificate's DNS name differs from
+  the endpoint host.
+- Use `metricsBackendCertSecretName` when the backend requires mTLS. This Secret is also the
+  source of trust for a private backend CA. It must contain `ca.crt`, `tls.crt`, and
+  `tls.key`.
+- Use `metricsBackendInsecureSkipVerify: "true"` only as a temporary test setting.
+
+:::note `remote error: tls: certificate required`
+This error means the backend rejected the connection because the gateway didn't present a
+client certificate, not because the gateway distrusts the backend's certificate.
+`metricsBackendInsecureSkipVerify` only skips the gateway's verification of the backend's
+server certificate, so it can't fix this. Set `metricsBackendCertSecretName` instead. The
+bundled Prometheus backend enforces mTLS and expects this client certificate. When deployed
+with its default parameters, it's the auto-generated `metrics-backend-mtls` Secret. See
+[Deploy the metrics backend with Argo CD](./install-observability-gateway.mdx#deploy-the-metrics-backend-with-argo-cd).
+:::
+
+## Gateway TLS failures
+
+The gateway always serves OTLP and query traffic over TLS. If collectors or query clients
+can't connect:
+
+- For the Platform-managed certificate, read `ca.crt` from the
+  `gateway-<connector-id>-tls` Secret and configure the client to trust it.
+- For a custom private certificate, include `ca.crt` in the Secret referenced by
+  `observabilityGatewayCertSecretName`.
+- Verify that the client uses `https` for OTLP HTTP and query traffic or enables TLS for
+  OTLP gRPC.
+- If the gateway uses a `LoadBalancer` Service and a Platform-managed certificate, wait for
+  the LoadBalancer address before expecting the gateway Deployment to become available.
+
+## Observability pods are OOMKilled or evicted
+
+The bundled templates deploy Prometheus, Grafana, and the collectors without an explicit
+`resources` block, so those pods likely end up in the `BestEffort` QoS class, which the
+kubelet evicts first under node pressure.
+
+Check the QoS class, last container state, and status message:
+
+```bash
+kubectl describe pod -n vcluster-platform <pod>
+```
+
+Look for `QoS Class`, `Last State`, and `Message` in the output.
+
+The fix depends on which failure you see:
+
+- `OOMKilled`: raise the memory limit on the affected template's `resources` parameter.
+- `Evicted`: set memory requests so the kubelet ranks the pod above pods that exceed their
+  own requests. Only memory, disk, and PID pressure trigger eviction, not CPU.
+
+Set requests and limits on the affected template:
+
+- Prometheus: the `resources` parameter. See [Deploy the metrics backend with Argo
+  CD](./install-observability-gateway.mdx#deploy-the-metrics-backend-with-argo-cd).
+- Grafana: the `resources` parameter. See [Deploy the bundled Grafana with Argo
+  CD](./query-fleet-metrics.mdx#deploy-the-bundled-grafana-with-argo-cd).
+- Collectors: the `otelDaemonResources` and `otelDeployResources` parameters. See [Deploy
+  collectors with Argo CD](./configure-edge-collectors.mdx#deploy-collectors-with-argo-cd).
+
+Prometheus is the most likely to be OOMKilled, because its memory grows with active series
+count.
+
+## Cluster backing store metrics are missing
+
+A cluster has one backing store, so one of the two scrape jobs is always down by
+design. Confirm which job applies before assuming something is broken. See
+[One backing store job is always down](./configure-edge-collectors.mdx#one-backing-store-job-is-always-down).
+
+| Symptom | Likely cause |
+|---|---|
+| `up{job="vcluster-kine"} == 0` on a cluster with embedded etcd | Expected. The `/metrics/kine` path doesn't exist on that cluster. |
+| `up{job="vcluster-etcd"} == 0` on a cluster with a database backing store | Expected. The `/metrics/etcd` path doesn't exist on that cluster. |
+| Both jobs down | The cluster uses deployed or external etcd, which vCluster serves no metrics route for. |
+| Both jobs down on an older cluster | The cluster runs a vCluster version without the route. `/metrics/etcd` needs v0.34.0 or later, and `/metrics/kine` needs v0.35.0 or later. |
+| Both jobs down on a connected control plane cluster | Expected. The collector scrapes that cluster's own API server, which serves neither path. |
+| Both jobs down, and the cluster's API server job is also down | Not backing store specific. The collector can't reach the cluster control plane proxy at all. |
+| Scrape returns `403` | The collector's ServiceAccount lacks `get` on the non-resource path. Restore the bundled ClusterRole. |
+
+Check the collector's view of the jobs:
+
+```bash
+TENANT_CLUSTER_CONTEXT=my-vcluster
+kubectl --context "$TENANT_CLUSTER_CONTEXT" logs -n observability deploy/otel-deploy | grep "Failed to scrape"
+```
+
+:::note `kubectl get --raw` can't reach these paths
+`kubectl get --raw /metrics/etcd` against a Platform kubeconfig doesn't reach the cluster
+control plane, so it can't confirm or rule out a backing store problem. Non-resource paths
+aren't forwarded to the cluster's proxy. Platform answers them itself and returns its
+own web UI's HTML. Read the paths from inside the cluster instead, using a ServiceAccount in
+that cluster that holds the non-resource grant.
+:::
+
+## Platform API outage
+
+The gateway and query proxy fail closed when Platform authorization is unavailable.
+Previously allowed decisions can continue only until their short positive cache TTL
+expires.
+
+Expected behavior:
+
+- Collectors may queue and retry writes locally, depending on their exporter settings.
+- Queries fail visibly after cached authorization decisions expire.
+- Writes and reads recover when the Platform API is reachable again.
+
+## Useful checks
+
+Gateway pods:
+
+```bash
+CONNECTOR_ID=fleet-observability
+kubectl get pods -n vcluster-platform -l app.kubernetes.io/name=gateway,app.kubernetes.io/instance="$CONNECTOR_ID"
+```
+
+Gateway service:
+
+```bash
+CONNECTOR_ID=fleet-observability
+kubectl get svc -n vcluster-platform "gateway-$CONNECTOR_ID"
+```
+
+Write Gateway metrics:
+
+```bash
+CONNECTOR_ID=fleet-observability
+GATEWAY_POD=$(kubectl get pod -n vcluster-platform -l app.kubernetes.io/name=gateway,app.kubernetes.io/instance="$CONNECTOR_ID" -o jsonpath='{.items[0].metadata.name}')
+kubectl port-forward -n vcluster-platform pod/$GATEWAY_POD 8889:8889
+curl http://127.0.0.1:8889/metrics
+```
+
+Query Proxy metrics:
+
+```bash
+CONNECTOR_ID=fleet-observability
+GATEWAY_POD=$(kubectl get pod -n vcluster-platform -l app.kubernetes.io/name=gateway,app.kubernetes.io/instance="$CONNECTOR_ID" -o jsonpath='{.items[0].metadata.name}')
+kubectl port-forward -n vcluster-platform pod/$GATEWAY_POD 8080:8080
+curl http://127.0.0.1:8080/metrics
+```

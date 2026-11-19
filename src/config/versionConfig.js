@@ -8,6 +8,19 @@
  * `versions` and `onlyIncludeVersions` config.
  */
 
+/**
+ * Docs versions for releases in limited availability, keyed by docs plugin ID
+ * and version name. DocVersionBanner shows a notice on every page of a listed
+ * version. Remove an entry when its release becomes generally available.
+ */
+export const limitedAvailabilityVersions = {
+  platform: { "5.0.0": "vCluster Platform 5.0" },
+  vcluster: { "0.38.0": "vCluster 0.38" },
+};
+
+export const limitedAvailabilityContactUrl =
+  "https://www.vcluster.com/enterprise-demo";
+
 export const vclusterHiddenVersions = [];
 export const platformHiddenVersions = [];
 
@@ -32,7 +45,7 @@ export const vclusterEOLVersions = [
 
 export const platformEOLVersions = [
   { to: "https://vcluster.com/docs/v4.8", label: "v4.8 (EOS)" },
-  { to: "https://vcluster.com/docs/v4.7", label: "v4.7 (EOS)" },
+  { to: "https://vcluster.com/docs/v4.7", label: "v4.7 (EOL)" },
   { to: "https://vcluster.com/docs/v4.6", label: "v4.6 (EOL)" },
   { to: "https://vcluster.com/docs/v4.5", label: "v4.5 (EOL)" },
   { to: "https://vcluster.com/docs/v4.4", label: "v4.4 (EOL)" },

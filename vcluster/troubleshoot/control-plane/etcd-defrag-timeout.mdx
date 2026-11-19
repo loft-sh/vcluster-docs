@@ -1,0 +1,62 @@
+---
+title: Resolve embedded etcd defragmentation timeouts on startup
+sidebar_label: etcd defragmentation timeout
+description: The control plane fails to start with "Etcd defragmentation did not finish in time" when embedded etcd can't defragment its database within defragTimeout.
+---
+
+import Flow, { Step } from '@site/src/components/Flow';
+
+## Symptoms
+
+The control plane doesn't start. Its logs contain this line:
+
+```text
+Etcd defragmentation did not finish in time, increase controlPlane.backingStore.etcd.embedded.defragTimeout
+```
+
+The startup error that follows contains `defragment:` and a deadline error from etcd.
+
+## Cause
+
+Embedded etcd defragments its database each time it starts, when at least 16 MiB and 25% of the database are reclaimable. The control plane waits for defragmentation to finish before it serves requests. If it takes longer than `controlPlane.backingStore.etcd.embedded.defragTimeout`, which defaults to `5m`, the control plane fails to start.
+
+This happens with large databases, slow storage, or both. It applies only to clusters that use embedded etcd.
+
+## Fix
+
+Raise the timeout, or skip defragmentation on startup. The control plane reads the setting at startup, so applying the change restarts it.
+
+<Flow>
+<Step>
+Set a longer timeout in your `vcluster.yaml`. To skip defragmentation instead, set `defragTimeout: 0s`.
+
+```yaml title="vcluster.yaml"
+controlPlane:
+  backingStore:
+    etcd:
+      embedded:
+        enabled: true
+        defragTimeout: 15m
+```
+</Step>
+<Step>
+Apply the change with the same method you used to deploy the cluster, such as the CLI or a Helm upgrade.
+</Step>
+</Flow>
+
+If you skip defragmentation, the database file doesn't shrink after compaction. Watch its size, because a database that reaches its quota raises the `NOSPACE` alarm.
+
+## Verify
+
+The control plane pods reach `Running`, and the logs show one of these lines instead of the timeout:
+
+```text
+Defragmenting etcd database
+Skipping etcd defragmentation, not enough reclaimable space
+Skipping etcd defragmentation, disabled via controlPlane.backingStore.etcd.embedded.defragTimeout
+```
+
+## Related resources
+
+- [Defragmentation on startup](../../configure/control-plane/components/backing-store/etcd/embedded.mdx#defragmentation-on-startup)
+- [Resolve etcd NOSPACE alarm](./etcd-compaction.mdx)
