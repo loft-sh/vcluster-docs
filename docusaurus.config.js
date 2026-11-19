@@ -496,7 +496,7 @@ const config = {
       announcementBar: {
         id: "vcluster-0-38-platform-5-0-release",
         content:
-          '<strong>New releases: <a href="https://www.vcluster.com/releases" target="_blank">vCluster Platform v5.0 and vCluster v0.38</a></strong>',
+          '<strong>New releases: <a href="/docs/platform/overview/whats-new">vCluster Platform v5.0</a> and <a href="/docs/vcluster/overview/whats-new">vCluster v0.38</a></strong>',
         backgroundColor: "#050b24",
         textColor: "#ffffff",
         isCloseable: true,
