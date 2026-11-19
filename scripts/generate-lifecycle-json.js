@@ -14,7 +14,7 @@
  * Schema: Follows .claude/specs/ops-409-json-endpoint/proofs/json-endpoint-validation/CONTRACT.md
  */
 
-import { readFileSync, writeFileSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -163,7 +163,7 @@ function parseMDXTable(content, product) {
 /**
  * Generate JSON for a product
  */
-function generateJSON(partialPath, product) {
+function generateJSON(partialPath, product, outputPath) {
   console.log(`\n📋 Processing ${product}...`);
 
   const content = readFileSync(partialPath, 'utf-8');
@@ -176,11 +176,34 @@ function generateJSON(partialPath, product) {
 
   const json = {
     product,
-    lastUpdated: new Date().toISOString().split('T')[0], // YYYY-MM-DD
+    lastUpdated: lastUpdatedFor(outputPath, versions),
     versions
   };
 
   return json;
+}
+
+/**
+ * Return the date the version data last changed (YYYY-MM-DD).
+ *
+ * Keeps the existing file's date when its versions match the generated ones,
+ * so a run on a later day without data changes produces no diff. A date-only
+ * diff made the CI commit step push to protected PR heads such as `next`.
+ */
+function lastUpdatedFor(outputPath, versions) {
+  const today = new Date().toISOString().split('T')[0];
+  if (!existsSync(outputPath)) return today;
+
+  try {
+    const existing = JSON.parse(readFileSync(outputPath, 'utf-8'));
+    if (existing.lastUpdated &&
+        JSON.stringify(existing.versions) === JSON.stringify(versions)) {
+      return existing.lastUpdated;
+    }
+  } catch {
+    // Unreadable or invalid existing file: regenerate with today's date.
+  }
+  return today;
 }
 
 /**
@@ -194,15 +217,15 @@ function main() {
   try {
     // Generate vCluster JSON
     const vclusterPartial = join(rootDir, 'docs/_partials/vcluster_supported_versions.mdx');
-    const vclusterJSON = generateJSON(vclusterPartial, 'vCluster');
     const vclusterOutput = join(rootDir, 'static/api/lifecycle/vcluster.json');
+    const vclusterJSON = generateJSON(vclusterPartial, 'vCluster', vclusterOutput);
     writeFileSync(vclusterOutput, JSON.stringify(vclusterJSON, null, 2) + '\n');
     console.log(`   ✅ Written to ${vclusterOutput}`);
 
     // Generate Platform JSON
     const platformPartial = join(rootDir, 'docs/_partials/platform_supported_versions.mdx');
-    const platformJSON = generateJSON(platformPartial, 'Platform');
     const platformOutput = join(rootDir, 'static/api/lifecycle/platform.json');
+    const platformJSON = generateJSON(platformPartial, 'Platform', platformOutput);
     writeFileSync(platformOutput, JSON.stringify(platformJSON, null, 2) + '\n');
     console.log(`   ✅ Written to ${platformOutput}`);
 
