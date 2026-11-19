@@ -186,7 +186,6 @@ new Crawler({
       attributesToSnippet: ["content:12"],
       camelCaseAttributes: ["hierarchy", "content"],
       searchableAttributes: [
-        "unordered(hierarchy.lvl0)",
         "unordered(hierarchy.lvl1)",
         "unordered(hierarchy.lvl2)",
         "unordered(hierarchy.lvl3)",
@@ -194,6 +193,7 @@ new Crawler({
         "unordered(hierarchy.lvl5)",
         "unordered(hierarchy.lvl6)",
         "content",
+        "unordered(hierarchy.lvl0)",
       ],
       distinct: true,
       attributeForDistinct: "url",
