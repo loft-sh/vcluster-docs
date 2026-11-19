@@ -1,4 +1,4 @@
-# Algolia Search Implementation Runbook
+# Algolia search implementation runbook
 
 This document covers the full rollout for the version-aware DocSearch work:
 
@@ -7,20 +7,22 @@ This document covers the full rollout for the version-aware DocSearch work:
 - crawler configuration changes
 - post-deploy reindex and verification
 
-## Files in This Folder
+## Files in this folder
 
 - `docsearch.config.js`
   Proposed crawler configuration in DocSearch `new Crawler(...)` format for reference.
+- `crawler-config-json.mjs`
+  Prints `docsearch.config.js` as the JSON body for the crawler `PATCH` in Step 5.
 - `export-vcluster-settings.preview.json`
   Preview of the updated index settings import for the `vcluster` index.
 
-## What This Work Changes
+## What this work changes
 
-### Docs Site
+### Docs site
 
 The docs implementation adds:
 
-- version-aware search metadata to doc pages via `meta` tags
+- version-aware search metadata to doc pages through `meta` tags
 - a better search page UX with explicit version filters
 - a more visible DocSearch modal CTA to open the full search page
 - default search bias toward current stable docs
@@ -44,7 +46,7 @@ The Algolia changes add support for:
 - product-aware filtering
 - crawler-level `pageRank` values that make the current stable docs rank higher
 
-## Rollout Order
+## Rollout order
 
 Do the rollout in this order:
 
@@ -70,7 +72,7 @@ Source references:
 - [Algolia start a crawl](https://www.algolia.com/doc/rest-api/crawler/start-reindex)
 - [Algolia initialIndexSettings behavior](https://www.algolia.com/doc/tools/crawler/apis/configuration/initial-index-settings/)
 
-## Step 1: Merge and Deploy the Docs Changes
+## Step 1: Merge and deploy the docs changes
 
 Merge the PR that contains the docs-site search implementation.
 
@@ -87,7 +89,7 @@ After deploy, confirm production pages under `https://www.vcluster.com/docs/` em
 
 These are added in [src/theme/DocItem/Layout/index.js](../src/theme/DocItem/Layout/index.js).
 
-## Step 2: Set Environment Variables
+## Step 2: Set environment variables
 
 Run these commands locally before making API calls:
 
@@ -99,15 +101,16 @@ export CRAWLER_ID="<your-crawler-uuid>"
 export CRAWLER_USER_ID="<your-crawler-user-id>"
 export CRAWLER_API_KEY="<your-crawler-api-key>"
 export CRAWLER_BASIC_AUTH="$(printf '%s:%s' "$CRAWLER_USER_ID" "$CRAWLER_API_KEY" | base64)"
+export CRAWLER_INDEXING_API_KEY="<crawler-indexing-api-key>"
 ```
 
 Notes:
 
 - `ALGOLIA_ADMIN_KEY` is a regular Algolia key for Search API operations on the index.
 - `CRAWLER_USER_ID` and `CRAWLER_API_KEY` are crawler-specific credentials from the Algolia crawler dashboard.
-- The crawler indexing `apiKey` used inside crawler config is separate again. Don’t use the Algolia Admin API key there.
+- `CRAWLER_INDEXING_API_KEY` is the indexing `apiKey` set inside the crawler config. It's separate again, and it needs crawler indexing permissions. Don't use the Algolia Admin API key there.
 
-## Step 3: Back Up Current Config and Settings
+## Step 3: Back up current config and settings
 
 Back up the crawler:
 
@@ -165,7 +168,7 @@ bidirectional set this PR replaced: `syn-virtual-tenant-cluster`,
 created in the dashboard. Commit it to the file first, or you will silently
 drop it.
 
-## Step 4: Apply Updated Index Settings and Synonyms
+## Step 4: Apply updated index settings and synonyms
 
 [export-vcluster-settings.preview.json](export-vcluster-settings.preview.json)
 is a wrapper holding three separate Algolia resources:
@@ -252,55 +255,23 @@ should reach it.
 shape as the synonyms call.
 
 
-## Step 5: Patch the Crawler Configuration
+## Step 5: Patch the crawler configuration
 
 The crawler API expects JSON, not the `new Crawler(...)` JS wrapper.
 
-Create a local JSON payload:
+Generate the payload from `docsearch.config.js`, so it always matches the template. Don't hand-edit the JSON. The crawler `PATCH` replaces every top-level key it receives, so a partial or stale payload silently drops settings. A hand-copied payload once dropped the vNode site this way (DOC-2024).
 
 ```bash
-cat > /tmp/vcluster-crawler-config.json <<'EOF'
-{
-  "appId": "K85RIQNFGF",
-  "apiKey": "<crawler-indexing-api-key>",
-  "rateLimit": 8,
-  "maxDepth": 10,
-  "startUrls": [
-    "https://www.vcluster.com/docs/"
-  ],
-  "renderJavaScript": false,
-  "sitemaps": [
-    "https://www.vcluster.com/docs/sitemap.xml"
-  ],
-  "ignoreCanonicalTo": true,
-  "discoveryPatterns": [
-    "https://www.vcluster.com/docs/**"
-  ],
-  "exclusionPatterns": [
-    "https://www.vcluster.com/docs/v0.19/**"
-  ],
-  "schedule": "at 05:00 on Saturday",
-  "actions": [
-    {
-      "indexName": "vcluster",
-      "pathsToMatch": [
-        "https://www.vcluster.com/docs/**"
-      ],
-      "recordExtractor": {
-        "__type": "function",
-        "source": "({ $, helpers, url }) => {\n  // Skip the non-canonical URL form (trailing-slash duplicates, DOC-1892). Compare paths only.\n  const canonicalHref = $('link[rel=\"canonical\"]').attr('href');\n  if (canonicalHref && new URL(canonicalHref, url.href).pathname !== url.pathname) {\n    return [];\n  }\n\n  $('.hash-link').remove();\n\n  const pathname = url.pathname.replace(/^\\/docs/, '') || '/';\n  const product = $('meta[name=\"docsearch:product\"]').attr('content') || 'docs';\n  const version = $('meta[name=\"docsearch:version\"]').attr('content') || 'unknown';\n  const versionLabel = $('meta[name=\"docsearch:version_label\"]').attr('content') || version;\n  const versionStatus = $('meta[name=\"docsearch:version_status\"]').attr('content') || 'unknown';\n  const stableVersion = $('meta[name=\"docsearch:stable_version\"]').attr('content') || '';\n  const isStable = $('meta[name=\"docsearch:is_stable\"]').attr('content') || 'false';\n  const isLatest = $('meta[name=\"docsearch:is_latest\"]').attr('content') || 'false';\n  const pageCategory = $('meta[name=\"docsearch:page_category\"]').attr('content') || 'docs';\n\n  const pageRankByStatus = {\n    stable: 120,\n    versioned: 60,\n    unreleased: 20,\n    unknown: 0,\n  };\n\n  const pageRank =\n    pathname === `/${product}/` || pathname === `/${product}`\n      ? 160\n      : pageRankByStatus[versionStatus] ?? 0;\n\n  const lvl0 =\n    $('.menu__link.menu__link--sublist.menu__link--active, .navbar__item.navbar__link--active')\n      .last()\n      .text() || 'Documentation';\n\n  return helpers.docsearch({\n    recordProps: {\n      lvl0: {\n        selectors: '',\n        defaultValue: lvl0,\n      },\n      lvl1: ['header h1', 'article h1'],\n      lvl2: 'article h2',\n      lvl3: 'article h3',\n      lvl4: 'article h4',\n      lvl5: 'article h5, article td:first-child',\n      lvl6: 'article h6',\n      content: 'article p, article li, article td:last-child',\n      product: {\n        defaultValue: product,\n      },\n      version: {\n        defaultValue: version,\n      },\n      version_label: {\n        defaultValue: versionLabel,\n      },\n      version_status: {\n        defaultValue: versionStatus,\n      },\n      stable_version: {\n        defaultValue: stableVersion,\n      },\n      is_stable: {\n        defaultValue: isStable,\n      },\n      is_latest: {\n        defaultValue: isLatest,\n      },\n      page_category: {\n        defaultValue: pageCategory,\n      },\n      pageRank\n    },\n    indexHeadings: true,\n    aggregateContent: true,\n    recordVersion: 'v3'\n  });\n}"
-      }
-    }
-  ]
-}
-EOF
+node algolia/crawler-config-json.mjs > /tmp/vcluster-crawler-config.json
 ```
 
-Replace:
+The script reads `ALGOLIA_APP_ID` and `CRAWLER_INDEXING_API_KEY` from Step 2 and fills them in for the template's placeholders. It turns `recordExtractor` functions into the `{"__type": "function", "source": "..."}` form that the API expects.
 
-- `<crawler-indexing-api-key>`
+Before patching, check that both sites are in the payload:
 
-That key must have the required crawler indexing permissions.
+```bash
+jq '.startUrls, [.actions[].pathsToMatch[]]' /tmp/vcluster-crawler-config.json
+```
 
 Patch the crawler config:
 
@@ -312,7 +283,7 @@ curl --request PATCH \
   --data @/tmp/vcluster-crawler-config.json
 ```
 
-## Step 6: Trigger a Full Reindex
+## Step 6: Trigger a full reindex
 
 Only do this after the docs-site changes are live on production.
 
@@ -322,7 +293,7 @@ curl --request POST \
   --header "Authorization: Basic $CRAWLER_BASIC_AUTH"
 ```
 
-## Step 7: Verify the New State
+## Step 7: Verify the new state
 
 Check crawler config:
 
@@ -368,9 +339,9 @@ Verify the index now supports:
 - `is_latest`
 - `page_category`
 
-## Step 8: Smoke Test Search
+## Step 8: Smoke test search
 
-### Modal Search
+### Modal search
 
 Check:
 
@@ -414,7 +385,7 @@ Check:
   this one confirms it reaches readers.
 - unreleased docs don’t dominate results unless intentionally targeted
 
-## External Site Reindex (vNode)
+## External site reindex (vNode)
 
 The crawler covers `vcluster.com` and `vnode.com`. The Saturday schedule crawls both automatically. However, vnode-docs deploys independently and has no per-deploy crawler hook, so a manual reindex is required after that external site ships significant content changes. vMetal content is indexed from the Platform section on `vcluster.com`.
 
@@ -431,7 +402,7 @@ Verify the external site is live with the correct meta tags. Check page source o
 <meta name="docsearch:page_category" content="docs">
 ```
 
-If the tags are missing (e.g. the `DocItem/Layout` swizzle wasn't deployed), the crawler falls back to the `defaultValue` fields in `docsearch.config.js`. Results will still be faceted correctly, but confirm this before proceeding.
+If the tags are missing (for example, the `DocItem/Layout` swizzle wasn't deployed), the crawler falls back to the `defaultValue` fields in `docsearch.config.js`. Results will still be faceted correctly, but confirm this before proceeding.
 
 ### Trigger the reindex
 
@@ -445,7 +416,7 @@ curl --request POST \
 
 After the crawl completes, open the Algolia index browser and filter by `product:vnode` to confirm records are present with correct `version_label` and `is_latest` values.
 
-## After Each Stable Release
+## After each stable release
 
 When a new stable version ships for either product:
 
@@ -454,7 +425,7 @@ When a new stable version ships for either product:
 
 If you skip step 1, the search modal and search page default filters will continue biasing toward the old stable version.
 
-## Notes and Follow-Up Ideas
+## Notes and follow-up ideas
 
 - The preview settings file carries eight synonym entries, added after the
   DOC-1372 terminology sweep. Seven are one-way mappings from a retired term to
