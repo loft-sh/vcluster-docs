@@ -35,6 +35,19 @@ new Crawler({
       indexName: "vcluster",
       pathsToMatch: ["https://www.vcluster.com/docs/**"],
       recordExtractor: ({ $, helpers, url }) => {
+        // Folder pages answer with and without a trailing slash, which indexed
+        // each such page twice (DOC-1892). Every page declares its own route as
+        // canonical, so skip the form that isn't. Compare paths only: canonical
+        // tags use vcluster.com while the crawler fetches www.vcluster.com,
+        // which is also why ignoreCanonicalTo has to stay true.
+        const canonicalHref = $('link[rel="canonical"]').attr("href");
+        if (canonicalHref) {
+          const canonicalPath = new URL(canonicalHref, url.href).pathname;
+          if (canonicalPath !== url.pathname) {
+            return [];
+          }
+        }
+
         $(".hash-link").remove();
 
         const pathname = url.pathname.replace(/^\/docs/, "") || "/";
