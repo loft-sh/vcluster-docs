@@ -1,5 +1,11 @@
 name: Sync Next Branch
 
+# Keeps `next` current with `main`. The next ruleset requires linear history
+# and pull requests, so the bot only ever fast-forwards `next` (its token must
+# be allowed to bypass that ruleset). When `next` has its own commits, the
+# workflow opens or updates one issue labeled `sync` instead, saying whether
+# main merges cleanly and which files conflict. See hack/sync-branches.sh.
+
 on:
   push:
     branches:
@@ -7,8 +13,12 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
+  issues: write
+
+concurrency:
+  group: sync-next-branch
+  cancel-in-progress: false
 
 jobs:
   sync:
@@ -19,33 +29,74 @@ jobs:
           fetch-depth: 0  # Full history required
           token: ${{ secrets.GH_ACCESS_TOKEN }}
 
-      - name: Configure git
-        run: |
-          git config --global user.name "Loft Bot"
-          git config --global user.email "loft-bot@users.noreply.github.com"
+      - name: Classify main and next
+        id: classify
+        run: SYNC_RESULT_FILE="$GITHUB_OUTPUT" ./hack/sync-branches.sh
 
-      - name: Sync branches
-        run: |
-          ./hack/sync-branches.sh > sync-output.txt 2>&1
-          cat sync-output.txt
-
-          if grep -q "Clean merge successful" sync-output.txt; then
-            git push origin next
-            echo "::notice::Successfully synced next with main"
-
-          elif grep -q "Conflicts detected" sync-output.txt; then
-            BRANCH_NAME=$(grep "created branch:" sync-output.txt | cut -d: -f2 | tr -d ' ')
-            git push origin "$BRANCH_NAME"
-
-            gh pr create \
-              --title "Sync: Merge main into next" \
-              --body "Automated sync from main to next branch. Please resolve conflicts and merge." \
-              --base next \
-              --head "$BRANCH_NAME" \
-              --label "sync"
-
-            echo "::notice::Created PR for manual conflict resolution"
-          fi
+      - name: Fast-forward next
+        if: steps.classify.outputs.status == 'fast-forward'
         env:
-          GITHUB_TOKEN: ${{ secrets.GH_ACCESS_TOKEN }}
+          MAIN_SHA: ${{ steps.classify.outputs.main_sha }}
+          MAIN_AHEAD: ${{ steps.classify.outputs.main_ahead }}
+        run: |
+          if ! git push origin "$MAIN_SHA:refs/heads/next"; then
+            echo "::error::Couldn't fast-forward next. The GH_ACCESS_TOKEN account must be allowed to bypass the 'next branch' ruleset (it requires pull requests)."
+            exit 1
+          fi
+          echo "::notice::Fast-forwarded next by $MAIN_AHEAD commit(s) to $MAIN_SHA"
+
+      - name: Report a diverged next
+        if: startsWith(steps.classify.outputs.status, 'diverged-')
+        env:
           GH_TOKEN: ${{ secrets.GH_ACCESS_TOKEN }}
+          STATUS: ${{ steps.classify.outputs.status }}
+          MAIN_SHA: ${{ steps.classify.outputs.main_sha }}
+          NEXT_SHA: ${{ steps.classify.outputs.next_sha }}
+          MAIN_AHEAD: ${{ steps.classify.outputs.main_ahead }}
+          NEXT_AHEAD: ${{ steps.classify.outputs.next_ahead }}
+          CONFLICTS: ${{ steps.classify.outputs.conflicts }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          {
+            echo "\`next\` has commits that \`main\` doesn't, so it can't be fast-forwarded. Merge \`main\` into \`next\` by hand."
+            echo
+            echo "- \`main\`: \`${MAIN_SHA:0:10}\` ($MAIN_AHEAD commit(s) not on \`next\`)"
+            echo "- \`next\`: \`${NEXT_SHA:0:10}\` ($NEXT_AHEAD commit(s) not on \`main\`)"
+            if [[ "$STATUS" == "diverged-clean" ]]; then
+              echo "- Dry-run merge: **clean**"
+            else
+              echo "- Dry-run merge: **conflicts** in:"
+              for f in $CONFLICTS; do echo "  - \`$f\`"; done
+            fi
+            echo
+            echo "To merge (needs an account that can bypass the \`next\` ruleset, because it creates a merge commit):"
+            echo
+            echo '```bash'
+            echo 'git fetch origin'
+            echo 'git switch next && git pull --ff-only'
+            echo 'git merge origin/main -m "chore: merge main into next"'
+            echo '# resolve any conflicts, then build and run hack/check-redirects.sh'
+            echo 'git push origin next'
+            echo '```'
+            echo
+            echo "Updated by [Sync Next Branch]($RUN_URL). This issue closes itself once \`next\` contains \`main\`."
+          } > sync-issue.md
+
+          existing="$(gh issue list --label sync --state open --json number --jq '.[0].number')"
+          if [[ -n "$existing" ]]; then
+            gh issue edit "$existing" --body-file sync-issue.md
+            echo "::warning::next has diverged from main ($STATUS). Updated issue #$existing."
+          else
+            gh issue create --title "Merge main into next" --label sync --body-file sync-issue.md
+            echo "::warning::next has diverged from main ($STATUS). Opened a sync issue."
+          fi
+
+      - name: Close a resolved sync issue
+        if: contains(fromJSON('["up-to-date","fast-forward","next-ahead"]'), steps.classify.outputs.status)
+        env:
+          GH_TOKEN: ${{ secrets.GH_ACCESS_TOKEN }}
+          STATUS: ${{ steps.classify.outputs.status }}
+        run: |
+          for n in $(gh issue list --label sync --state open --json number --jq '.[].number'); do
+            gh issue close "$n" --comment "Resolved: \`next\` now contains \`main\` ($STATUS)."
+          done

@@ -68,7 +68,15 @@ bats hack/preview/*.bats
 ```
 
 ## Sync next branch (`sync-next-branch.yml`)
-Keeps `next` branch in sync with `main` by auto-merging or creating PRs when conflicts exist. Runs on push to main, daily, or manually. Never syncs in reverse (next → main is manual only).
+Keeps `next` current with `main`. Runs on every push to `main`, or manually. It never syncs in reverse: `next` → `main` is the release PR.
+
+`hack/sync-branches.sh` classifies the two branches without changing either one:
+
+- **Fast-forward** (`next` has no commits of its own, as between major releases): the workflow fast-forwards `next` to `main`. The `next` ruleset requires pull requests, so the `GH_ACCESS_TOKEN` account must be allowed to bypass it. Without that, the run fails with an error saying so.
+- **Diverged** (`next` has its own commits, during a major release cycle): nothing is pushed. The workflow opens or updates one issue labeled `sync` that says whether `main` merges cleanly and lists any conflicting files. Someone who can bypass the ruleset merges `main` into `next` by hand, because the merge commit breaks the linear-history rule.
+- **Up to date** or **`next` ahead**: nothing to do. Any open `sync` issue is closed.
+
+Tests: `bats hack/sync-branches.bats` (run in `test-release-scripts.yml`).
 
 ## Validate glossary terms
 
@@ -76,7 +84,7 @@ The `validate-glossary.yml` workflow checks that all terms referenced in `<Gloss
 
 ### When it runs:
 - On all PRs to the main branch that change MDX files or the glossary data
-- When manually triggered via the GitHub Actions UI
+- When someone runs it from the GitHub Actions UI
 
 ### What it checks:
 - Scans all MDX files in the docs, vCluster, and platform directories
