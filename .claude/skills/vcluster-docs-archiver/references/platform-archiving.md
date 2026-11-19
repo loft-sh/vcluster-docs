@@ -127,7 +127,7 @@ Replace the existing announcement bar with an archive warning:
 announcementBar: {
   id: "platform-v4-5-eos",
   content:
-    'Warning: This is an archived version of the docs. Go to the <a href="https://vcluster.com/docs/platform/">latest Platform docs</a>.',
+    'Warning: This is an archived version of the docs. Go to the <a href="https://www.vcluster.com/docs/platform/">latest Platform docs</a>.',
   backgroundColor: "#e8a735",
   textColor: "#000000",
   isCloseable: false,
@@ -244,7 +244,7 @@ git checkout main
 # File: src/theme/DocSidebar/Desktop/Content/index.js
 # Add to dropdownItemsAfter:
 {
-  to: "https://vcluster.com/docs/v4.2",
+  to: "https://www.vcluster.com/docs/v4.2",
   label: "v4.2 (EOS) ↗"  # EOS not EOL!
 }
 

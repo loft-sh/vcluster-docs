@@ -74,7 +74,7 @@ Common patterns to fix:
 - [ ] Add the EOL version to dropdown menu:
 ```javascript
 {
-  to: "https://vcluster.com/docs/v0.XX",
+  to: "https://www.vcluster.com/docs/v0.XX",
   label: "v0.XX (EOL) ↗"
 }
 ```

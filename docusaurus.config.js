@@ -37,7 +37,7 @@ const config = {
   // than reading "vCluster Docs | vCluster".
   title: "vCluster",
   tagline: "Run your AI cloud like a hyperscaler",
-  url: "https://vcluster.com",
+  url: "https://www.vcluster.com",
   baseUrl: __webpack_public_path__,
   organizationName: "loft-sh", // Usually your GitHub org/user name.
   projectName: "vcluster-docs", // Usually your repo name.
@@ -160,9 +160,11 @@ const config = {
             // Landing pages get highest priority; everything else stays
             // on the default sitemap priority.
             return filteredItems.map((item) => {
-              if (item.url === 'https://vcluster.com/docs/' ||
-                  item.url === 'https://vcluster.com/docs/vcluster/' ||
-                  item.url === 'https://vcluster.com/docs/platform/') {
+              // Compare paths only, so this doesn't depend on the site host.
+              const { pathname } = new URL(item.url);
+              if (pathname === '/docs/' ||
+                  pathname === '/docs/vcluster/' ||
+                  pathname === '/docs/platform/') {
                 return { ...item, priority: 1.0, changefreq: 'daily' };
               }
               return { ...item, priority: 0.8, changefreq: 'weekly' };
