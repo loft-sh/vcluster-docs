@@ -142,7 +142,7 @@ vCluster provides [node providers](/platform/next/administer/node-providers/over
 3. Updated dropdown in `src/theme/DocSidebar/Desktop/Content/index.js`:
    ```javascript
    {
-     to: "https://vcluster.com/docs/v4.2",
+     to: "https://www.vcluster.com/docs/v4.2",
      label: "v4.2 (EOS) ↗"
    }
    ```

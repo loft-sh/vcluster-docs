@@ -190,15 +190,15 @@ Main branch adds archived versions to dropdown:
 ```javascript
 {shouldShowVClusterVersioning && <VersionSelector docsPluginId={"vcluster"} dropdownItemsAfter={[
   {
-    to: "https://vcluster.com/docs/v0.24",
+    to: "https://www.vcluster.com/docs/v0.24",
     label: "v0.24 (EOL) ↗"
   },
   {
-    to: "https://vcluster.com/docs/v0.23",
+    to: "https://www.vcluster.com/docs/v0.23",
     label: "v0.23 (EOL) ↗"
   },
   {
-    to: "https://vcluster.com/docs/v0.22",
+    to: "https://www.vcluster.com/docs/v0.22",
     label: "v0.22 (EOL) ↗"  // Newly archived
   },
 ]} />}
@@ -208,7 +208,7 @@ Main branch adds archived versions to dropdown:
 ```javascript
 {shouldShowPlatformVersioning && <VersionSelector docsPluginId={"platform"} dropdownItemsAfter={[
   {
-    to: "https://vcluster.com/docs/v4.2",
+    to: "https://www.vcluster.com/docs/v4.2",
     label: "v4.2 (EOS) ↗"  // EOS not EOL!
   },
   {

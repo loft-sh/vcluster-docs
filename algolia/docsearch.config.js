@@ -1,5 +1,5 @@
 /*
- * DocSearch crawler template for https://vcluster.com/docs
+ * DocSearch crawler template for https://www.vcluster.com/docs
  *
  * Apply this in the Algolia crawler editor. After changing
  * `initialIndexSettings`, delete the existing index and trigger a fresh crawl
@@ -37,9 +37,10 @@ new Crawler({
       recordExtractor: ({ $, helpers, url }) => {
         // Folder pages answer with and without a trailing slash, which indexed
         // each such page twice (DOC-1892). Every page declares its own route as
-        // canonical, so skip the form that isn't. Compare paths only: canonical
-        // tags use vcluster.com while the crawler fetches www.vcluster.com,
-        // which is also why ignoreCanonicalTo has to stay true.
+        // canonical, so skip the form that isn't. Compare paths only, so a host
+        // difference between the canonical tag and the crawled URL never
+        // matters. This check replaces Algolia's canonical handling, which is
+        // why ignoreCanonicalTo stays true.
         const canonicalHref = $('link[rel="canonical"]').attr("href");
         if (canonicalHref) {
           const canonicalPath = new URL(canonicalHref, url.href).pathname;

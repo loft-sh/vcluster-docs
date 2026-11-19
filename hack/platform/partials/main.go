@@ -182,7 +182,7 @@ clusters:
 isolation:
   enabled: true
 
-# Checkout https://vcluster.com/docs for more config options`,
+# Checkout https://www.vcluster.com/docs for more config options`,
 						},
 					},
 				},
