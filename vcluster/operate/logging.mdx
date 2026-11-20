@@ -12,7 +12,7 @@ vCluster produces three distinct types of logs. Each type has a different source
 
 | Type | Source | Typical access |
 |------|--------|----------------|
-| [Control plane logs](#control-plane-logs) | vCluster pod `stdout` | `kubectl logs` |
+| [Control plane logs](#control-plane-logs) | vCluster pod `stdout`, or the `vcluster` systemd service on vCluster Standalone | `kubectl logs` or `journalctl` |
 | [Audit logs](#audit-logs) | Cluster API server | `kubectl logs` or file |
 | [Workload logs](#workload-logs) | Apps inside the cluster | Log collector |
 
@@ -35,6 +35,60 @@ By default, logs use a human-readable console format at `info` level. To change 
 
 - [Log encoding](../configure/logging-and-telemetry/logging.mdx) — switch between console and JSON format
 - [Enable debug logging](../troubleshoot/diagnostics/enable-debug-logging.mdx) — increase verbosity for troubleshooting
+
+### vCluster Standalone
+
+vCluster Standalone runs the control plane as the `vcluster` systemd service on the control plane node, not as a pod. Read its logs from the systemd journal on that node:
+
+```bash title="Follow the control plane logs"
+sudo journalctl -u vcluster.service -f
+```
+
+The `vcluster` service also runs the Kubernetes control plane components, so their output goes to the same journal. Each line has a `component` field that names its source, such as `vcluster`, `apiserver`, `controller-manager`, `scheduler`, or `kine`.
+
+```text title="Example output"
+Nov 19 01:36:10 vcluster-standalone vcluster[4818]: 2026-11-19 01:36:10        INFO        loader/loader.go:234        Detected standalone license        {"component": "vcluster"}
+Nov 20 20:57:07 vcluster-standalone vcluster[4818]: 2026-11-20 20:57:07        INFO        commandwriter/commandwriter.go:128        watch chan error: etcdserver: mvcc: required revision has been compacted        {"component": "vcluster", "component": "apiserver", "location": "watcher.go:332"}
+```
+
+Lines from the control plane components always show `INFO`. When a component reports its own severity, it appears in a `level` field, such as `"level": "error"`.
+
+journald stores every line from the service at the same priority, so `journalctl -p` can't filter by severity. Filter the text instead:
+
+```bash title="Show errors from the last hour"
+sudo journalctl -u vcluster.service --since "1 hour ago" --no-pager | grep -E 'ERROR|"level": "error"'
+```
+
+When the cluster isn't connected to vCluster Platform, the error filter also returns a platform cache error every 10 seconds. You can ignore it, or add `| grep -v 'platform cache'` to hide it.
+
+```bash title="Show API server lines from the last hour"
+sudo journalctl -u vcluster.service --since "1 hour ago" --no-pager | grep '"component": "apiserver"'
+```
+
+When the control plane node also runs as a worker node, which is the default, the kubelet and containerd run as separate systemd services with their own journals:
+
+```bash title="View kubelet and containerd logs"
+sudo journalctl -u kubelet.service --since "1 hour ago" --no-pager
+sudo journalctl -u containerd.service --since "1 hour ago" --no-pager
+```
+
+The Standalone installer turns on persistent journal storage, so logs survive a reboot. To read logs from the previous boot, add `-b -1` to a `journalctl` command. How long the journal keeps logs depends on the node's journald settings.
+
+To turn on debug logging, set the `DEBUG` environment variable in `/etc/default/vcluster` and restart the service. The API server is unavailable while the service restarts. These commands assume the file doesn't exist yet. If it does, edit the `DEBUG=true` line in the file instead of replacing or deleting the file.
+
+```bash title="Turn on debug logging"
+echo 'DEBUG=true' | sudo tee /etc/default/vcluster
+sudo systemctl restart vcluster.service
+```
+
+Debug lines show `DEBUG` in the level column. To turn debug logging off, remove the file and restart the service again:
+
+```bash title="Turn off debug logging"
+sudo rm /etc/default/vcluster
+sudo systemctl restart vcluster.service
+```
+
+For service status checks and common problems, see [Troubleshoot vCluster Standalone control plane nodes](../troubleshoot/control-plane/standalone.mdx).
 
 ## Audit logs
 
