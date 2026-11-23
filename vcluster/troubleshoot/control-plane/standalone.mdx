@@ -1,6 +1,6 @@
 ---
 title: Troubleshoot vCluster Standalone control plane nodes
-description: Troubleshoot vCluster Standalone control plane nodes by checking service logs, network ports, node join failures, and unsupported config options.
+description: Troubleshoot vCluster Standalone control plane nodes by checking service status, API server readiness, service logs, network ports, and node joins.
 sidebar_label: Standalone control plane nodes
 sidebar_position: 3
 sidebar_class_name: standalone private-nodes
@@ -8,20 +8,123 @@ sidebar_class_name: standalone private-nodes
 
 import TenancySupport from '../../_fragments/tenancy-support.mdx';
 import PrivateNodeLimitations from '../../_fragments/private-nodes-limitations.mdx';
+import Flow, { Step } from '@site/src/components/Flow';
 
 <TenancySupport standalone="true" />
 
-Bringing up a Kubernetes cluster can face challenges, so here are some troubleshooting tips to help get you started. 
+vCluster Standalone runs the control plane as the `vcluster` systemd service on the control plane node. Start with the checks in this section to find out whether the service, the API server, or another component is failing. Then go to the matching issue in [Common issues](#common-issues).
 
-## Check vCluster logs
+## Check the control plane
 
-All vCluster logs are located in the control plane, view service logs using journalctl.
+Run these commands on the control plane node.
 
-```bash title="View vCluster service logs"
-journalctl -u vcluster.service --since="2 minutes ago" -f
+<Flow id="check-standalone-control-plane">
+<Step>
+**Check the service status.**
+
+```bash title="Check the vcluster service"
+systemctl status vcluster.service --no-pager
 ```
 
-## Common Issues
+```text title="Example output"
+● vcluster.service - vcluster
+     Loaded: loaded (/etc/systemd/system/vcluster.service; enabled; vendor preset: enabled)
+     Active: active (running) since Mon 2026-11-02 22:26:48 UTC; 2 weeks 3 days ago
+       Docs: https://vcluster.com
+   Main PID: 4818 (vcluster)
+```
+
+`active (running)` means the vCluster process is running. It doesn't mean the API server is ready, because the service reports that it started before the control plane components come up. The next step checks the API server.
+
+If the output shows `activating (auto-restart)`, the process exited and systemd restarts it 5 seconds later. The `Process` line shows how the last attempt ended, for example with an exit code or a signal:
+
+```text title="Example output after the process exits"
+     Active: activating (auto-restart) (Result: signal) since Fri 2026-11-20 21:41:25 UTC; 2s ago
+       Docs: https://vcluster.com
+    Process: 2244358 ExecStart=/var/lib/vcluster/bin/vcluster start --config /etc/vcluster/vcluster.yaml (code=killed, signal=KILL)
+```
+
+Check how many times systemd has restarted the service:
+
+```bash title="Check the restart count"
+systemctl show vcluster.service -p NRestarts
+```
+
+The count includes only restarts that already happened, not one that is waiting out the 5-second delay. Run the command again after a few minutes. A count that keeps rising means the service is in a restart loop. Read the logs in step 3 to find the error that ends each attempt.
+
+If the output shows `failed`, systemd stopped restarting the service, and the restart count no longer rises. Read the logs in step 3 and fix the cause. Then clear the failed state and start the service again:
+
+```bash title="Restart a failed service"
+sudo systemctl reset-failed vcluster.service
+sudo systemctl restart vcluster.service
+```
+</Step>
+<Step>
+**Check the API server.**
+
+Run `kubectl` as root. The installer sets up the kubeconfig for root, so `kubectl` run as another user tries `localhost:8080` and fails with `The connection to the server localhost:8080 was refused`.
+
+```bash title="Check API server readiness and nodes"
+sudo kubectl get --raw='/readyz?verbose' | tail -1
+sudo kubectl get nodes
+```
+
+```text title="Example output"
+readyz check passed
+NAME                  STATUS   ROLES                  AGE   VERSION
+vcluster-standalone   Ready    control-plane,master   17d   v1.36.0
+```
+
+While the service starts, `kubectl` fails with `The connection to the server localhost:8443 was refused`. Wait a few seconds and run the check again.
+
+If a readiness check fails, `kubectl` prints `Error from server (InternalError)` followed by the list of checks. Failed checks start with `[-]`:
+
+```text title="Example output when a check fails"
+Error from server (InternalError): an error on the server ("[+]ping ok\n[+]log ok\n[+]etcd ok\n...\n[-]poststarthook/apiservice-discovery-controller failed: reason withheld\n...\nreadyz check failed") has prevented the request from succeeding
+```
+
+Right after a restart, a check can fail for a few seconds before the API server is ready. If a check keeps failing, read the logs in the next step for the failing component.
+</Step>
+<Step>
+**Read recent logs.**
+
+```bash title="Show recent vcluster service logs"
+sudo journalctl -u vcluster.service --since "10 minutes ago" --no-pager
+```
+
+To show only errors, filter the text, because `journalctl -p` can't filter this service's logs by severity:
+
+```bash title="Show recent errors"
+sudo journalctl -u vcluster.service --since "10 minutes ago" --no-pager | grep -E 'ERROR|"level": "error"'
+```
+
+To hide the expected platform cache error on a cluster that isn't connected to vCluster Platform, see [Messages you can ignore](#messages-you-can-ignore).
+
+Each line has a `component` field that names its source, such as `vcluster`, `apiserver`, `controller-manager`, `scheduler`, or `kine`. For more ways to filter, see [Logging](../../operate/logging.mdx#vcluster-standalone).
+</Step>
+</Flow>
+
+### Where to look next
+
+| Symptom | Next check |
+|---------|------------|
+| Errors from `apiserver` or `kine` | Check free disk space and memory on the node. With the embedded SQLite backing store, the database is `/var/lib/vcluster/state.db`. See [Resource constraints](#resource-constraints). |
+| Node is `NotReady`, or pods don't start | `sudo journalctl -u kubelet.service` and `sudo journalctl -u containerd.service`. The kubelet and containerd log to their own services. |
+| Clients or worker nodes can't connect | [Network connectivity](#network-connectivity) |
+| A node can't join | [Node join failures](#node-join-failures) |
+| The logs don't show enough detail | Turn on [debug logging](../../operate/logging.mdx#vcluster-standalone). |
+
+### Messages you can ignore
+
+When the cluster isn't connected to vCluster Platform, this error repeats every 10 seconds. It doesn't affect the cluster.
+
+```text title="Platform cache error"
+ERROR        platformcache/platformcache.go:61        error recreating platform cache        {"component": "vcluster", "error": "getting platform connection: license is not online"}
+```
+
+To hide it from the error filter in step 3, add `| grep -v 'platform cache'` to the command. Only do this when the cluster isn't connected to vCluster Platform. On a connected cluster, the same filter would hide real errors.
+
+## Common issues
 
 ### Network connectivity
 
@@ -34,14 +137,6 @@ sudo ss -tlnp | grep -E ':(6443|8443)\b'
 ```
 
 In the output, expect `0.0.0.0:8443` or `*:8443` for the vCluster proxy and `127.0.0.1:6443` for the API server. For the full list of ports, see [Required ports](../../deploy/control-plane/binary/node-requirements.mdx#required-ports).
-
-### Check the systemd service
-
-The vCluster service needs to be running at all times.
-
-```bash title="Verify the vCluster service is running"
-systemctl status vcluster.service
-```
 
 ### Node join failures
 
