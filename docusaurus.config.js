@@ -490,7 +490,7 @@ const config = {
       },
       prism: {
         theme: vClusterTheme,
-        additionalLanguages: ["bash", "hcl"],
+        additionalLanguages: ["bash", "hcl", "toml"],
       },
       // Release announcement for Platform 5.0 and vCluster 0.38 (DOC-1854).
       // Change the id with each release, so readers who closed the previous
