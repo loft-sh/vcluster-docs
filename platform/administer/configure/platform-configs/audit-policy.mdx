@@ -15,7 +15,7 @@ Audit levels are preconfigured audit policies. Use this reference to see exactly
 
 Audit levels and custom policies both determine payload storage through one of four granularity settings. `Request` stores the request payload. `RequestResponse` also stores the response payload. See [Audit policy](#audit-policy) for the full list.
 
-The platform stores payloads for resource requests only. Long-running requests, such as log streaming, never store payloads. Requests to create sensitive resources, such as access keys and cluster registrations, keep metadata-only events on every level. See [Default policy exclusions](#default-policy-exclusions) for the full list of affected resources and why.
+The platform stores payloads for resource requests only. Long-running requests, such as log streaming, never store payloads. Requests to create sensitive resources, such as access keys and cluster registrations, keep metadata-only events on every level. See [Default policy exclusions](#default-policy-exclusions) for the full list of affected resources and why. Independently of the level or policy, the platform never stores credentials from a payload. See [Credentials in payloads](#credentials-in-payloads).
 
 The platform always stores payloads as JSON:
 
@@ -43,6 +43,82 @@ The following reasons can appear as annotation values:
 | `decode-failed` | The platform couldn't decompress or decode the payload. |
 | `unsupported-encoding` | The payload used a content encoding or media type that the platform can't convert to JSON. |
 | `invalid-json` | The payload wasn't valid JSON and not in any recognized format. |
+| `sensitive` | The resource carries credentials in its payload, so the platform never stores it. See [Credentials in payloads](#credentials-in-payloads). |
+| `redaction-failed` | The platform couldn't find the credential fields of a redacted resource in the payload, for example in a JSON patch. |
+
+### Credentials in payloads
+
+Some request and response payloads carry credentials, such as access keys, tokens, passwords, and Kubernetes Secret data. The platform never writes these credentials to an audit event. It applies this protection after the audit policy picks the granularity of an event. The protection holds at every audit level and under a custom `policy.rules` list.
+
+The platform handles the payload of each resource in one of three ways:
+
+- **Omitted**: The platform stores no payload. The event keeps all of its metadata and carries the [omission annotation](#omitted-payloads) with the reason `sensitive`.
+- **Redacted**: The platform stores the payload, but replaces the value of each credential field with `<REDACTED>`. A field that holds a map keeps its keys and loses its values.
+- **Stored**: The payload carries no credentials, and the platform stores it unchanged.
+
+An event with an omitted payload looks like this:
+
+```yaml title="Audit event with an omitted response payload"
+annotations:
+  audit.platform.vcluster.com/response-object-omitted: sensitive
+objectRef:
+  apiGroup: management.loft.sh
+  resource: clusters
+  subresource: accesskey
+verb: get
+```
+
+#### Omitted resources
+
+The platform omits the request and response payloads of these resources:
+
+| Resource | API group | Payload carries |
+|---|---|---|
+| `clusters/accesskey`, `virtualclusterinstances/accesskey`, `virtualclusterinstances/nodeaccesskey` | `management.loft.sh` | Agent and node access keys. |
+| `virtualclusterinstances/kubeconfig`, `virtualclusterinstances/joinscript`, `virtualclusterinstances/standalone` | `management.loft.sh` | Kubeconfigs, bootstrap tokens, and private keys. |
+| `virtualclusterinstances/externaldatabase`, `virtualclusterinstances/snapshotcredentials`, `virtualclusterinstances/observabilityconnector` | `management.loft.sh` | Database passwords, storage credentials, and metrics-writer tokens. |
+| `configs`, `tenants/config`, `oidcclients` | `management.loft.sh` | SSO and OIDC client secrets. |
+| `connectors` | `management.loft.sh` | Credentials for the external systems they connect to. |
+| `users/profile` | `management.loft.sh` | A new password. |
+| `redirecttokens`, `directclusterendpointtokens`, `ingressauthtokens`, `selves` | `management.loft.sh` | Tokens. |
+| `apps/credentials` | `management.loft.sh` | Resolved project secret values, such as chart registry passwords. |
+| `stackinstances/outputs` | `management.loft.sh` | Stack output values, including sensitive outputs. |
+| `backups`, `backups/apply` | `management.loft.sh` | A raw copy of all platform objects. |
+| `convertvirtualclusterconfig` | `management.loft.sh` | A full vCluster config. |
+| `nodeproviders/exec` | `management.loft.sh` | Terraform state with the node join token. |
+| `osimages/upload` | `management.loft.sh` | Upload targets that grant write access to the image. |
+| `kiosk` | `management.loft.sh` | An embedded access key. |
+| `metal3bmcs/redfish` | `cluster.loft.sh` | BMC passwords and session tokens. |
+
+A resource of the `management.loft.sh` or `cluster.loft.sh` API groups that the platform doesn't know is also omitted. Resources of other API groups, other than core Secrets, are stored unchanged.
+
+#### Redacted resources
+
+The platform redacts the credential fields of these resources and stores the rest of the payload:
+
+| Resource | API group | Redacted fields |
+|---|---|---|
+| `secrets` and its subresources, sent through the platform proxies or the agent | core (`""`) | `data`, `stringData` |
+| `projectsecrets` | `management.loft.sh` | `spec.data` |
+| `projects`, `projects/status` | `management.loft.sh` | Vault authentication token |
+| `ownedaccesskeys`, `resetaccesskeys`, `users/accesskeys`, `teams/accesskeys` | `management.loft.sh` | Access key value, identity connector data, and OIDC tokens |
+| `apps`, `appinstances`, `projects/chartinfo` | `management.loft.sh` | Chart passwords, Helm values, manifests, scripts, and parameter values |
+| `spacetemplates`, `spaceinstances`, `virtualclustertemplates`, `virtualclusterinstances`, `projects/templates`, `rendervirtualclustertemplates`, `registervirtualclusters` | `management.loft.sh` | Chart passwords, Helm values, objects, parameter values, and the rendered objects in the status |
+| `stacktemplates`, `stackinstances`, `argocdapplications`, `argocdapplicationtemplates` | `management.loft.sh` | Parameter values, Helm values, and plugin and Jsonnet variables |
+| `nodeproviders`, `nodeproviders/status`, `projects/nodetypes`, `machineconfigtemplates` | `management.loft.sh` | Helm values, Terraform and machine templates, and cloud-init templates |
+| `storageaccounts`, `storageprofiles`, `storagevolumes`, and their `status` subresources | `management.loft.sh` | Weka users, tenants, and file systems |
+| `licenses/request` | `management.loft.sh` | `status.output` |
+| `events`, `agentauditevents` | `management.loft.sh` | The request and response payloads that stored audit events embed |
+
+For every redacted resource, the platform also replaces the `kubectl.kubernetes.io/last-applied-configuration` annotation, because `kubectl apply` writes a full copy of the object, credentials included, into it.
+
+For omitted and redacted resources, the platform also replaces the messages of a failure `Status` with `<REDACTED>`, because a validation error can repeat the rejected value.
+
+The agent applies the same protection to the events it records and sends to the platform. An agent on an older version keeps recording Secret data until you upgrade it.
+
+:::warning Review audit events written before the fix
+vCluster Platform versions before 4.12.8 and 5.0.1 stored these credentials in audit events. Audit stores, log files, and webhook targets that hold events from those versions can contain access keys, tokens, passwords, and Secret data. Review who can read them, and purge the events you don't need. Rotate the credentials that someone could have read, starting with cluster access keys. See [Persist audit logs](./audit.mdx#persist-audit-logs) for where the platform stores events.
+:::
 
 ## Audit policy
 
@@ -54,7 +130,7 @@ Audit policy is a more complex alternative to audit levels, letting you define e
 - `RequestResponse`: Log event metadata, and request and response bodies. This doesn't apply for non-resource requests.
 
 :::warning Custom rules replace the defaults entirely
-Setting a non-empty `policy.rules` list under `config.audit` replaces the resolved default policy outright, and the platform then ignores the `level` field. None of the [default policy exclusions](#default-policy-exclusions) apply automatically. Authentication events and connector requests then follow your rules too, so a policy without the built-in rules can drop sign-in events or record connector request bodies. Start from the [default rules for a level](#default-policy-rules-by-level) and add to them, rather than writing a custom policy from scratch. An empty `rules: []` list doesn't count as a custom policy. The platform still resolves and applies the configured level's defaults.
+Setting a non-empty `policy.rules` list under `config.audit` replaces the resolved default policy outright, and the platform then ignores the `level` field. None of the [default policy exclusions](#default-policy-exclusions) apply automatically. Authentication events and connector requests then follow your rules too, so a policy without the built-in rules can drop sign-in events or record connector request bodies. Start from the [default rules for a level](#default-policy-rules-by-level) and add to them, rather than writing a custom policy from scratch. An empty `rules: []` list doesn't count as a custom policy. The platform still resolves and applies the configured level's defaults. A custom policy doesn't turn off [credential protection](#credentials-in-payloads). Credentials stay out of payloads, whatever the rules say.
 :::
 
 An example policy that catches all requests:
@@ -75,6 +151,8 @@ See the [complete policy reference](../../../api/resources/config.mdx#status-aud
 ## Default policy exclusions
 
 Before a request reaches an audit level's own rules, six built-in rules run first, in this order. Because the platform uses the first matching rule, these built-ins take priority over anything the level would otherwise log. They apply to all four audit levels.
+
+These rules decide only whether an event is logged and at which granularity. Which payloads may hold credentials is decided separately, at every level and under a custom policy. See [Credentials in payloads](#credentials-in-payloads).
 
 1. [Never logged](#never-logged)
 1. [Authentication activity](#metadata-only-for-authentication-activity)
@@ -144,6 +222,8 @@ This keeps the event auditable (who did it, when, on which object) without writi
 ## Default policy rules by level
 
 Each audit level resolves to a fixed list of policy rules, evaluated in order, where the first match sets an event's granularity. Copy the rules for a level below as a starting point for a custom policy, then add, remove, or reorder rules to fit your needs. All four levels start with the same six rules, covered in [Default policy exclusions](#default-policy-exclusions), followed by level-specific rules for everything else.
+
+A `Request` or `RequestResponse` rule doesn't store credentials. The platform omits or redacts them after the rule matches, as described in [Credentials in payloads](#credentials-in-payloads).
 
 <Tabs
   defaultValue="1"
